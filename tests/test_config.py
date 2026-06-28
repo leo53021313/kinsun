@@ -18,6 +18,7 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.memory_db_path == "kinsun_memory.db"
     assert settings.memory_max_turns == 200
     assert settings.timezone == "Asia/Taipei"
+    assert settings.knowledge_db_path == "kinsun_knowledge.db"
 
 
 def test_load_settings_missing_required_raises():

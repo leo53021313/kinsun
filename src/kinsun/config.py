@@ -23,6 +23,7 @@ class Settings:
     memory_db_path: str
     memory_max_turns: int
     timezone: str
+    knowledge_db_path: str
 
 
 def _require(env: Mapping[str, str], key: str) -> str:
@@ -45,4 +46,5 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         memory_db_path=env.get("MEMORY_DB_PATH", "kinsun_memory.db"),
         memory_max_turns=int(env.get("MEMORY_MAX_TURNS", "200")),
         timezone=env.get("TIMEZONE", "Asia/Taipei"),
+        knowledge_db_path=env.get("KNOWLEDGE_DB_PATH", "kinsun_knowledge.db"),
     )
