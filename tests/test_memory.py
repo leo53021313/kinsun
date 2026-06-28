@@ -64,3 +64,22 @@ def test_sessions_lists_distinct_sorted():
 def test_sessions_empty():
     store = _store(datetime(2026, 6, 29, 10, 0, tzinfo=TPE))
     assert store.sessions() == []
+
+
+def test_last_active_returns_latest_user_turn():
+    clock = FakeClock(datetime(2026, 6, 29, 9, 0, tzinfo=TPE))
+    store = SqliteMemoryStore(":memory:", clock, 20)
+    store.append("u1", Message("user", "早"))
+    clock.dt = datetime(2026, 6, 29, 10, 0, tzinfo=TPE)
+    store.append("u1", Message("user", "午"))
+    clock.dt = datetime(2026, 6, 29, 11, 0, tzinfo=TPE)
+    store.append("u1", Message("assistant", "金孫回覆"))
+    assert store.last_active("u1") == datetime(2026, 6, 29, 10, 0, tzinfo=TPE).timestamp()
+
+
+def test_last_active_none_without_user_turns():
+    clock = FakeClock(datetime(2026, 6, 29, 9, 0, tzinfo=TPE))
+    store = SqliteMemoryStore(":memory:", clock, 20)
+    store.append("u1", Message("assistant", "只有金孫說話"))
+    assert store.last_active("u1") is None
+    assert store.last_active("nobody") is None

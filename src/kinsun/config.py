@@ -29,6 +29,9 @@ class Settings:
     embedding_model: str
     consolidation_hour: int
     scheduler_tick_seconds: int
+    greeting_hour: int
+    inactivity_hour: int
+    inactivity_days: int
 
 
 def _require(env: Mapping[str, str], key: str) -> str:
@@ -57,4 +60,7 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         embedding_model=env.get("EMBEDDING_MODEL", "gemini-embedding-001"),
         consolidation_hour=int(env.get("CONSOLIDATION_HOUR", "3")),
         scheduler_tick_seconds=int(env.get("SCHEDULER_TICK_SECONDS", "60")),
+        greeting_hour=int(env.get("GREETING_HOUR", "8")),
+        inactivity_hour=int(env.get("INACTIVITY_HOUR", "10")),
+        inactivity_days=int(env.get("INACTIVITY_DAYS", "2")),
     )
