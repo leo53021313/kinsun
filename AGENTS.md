@@ -27,6 +27,17 @@
 
 ---
 
+## 開發與部署環境（跨平台）
+
+本專案的開發橫跨 **Windows / macOS / DGX Spark（Linux + ARM64/aarch64）**；DGX Spark 同時是**開發環境**、伺服器與部署目標。程式碼必須在三者皆可運作，請守以下紀律：
+
+* **OS-agnostic**：一律使用 `pathlib`，不寫死路徑與路徑分隔符；設定與金鑰一律走環境變數，不假設特定作業系統。
+* **ARM64 相容**：新增依賴前確認其在 `linux/aarch64` 有可用 wheel；吃 GPU 的重模型（如 ASR、TTS）只跑在 DGX，不要求在 Windows/macOS 安裝。
+* **位置無關（Location-Independent）**：重模型以網路服務形式提供，應用層僅為呼叫端（client），透過**可設定的 endpoint（環境變數）**連線。模型與應用「同機」或「分離」都不需改程式碼。
+* **環境一致性**：以 **uv** 維持跨平台 Python 環境一致；必要時再以容器（Docker／NGC）在三邊求一致。
+
+---
+
 # 工程開發原則（Engineering Principles）
 
 ## 程式碼品質
