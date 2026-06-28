@@ -1,0 +1,16 @@
+# CODEOWNERS — 定義各路徑的審查負責人
+# 語法：<路徑模式>  <@GitHub帳號...>
+# 被列為 owner 的人，會在相關檔案的 PR 中被自動指派為審查者。
+# 文件：https://docs.github.com/articles/about-code-owners
+
+# 預設：所有檔案由整合負責人審查
+*   @leo53021313
+
+# ── 模組分工（待新架構定案後填寫）──────────────────────
+# 等專案目錄骨架確定後，依模組把擁有權分配給各成員，
+# 例如：
+#   /src/asr/      @someone      # 語音辨識（國台語）
+#   /src/tts/      @someone      # 語音合成
+#   /src/agent/    @someone      # 對話 Agent
+#   /src/line_bot/ @someone      # LINE Bot 整合
+# 分配後，PR 會自動找對應負責人審查，減少踩到別人的檔案。

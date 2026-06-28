@@ -1,0 +1,13 @@
+# 統一文字檔在 repo 內以 LF 儲存，避免不同作業系統的 CRLF/LF 差異造成無謂 diff 與衝突
+* text=auto eol=lf
+
+# 二進位檔不做行尾轉換
+*.pdf  binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.mp3  binary
+*.wav  binary
+*.mp4  binary
