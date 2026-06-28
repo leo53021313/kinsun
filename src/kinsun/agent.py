@@ -1,7 +1,8 @@
-"""Care Agent 樞紐：載入今日記憶 → 呼叫 LLM → 寫回。"""
+"""Care Agent 樞紐：注入長期事實 + 載入今日記憶 → 呼叫 LLM → 寫回。"""
 
 from __future__ import annotations
 
+from kinsun.knowledge.recall import KnowledgeRecaller
 from kinsun.llm import LLMClient, Message
 from kinsun.memory.store import MemoryStore
 
@@ -15,14 +16,16 @@ SYSTEM_PROMPT = (
 
 
 class CareAgent:
-    def __init__(self, llm: LLMClient, memory: MemoryStore) -> None:
+    def __init__(self, llm: LLMClient, memory: MemoryStore, recaller: KnowledgeRecaller) -> None:
         self._llm = llm
         self._memory = memory
+        self._recaller = recaller
 
     def handle(self, session_id: str, user_text: str) -> str:
+        system_prompt = SYSTEM_PROMPT + self._recaller.recall(session_id)
         history = self._memory.recent(session_id)
         user_msg = Message("user", user_text)
-        reply = self._llm.generate(system_prompt=SYSTEM_PROMPT, messages=[*history, user_msg])
+        reply = self._llm.generate(system_prompt=system_prompt, messages=[*history, user_msg])
         self._memory.append(session_id, user_msg)
         self._memory.append(session_id, Message("assistant", reply))
         return reply
