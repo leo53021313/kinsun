@@ -24,6 +24,9 @@ class Settings:
     memory_max_turns: int
     timezone: str
     knowledge_db_path: str
+    episodic_db_path: str
+    episodic_top_k: int
+    embedding_model: str
 
 
 def _require(env: Mapping[str, str], key: str) -> str:
@@ -47,4 +50,7 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         memory_max_turns=int(env.get("MEMORY_MAX_TURNS", "200")),
         timezone=env.get("TIMEZONE", "Asia/Taipei"),
         knowledge_db_path=env.get("KNOWLEDGE_DB_PATH", "kinsun_knowledge.db"),
+        episodic_db_path=env.get("EPISODIC_DB_PATH", "kinsun_episodic.db"),
+        episodic_top_k=int(env.get("EPISODIC_TOP_K", "3")),
+        embedding_model=env.get("EMBEDDING_MODEL", "gemini-embedding-001"),
     )

@@ -25,18 +25,18 @@ class SpyMemory:
         self.appended.append((session_id, message))
 
 
-class SpyRecaller:
+class SpyContext:
     def __init__(self, text: str = "") -> None:
         self._text = text
 
-    def recall(self, session_id: str) -> str:
+    def recall(self, session_id: str, user_text: str) -> str:
         return self._text
 
 
 def test_handle_includes_history_and_writes_back():
     llm = SpyLLM()
     memory = SpyMemory([Message("user", "早安"), Message("assistant", "阿公早")])
-    agent = CareAgent(llm, memory, SpyRecaller(""))
+    agent = CareAgent(llm, memory, SpyContext(""))
 
     reply = agent.handle("u1", "我今天有點累")
 
@@ -55,6 +55,6 @@ def test_handle_includes_history_and_writes_back():
 
 def test_handle_injects_known_facts_into_system_prompt():
     llm = SpyLLM()
-    agent = CareAgent(llm, SpyMemory(), SpyRecaller("\n已知：高血壓（長者自述）"))
+    agent = CareAgent(llm, SpyMemory(), SpyContext("\n已知：高血壓（長者自述）"))
     agent.handle("u1", "嗨")
     assert llm.system_prompt == SYSTEM_PROMPT + "\n已知：高血壓（長者自述）"

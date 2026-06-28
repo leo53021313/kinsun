@@ -19,6 +19,9 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.memory_max_turns == 200
     assert settings.timezone == "Asia/Taipei"
     assert settings.knowledge_db_path == "kinsun_knowledge.db"
+    assert settings.episodic_db_path == "kinsun_episodic.db"
+    assert settings.episodic_top_k == 3
+    assert settings.embedding_model == "gemini-embedding-001"
 
 
 def test_load_settings_missing_required_raises():
