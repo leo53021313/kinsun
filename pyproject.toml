@@ -27,8 +27,8 @@ quote-style = "double"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# 採扁平佈局：把專案根加入匯入路徑，讓測試可直接 import kinsun（本專案非套件、不安裝）。
-pythonpath = ["."]
+# 採 src layout：把 src 加入匯入路徑，讓測試可直接 import kinsun（本專案非套件、不安裝）。
+pythonpath = ["src"]
 
 [dependency-groups]
 dev = [
