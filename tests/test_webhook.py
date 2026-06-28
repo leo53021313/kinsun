@@ -6,8 +6,19 @@ from kinsun.agent import CareAgent
 from kinsun.channels.line.webhook import FALLBACK_PROMPT, NON_AUDIO_PROMPT, create_app
 from kinsun.llm import Message
 from kinsun.pipeline import VoicePipeline
+from kinsun.safety.tiers import RiskAssessment, RiskTier
 from kinsun.speech.asr import ASRError, MockAsrClient
 from kinsun.speech.tts import TextBubbleTts
+
+
+class _NullDetector:
+    def assess(self, text: str) -> RiskAssessment:
+        return RiskAssessment(RiskTier.L0, 0.0, "", [])
+
+
+class _NullNotifier:
+    def notify(self, session_id: str, assessment: RiskAssessment) -> None:
+        pass
 
 
 class EchoLLM:
@@ -71,6 +82,8 @@ def _make_client(parser, messenger, asr=None, memory=None):
         asr=asr or MockAsrClient("阿公早安"),
         agent=CareAgent(EchoLLM(), memory or NullMemory()),
         tts=TextBubbleTts(),
+        detector=_NullDetector(),
+        notifier=_NullNotifier(),
     )
     app = create_app(parser=parser, pipeline=pipeline, messenger=messenger)
     return TestClient(app)

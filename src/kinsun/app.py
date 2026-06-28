@@ -19,6 +19,9 @@ from kinsun.config import load_settings
 from kinsun.llm import GeminiClient
 from kinsun.memory.store import SqliteMemoryStore
 from kinsun.pipeline import VoicePipeline
+from kinsun.safety.classifier import LlmRiskClassifier
+from kinsun.safety.detector import RiskDetector
+from kinsun.safety.notifier import LogNotifier
 from kinsun.speech.asr import build_asr_client
 from kinsun.speech.tts import TextBubbleTts
 
@@ -31,17 +34,17 @@ def build_app() -> FastAPI:
         clock=lambda: datetime.now(tz),
         max_turns=settings.memory_max_turns,
     )
+    gemini = GeminiClient(
+        api_key=settings.gemini_api_key,
+        model=settings.gemini_model,
+        timeout=settings.llm_timeout_seconds,
+    )
     pipeline = VoicePipeline(
         asr=build_asr_client(settings),
-        agent=CareAgent(
-            GeminiClient(
-                api_key=settings.gemini_api_key,
-                model=settings.gemini_model,
-                timeout=settings.llm_timeout_seconds,
-            ),
-            memory,
-        ),
+        agent=CareAgent(gemini, memory),
         tts=TextBubbleTts(),
+        detector=RiskDetector(LlmRiskClassifier(gemini)),
+        notifier=LogNotifier(),
     )
     messenger = LineApiMessenger(settings.line_channel_access_token)
     parser = WebhookParser(settings.line_channel_secret)
