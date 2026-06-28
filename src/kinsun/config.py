@@ -32,6 +32,9 @@ class Settings:
     greeting_hour: int
     inactivity_hour: int
     inactivity_days: int
+    accounts_db_path: str
+    invite_ttl_hours: int
+    invite_max_attempts: int
 
 
 def _require(env: Mapping[str, str], key: str) -> str:
@@ -63,4 +66,7 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         greeting_hour=int(env.get("GREETING_HOUR", "8")),
         inactivity_hour=int(env.get("INACTIVITY_HOUR", "10")),
         inactivity_days=int(env.get("INACTIVITY_DAYS", "2")),
+        accounts_db_path=env.get("ACCOUNTS_DB_PATH", "kinsun_accounts.db"),
+        invite_ttl_hours=int(env.get("INVITE_TTL_HOURS", "24")),
+        invite_max_attempts=int(env.get("INVITE_MAX_ATTEMPTS", "5")),
     )

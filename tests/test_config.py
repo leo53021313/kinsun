@@ -27,6 +27,9 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.greeting_hour == 8
     assert settings.inactivity_hour == 10
     assert settings.inactivity_days == 2
+    assert settings.accounts_db_path == "kinsun_accounts.db"
+    assert settings.invite_ttl_hours == 24
+    assert settings.invite_max_attempts == 5
 
 
 def test_load_settings_missing_required_raises():
