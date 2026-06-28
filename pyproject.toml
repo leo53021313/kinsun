@@ -4,7 +4,12 @@ version = "0.1.0"
 description = "聽懂國台語的長輩 AI 語音陪伴守護 Agent"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "fastapi>=0.138.1",
+    "google-genai>=2.10.0",
+    "line-bot-sdk>=3",
+    "uvicorn>=0.49.0",
+]
 
 # 本專案為應用程式（非套件），不需被建置安裝；uv 只負責管理依賴與虛擬環境。
 
@@ -20,8 +25,15 @@ select = ["E", "W", "F", "I", "B", "UP"]
 [tool.ruff.format]
 quote-style = "double"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# 採扁平佈局：把專案根加入匯入路徑，讓測試可直接 import kinsun（本專案非套件、不安裝）。
+pythonpath = ["."]
+
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
     "pre-commit>=4.6.0",
+    "pytest>=9.1.1",
     "ruff>=0.15.20",
 ]
