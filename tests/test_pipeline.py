@@ -19,8 +19,8 @@ class NullMemory:
         pass
 
 
-class NullRecaller:
-    def recall(self, session_id: str) -> str:
+class NullContext:
+    def recall(self, session_id: str, user_text: str) -> str:
         return ""
 
 
@@ -43,7 +43,7 @@ class SpyNotifier:
 def _pipeline(detector, notifier):
     return VoicePipeline(
         asr=MockAsrClient("阿公早安"),
-        agent=CareAgent(EchoLLM(), NullMemory(), NullRecaller()),
+        agent=CareAgent(EchoLLM(), NullMemory(), NullContext()),
         tts=TextBubbleTts(),
         detector=detector,
         notifier=notifier,
