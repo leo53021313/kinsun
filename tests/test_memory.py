@@ -51,3 +51,16 @@ def test_caps_to_max_turns():
     for i in range(5):
         store.append("u1", Message("user", str(i)))
     assert store.recent("u1") == [Message("user", "3"), Message("user", "4")]
+
+
+def test_sessions_lists_distinct_sorted():
+    store = _store(datetime(2026, 6, 29, 10, 0, tzinfo=TPE))
+    store.append("u2", Message("user", "B"))
+    store.append("u1", Message("user", "A"))
+    store.append("u1", Message("assistant", "a"))
+    assert store.sessions() == ["u1", "u2"]
+
+
+def test_sessions_empty():
+    store = _store(datetime(2026, 6, 29, 10, 0, tzinfo=TPE))
+    assert store.sessions() == []

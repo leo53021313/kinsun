@@ -17,6 +17,7 @@ class MemoryError(Exception):
 class MemoryStore(Protocol):
     def append(self, session_id: str, message: Message) -> None: ...
     def recent(self, session_id: str) -> list[Message]: ...
+    def sessions(self) -> list[str]: ...
 
 
 class SqliteMemoryStore:
@@ -60,6 +61,15 @@ class SqliteMemoryStore:
         except sqlite3.Error as exc:
             raise MemoryError(f"讀取記憶失敗：{exc}") from exc
         return [Message(role=role, text=text) for role, text in reversed(rows)]
+
+    def sessions(self) -> list[str]:
+        try:
+            rows = self._conn.execute(
+                "SELECT DISTINCT session_id FROM turns ORDER BY session_id"
+            ).fetchall()
+        except sqlite3.Error as exc:
+            raise MemoryError(f"列出 session 失敗：{exc}") from exc
+        return [row[0] for row in rows]
 
     def _start_of_today(self) -> float:
         now = self._clock()

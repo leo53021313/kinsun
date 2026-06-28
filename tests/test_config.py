@@ -22,6 +22,8 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.episodic_db_path == "kinsun_episodic.db"
     assert settings.episodic_top_k == 3
     assert settings.embedding_model == "gemini-embedding-001"
+    assert settings.consolidation_hour == 3
+    assert settings.scheduler_tick_seconds == 60
 
 
 def test_load_settings_missing_required_raises():

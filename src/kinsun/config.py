@@ -27,6 +27,8 @@ class Settings:
     episodic_db_path: str
     episodic_top_k: int
     embedding_model: str
+    consolidation_hour: int
+    scheduler_tick_seconds: int
 
 
 def _require(env: Mapping[str, str], key: str) -> str:
@@ -53,4 +55,6 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         episodic_db_path=env.get("EPISODIC_DB_PATH", "kinsun_episodic.db"),
         episodic_top_k=int(env.get("EPISODIC_TOP_K", "3")),
         embedding_model=env.get("EMBEDDING_MODEL", "gemini-embedding-001"),
+        consolidation_hour=int(env.get("CONSOLIDATION_HOUR", "3")),
+        scheduler_tick_seconds=int(env.get("SCHEDULER_TICK_SECONDS", "60")),
     )
