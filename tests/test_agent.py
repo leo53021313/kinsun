@@ -58,3 +58,16 @@ def test_handle_injects_known_facts_into_system_prompt():
     agent = CareAgent(llm, SpyMemory(), SpyContext("\n已知：高血壓（長者自述）"))
     agent.handle("u1", "嗨")
     assert llm.system_prompt == SYSTEM_PROMPT + "\n已知：高血壓（長者自述）"
+
+
+def test_proactive_composes_with_memory_and_writes_back():
+    llm = SpyLLM()
+    memory = SpyMemory()
+    agent = CareAgent(llm, memory, SpyContext("【記憶】"))
+
+    reply = agent.proactive("u1", "早安問候")
+
+    assert reply == "金孫回您：好的"
+    assert llm.system_prompt == SYSTEM_PROMPT + "【記憶】"
+    assert "早安問候" in llm.messages[-1].text
+    assert memory.appended == [("u1", Message("assistant", "金孫回您：好的"))]

@@ -14,6 +14,10 @@ SYSTEM_PROMPT = (
     "若長者陳述前後不一或可能記錯，不要爭辯，溫和回應即可。"
 )
 
+_PROACTIVE_DIRECTIVE = (
+    "（系統提示，非長者發話）請主動關心長者：{intent}。用一句溫暖、口語、簡短的話開啟對話。"
+)
+
 
 class CareAgent:
     def __init__(self, llm: LLMClient, memory: MemoryStore, context: MemoryContext) -> None:
@@ -27,5 +31,13 @@ class CareAgent:
         user_msg = Message("user", user_text)
         reply = self._llm.generate(system_prompt=system_prompt, messages=[*history, user_msg])
         self._memory.append(session_id, user_msg)
+        self._memory.append(session_id, Message("assistant", reply))
+        return reply
+
+    def proactive(self, session_id: str, intent: str) -> str:
+        system_prompt = SYSTEM_PROMPT + self._context.recall(session_id, intent)
+        history = self._memory.recent(session_id)
+        directive = Message("user", _PROACTIVE_DIRECTIVE.format(intent=intent))
+        reply = self._llm.generate(system_prompt=system_prompt, messages=[*history, directive])
         self._memory.append(session_id, Message("assistant", reply))
         return reply
