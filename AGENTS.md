@@ -111,10 +111,16 @@
 
 ---
 
-## Git
+## Git 與協作
 
-* 不要自動 Commit。
-* 不要自動 Push。
+本專案為 7 人協作，採「每人一分支 + 整合負責人」模型，完整流程見 [CONTRIBUTING.md](CONTRIBUTING.md)。
+AI 代理協助開發時務必遵守：
+
+* 不要自動 Commit、不要自動 Push（等使用者明確指示）。
+* 只在「目前所在的個人分支」上工作；不要切到或 push 到 main
+  —— main 受保護，僅由整合負責人經 PR 合併。
+* commit 訊息遵循 CONTRIBUTING.md 的規範（feat / fix / docs / refactor / test / chore）。
+* 開工前提醒使用者先把最新的 main 同步進個人分支，降低衝突。
 * 未經明確允許，不要改寫 Git 歷史（Rebase、Force Push 等）。
 
 ---
