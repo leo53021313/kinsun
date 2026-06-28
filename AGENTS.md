@@ -18,7 +18,7 @@
 
 ## 語言（Language）
 
-* 一律使用**台灣繁體中文**回覆，並用於文件、程式碼註解與 commit 訊息。
+* 一律使用**台灣繁體中文**回覆，並用於文件、程式碼註解與 ==commit== 訊息。
 * 採用台灣慣用的軟體技術用語，避免中國大陸用語。常見對照（採用 → 避免）：
   * 程式（程序）、程式碼（代码）、函式（函数）、變數（变量）、物件（对象）
   * 介面（接口）、預設（默认）、最佳化（优化）、回傳（返回）、執行緒（线程）
@@ -127,10 +127,10 @@
 本專案為 7 人協作，採「每人一分支 + 整合負責人」模型，完整流程見 [CONTRIBUTING.md](CONTRIBUTING.md)。
 AI 代理協助開發時務必遵守：
 
-* 不要自動 Commit、不要自動 Push（等使用者明確指示）。
+* 不要自動 Push（等使用者明確指示）。
 * 只在「目前所在的個人分支」上工作；不要切到或 push 到 main
   —— main 受保護，僅由整合負責人經 PR 合併。
-* commit 訊息遵循 CONTRIBUTING.md 的規範（feat / fix / docs / refactor / test / chore）。
+* ==commit== 訊息遵循 CONTRIBUTING.md 的規範（feat / fix / docs / refactor / test / chore）。
 * 開工前提醒使用者先把最新的 main 同步進個人分支，降低衝突。
 * 未經明確允許，不要改寫 Git 歷史（Rebase、Force Push 等）。
 

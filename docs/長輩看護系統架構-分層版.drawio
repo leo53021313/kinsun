@@ -1,0 +1,344 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="分層版" id="layered-care-arch">
+    <mxGraphModel dx="2282" dy="1289" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1460" pageHeight="1540" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="t1EieQiENL4CZ7FKnmlX-5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fad7ac;strokeColor=#b46504;align=center;spacingBottom=0;spacingTop=10;spacingLeft=0;verticalAlign=top;" value="&lt;span style=&quot;font-size: 13px; text-align: left;&quot;&gt;②&lt;/span&gt;&lt;b&gt;應用 / 後端服務層 (Application &amp;amp; Backend Services)&lt;/b&gt;" vertex="1">
+          <mxGeometry height="975" width="270" x="1500" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="b1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;verticalAlign=top;align=left;fontStyle=1;fontSize=13;spacingLeft=10;spacingTop=6;" value="① 前端 / 通路層 (Frontend &amp; Channels)　　長者側 ←→ 家屬側" vertex="1">
+          <mxGeometry height="200" width="1380" x="40" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="b2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;verticalAlign=top;align=left;fontStyle=1;fontSize=13;spacingLeft=10;spacingTop=6;" value="③&amp;nbsp;語音處理 (Speech I/O)&lt;br&gt;ASR 進 ←→ TTS 出" vertex="1">
+          <mxGeometry height="120" width="1380" x="40" y="280" as="geometry" />
+        </mxCell>
+        <mxCell id="b3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;verticalAlign=top;align=left;fontStyle=1;fontSize=13;spacingLeft=10;spacingTop=6;" value="④&amp;nbsp;Agent 核心 (Orchestration)" vertex="1">
+          <mxGeometry height="170" width="1380" x="40" y="420" as="geometry" />
+        </mxCell>
+        <mxCell id="b4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;verticalAlign=top;align=left;fontStyle=1;fontSize=13;spacingLeft=10;spacingTop=6;" value="⑤&amp;nbsp;工具 / 外部服務 (Tools &amp;amp; External)" vertex="1">
+          <mxGeometry height="180" width="1380" x="40" y="610" as="geometry" />
+        </mxCell>
+        <mxCell id="b5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;verticalAlign=top;align=left;fontStyle=1;fontSize=13;spacingLeft=10;spacingTop=6;" value="⑥ 主動關懷 (Proactive Care)&lt;br&gt;＊讓系統從『被動回答』升級為『主動關懷』" vertex="1">
+          <mxGeometry height="120" width="1380" x="40" y="810" as="geometry" />
+        </mxCell>
+        <mxCell id="b6" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;verticalAlign=top;align=left;fontStyle=1;fontSize=13;spacingLeft=10;spacingTop=6;" value="⑦ 記憶 / 資料層 (Memory &amp;amp; Data)" vertex="1">
+          <mxGeometry height="230" width="1380" x="40" y="988" as="geometry" />
+        </mxCell>
+        <mxCell id="b7" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;verticalAlign=top;align=left;fontStyle=1;fontSize=13;spacingLeft=10;spacingTop=6;" value="⑧&amp;nbsp;可靠性 / 監控 (Observability)　＊跨層橫切" vertex="1">
+          <mxGeometry height="110" width="1380" x="40" y="1250" as="geometry" />
+        </mxCell>
+        <mxCell id="gf" parent="1" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;strokeColor=#9673a6;fillColor=none;verticalAlign=top;align=left;fontColor=#9673a6;fontStyle=1;fontSize=11;spacingLeft=8;spacingTop=4;" value="資料治理層 (隱私/安全/合規)：個資加密 · 存取控制 · 稽核 · 去識別化 (個資法)" vertex="1">
+          <mxGeometry height="185.5" width="1025" x="270" y="1004.5" as="geometry" />
+        </mxCell>
+        <mxCell id="n-user" parent="1" style="shape=actor;whiteSpace=wrap;html=1;" value="&lt;br&gt;&lt;br&gt;User&lt;br&gt;長者" vertex="1">
+          <mxGeometry height="65" width="50" x="50" y="117.5" as="geometry" />
+        </mxCell>
+        <mxCell id="Vevh1J52RLoUgDcqLZWR-8" edge="1" parent="1" source="n-gw" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" target="n-asr">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Vevh1J52RLoUgDcqLZWR-9" connectable="0" parent="Vevh1J52RLoUgDcqLZWR-8" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="傳送語音" vertex="1">
+          <mxGeometry relative="1" x="-0.5421" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="n-gw" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="&lt;b&gt;Voice Gateway 前端&lt;/b&gt;&lt;div&gt;MVP: LINE bot (語音訊息)&lt;br&gt;未來: WebRTC/APP/電話&lt;/div&gt;" vertex="1">
+          <mxGeometry height="100" width="195" x="220" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="n-emerg" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;家屬緊急通知系統&lt;/b&gt;&lt;div&gt;技術: LINE 推播 (Messaging API push)&lt;/div&gt;" vertex="1">
+          <mxGeometry height="80" width="185" x="710" y="110" as="geometry" />
+        </mxCell>
+        <mxCell id="n-fam-user" parent="1" style="shape=actor;whiteSpace=wrap;html=1;" value="&lt;br&gt;&lt;br&gt;User&lt;br&gt;家屬" vertex="1">
+          <mxGeometry height="70" width="50" x="990" y="115" as="geometry" />
+        </mxCell>
+        <mxCell id="n-fam-app" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;家屬端（LINE）&lt;/b&gt;&lt;div&gt;圖文選單(Rich Menu)入口 + LIFF 儀表板&lt;/div&gt;&lt;div&gt;建立長者檔案 · 設定用藥/提醒 · 查看健康/對話報告&lt;/div&gt;" vertex="1">
+          <mxGeometry height="100" width="195" x="1090" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="t1EieQiENL4CZ7FKnmlX-1" edge="1" parent="1" source="n-backend" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;startArrow=classic;startFill=1;" target="n-fam-app" value="6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="t1EieQiENL4CZ7FKnmlX-2" connectable="0" parent="t1EieQiENL4CZ7FKnmlX-1" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="LINE Webhook/REST：建檔·設定提醒·查報告" vertex="1">
+          <mxGeometry relative="1" x="-0.5474" y="-1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="n-backend" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" value="&lt;b&gt;後端服務 / API（應用層）&lt;/b&gt;&lt;div&gt;LINE Webhook · 身分驗證/授權&lt;/div&gt;&lt;div&gt;長者檔案/用藥提醒 CRUD · 報告查詢&lt;/div&gt;" vertex="1">
+          <mxGeometry height="100" width="170" x="1550" y="450" as="geometry" />
+        </mxCell>
+        <mxCell id="Vevh1J52RLoUgDcqLZWR-10" edge="1" parent="1" source="n-asr" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0;entryY=0.25;entryDx=0;entryDy=0;" target="n-agent">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Vevh1J52RLoUgDcqLZWR-11" connectable="0" parent="Vevh1J52RLoUgDcqLZWR-10" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="傳送辨識文字" vertex="1">
+          <mxGeometry relative="1" x="-0.6875" y="-1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="n-asr" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;ASR/STT&lt;/b&gt; 語音轉文字&lt;div&gt;技術: Breeze-ASR-26&lt;/div&gt;&lt;div&gt;Output: 繁體國語漢字&lt;/div&gt;" vertex="1">
+          <mxGeometry height="80" width="195" x="220" y="310" as="geometry" />
+        </mxCell>
+        <mxCell id="Vevh1J52RLoUgDcqLZWR-4" edge="1" parent="1" source="n-tts" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" target="n-gw">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1300" y="350" />
+              <mxPoint x="1300" y="80" />
+              <mxPoint x="450" y="80" />
+              <mxPoint x="450" y="150" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Vevh1J52RLoUgDcqLZWR-5" connectable="0" parent="Vevh1J52RLoUgDcqLZWR-4" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="語音回復" vertex="1">
+          <mxGeometry relative="1" x="0.2292" y="-2" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="n-tts" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;TTS&lt;/b&gt; 文字轉語音&lt;div&gt;技術: 微調CosyVoice3/VoxCPM2&lt;/div&gt;&lt;div&gt;In: 國語漢字 → Out: 台語語音&lt;/div&gt;" vertex="1">
+          <mxGeometry height="80" width="195" x="970" y="310" as="geometry" />
+        </mxCell>
+        <mxCell id="Vevh1J52RLoUgDcqLZWR-12" edge="1" parent="1" source="n-agent" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" target="n-emerg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Vevh1J52RLoUgDcqLZWR-13" connectable="0" parent="Vevh1J52RLoUgDcqLZWR-12" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="偵測危急語意→觸發" vertex="1">
+          <mxGeometry relative="1" x="-0.0075" y="4" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Vevh1J52RLoUgDcqLZWR-32" edge="1" parent="1" source="n-agent" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="n-tts">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="680" y="493" />
+              <mxPoint x="680" y="350" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Vevh1J52RLoUgDcqLZWR-33" connectable="0" parent="Vevh1J52RLoUgDcqLZWR-32" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="傳送回應文字" vertex="1">
+          <mxGeometry relative="1" x="0.4408" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="n-agent" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;Care Agent&lt;/b&gt; (orchestrator 樞紐)&lt;div&gt;技術: 自建輕量，借鏡 Hermes，不 fork&lt;/div&gt;&lt;div&gt;①讀記憶 ②呼叫工具 ③送LLM ④寫記憶 ⑤偵測緊急&lt;/div&gt;" vertex="1">
+          <mxGeometry height="110" width="220" x="370" y="465" as="geometry" />
+        </mxCell>
+        <mxCell id="n-guard" parent="1" style="ellipse;shape=doubleEllipse;whiteSpace=wrap;html=1;aspect=fixed;" value="&lt;b&gt;安全邊界&lt;/b&gt;&lt;div&gt;LLM 系統指令/Prompt&lt;/div&gt;&lt;div&gt;不做醫療診斷·免責&lt;/div&gt;" vertex="1">
+          <mxGeometry height="130" width="130" x="790" y="455" as="geometry" />
+        </mxCell>
+        <mxCell id="Vevh1J52RLoUgDcqLZWR-34" edge="1" parent="1" source="n-llm" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0;" target="n-agent">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1068" y="440" />
+              <mxPoint x="535" y="440" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Vevh1J52RLoUgDcqLZWR-35" connectable="0" parent="Vevh1J52RLoUgDcqLZWR-34" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="回應文字(國語漢字)" vertex="1">
+          <mxGeometry relative="1" x="-0.3563" y="-1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="n-llm" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;LLM&lt;/b&gt;&lt;div&gt;技術: 雲端 Gemini API&lt;/div&gt;&lt;div&gt;In: 系統指令+記憶+工具+使用者文字&lt;br&gt;Out: 回應文字(繁體國語漢字)&lt;/div&gt;" vertex="1">
+          <mxGeometry height="100" width="220" x="957.5" y="470" as="geometry" />
+        </mxCell>
+        <mxCell id="n-skill" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="&lt;b&gt;Skill/MCP 知識庫&lt;/b&gt;&lt;div&gt;(工具註冊表 tool registry)&lt;/div&gt;" vertex="1">
+          <mxGeometry height="125" width="160" x="430" y="652.5" as="geometry" />
+        </mxCell>
+        <mxCell id="n-weather" parent="1" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;" value="&lt;b&gt;天氣API&lt;/b&gt;&lt;div&gt;提醒天氣&lt;/div&gt;" vertex="1">
+          <mxGeometry height="90" width="90" x="730" y="610" as="geometry" />
+        </mxCell>
+        <mxCell id="n-news" parent="1" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;" value="&lt;b&gt;新聞API&lt;/b&gt;&lt;div&gt;談話素材&lt;/div&gt;" vertex="1">
+          <mxGeometry height="90" width="90" x="840" y="700" as="geometry" />
+        </mxCell>
+        <mxCell id="n-edurag" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="&lt;b&gt;衛教RAG&lt;/b&gt;" vertex="1">
+          <mxGeometry height="115" width="90" x="960" y="640" as="geometry" />
+        </mxCell>
+        <mxCell id="n-edudoc" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="&lt;b&gt;衛教文件庫&lt;/b&gt;&lt;div&gt;文件→切塊→embeddings&lt;/div&gt;" vertex="1">
+          <mxGeometry height="115" width="170" x="1190" y="642.5" as="geometry" />
+        </mxCell>
+        <mxCell id="Vevh1J52RLoUgDcqLZWR-21" edge="1" parent="1" source="n-cron" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=1;entryDx=0;entryDy=0;" target="n-agent">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Vevh1J52RLoUgDcqLZWR-22" connectable="0" parent="Vevh1J52RLoUgDcqLZWR-21" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="定時主動觸發(問候/提醒)" vertex="1">
+          <mxGeometry relative="1" x="0.5613" y="-1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="n-cron" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;排程引擎 (Cron)&lt;/b&gt;&lt;div&gt;定時主動觸發 · 借鏡 Hermes cron&lt;/div&gt;" vertex="1">
+          <mxGeometry height="75" width="180" x="440" y="845" as="geometry" />
+        </mxCell>
+        <mxCell id="n-remind" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;用藥/健康提醒引擎&lt;/b&gt;&lt;div&gt;讀知識圖譜用藥/回診 → 到點提醒&lt;/div&gt;" vertex="1">
+          <mxGeometry height="75" width="205" x="772.5" y="845" as="geometry" />
+        </mxCell>
+        <mxCell id="n-stm" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="&lt;b&gt;短期記憶&lt;/b&gt;&lt;div&gt;今日對話上下文&lt;/div&gt;&lt;div&gt;SQLite/SessionDB/Redis&lt;/div&gt;" vertex="1">
+          <mxGeometry height="140" width="155" x="290" y="1038.5" as="geometry" />
+        </mxCell>
+        <mxCell id="n-ltm" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="&lt;b&gt;長期記憶骨幹&lt;/b&gt;&lt;div&gt;Letta / Mem0-g&lt;/div&gt;&lt;div&gt;抽取·路由·檢索·更新&lt;/div&gt;" vertex="1">
+          <mxGeometry height="140" width="155" x="650" y="1038.5" as="geometry" />
+        </mxCell>
+        <mxCell id="n-kg" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="&lt;b&gt;知識圖譜&lt;/b&gt;&lt;div&gt;個資/家庭/用藥/慢性病/事件時間軸&lt;/div&gt;&lt;div&gt;(semantic+episodic)&lt;/div&gt;" vertex="1">
+          <mxGeometry height="140" width="155" x="920" y="1038.5" as="geometry" />
+        </mxCell>
+        <mxCell id="n-vec" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="&lt;b&gt;向量庫&lt;/b&gt;&lt;div&gt;閒聊/情緒片段 (episodic)&lt;/div&gt;&lt;div&gt;Chroma/Qdrant/pgvector&lt;/div&gt;" vertex="1">
+          <mxGeometry height="140" width="175" x="1090" y="1038.5" as="geometry" />
+        </mxCell>
+        <mxCell id="n-obs" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;可靠性/監控層 (Observability)&lt;/b&gt;&lt;div&gt;ASR/LLM/TTS fallback · 延遲/錯誤監控 ·&lt;br&gt;以 Agent 為樞紐代表全鏈路監控&lt;/div&gt;" vertex="1">
+          <mxGeometry height="66" width="380" x="525" y="1272" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" edge="1" parent="1" source="n-user" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=classic;startFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n-gw" value="傳送/接收語音">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" edge="1" parent="1" source="n-agent" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n-guard" value="組prompt(指令+記憶+工具+文字)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" edge="1" parent="1" source="n-guard" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n-llm" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e11" edge="1" parent="1" source="n-agent" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=classic;startFill=1;exitX=0.25;exitY=1;entryX=0.5;entryY=0;" target="n-skill" value="工具呼叫/結果">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e12" edge="1" parent="1" source="n-weather" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0;exitY=0.5;entryX=1;entryY=0.4;startArrow=classic;startFill=1;" target="n-skill" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e13" edge="1" parent="1" source="n-news" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0;exitY=0.5;entryX=1;entryY=0.6;startArrow=classic;startFill=1;" target="n-skill" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e15" edge="1" parent="1" source="n-edudoc" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0;exitY=0.5;entryX=1;entryY=0.5;" target="n-edurag" value="切塊+embeddings 索引">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e16" edge="1" parent="1" source="n-agent" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=classic;startFill=1;exitX=0.6;exitY=1;entryX=0.5;entryY=0;" target="n-ltm" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="502" y="600" />
+              <mxPoint x="640" y="600" />
+              <mxPoint x="640" y="1000" />
+              <mxPoint x="728" y="1000" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Vevh1J52RLoUgDcqLZWR-29" connectable="0" parent="e16" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="即時檢索/回填記憶(讀)" vertex="1">
+          <mxGeometry relative="1" x="0.5173" y="-1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e18" edge="1" parent="1" source="n-stm" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n-ltm" value="每日批次：抽取值得記憶的內容">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e19" edge="1" parent="1" source="n-ltm" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=classic;startFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n-kg" value="結構化事實/因果">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e20" edge="1" parent="1" source="n-ltm" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=classic;startFill=1;exitX=0.5;exitY=1;entryX=0.5;entryY=1;" target="n-vec" value="閒聊/情緒">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="782" y="1201.5" />
+              <mxPoint x="1152" y="1201.5" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e22" edge="1" parent="1" source="n-cron" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=1;entryX=0.3;entryY=0;" target="n-stm" value="觸發每日批次整理">
+          <mxGeometry relative="1" x="0.0008" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="530" y="960" />
+              <mxPoint x="337" y="960" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e23" edge="1" parent="1" source="n-cron" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n-remind" value="定時檢查">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e24" edge="1" parent="1" source="n-kg" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=classic;startFill=1;exitX=0.3;exitY=0;entryX=0.7;entryY=1;" target="n-remind" value="讀用藥/回診時間">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="967" y="960" />
+              <mxPoint x="916" y="960" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e25" edge="1" parent="1" source="n-remind" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=0;entryX=0.95;entryY=1;" target="n-agent" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="875" y="800" />
+              <mxPoint x="1370" y="800" />
+              <mxPoint x="1370" y="580" />
+              <mxPoint x="579" y="580" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Vevh1J52RLoUgDcqLZWR-31" connectable="0" parent="e25" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="到點→請 agent 提醒" vertex="1">
+          <mxGeometry relative="1" x="-0.801" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e27" edge="1" parent="1" source="n-emerg" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n-fam-user" value="LINE 推播">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e28" edge="1" parent="1" source="n-fam-user" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=classic;startFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n-fam-app" value="操作">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e30" edge="1" parent="1" source="n-obs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=classic;startFill=1;exitX=0;exitY=0.5;entryX=0;entryY=0.5;" target="n-agent" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="10" y="1305" />
+              <mxPoint x="10" y="520" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Vevh1J52RLoUgDcqLZWR-1" connectable="0" parent="e30" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="監控全鏈路 + fallback" vertex="1">
+          <mxGeometry relative="1" x="-0.7155" y="-1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="note-lang" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;align=center;verticalAlign=top;fontSize=10;spacingLeft=6;" value="&lt;b&gt;&lt;font style=&quot;font-size: 16px;&quot;&gt;語言流 (重要)&lt;/font&gt;&lt;/b&gt;&lt;div&gt;&lt;font style=&quot;font-size: 16px;&quot;&gt;全程文字=繁體國語漢字；國語→台語只在『微調TTS聲學層』產生 (text 不轉台羅，台語漢字，同 BreezyVoice-Taigi 配方)。&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="120" width="330" x="40" y="1390" as="geometry" />
+        </mxCell>
+        <mxCell id="note-mem" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;align=center;verticalAlign=top;fontSize=10;spacingLeft=6;" value="&lt;b&gt;&lt;font style=&quot;font-size: 16px;&quot;&gt;記憶讀寫 (即時讀＋批次寫)&lt;/font&gt;&lt;/b&gt;&lt;div&gt;&lt;font style=&quot;font-size: 16px;&quot;&gt;①對話前即時檢索長期記憶餵LLM&lt;br&gt;②每輪即時寫短期記憶&lt;br&gt;③Cron 每日把短期抽取整理進長期(知識圖譜/向量庫)。&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="120" width="340" x="390" y="1390" as="geometry" />
+        </mxCell>
+        <mxCell id="note-proactive" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;align=center;verticalAlign=top;fontSize=10;spacingLeft=6;" value="&lt;b&gt;&lt;font style=&quot;font-size: 16px;&quot;&gt;主動關懷 (長照核心)&lt;/font&gt;&lt;/b&gt;&lt;div&gt;&lt;font style=&quot;font-size: 16px;&quot;&gt;Cron 排程主動觸發 Care Agent：定時問候、吃藥/回診提醒、長者太久沒互動主動關心。讓系統不只『被動回答』。&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="120" width="340" x="750" y="1390" as="geometry" />
+        </mxCell>
+        <mxCell id="note-front" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;align=center;verticalAlign=top;fontSize=10;spacingLeft=6;" value="&lt;b&gt;&lt;font style=&quot;font-size: 16px;&quot;&gt;前端互動 (MVP = LINE)&lt;/font&gt;&lt;/b&gt;&lt;div&gt;&lt;font style=&quot;font-size: 16px;&quot;&gt;LINE 語音訊息=非即時、一來一往，不需 VAD/串流/打斷。&lt;br&gt;未來走 WebRTC/電話才需補 VAD、降噪、串流、barge-in。&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="120" width="310" x="1110" y="1390" as="geometry" />
+        </mxCell>
+        <mxCell id="Vevh1J52RLoUgDcqLZWR-26" edge="1" parent="1" source="n-edurag" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;startArrow=classic;startFill=1;" target="n-skill">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="940" y="698" />
+              <mxPoint x="940" y="680" />
+              <mxPoint x="830" y="680" />
+              <mxPoint x="830" y="715" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Vevh1J52RLoUgDcqLZWR-27" connectable="0" parent="Vevh1J52RLoUgDcqLZWR-26" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="健康訊息" vertex="1">
+          <mxGeometry relative="1" x="-0.5654" y="-3" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="ybXuyPUBIgw73_crgTjx-1" edge="1" parent="1" source="n-agent" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=classic;startFill=1;exitX=0;exitY=0.75;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" target="n-stm">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="260" y="548" />
+              <mxPoint x="260" y="1109" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="ybXuyPUBIgw73_crgTjx-3" connectable="0" parent="ybXuyPUBIgw73_crgTjx-1" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="讀今日上下文/即時寫入" vertex="1">
+          <mxGeometry relative="1" x="-0.151" y="-1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="t1EieQiENL4CZ7FKnmlX-3" edge="1" parent="1" source="n-backend" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.855;entryY=0;entryDx=0;entryDy=4.35;entryPerimeter=0;" target="n-kg">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1635" y="880" />
+              <mxPoint x="1053" y="880" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="t1EieQiENL4CZ7FKnmlX-4" connectable="0" parent="t1EieQiENL4CZ7FKnmlX-3" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="讀寫長者檔案/用藥/報告" vertex="1">
+          <mxGeometry relative="1" x="-0.7156" y="3" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
