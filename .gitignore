@@ -147,6 +147,9 @@ activemq-data/
 # SageMath parsed files
 *.sage.py
 
+# 短期記憶資料庫（含長者對話內容，不得進版控）
+*.db
+
 # Environments
 .env
 .envrc

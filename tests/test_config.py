@@ -15,6 +15,9 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.line_channel_secret == "secret"
     assert settings.asr_backend == "mock"
     assert settings.gemini_model == "gemini-2.5-flash"
+    assert settings.memory_db_path == "kinsun_memory.db"
+    assert settings.memory_max_turns == 20
+    assert settings.timezone == "Asia/Taipei"
 
 
 def test_load_settings_missing_required_raises():
