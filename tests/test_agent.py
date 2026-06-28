@@ -1,18 +1,18 @@
-from kinsun.agent import SYSTEM_PROMPT, CareAgent
+from kinsun.agent import CareAgent
+from kinsun.llm import Message
 
 
 class SpyLLM:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, str]] = []
+        self.messages: list[Message] | None = None
 
-    def generate(self, *, system_prompt: str, user_text: str) -> str:
-        self.calls.append((system_prompt, user_text))
+    def generate(self, *, system_prompt: str, messages: list[Message]) -> str:
+        self.messages = messages
         return "金孫回您：好的"
 
 
-def test_handle_calls_llm_with_system_prompt_and_returns_reply():
+def test_handle_wraps_user_text_and_returns_reply():
     llm = SpyLLM()
-    agent = CareAgent(llm)
-    reply = agent.handle("我今天有點累")
+    reply = CareAgent(llm).handle("我今天有點累")
     assert reply == "金孫回您：好的"
-    assert llm.calls == [(SYSTEM_PROMPT, "我今天有點累")]
+    assert llm.messages == [Message("user", "我今天有點累")]

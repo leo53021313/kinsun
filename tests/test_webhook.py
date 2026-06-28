@@ -4,14 +4,15 @@ from fastapi.testclient import TestClient
 
 from kinsun.agent import CareAgent
 from kinsun.channels.line.webhook import FALLBACK_PROMPT, NON_AUDIO_PROMPT, create_app
+from kinsun.llm import Message
 from kinsun.pipeline import VoicePipeline
 from kinsun.speech.asr import ASRError, MockAsrClient
 from kinsun.speech.tts import TextBubbleTts
 
 
 class EchoLLM:
-    def generate(self, *, system_prompt: str, user_text: str) -> str:
-        return f"你說的是：{user_text}"
+    def generate(self, *, system_prompt: str, messages: list[Message]) -> str:
+        return f"你說的是：{messages[-1].text}"
 
 
 class FakeMessenger:

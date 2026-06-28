@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from kinsun.llm import LLMClient
+from kinsun.llm import LLMClient, Message
 
 SYSTEM_PROMPT = (
     "你是「金孫」，一位溫暖、有耐心的台灣長輩陪伴助理。"
@@ -16,4 +16,6 @@ class CareAgent:
         self._llm = llm
 
     def handle(self, user_text: str) -> str:
-        return self._llm.generate(system_prompt=SYSTEM_PROMPT, user_text=user_text)
+        return self._llm.generate(
+            system_prompt=SYSTEM_PROMPT, messages=[Message("user", user_text)]
+        )
