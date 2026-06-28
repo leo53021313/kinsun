@@ -1,0 +1,27 @@
+[project]
+name = "kinsun"
+version = "0.1.0"
+description = "聽懂國台語的長輩 AI 語音陪伴守護 Agent"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+# 本專案為應用程式（非套件），不需被建置安裝；uv 只負責管理依賴與虛擬環境。
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# E/W: pycodestyle, F: pyflakes, I: isort(import 排序),
+# B: bugbear(常見陷阱), UP: pyupgrade(語法現代化)
+select = ["E", "W", "F", "I", "B", "UP"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.6.0",
+    "ruff>=0.15.20",
+]
