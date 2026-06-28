@@ -16,9 +16,15 @@ from kinsun.agent import CareAgent
 from kinsun.channels.line.messenger import LineApiMessenger
 from kinsun.channels.line.webhook import create_app
 from kinsun.config import load_settings
+from kinsun.episodic.embeddings import GeminiEmbedder
+from kinsun.episodic.recall import EpisodicRecaller
+from kinsun.episodic.store import SqliteVectorStore
+from kinsun.knowledge.recall import KnowledgeRecaller
+from kinsun.knowledge.store import SqliteFactStore
 from kinsun.llm import GeminiClient
 from kinsun.memory.store import SqliteMemoryStore
 from kinsun.pipeline import VoicePipeline
+from kinsun.recall import MemoryContext
 from kinsun.safety.classifier import LlmRiskClassifier
 from kinsun.safety.detector import RiskDetector
 from kinsun.safety.notifier import LogNotifier
@@ -39,9 +45,16 @@ def build_app() -> FastAPI:
         model=settings.gemini_model,
         timeout=settings.llm_timeout_seconds,
     )
+    knowledge = KnowledgeRecaller(SqliteFactStore(settings.knowledge_db_path))
+    episodic = EpisodicRecaller(
+        GeminiEmbedder(api_key=settings.gemini_api_key, model=settings.embedding_model),
+        SqliteVectorStore(settings.episodic_db_path),
+        top_k=settings.episodic_top_k,
+    )
+    context = MemoryContext(knowledge, episodic)
     pipeline = VoicePipeline(
         asr=build_asr_client(settings),
-        agent=CareAgent(gemini, memory),
+        agent=CareAgent(gemini, memory, context),
         tts=TextBubbleTts(),
         detector=RiskDetector(LlmRiskClassifier(gemini)),
         notifier=LogNotifier(),

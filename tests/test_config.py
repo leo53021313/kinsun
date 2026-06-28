@@ -18,6 +18,18 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.memory_db_path == "kinsun_memory.db"
     assert settings.memory_max_turns == 200
     assert settings.timezone == "Asia/Taipei"
+    assert settings.knowledge_db_path == "kinsun_knowledge.db"
+    assert settings.episodic_db_path == "kinsun_episodic.db"
+    assert settings.episodic_top_k == 3
+    assert settings.embedding_model == "gemini-embedding-001"
+    assert settings.consolidation_hour == 3
+    assert settings.scheduler_tick_seconds == 60
+    assert settings.greeting_hour == 8
+    assert settings.inactivity_hour == 10
+    assert settings.inactivity_days == 2
+    assert settings.accounts_db_path == "kinsun_accounts.db"
+    assert settings.invite_ttl_hours == 24
+    assert settings.invite_max_attempts == 5
 
 
 def test_load_settings_missing_required_raises():

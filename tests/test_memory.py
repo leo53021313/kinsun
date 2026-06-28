@@ -51,3 +51,35 @@ def test_caps_to_max_turns():
     for i in range(5):
         store.append("u1", Message("user", str(i)))
     assert store.recent("u1") == [Message("user", "3"), Message("user", "4")]
+
+
+def test_sessions_lists_distinct_sorted():
+    store = _store(datetime(2026, 6, 29, 10, 0, tzinfo=TPE))
+    store.append("u2", Message("user", "B"))
+    store.append("u1", Message("user", "A"))
+    store.append("u1", Message("assistant", "a"))
+    assert store.sessions() == ["u1", "u2"]
+
+
+def test_sessions_empty():
+    store = _store(datetime(2026, 6, 29, 10, 0, tzinfo=TPE))
+    assert store.sessions() == []
+
+
+def test_last_active_returns_latest_user_turn():
+    clock = FakeClock(datetime(2026, 6, 29, 9, 0, tzinfo=TPE))
+    store = SqliteMemoryStore(":memory:", clock, 20)
+    store.append("u1", Message("user", "早"))
+    clock.dt = datetime(2026, 6, 29, 10, 0, tzinfo=TPE)
+    store.append("u1", Message("user", "午"))
+    clock.dt = datetime(2026, 6, 29, 11, 0, tzinfo=TPE)
+    store.append("u1", Message("assistant", "金孫回覆"))
+    assert store.last_active("u1") == datetime(2026, 6, 29, 10, 0, tzinfo=TPE).timestamp()
+
+
+def test_last_active_none_without_user_turns():
+    clock = FakeClock(datetime(2026, 6, 29, 9, 0, tzinfo=TPE))
+    store = SqliteMemoryStore(":memory:", clock, 20)
+    store.append("u1", Message("assistant", "只有金孫說話"))
+    assert store.last_active("u1") is None
+    assert store.last_active("nobody") is None

@@ -8,6 +8,7 @@ from typing import Protocol
 class LineMessenger(Protocol):
     def get_audio(self, message_id: str) -> bytes: ...
     def reply_text(self, reply_token: str, text: str) -> None: ...
+    def push_text(self, user_id: str, text: str) -> None: ...
 
 
 class LineApiMessenger:
@@ -19,6 +20,7 @@ class LineApiMessenger:
             Configuration,
             MessagingApi,
             MessagingApiBlob,
+            PushMessageRequest,
             ReplyMessageRequest,
             TextMessage,
         )
@@ -27,6 +29,7 @@ class LineApiMessenger:
         self._ApiClient = ApiClient
         self._MessagingApi = MessagingApi
         self._MessagingApiBlob = MessagingApiBlob
+        self._PushMessageRequest = PushMessageRequest
         self._ReplyMessageRequest = ReplyMessageRequest
         self._TextMessage = TextMessage
 
@@ -41,6 +44,16 @@ class LineApiMessenger:
             api.reply_message(
                 self._ReplyMessageRequest(
                     reply_token=reply_token,
+                    messages=[self._TextMessage(text=text)],
+                )
+            )
+
+    def push_text(self, user_id: str, text: str) -> None:
+        with self._ApiClient(self._configuration) as api_client:
+            api = self._MessagingApi(api_client)
+            api.push_message(
+                self._PushMessageRequest(
+                    to=user_id,
                     messages=[self._TextMessage(text=text)],
                 )
             )
