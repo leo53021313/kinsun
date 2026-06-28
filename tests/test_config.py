@@ -14,9 +14,9 @@ def test_load_settings_reads_required_and_defaults():
     assert isinstance(settings, Settings)
     assert settings.line_channel_secret == "secret"
     assert settings.asr_backend == "mock"
-    assert settings.gemini_model == "gemini-2.5-flash"
+    assert settings.gemini_model == "gemini-3.1-flash-lite"
     assert settings.memory_db_path == "kinsun_memory.db"
-    assert settings.memory_max_turns == 20
+    assert settings.memory_max_turns == 200
     assert settings.timezone == "Asia/Taipei"
 
 
