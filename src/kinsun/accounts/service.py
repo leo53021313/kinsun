@@ -8,6 +8,8 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 
 from kinsun.accounts.models import (
+    Consent,
+    ConsentBy,
     Elder,
     ElderGuardian,
     Guardian,
@@ -66,3 +68,61 @@ class AccountService:
         invite = Invite(self._new_code(), elder_id, role, expires_at, self._max_attempts)
         self._repo.save_invite(invite)
         return invite
+
+    def redeem_invite(self, code: str, line_user_id: str, *, consent_by: ConsentBy) -> None:
+        invite = self._repo.get_invite(code)
+        if invite is None:
+            raise InviteError("not_found")
+        now = self._clock()
+        if invite.used_at is not None:
+            raise InviteError("used")
+        if invite.attempts >= invite.max_attempts:
+            self._fail(invite, "too_many_attempts")
+        if now.timestamp() > invite.expires_at:
+            self._fail(invite, "expired")
+
+        if invite.role == InviteRole.ELDER:
+            elder = self._repo.get_elder(invite.elder_id)
+            if elder is None:
+                raise InviteError("not_found")
+            self._repo.save_elder(Elder(elder.elder_id, elder.name, line_user_id))
+        else:
+            guardian = self._guardian_for(line_user_id, "")
+            order = max(
+                (eg.escalation_order for eg in self._repo.list_elder_guardians(invite.elder_id)),
+                default=0,
+            )
+            self._repo.save_elder_guardian(
+                ElderGuardian(
+                    invite.elder_id, guardian.guardian_id, Role.GUARDIAN, order + 1, False
+                )
+            )
+
+        self._repo.save_consent(
+            Consent(invite.elder_id, consent_by, CONSENT_VERSION, now.timestamp())
+        )
+        self._repo.save_invite(
+            Invite(
+                invite.code,
+                invite.elder_id,
+                invite.role,
+                invite.expires_at,
+                invite.max_attempts,
+                invite.attempts + 1,
+                now.timestamp(),
+            )
+        )
+
+    def _fail(self, invite: Invite, reason: str) -> None:
+        self._repo.save_invite(
+            Invite(
+                invite.code,
+                invite.elder_id,
+                invite.role,
+                invite.expires_at,
+                invite.max_attempts,
+                invite.attempts + 1,
+                invite.used_at,
+            )
+        )
+        raise InviteError(reason)
