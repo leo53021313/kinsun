@@ -16,6 +16,8 @@ from kinsun.agent import CareAgent
 from kinsun.channels.line.messenger import LineApiMessenger
 from kinsun.channels.line.webhook import create_app
 from kinsun.config import load_settings
+from kinsun.knowledge.recall import KnowledgeRecaller
+from kinsun.knowledge.store import SqliteFactStore
 from kinsun.llm import GeminiClient
 from kinsun.memory.store import SqliteMemoryStore
 from kinsun.pipeline import VoicePipeline
@@ -39,9 +41,10 @@ def build_app() -> FastAPI:
         model=settings.gemini_model,
         timeout=settings.llm_timeout_seconds,
     )
+    recaller = KnowledgeRecaller(SqliteFactStore(settings.knowledge_db_path))
     pipeline = VoicePipeline(
         asr=build_asr_client(settings),
-        agent=CareAgent(gemini, memory),
+        agent=CareAgent(gemini, memory, recaller),
         tts=TextBubbleTts(),
         detector=RiskDetector(LlmRiskClassifier(gemini)),
         notifier=LogNotifier(),

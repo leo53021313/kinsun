@@ -19,6 +19,11 @@ class NullMemory:
         pass
 
 
+class NullRecaller:
+    def recall(self, session_id: str) -> str:
+        return ""
+
+
 class StubDetector:
     def __init__(self, tier: RiskTier) -> None:
         self._tier = tier
@@ -38,7 +43,7 @@ class SpyNotifier:
 def _pipeline(detector, notifier):
     return VoicePipeline(
         asr=MockAsrClient("阿公早安"),
-        agent=CareAgent(EchoLLM(), NullMemory()),
+        agent=CareAgent(EchoLLM(), NullMemory(), NullRecaller()),
         tts=TextBubbleTts(),
         detector=detector,
         notifier=notifier,

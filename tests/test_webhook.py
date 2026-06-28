@@ -34,6 +34,11 @@ class NullMemory:
         pass
 
 
+class NullRecaller:
+    def recall(self, session_id: str) -> str:
+        return ""
+
+
 class RecordingMemory(NullMemory):
     def __init__(self) -> None:
         self.sessions: list[str] = []
@@ -80,7 +85,7 @@ class FakeParser:
 def _make_client(parser, messenger, asr=None, memory=None):
     pipeline = VoicePipeline(
         asr=asr or MockAsrClient("阿公早安"),
-        agent=CareAgent(EchoLLM(), memory or NullMemory()),
+        agent=CareAgent(EchoLLM(), memory or NullMemory(), NullRecaller()),
         tts=TextBubbleTts(),
         detector=_NullDetector(),
         notifier=_NullNotifier(),
