@@ -37,6 +37,8 @@ main  ← 唯一正式主幹，受保護，只能透過 PR 合併
 
 ## 開發流程
 
+> 第一次參與請先完成 [README 的開發環境設定](README.md#快速開始)：安裝 uv、`uv sync`、`uv run pre-commit install`。
+
 ### 1. 開工前，先把 main 同步進自己的分支
 
 每次開始工作前都做，能大幅減少之後的合併衝突：
@@ -58,6 +60,7 @@ git commit -m "feat: 加入台語語音辨識前處理"
 
 * 修改範圍盡量小、聚焦單一任務（見 [AGENTS.md](AGENTS.md)）。
 * commit 訊息規範見下方。
+* commit 時 pre-commit 會自動跑 ruff 檢查與排版；沒過會擋下，依提示修正後重新 `git add` 並 commit。
 
 ### 3. 推送自己的分支
 

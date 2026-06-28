@@ -1,0 +1,26 @@
+# pre-commit hooks — commit 前自動檢查與排版
+# 啟用：uv run pre-commit install
+# 手動全跑：uv run pre-commit run --all-files
+
+# 封存的產生物（大型 PDF/HTML 報告）不套用任何 hook
+exclude: ^docs/archive/
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.20
+    hooks:
+      - id: ruff           # lint（自動修正可修的問題）
+        args: [--fix]
+      - id: ruff-format    # 排版
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]  # 保留 Markdown 行尾換行
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: [--maxkb=1024]
