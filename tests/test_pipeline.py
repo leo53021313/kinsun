@@ -1,20 +1,29 @@
 from kinsun.agent import CareAgent
+from kinsun.llm import Message
 from kinsun.pipeline import VoicePipeline
 from kinsun.speech.asr import MockAsrClient
 from kinsun.speech.tts import TextBubbleTts
 
 
 class EchoLLM:
-    def generate(self, *, system_prompt: str, user_text: str) -> str:
-        return f"你說的是：{user_text}"
+    def generate(self, *, system_prompt: str, messages: list[Message]) -> str:
+        return f"你說的是：{messages[-1].text}"
+
+
+class NullMemory:
+    def recent(self, session_id: str) -> list[Message]:
+        return []
+
+    def append(self, session_id: str, message: Message) -> None:
+        pass
 
 
 def test_pipeline_runs_asr_agent_tts():
     pipeline = VoicePipeline(
         asr=MockAsrClient("阿公早安"),
-        agent=CareAgent(EchoLLM()),
+        agent=CareAgent(EchoLLM(), NullMemory()),
         tts=TextBubbleTts(),
     )
-    result = pipeline.process(b"\x00\x01")
+    result = pipeline.process(b"\x00\x01", session_id="u1")
     assert result.text == "你說的是：阿公早安"
     assert result.audio is None

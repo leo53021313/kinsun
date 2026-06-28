@@ -20,6 +20,9 @@ class Settings:
     asr_endpoint: str
     asr_timeout_seconds: float
     llm_timeout_seconds: float
+    memory_db_path: str
+    memory_max_turns: int
+    timezone: str
 
 
 def _require(env: Mapping[str, str], key: str) -> str:
@@ -39,4 +42,7 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         asr_endpoint=env.get("ASR_ENDPOINT", ""),
         asr_timeout_seconds=float(env.get("ASR_TIMEOUT_SECONDS", "15")),
         llm_timeout_seconds=float(env.get("LLM_TIMEOUT_SECONDS", "30")),
+        memory_db_path=env.get("MEMORY_DB_PATH", "kinsun_memory.db"),
+        memory_max_turns=int(env.get("MEMORY_MAX_TURNS", "20")),
+        timezone=env.get("TIMEZONE", "Asia/Taipei"),
     )
