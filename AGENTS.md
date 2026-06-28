@@ -18,12 +18,23 @@
 
 ## 語言（Language）
 
-* 一律使用**台灣繁體中文**回覆，並用於文件、程式碼註解與 commit 訊息。
+* 一律使用**台灣繁體中文**回覆，並用於文件、程式碼註解與 ==commit== 訊息。
 * 採用台灣慣用的軟體技術用語，避免中國大陸用語。常見對照（採用 → 避免）：
   * 程式（程序）、程式碼（代码）、函式（函数）、變數（变量）、物件（对象）
   * 介面（接口）、預設（默认）、最佳化（优化）、回傳（返回）、執行緒（线程）
   * 字串（字符串）、陣列（数组）、依賴套件（依赖）、伺服器（服务器）、快取（缓存）
 * 標點使用全形中文標點。
+
+---
+
+## 開發與部署環境（跨平台）
+
+本專案的開發橫跨 **Windows / macOS / DGX Spark（Linux + ARM64/aarch64）**；DGX Spark 同時是**開發環境**、伺服器與部署目標。程式碼必須在三者皆可運作，請守以下紀律：
+
+* **OS-agnostic**：一律使用 `pathlib`，不寫死路徑與路徑分隔符；設定與金鑰一律走環境變數，不假設特定作業系統。
+* **ARM64 相容**：新增依賴前確認其在 `linux/aarch64` 有可用 wheel；吃 GPU 的重模型（如 ASR、TTS）只跑在 DGX，不要求在 Windows/macOS 安裝。
+* **位置無關（Location-Independent）**：重模型以網路服務形式提供，應用層僅為呼叫端（client），透過**可設定的 endpoint（環境變數）**連線。模型與應用「同機」或「分離」都不需改程式碼。
+* **環境一致性**：以 **uv** 維持跨平台 Python 環境一致；必要時再以容器（Docker／NGC）在三邊求一致。
 
 ---
 
@@ -127,10 +138,10 @@
 本專案為 7 人協作，採「每人一分支 + 整合負責人」模型，完整流程見 [CONTRIBUTING.md](CONTRIBUTING.md)。
 AI 代理協助開發時務必遵守：
 
-* 不要自動 Commit、不要自動 Push（等使用者明確指示）。
+* 不要自動 Push（等使用者明確指示）。
 * 只在「目前所在的個人分支」上工作；不要切到或 push 到 main
   —— main 受保護，僅由整合負責人經 PR 合併。
-* commit 訊息遵循 CONTRIBUTING.md 的規範（feat / fix / docs / refactor / test / chore）。
+* ==commit== 訊息遵循 CONTRIBUTING.md 的規範（feat / fix / docs / refactor / test / chore）。
 * 開工前提醒使用者先把最新的 main 同步進個人分支，降低衝突。
 * 未經明確允許，不要改寫 Git 歷史（Rebase、Force Push 等）。
 

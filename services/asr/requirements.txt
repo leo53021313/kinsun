@@ -1,0 +1,6 @@
+# 僅在 DGX Spark（Linux + ARM64/aarch64 + GPU）安裝。
+# 版本於 DGX 上以實機驗證後再鎖定；torch 請使用 NVIDIA 官方對應 aarch64/CUDA 的版本。
+fastapi
+uvicorn
+transformers
+torch

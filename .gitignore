@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# CodeGraph (local code index; auto-rebuilt, machine-specific)
+.codegraph/
