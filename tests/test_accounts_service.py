@@ -93,3 +93,27 @@ def test_redeem_expired():
         later.redeem_invite(inv.code, "U-d", consent_by=ConsentBy.SELF)
     assert exc.value.reason == "expired"
     assert repo.get_invite(inv.code).attempts == 1
+
+
+def test_revoke_consent_sets_revoked():
+    repo = SqliteAccountRepository(":memory:")
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    inv = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
+    svc.redeem_invite(inv.code, "U-elder", consent_by=ConsentBy.SELF)
+    svc.revoke_consent(elder.elder_id)
+    assert repo.get_consent(elder.elder_id).revoked_at == NOW.timestamp()
+
+
+def test_guardians_of_sorted_and_permissions():
+    repo = SqliteAccountRepository(":memory:")
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    inv = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
+    svc.redeem_invite(inv.code, "U-daughter", consent_by=ConsentBy.SELF)
+    egs = svc.guardians_of(elder.elder_id)
+    assert [e.escalation_order for e in egs] == [1, 2]
+    primary, secondary = egs
+    assert svc.can_view_transcript(elder.elder_id, primary.guardian_id) is True
+    assert svc.can_view_transcript(elder.elder_id, secondary.guardian_id) is False
+    assert svc.can_view_transcript(elder.elder_id, "nobody") is False

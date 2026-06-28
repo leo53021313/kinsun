@@ -113,6 +113,27 @@ class AccountService:
             )
         )
 
+    def revoke_consent(self, elder_id: str) -> None:
+        consent = self._repo.get_consent(elder_id)
+        if consent is None:
+            return
+        self._repo.save_consent(
+            Consent(
+                consent.elder_id,
+                consent.consent_by,
+                consent.version,
+                consent.granted_at,
+                self._clock().timestamp(),
+            )
+        )
+
+    def guardians_of(self, elder_id: str) -> list[ElderGuardian]:
+        return self._repo.list_elder_guardians(elder_id)
+
+    def can_view_transcript(self, elder_id: str, guardian_id: str) -> bool:
+        eg = self._repo.get_elder_guardian(elder_id, guardian_id)
+        return eg is not None and eg.can_view_transcript
+
     def _fail(self, invite: Invite, reason: str) -> None:
         self._repo.save_invite(
             Invite(
