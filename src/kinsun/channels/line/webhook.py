@@ -7,6 +7,7 @@ from linebot.v3.exceptions import InvalidSignatureError
 
 from kinsun.channels.line.messenger import LineMessenger
 from kinsun.llm import LLMError
+from kinsun.memory.store import MemoryError
 from kinsun.pipeline import VoicePipeline
 from kinsun.speech.asr import ASRError
 
@@ -23,11 +24,13 @@ def _handle_events(events, pipeline: VoicePipeline, messenger: LineMessenger) ->
         if getattr(message, "type", None) != "audio":
             messenger.reply_text(reply_token, NON_AUDIO_PROMPT)
             continue
+        source = getattr(event, "source", None)
+        session_id = getattr(source, "user_id", None) or "unknown"
         try:
             audio = messenger.get_audio(message.id)
-            result = pipeline.process(audio)
+            result = pipeline.process(audio, session_id=session_id)
             messenger.reply_text(reply_token, result.text)
-        except (ASRError, LLMError):
+        except (ASRError, LLMError, MemoryError):
             messenger.reply_text(reply_token, FALLBACK_PROMPT)
 
 

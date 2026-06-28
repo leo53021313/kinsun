@@ -1,8 +1,9 @@
-"""Care Agent 樞紐：用系統指令呼叫 LLM 產生回覆。本切片僅最小職責。"""
+"""Care Agent 樞紐：載入今日記憶 → 呼叫 LLM → 寫回。"""
 
 from __future__ import annotations
 
 from kinsun.llm import LLMClient, Message
+from kinsun.memory.store import MemoryStore
 
 SYSTEM_PROMPT = (
     "你是「金孫」，一位溫暖、有耐心的台灣長輩陪伴助理。"
@@ -12,10 +13,14 @@ SYSTEM_PROMPT = (
 
 
 class CareAgent:
-    def __init__(self, llm: LLMClient) -> None:
+    def __init__(self, llm: LLMClient, memory: MemoryStore) -> None:
         self._llm = llm
+        self._memory = memory
 
-    def handle(self, user_text: str) -> str:
-        return self._llm.generate(
-            system_prompt=SYSTEM_PROMPT, messages=[Message("user", user_text)]
-        )
+    def handle(self, session_id: str, user_text: str) -> str:
+        history = self._memory.recent(session_id)
+        user_msg = Message("user", user_text)
+        reply = self._llm.generate(system_prompt=SYSTEM_PROMPT, messages=[*history, user_msg])
+        self._memory.append(session_id, user_msg)
+        self._memory.append(session_id, Message("assistant", reply))
+        return reply

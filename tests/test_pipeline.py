@@ -10,12 +10,20 @@ class EchoLLM:
         return f"你說的是：{messages[-1].text}"
 
 
+class NullMemory:
+    def recent(self, session_id: str) -> list[Message]:
+        return []
+
+    def append(self, session_id: str, message: Message) -> None:
+        pass
+
+
 def test_pipeline_runs_asr_agent_tts():
     pipeline = VoicePipeline(
         asr=MockAsrClient("阿公早安"),
-        agent=CareAgent(EchoLLM()),
+        agent=CareAgent(EchoLLM(), NullMemory()),
         tts=TextBubbleTts(),
     )
-    result = pipeline.process(b"\x00\x01")
+    result = pipeline.process(b"\x00\x01", session_id="u1")
     assert result.text == "你說的是：阿公早安"
     assert result.audio is None

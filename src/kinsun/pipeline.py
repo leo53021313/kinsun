@@ -13,7 +13,9 @@ class VoicePipeline:
         self._agent = agent
         self._tts = tts
 
-    def process(self, audio: bytes, content_type: str = "audio/m4a") -> TtsResult:
+    def process(
+        self, audio: bytes, *, session_id: str, content_type: str = "audio/m4a"
+    ) -> TtsResult:
         user_text = self._asr.transcribe(audio, content_type=content_type)
-        reply_text = self._agent.handle(user_text)
+        reply_text = self._agent.handle(session_id, user_text)
         return self._tts.synthesize(reply_text)

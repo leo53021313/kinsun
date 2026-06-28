@@ -15,6 +15,22 @@ class EchoLLM:
         return f"你說的是：{messages[-1].text}"
 
 
+class NullMemory:
+    def recent(self, session_id: str) -> list[Message]:
+        return []
+
+    def append(self, session_id: str, message: Message) -> None:
+        pass
+
+
+class RecordingMemory(NullMemory):
+    def __init__(self) -> None:
+        self.sessions: list[str] = []
+
+    def append(self, session_id: str, message: Message) -> None:
+        self.sessions.append(session_id)
+
+
 class FakeMessenger:
     def __init__(self) -> None:
         self.replies: list[tuple[str, str]] = []
@@ -26,10 +42,11 @@ class FakeMessenger:
         self.replies.append((reply_token, text))
 
 
-def _audio_event():
+def _audio_event(user_id="U-1"):
     return SimpleNamespace(
         reply_token="rt-1",
         message=SimpleNamespace(type="audio", id="m-1"),
+        source=SimpleNamespace(user_id=user_id),
     )
 
 
@@ -37,6 +54,7 @@ def _text_event():
     return SimpleNamespace(
         reply_token="rt-2",
         message=SimpleNamespace(type="text", id="m-2"),
+        source=SimpleNamespace(user_id="U-2"),
     )
 
 
@@ -48,10 +66,10 @@ class FakeParser:
         return self._events
 
 
-def _make_client(parser, messenger, asr=None):
+def _make_client(parser, messenger, asr=None, memory=None):
     pipeline = VoicePipeline(
         asr=asr or MockAsrClient("阿公早安"),
-        agent=CareAgent(EchoLLM()),
+        agent=CareAgent(EchoLLM(), memory or NullMemory()),
         tts=TextBubbleTts(),
     )
     app = create_app(parser=parser, pipeline=pipeline, messenger=messenger)
@@ -64,6 +82,23 @@ def test_audio_message_replies_agent_output():
     resp = client.post("/line/webhook", content=b"{}", headers={"X-Line-Signature": "x"})
     assert resp.status_code == 200
     assert messenger.replies == [("rt-1", "你說的是：阿公早安")]
+
+
+def test_session_id_threaded_to_memory():
+    messenger = FakeMessenger()
+    memory = RecordingMemory()
+    client = _make_client(FakeParser([_audio_event("U-42")]), messenger, memory=memory)
+    client.post("/line/webhook", content=b"{}", headers={"X-Line-Signature": "x"})
+    assert memory.sessions == ["U-42", "U-42"]
+
+
+def test_missing_user_id_degrades_to_unknown():
+    messenger = FakeMessenger()
+    memory = RecordingMemory()
+    client = _make_client(FakeParser([_audio_event(user_id=None)]), messenger, memory=memory)
+    resp = client.post("/line/webhook", content=b"{}", headers={"X-Line-Signature": "x"})
+    assert resp.status_code == 200
+    assert memory.sessions == ["unknown", "unknown"]
 
 
 def test_non_audio_message_replies_prompt():
