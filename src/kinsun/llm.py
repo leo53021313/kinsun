@@ -16,6 +16,31 @@ class Message:
     text: str
 
 
+@dataclass(frozen=True)
+class ToolSpec:
+    name: str
+    description: str
+    parameters: dict
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    name: str
+    arguments: dict
+
+
+@dataclass(frozen=True)
+class ToolResult:
+    call: ToolCall
+    output: str
+
+
+@dataclass(frozen=True)
+class ToolTurn:
+    text: str | None
+    tool_calls: list[ToolCall]
+
+
 class LLMClient(Protocol):
     def generate(self, *, system_prompt: str, messages: list[Message]) -> str: ...
 
