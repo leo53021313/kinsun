@@ -5,6 +5,7 @@ description = "聽懂國台語的長輩 AI 語音陪伴守護 Agent"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "croniter>=6.2.2",
     "fastapi>=0.138.1",
     "google-genai>=2.10.0",
     "line-bot-sdk>=3",
