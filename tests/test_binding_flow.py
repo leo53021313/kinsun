@@ -4,7 +4,9 @@ from itertools import count
 from kinsun.accounts.models import ConsentBy, InviteRole
 from kinsun.accounts.service import AccountService
 from kinsun.binding.flow import BindingFlow
-from tests.fakes import FakeAccountRepository, FakeBindingSessionStore
+from kinsun.medication.flow import MedicationMenu
+from kinsun.medication.service import MedicationService
+from tests.fakes import FakeAccountRepository, FakeBindingSessionStore, FakeMedicationStore
 
 TPE = timezone(timedelta(hours=8))
 NOW = datetime(2026, 6, 29, 10, 0, tzinfo=TPE)
@@ -18,19 +20,21 @@ class _FakeProfiles:
         return self._name
 
 
+def _build_flow(accounts, sessions, profiles, *, clock):
+    med_ids = (f"m{i}" for i in count(1))
+    medications = MedicationService(FakeMedicationStore(), new_id=lambda: next(med_ids))
+    menu = MedicationMenu(medications, accounts, sessions, clock=clock)
+    return BindingFlow(accounts, sessions, profiles, menu, clock=clock, session_ttl_seconds=600)
+
+
 def _flow(repo=None, *, now=NOW, profiles=None, code="ABCDEFGHIJKLMNOP"):
     repo = repo or FakeAccountRepository()
     ids = (f"id{i}" for i in count(1))
     accounts = AccountService(
         repo, clock=lambda: now, new_id=lambda: next(ids), new_code=lambda: code
     )
-    flow = BindingFlow(
-        accounts,
-        FakeBindingSessionStore(),
-        profiles or _FakeProfiles(),
-        clock=lambda: now,
-        session_ttl_seconds=600,
-    )
+    sessions = FakeBindingSessionStore()
+    flow = _build_flow(accounts, sessions, profiles or _FakeProfiles(), clock=lambda: now)
     return flow, accounts, repo
 
 
@@ -124,6 +128,12 @@ def test_cancel_resets_to_idle():
     assert flow.handle("U-1", "隨便") is None
 
 
+def test_menu_shows_medication_and_delegates():
+    flow, _, _ = _flow()
+    assert "用藥提醒" in flow.handle("U-1", "設定")
+    assert "新增用藥" in flow.handle("U-1", "4")
+
+
 def test_session_timeout_resets():
     repo = FakeAccountRepository()
     now = {"t": NOW}
@@ -131,13 +141,8 @@ def test_session_timeout_resets():
     accounts = AccountService(
         repo, clock=lambda: now["t"], new_id=lambda: next(ids), new_code=lambda: "c"
     )
-    flow = BindingFlow(
-        accounts,
-        FakeBindingSessionStore(),
-        _FakeProfiles(),
-        clock=lambda: now["t"],
-        session_ttl_seconds=600,
-    )
+    sessions = FakeBindingSessionStore()
+    flow = _build_flow(accounts, sessions, _FakeProfiles(), clock=lambda: now["t"])
     flow.handle("U-1", "設定")
     now["t"] = NOW + timedelta(minutes=11)
     assert flow.handle("U-1", "1") is None

@@ -31,6 +31,7 @@ _MENU = (
     "1️⃣ 建立長輩檔案\n"
     "2️⃣ 邀請其他家屬\n"
     "3️⃣ 綁定（貼上邀請碼）\n"
+    "4️⃣ 用藥提醒\n"
     "（隨時回覆「取消」可結束）"
 )
 _REASON_MSG = {
@@ -47,6 +48,7 @@ class BindingFlow:
         accounts: AccountService,
         sessions: BindingSessionStore,
         profiles: Profiles,
+        medication,
         *,
         clock: Callable[[], datetime],
         session_ttl_seconds: int = 600,
@@ -54,6 +56,7 @@ class BindingFlow:
         self._accounts = accounts
         self._sessions = sessions
         self._profiles = profiles
+        self._medication = medication
         self._clock = clock
         self._ttl = session_ttl_seconds
 
@@ -94,6 +97,8 @@ class BindingFlow:
 
     def _step(self, session: BindingSession, text: str, line: str) -> str:
         state = session.state
+        if state.value.startswith("med_"):
+            return self._medication.step(session, text, line)
         if state == BindingState.MENU:
             return self._menu(text, line)
         if state == BindingState.AWAIT_ELDER_NAME:
@@ -125,7 +130,9 @@ class BindingFlow:
         if choice == "3":
             self._save(line, BindingState.AWAIT_CODE, {})
             return "請貼上您收到的邀請碼。"
-        return "請回覆 1、2 或 3。"
+        if choice == "4":
+            return self._medication.open(line)
+        return "請回覆 1、2、3 或 4。"
 
     def _create_elder(self, line: str, name: str) -> str:
         display = self._profiles.display_name(line)
