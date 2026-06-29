@@ -1,4 +1,7 @@
-"""長期記憶骨幹批次：把今日對話寫入長期記憶（Mem0）。
+"""長期記憶骨幹批次：把前一天整天的對話寫入長期記憶（Mem0）。
+
+於夜間（預設凌晨 3 點）執行，整理的是「剛結束的那一天」整天對話；
+若改抓「當下這天」會只拿到凌晨剛過的片段，故用 previous_day 取日界區間。
 
 CLI：PYTHONPATH=src uv run python -m kinsun.longterm.consolidation <session_id>
 """
@@ -17,7 +20,7 @@ from kinsun.memory.store import MemoryStore
 
 
 def run_consolidation(session_id: str, *, short_term: MemoryStore, long_term: LongTermStore) -> int:
-    turns = short_term.recent(session_id)
+    turns = short_term.previous_day(session_id)
     if not turns:
         return 0
     long_term.add(session_id, turns, provenance=provenance.SELF_CLAIMED)
