@@ -94,6 +94,10 @@ class AccountService:
             if elder is None:
                 raise InviteError("not_found")
             self._repo.save_elder(Elder(elder.elder_id, elder.name, line_user_id))
+            # 只有長輩本人綁定才代表「長輩同意」；家屬綁定不可覆寫或復活長輩的同意紀錄。
+            self._repo.save_consent(
+                Consent(invite.elder_id, consent_by, CONSENT_VERSION, now.timestamp())
+            )
         else:
             guardian = self._guardian_for(line_user_id, "")
             order = max(
@@ -106,9 +110,6 @@ class AccountService:
                 )
             )
 
-        self._repo.save_consent(
-            Consent(invite.elder_id, consent_by, CONSENT_VERSION, now.timestamp())
-        )
         self._repo.save_invite(
             Invite(
                 invite.code,
