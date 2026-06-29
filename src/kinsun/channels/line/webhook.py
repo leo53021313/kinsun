@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
@@ -62,9 +64,21 @@ def _handle_events(
 
 
 def create_app(
-    *, parser, pipeline: VoicePipeline, messenger: LineMessenger, binding, gate
+    *,
+    parser,
+    pipeline: VoicePipeline,
+    messenger: LineMessenger,
+    binding,
+    gate,
+    on_shutdown: Callable[[], None] | None = None,
 ) -> FastAPI:
-    app = FastAPI()
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        yield
+        if on_shutdown is not None:
+            on_shutdown()
+
+    app = FastAPI(lifespan=lifespan)
 
     @app.post("/line/webhook")
     async def line_webhook(request: Request) -> dict[str, bool]:

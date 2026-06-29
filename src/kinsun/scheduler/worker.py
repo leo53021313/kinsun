@@ -16,7 +16,7 @@ from kinsun.accounts.service import AccountService
 from kinsun.agent import CareAgent
 from kinsun.channels.line.messenger import LineApiMessenger
 from kinsun.config import Settings, load_settings
-from kinsun.db import ensure_schema
+from kinsun.db import Database, ensure_schema
 from kinsun.llm import GeminiClient
 from kinsun.longterm.consolidation import run_consolidation
 from kinsun.longterm.store import Mem0LongTermStore
@@ -37,11 +37,14 @@ from kinsun.scheduler.scheduler import Scheduler
 from kinsun.scheduler.state import PgScheduleStateStore
 
 
-def build_scheduler(settings: Settings, *, clock: Callable[[], datetime]) -> Scheduler:
+def build_scheduler(
+    settings: Settings, *, clock: Callable[[], datetime]
+) -> tuple[Scheduler, Database]:
     tz = ZoneInfo(settings.timezone)
     ensure_schema(settings.database_url)
+    db = Database.open(settings.database_url)
     memory = PgMemoryStore(
-        settings.database_url,
+        db,
         clock=lambda: datetime.now(tz),
         max_turns=settings.memory_max_turns,
     )
@@ -53,8 +56,8 @@ def build_scheduler(settings: Settings, *, clock: Callable[[], datetime]) -> Sch
     long_term = Mem0LongTermStore(build_mem0_memory(settings), top_k=settings.longterm_top_k)
     agent = CareAgent(gemini, memory, MemoryContext(long_term))
     messenger = LineApiMessenger(settings.line_channel_access_token)
-    accounts = AccountService(PgAccountRepository(settings.database_url), clock=clock)
-    med_store = PgMedicationStore(settings.database_url)
+    accounts = AccountService(PgAccountRepository(db), clock=clock)
+    med_store = PgMedicationStore(db)
 
     def run_one(session_id: str) -> None:
         run_consolidation(session_id, short_term=memory, long_term=long_term)
@@ -99,8 +102,8 @@ def build_scheduler(settings: Settings, *, clock: Callable[[], datetime]) -> Sch
                 name=name,
             )
         )
-    state = PgScheduleStateStore(settings.database_url, tz)
-    return Scheduler(jobs, clock, state)
+    state = PgScheduleStateStore(db, tz)
+    return Scheduler(jobs, clock, state), db
 
 
 def serve(scheduler: Scheduler, *, tick_seconds: int) -> None:
@@ -112,11 +115,14 @@ def serve(scheduler: Scheduler, *, tick_seconds: int) -> None:
 def main() -> int:
     settings = load_settings(os.environ)
     tz = ZoneInfo(settings.timezone)
-    scheduler = build_scheduler(settings, clock=lambda: datetime.now(tz))
+    scheduler, db = build_scheduler(settings, clock=lambda: datetime.now(tz))
     print(
         f"排程器啟動：每 {settings.scheduler_tick_seconds}s 檢查；"
         f"整理 {settings.consolidation_hour}:00、問候 {settings.greeting_hour}:00、"
         f"失聯關心 {settings.inactivity_hour}:00（{settings.inactivity_days} 天門檻）。"
     )
-    serve(scheduler, tick_seconds=settings.scheduler_tick_seconds)
+    try:
+        serve(scheduler, tick_seconds=settings.scheduler_tick_seconds)
+    finally:
+        db.close()
     return 0
