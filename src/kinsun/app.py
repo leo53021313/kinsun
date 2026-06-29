@@ -15,6 +15,8 @@ from linebot.v3 import WebhookParser
 from kinsun.accounts.repository import PgAccountRepository
 from kinsun.accounts.service import AccountService
 from kinsun.agent import CareAgent
+from kinsun.binding.flow import BindingFlow
+from kinsun.binding.session import PgBindingSessionStore
 from kinsun.channels.line.messenger import LineApiMessenger
 from kinsun.channels.line.webhook import create_app
 from kinsun.config import load_settings
@@ -62,5 +64,12 @@ def build_app() -> FastAPI:
         detector=RiskDetector(LlmRiskClassifier(gemini)),
         notifier=LineGuardianNotifier(accounts, messenger),
     )
+    binding = BindingFlow(
+        accounts,
+        PgBindingSessionStore(settings.database_url),
+        messenger,
+        clock=lambda: datetime.now(tz),
+        session_ttl_seconds=settings.binding_session_ttl_minutes * 60,
+    )
     parser = WebhookParser(settings.line_channel_secret)
-    return create_app(parser=parser, pipeline=pipeline, messenger=messenger)
+    return create_app(parser=parser, pipeline=pipeline, messenger=messenger, binding=binding)

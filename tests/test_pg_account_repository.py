@@ -33,3 +33,16 @@ def test_get_elder_by_line_and_get_guardian():
     assert repo.get_elder_by_line("nope") is None
     assert repo.get_guardian("g2").line_user_id == "U-guard2"
     assert repo.get_guardian("nope") is None
+
+
+def test_elder_ids_of_guardian():
+    from kinsun.accounts.models import ElderGuardian, Role
+    from kinsun.accounts.repository import PgAccountRepository
+    from kinsun.db import ensure_schema
+
+    url = os.environ["DATABASE_URL"]
+    ensure_schema(url)
+    repo = PgAccountRepository(url)
+    repo.save_elder_guardian(ElderGuardian("e3", "g3", Role.PRIMARY, 1, True))
+    assert "e3" in repo.elder_ids_of_guardian("g3")
+    assert repo.elder_ids_of_guardian("no-such") == []

@@ -119,6 +119,45 @@ def test_guardians_of_sorted_and_permissions():
     assert svc.can_view_transcript(elder.elder_id, "nobody") is False
 
 
+def test_preview_invite_valid_and_not_found():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    inv = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
+    p = svc.preview_invite(inv.code)
+    assert p.role == InviteRole.ELDER
+    assert p.elder_name == "阿公"
+    assert p.reason is None
+    assert svc.preview_invite("nope") is None
+
+
+def test_preview_invite_expired():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    inv = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
+    later = _service(repo, now=NOW + timedelta(hours=25))
+    assert later.preview_invite(inv.code).reason == "expired"
+
+
+def test_preview_invite_used():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    inv = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
+    svc.redeem_invite(inv.code, "U-elder", consent_by=ConsentBy.SELF)
+    assert svc.preview_invite(inv.code).reason == "used"
+
+
+def test_elders_managed_by():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    assert svc.elders_managed_by("U-son") == []
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    managed = svc.elders_managed_by("U-son")
+    assert [e.elder_id for e in managed] == [elder.elder_id]
+
+
 def test_guardian_line_ids_in_escalation_order():
     repo = FakeAccountRepository()
     svc = _service(repo)

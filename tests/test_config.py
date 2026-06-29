@@ -34,6 +34,7 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.neo4j_username == "neo4j"
     assert settings.neo4j_password == "pw"
     assert settings.longterm_top_k == 5
+    assert settings.binding_session_ttl_minutes == 10
 
 
 def test_load_settings_requires_database_url():

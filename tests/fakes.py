@@ -82,6 +82,9 @@ class FakeAccountRepository:
         rows = [v for (e, _), v in self.elder_guardians.items() if e == elder_id]
         return sorted(rows, key=lambda x: x.escalation_order)
 
+    def elder_ids_of_guardian(self, guardian_id):
+        return sorted(e for (e, g) in self.elder_guardians if g == guardian_id)
+
     def save_consent(self, c):
         self.consents[c.elder_id] = c
 
@@ -93,3 +96,17 @@ class FakeAccountRepository:
 
     def get_invite(self, code):
         return self.invites.get(code)
+
+
+class FakeBindingSessionStore:
+    def __init__(self) -> None:
+        self._sessions = {}
+
+    def get(self, line_user_id):
+        return self._sessions.get(line_user_id)
+
+    def save(self, session):
+        self._sessions[session.line_user_id] = session
+
+    def delete(self, line_user_id):
+        self._sessions.pop(line_user_id, None)
