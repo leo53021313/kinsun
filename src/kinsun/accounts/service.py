@@ -145,6 +145,9 @@ class AccountService:
         consent = self._repo.get_consent(elder.elder_id)
         return consent is not None and consent.revoked_at is None
 
+    def get_elder(self, elder_id: str):
+        return self._repo.get_elder(elder_id)
+
     def preview_invite(self, code: str) -> InvitePreview | None:
         invite = self._repo.get_invite(code)
         if invite is None:

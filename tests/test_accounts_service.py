@@ -119,6 +119,14 @@ def test_guardians_of_sorted_and_permissions():
     assert svc.can_view_transcript(elder.elder_id, "nobody") is False
 
 
+def test_get_elder():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    assert svc.get_elder(elder.elder_id).name == "阿公"
+    assert svc.get_elder("nope") is None
+
+
 def test_is_consented_elder_lifecycle():
     repo = FakeAccountRepository()
     svc = _service(repo)
