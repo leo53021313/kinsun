@@ -20,6 +20,7 @@ from kinsun.db import Database, ensure_schema
 from kinsun.llm import GeminiClient
 from kinsun.longterm.consolidation import run_consolidation
 from kinsun.longterm.store import Mem0LongTermStore
+from kinsun.medication.facts import MedicationFacts
 from kinsun.medication.jobs import build_medication_slot_job
 from kinsun.medication.models import MedicationSlot
 from kinsun.medication.store import PgMedicationStore
@@ -54,10 +55,11 @@ def build_scheduler(
         timeout=settings.llm_timeout_seconds,
     )
     long_term = Mem0LongTermStore(build_mem0_memory(settings), top_k=settings.longterm_top_k)
-    agent = CareAgent(gemini, memory, MemoryContext(long_term))
-    messenger = LineApiMessenger(settings.line_channel_access_token)
     accounts = AccountService(PgAccountRepository(db), clock=clock)
     med_store = PgMedicationStore(db)
+    context = MemoryContext(long_term, facts=[MedicationFacts(accounts, med_store)])
+    agent = CareAgent(gemini, memory, context)
+    messenger = LineApiMessenger(settings.line_channel_access_token)
 
     def run_one(session_id: str) -> None:
         run_consolidation(session_id, short_term=memory, long_term=long_term)

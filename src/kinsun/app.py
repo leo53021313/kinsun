@@ -24,6 +24,7 @@ from kinsun.config import load_settings
 from kinsun.db import Database, ensure_schema
 from kinsun.llm import GeminiClient
 from kinsun.longterm.store import Mem0LongTermStore
+from kinsun.medication.facts import MedicationFacts
 from kinsun.medication.flow import MedicationMenu
 from kinsun.medication.service import MedicationService
 from kinsun.medication.store import PgMedicationStore
@@ -56,13 +57,14 @@ def build_app() -> FastAPI:
         timeout=settings.llm_timeout_seconds,
     )
     long_term = Mem0LongTermStore(build_mem0_memory(settings), top_k=settings.longterm_top_k)
-    context = MemoryContext(long_term)
     accounts = AccountService(
         PgAccountRepository(db),
         clock=lambda: datetime.now(tz),
         ttl_hours=settings.invite_ttl_hours,
         max_attempts=settings.invite_max_attempts,
     )
+    medications = MedicationService(PgMedicationStore(db))
+    context = MemoryContext(long_term, facts=[MedicationFacts(accounts, medications)])
     messenger = LineApiMessenger(settings.line_channel_access_token)
     registry = ToolRegistry()
     registry.register(WEATHER_SPEC, build_weather_handler())
@@ -74,7 +76,6 @@ def build_app() -> FastAPI:
         notifier=LineGuardianNotifier(accounts, messenger),
     )
     binding_sessions = PgBindingSessionStore(db)
-    medications = MedicationService(PgMedicationStore(db))
     medication_menu = MedicationMenu(
         medications, accounts, binding_sessions, clock=lambda: datetime.now(tz)
     )
