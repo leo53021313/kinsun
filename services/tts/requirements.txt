@@ -1,0 +1,4 @@
+# 僅在 DGX Spark（Linux + ARM64/aarch64 + GPU）安裝。
+# 台語 TTS 引擎與其依賴待模型選定後補上並於 DGX 實機驗證、鎖定版本。
+fastapi
+uvicorn
