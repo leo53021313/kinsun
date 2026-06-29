@@ -29,7 +29,7 @@ LINE 語音 → webhook → VoicePipeline
 | 語言/工具 | Python 3.12、**uv**、ruff（E,W,F,I,B,UP / line-length 100）、pre-commit、pytest |
 | 對外 | FastAPI webhook、line-bot-sdk v3 |
 | LLM/Embedding | Gemini：`gemini-3.1-flash-lite`（對話/分級/抽取）、`gemini-embedding-001` |
-| 長期記憶 | **Mem0**（graph 模式）＝ Supabase Postgres（pgvector）＋ Neo4j Aura |
+| 長期記憶 | **Mem0** v1.1 新演算法（單次抽取＋entity linking＋語意/BM25/entity 多訊號檢索）＝ Supabase Postgres（pgvector） |
 | 短期記憶/帳號 | **Supabase Postgres**（`psycopg` v3） |
 | 佈署目標 | **NVIDIA DGX Spark**（Linux + ARM64/aarch64），同時是開發環境 |
 
@@ -39,7 +39,7 @@ LINE 語音 → webhook → VoicePipeline
 - 位置無關：重模型走可設定 endpoint（環境變數），同機/分離都不改程式。
 - `tzdata` 為依賴（修正 Windows 無 `Asia/Taipei` 時區的問題）。
 
-> ⚠️ **雲端遷移後，啟動 app 一定要雲端金鑰**（`DATABASE_URL`、`NEO4J_*`、`GEMINI_API_KEY`、LINE）。
+> ⚠️ **雲端遷移後，啟動 app 一定要雲端金鑰**（`DATABASE_URL`、`GEMINI_API_KEY`、LINE）。
 > 本機已無 SQLite，無法離線跑整支 app；但**單元測試全離線**（注入 fake，不需網路/金鑰）。
 
 ---
