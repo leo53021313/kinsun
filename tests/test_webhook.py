@@ -120,7 +120,9 @@ class _DenyGate:
         return False
 
 
-def _make_client(parser, messenger, asr=None, memory=None, binding=None, gate=None):
+def _make_client(
+    parser, messenger, asr=None, memory=None, binding=None, gate=None, raise_server_exceptions=True
+):
     pipeline = VoicePipeline(
         asr=asr or MockAsrClient("阿公早安"),
         agent=CareAgent(EchoLLM(), memory or NullMemory(), NullContext()),
@@ -135,7 +137,7 @@ def _make_client(parser, messenger, asr=None, memory=None, binding=None, gate=No
         binding=binding or _NullBinding(),
         gate=gate or _AllowGate(),
     )
-    return TestClient(app)
+    return TestClient(app, raise_server_exceptions=raise_server_exceptions)
 
 
 def test_audio_message_replies_agent_output():
@@ -210,6 +212,36 @@ def test_pipeline_error_replies_fallback():
     client = _make_client(FakeParser([_audio_event()]), messenger, asr=BoomAsr())
     client.post("/line/webhook", content=b"{}", headers={"X-Line-Signature": "x"})
     assert messenger.replies == [("rt-1", FALLBACK_PROMPT)]
+
+
+class _BoomReplyMessenger(FakeMessenger):
+    def reply_text(self, reply_token: str, text: str) -> None:
+        raise RuntimeError("LINE API 失敗（例如 reply token 逾時）")
+
+
+def test_reply_failure_does_not_return_500():
+    # 回覆失敗（reply token 逾時、LINE API 例外等）若讓 webhook 回 500，
+    # LINE 會重送整包事件 → 重複跑管線、重複發家屬危急通知。必須吞掉並回 200。
+    messenger = _BoomReplyMessenger()
+    client = _make_client(FakeParser([_audio_event()]), messenger, raise_server_exceptions=False)
+    resp = client.post("/line/webhook", content=b"{}", headers={"X-Line-Signature": "x"})
+    assert resp.status_code == 200
+
+
+def test_one_failing_event_does_not_block_the_next():
+    # 第一個事件回覆爆掉，第二個事件仍要被處理（不可整批中止）。
+    class _BoomThenOk(FakeMessenger):
+        def reply_text(self, reply_token: str, text: str) -> None:
+            if reply_token == "rt-1":
+                raise RuntimeError("第一個爆掉")
+            super().reply_text(reply_token, text)
+
+    messenger = _BoomThenOk()
+    events = [_audio_event(), _sticker_event()]
+    client = _make_client(FakeParser(events), messenger, raise_server_exceptions=False)
+    resp = client.post("/line/webhook", content=b"{}", headers={"X-Line-Signature": "x"})
+    assert resp.status_code == 200
+    assert ("rt-3", NON_AUDIO_PROMPT) in messenger.replies
 
 
 def test_invalid_signature_returns_400():
