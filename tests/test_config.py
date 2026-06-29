@@ -29,6 +29,10 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.database_url == "postgresql://u:p@h:5432/db"
     assert settings.longterm_top_k == 5
     assert settings.binding_session_ttl_minutes == 10
+    assert settings.medication_morning_hour == 8
+    assert settings.medication_noon_hour == 12
+    assert settings.medication_evening_hour == 18
+    assert settings.medication_bedtime_hour == 21
 
 
 def test_load_settings_requires_database_url():

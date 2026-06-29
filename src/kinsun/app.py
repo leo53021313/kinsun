@@ -24,6 +24,9 @@ from kinsun.config import load_settings
 from kinsun.db import ensure_schema
 from kinsun.llm import GeminiClient
 from kinsun.longterm.store import Mem0LongTermStore
+from kinsun.medication.flow import MedicationMenu
+from kinsun.medication.service import MedicationService
+from kinsun.medication.store import PgMedicationStore
 from kinsun.mem0_factory import build_mem0_memory
 from kinsun.memory.store import PgMemoryStore
 from kinsun.pipeline import VoicePipeline
@@ -69,10 +72,16 @@ def build_app() -> FastAPI:
         detector=RiskDetector(LlmRiskClassifier(gemini)),
         notifier=LineGuardianNotifier(accounts, messenger),
     )
+    binding_sessions = PgBindingSessionStore(settings.database_url)
+    medications = MedicationService(PgMedicationStore(settings.database_url))
+    medication_menu = MedicationMenu(
+        medications, accounts, binding_sessions, clock=lambda: datetime.now(tz)
+    )
     binding = BindingFlow(
         accounts,
-        PgBindingSessionStore(settings.database_url),
+        binding_sessions,
         messenger,
+        medication_menu,
         clock=lambda: datetime.now(tz),
         session_ttl_seconds=settings.binding_session_ttl_minutes * 60,
     )

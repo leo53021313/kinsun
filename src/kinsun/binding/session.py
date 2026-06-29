@@ -17,6 +17,11 @@ class BindingState(StrEnum):
     AWAIT_ELDER_PICK = "elder_pick"
     AWAIT_CODE = "code"
     AWAIT_CONFIRM = "confirm"
+    MED_MENU = "med_menu"
+    MED_PICK_ELDER = "med_pick_elder"
+    MED_ADD_NAME = "med_add_name"
+    MED_ADD_SLOTS = "med_add_slots"
+    MED_DEL_PICK = "med_del_pick"
 
 
 @dataclass(frozen=True)
