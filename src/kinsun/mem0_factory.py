@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from kinsun.config import Settings
+from kinsun.longterm import provenance
 
 
 def build_mem0_config(settings: Settings) -> dict:
@@ -32,6 +33,7 @@ def build_mem0_config(settings: Settings) -> dict:
                 "password": settings.neo4j_password,
             },
         },
+        "custom_instructions": provenance.CUSTOM_FACT_EXTRACTION_PROMPT,
     }
 
 

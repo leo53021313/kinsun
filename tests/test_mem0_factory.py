@@ -1,4 +1,5 @@
 from kinsun.config import load_settings
+from kinsun.longterm.provenance import CUSTOM_FACT_EXTRACTION_PROMPT
 from kinsun.mem0_factory import build_mem0_config
 
 _ENV = {
@@ -23,3 +24,8 @@ def test_build_mem0_config_shape():
     assert cfg["vector_store"]["config"]["connection_string"] == "postgresql://u:p@h:5432/db"
     assert cfg["graph_store"]["provider"] == "neo4j"
     assert cfg["graph_store"]["config"]["url"] == "neo4j+s://x"
+
+
+def test_build_mem0_config_includes_custom_instructions():
+    cfg = build_mem0_config(load_settings(_ENV))
+    assert cfg["custom_instructions"] == CUSTOM_FACT_EXTRACTION_PROMPT
