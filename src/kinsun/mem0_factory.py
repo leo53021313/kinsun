@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from kinsun.config import Settings
+from kinsun.longterm import provenance
 
 
 def build_mem0_config(settings: Settings) -> dict:
@@ -24,14 +25,8 @@ def build_mem0_config(settings: Settings) -> dict:
                 "index_measure": "cosine_distance",
             },
         },
-        "graph_store": {
-            "provider": "neo4j",
-            "config": {
-                "url": settings.neo4j_uri,
-                "username": settings.neo4j_username,
-                "password": settings.neo4j_password,
-            },
-        },
+        "version": "v1.1",
+        "custom_instructions": provenance.CUSTOM_FACT_EXTRACTION_PROMPT,
     }
 
 

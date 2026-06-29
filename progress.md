@@ -29,7 +29,7 @@ LINE 語音 → webhook → VoicePipeline
 | 語言/工具 | Python 3.12、**uv**、ruff（E,W,F,I,B,UP / line-length 100）、pre-commit、pytest |
 | 對外 | FastAPI webhook、line-bot-sdk v3 |
 | LLM/Embedding | Gemini：`gemini-3.1-flash-lite`（對話/分級/抽取）、`gemini-embedding-001` |
-| 長期記憶 | **Mem0**（graph 模式）＝ Supabase Postgres（pgvector）＋ Neo4j Aura |
+| 長期記憶 | **Mem0** v1.1 新演算法（單次抽取＋entity linking＋語意/BM25/entity 多訊號檢索）＝ Supabase Postgres（pgvector） |
 | 短期記憶/帳號 | **Supabase Postgres**（`psycopg` v3） |
 | 佈署目標 | **NVIDIA DGX Spark**（Linux + ARM64/aarch64），同時是開發環境 |
 
@@ -39,7 +39,7 @@ LINE 語音 → webhook → VoicePipeline
 - 位置無關：重模型走可設定 endpoint（環境變數），同機/分離都不改程式。
 - `tzdata` 為依賴（修正 Windows 無 `Asia/Taipei` 時區的問題）。
 
-> ⚠️ **雲端遷移後，啟動 app 一定要雲端金鑰**（`DATABASE_URL`、`NEO4J_*`、`GEMINI_API_KEY`、LINE）。
+> ⚠️ **雲端遷移後，啟動 app 一定要雲端金鑰**（`DATABASE_URL`、`GEMINI_API_KEY`、LINE）。
 > 本機已無 SQLite，無法離線跑整支 app；但**單元測試全離線**（注入 fake，不需網路/金鑰）。
 
 ---
@@ -51,7 +51,7 @@ LINE 語音 → webhook → VoicePipeline
 | 1 | 端到端語音薄切片 | ASR(mock)→Agent→TTS(泡泡)、LINE webhook、組裝根 app.py | — |
 | 2 | 短期記憶 | `MemoryStore` Protocol；今日對話、`max_turns`、`last_active` | — |
 | 3 | 危急偵測核心 | `RiskTier` L0–L3、關鍵字 + Gemini 分級、`RiskDetector`（fail-safe、絕對危險詞覆蓋） | — |
-| 4 | 記憶層雲端遷移 | Mem0-g＋Supabase＋Neo4j 取代自建 SQLite（知識圖譜/向量庫/長期骨幹全部收斂於此） | #14 |
+| 4 | 記憶層雲端遷移 | Mem0＋Supabase pgvector 取代自建 SQLite（註：原規劃的 Neo4j graph 經實測 mem0 2.0.10 不支援，已於 MEM-UP 移除，關係感知改靠 v1.1 entity linking／多訊號檢索） | #14 |
 | 5 | 排程引擎 | `Scheduler`（每日一次、錯誤隔離）、worker 常駐 | — |
 | 6 | 主動關懷 | 定時問候 + 失聯關心 job（共用排程器、走 CareAgent + 記憶） | — |
 | 7 | 帳號綁定核心 | 5 實體 + `PgAccountRepository` + `AccountService`（建檔/邀請/兌換/同意/家屬清單/權限） | #12 |

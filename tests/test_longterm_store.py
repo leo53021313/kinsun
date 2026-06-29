@@ -1,5 +1,5 @@
 from kinsun.llm import Message
-from kinsun.longterm.store import Mem0LongTermStore, _format_memories_for_prompt
+from kinsun.longterm.store import HEALTH_QUERY, Mem0LongTermStore, _format_memories_for_prompt
 
 
 class _FakeMem0:
@@ -15,6 +15,21 @@ class _FakeMem0:
         if self._raise:
             raise RuntimeError("boom")
         return self._search_return
+
+
+class _ByQueryMem0:
+    """依 query 回不同 results 的 fake；值為 "RAISE" 則該 query 拋例外。"""
+
+    def __init__(self, mapping):
+        self.mapping = mapping
+        self.calls = []
+
+    def search(self, query, user_id=None, limit=None, **kwargs):
+        self.calls.append((query, limit))
+        entry = self.mapping.get(query)
+        if entry == "RAISE":
+            raise RuntimeError("boom")
+        return entry or {"results": []}
 
 
 def test_format_empty_returns_blank():
@@ -47,3 +62,44 @@ def test_search_returns_formatted_string():
 def test_search_failsafe_returns_blank():
     store = Mem0LongTermStore(_FakeMem0(raise_on_search=True))
     assert store.search("x", "sess1") == ""
+
+
+def test_search_always_includes_health_facts():
+    mem = _ByQueryMem0(
+        {
+            "今天天氣": {"results": [{"id": "1", "memory": "喜歡晴天"}]},
+            HEALTH_QUERY: {"results": [{"id": "2", "memory": "有高血壓，每天吃藥"}]},
+        }
+    )
+    out = Mem0LongTermStore(mem).search("sess1", "今天天氣")
+    assert "喜歡晴天" in out
+    assert "有高血壓" in out
+
+
+def test_search_dedups_overlapping_id():
+    mem = _ByQueryMem0(
+        {
+            "頭痛": {"results": [{"id": "1", "memory": "有高血壓"}]},
+            HEALTH_QUERY: {"results": [{"id": "1", "memory": "有高血壓"}]},
+        }
+    )
+    out = Mem0LongTermStore(mem).search("sess1", "頭痛")
+    assert out.count("有高血壓") == 1
+
+
+def test_search_uses_top_k_and_health_top_k():
+    mem = _ByQueryMem0({})
+    Mem0LongTermStore(mem, top_k=5, health_top_k=2).search("sess1", "天氣")
+    assert ("天氣", 5) in mem.calls
+    assert (HEALTH_QUERY, 2) in mem.calls
+
+
+def test_health_search_failure_keeps_user_results():
+    mem = _ByQueryMem0(
+        {
+            "頭痛": {"results": [{"id": "1", "memory": "今天頭痛"}]},
+            HEALTH_QUERY: "RAISE",
+        }
+    )
+    out = Mem0LongTermStore(mem).search("sess1", "頭痛")
+    assert "今天頭痛" in out

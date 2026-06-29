@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from kinsun.llm import Message
 
 
@@ -110,3 +112,14 @@ class FakeBindingSessionStore:
 
     def delete(self, line_user_id):
         self._sessions.pop(line_user_id, None)
+
+
+class FakeScheduleStateStore:
+    def __init__(self) -> None:
+        self._last: dict[str, datetime] = {}
+
+    def get_last_run(self, job_name: str) -> datetime | None:
+        return self._last.get(job_name)
+
+    def set_last_run(self, job_name: str, when: datetime) -> None:
+        self._last[job_name] = when

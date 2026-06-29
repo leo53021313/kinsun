@@ -35,6 +35,11 @@ BINDING_DDL = (
     "updated_at DOUBLE PRECISION NOT NULL);"
 )
 
+SCHEDULER_DDL = (
+    "CREATE TABLE IF NOT EXISTS scheduler_state ("
+    "job_name TEXT PRIMARY KEY, last_run_at DOUBLE PRECISION NOT NULL);"
+)
+
 
 def connect(database_url: str) -> psycopg.Connection:
     return psycopg.connect(database_url)
@@ -45,4 +50,5 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(MEMORY_DDL)
         conn.execute(ACCOUNTS_DDL)
         conn.execute(BINDING_DDL)
+        conn.execute(SCHEDULER_DDL)
         conn.commit()
