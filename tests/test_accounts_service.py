@@ -117,3 +117,29 @@ def test_guardians_of_sorted_and_permissions():
     assert svc.can_view_transcript(elder.elder_id, primary.guardian_id) is True
     assert svc.can_view_transcript(elder.elder_id, secondary.guardian_id) is False
     assert svc.can_view_transcript(elder.elder_id, "nobody") is False
+
+
+def test_guardian_line_ids_in_escalation_order():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    inv_elder = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
+    svc.redeem_invite(inv_elder.code, "U-elder", consent_by=ConsentBy.SELF)
+    inv_guard = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
+    svc.redeem_invite(inv_guard.code, "U-daughter", consent_by=ConsentBy.SELF)
+    assert svc.guardian_line_ids("U-elder") == ["U-son", "U-daughter"]
+
+
+def test_guardian_line_ids_unbound_elder_returns_empty():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    assert svc.guardian_line_ids("U-nobody") == []
+
+
+def test_guardian_line_ids_only_primary():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    inv_elder = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
+    svc.redeem_invite(inv_elder.code, "U-elder", consent_by=ConsentBy.SELF)
+    assert svc.guardian_line_ids("U-elder") == ["U-son"]
