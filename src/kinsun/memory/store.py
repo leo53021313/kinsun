@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Protocol
 
 from kinsun.db import connect
@@ -14,9 +14,21 @@ class MemoryError(Exception):
     """短期記憶讀寫失敗。"""
 
 
+def previous_day_bounds(now: datetime) -> tuple[float, float]:
+    """回傳『剛結束的那一天』的 [起, 迄) Unix 時間戳（沿用 now 的時區）。
+
+    供夜間整理批次使用：例如凌晨 3 點執行時，要整理前一天整天的對話，
+    而不是當下這天才過幾小時的片段。
+    """
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    prev_start = today_start - timedelta(days=1)
+    return prev_start.timestamp(), today_start.timestamp()
+
+
 class MemoryStore(Protocol):
     def append(self, session_id: str, message: Message) -> None: ...
     def recent(self, session_id: str) -> list[Message]: ...
+    def previous_day(self, session_id: str) -> list[Message]: ...
     def sessions(self) -> list[str]: ...
     def last_active(self, session_id: str) -> float | None: ...
 
@@ -56,6 +68,21 @@ class PgMemoryStore:
         except Exception as exc:  # noqa: BLE001
             raise MemoryError(f"讀取記憶失敗：{exc}") from exc
         return [Message(role=r, text=t) for r, t in reversed(rows)]
+
+    def previous_day(self, session_id: str) -> list[Message]:
+        """整理批次用：回傳『剛結束的那一天』整天的對話（時序由舊到新）。"""
+        start, end = previous_day_bounds(self._clock())
+        try:
+            with connect(self._url) as conn:
+                rows = conn.execute(
+                    "SELECT role, text FROM turns "
+                    "WHERE session_id = %s AND created_at >= %s AND created_at < %s "
+                    "ORDER BY created_at ASC, id ASC LIMIT %s",
+                    (session_id, start, end, self._max_turns),
+                ).fetchall()
+        except Exception as exc:  # noqa: BLE001
+            raise MemoryError(f"讀取記憶失敗：{exc}") from exc
+        return [Message(role=r, text=t) for r, t in rows]
 
     def sessions(self) -> list[str]:
         try:

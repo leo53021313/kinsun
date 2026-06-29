@@ -95,6 +95,30 @@ def test_redeem_expired():
     assert repo.get_invite(inv.code).attempts == 1
 
 
+def test_guardian_redeem_does_not_create_elder_consent():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    inv = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
+    svc.redeem_invite(inv.code, "U-daughter", consent_by=ConsentBy.SELF)
+    # 家屬綁定不代表長輩本人同意；不應替長輩寫入同意紀錄。
+    assert repo.get_consent(elder.elder_id) is None
+
+
+def test_guardian_redeem_does_not_resurrect_revoked_consent():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    inv_e = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
+    svc.redeem_invite(inv_e.code, "U-elder", consent_by=ConsentBy.SELF)
+    svc.revoke_consent(elder.elder_id)
+    assert svc.is_consented_elder("U-elder") is False
+    # 之後有家屬加入，不可「復活」長輩已撤回的同意。
+    inv_g = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
+    svc.redeem_invite(inv_g.code, "U-daughter", consent_by=ConsentBy.SELF)
+    assert svc.is_consented_elder("U-elder") is False
+
+
 def test_revoke_consent_sets_revoked():
     repo = FakeAccountRepository()
     svc = _service(repo)

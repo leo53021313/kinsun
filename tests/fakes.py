@@ -2,31 +2,40 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from kinsun.llm import Message
+from kinsun.memory.store import previous_day_bounds
+
+_TPE = timezone(timedelta(hours=8))
+_DEFAULT_NOW = datetime(2026, 6, 29, 3, 0, tzinfo=_TPE)
 
 
 class FakeMemoryStore:
-    def __init__(self) -> None:
-        self._turns: dict[str, list[Message]] = {}
-        self._last_user: dict[str, float] = {}
-        self._clock = 0.0
+    """以時間戳記錄每輪對話，可模擬「今天」與「前一天」的日界查詢。"""
 
-    def append(self, session_id: str, message: Message) -> None:
-        self._turns.setdefault(session_id, []).append(message)
-        if message.role == "user":
-            self._clock += 1.0
-            self._last_user[session_id] = self._clock
+    def __init__(self, now: datetime | None = None) -> None:
+        self._now = now or _DEFAULT_NOW
+        self._turns: dict[str, list[tuple[float, Message]]] = {}
+
+    def append(self, session_id: str, message: Message, *, at: datetime | None = None) -> None:
+        ts = (at or self._now).timestamp()
+        self._turns.setdefault(session_id, []).append((ts, message))
 
     def recent(self, session_id: str) -> list[Message]:
-        return list(self._turns.get(session_id, []))
+        midnight = self._now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        return [m for ts, m in self._turns.get(session_id, []) if ts >= midnight]
+
+    def previous_day(self, session_id: str) -> list[Message]:
+        start, end = previous_day_bounds(self._now)
+        return [m for ts, m in self._turns.get(session_id, []) if start <= ts < end]
 
     def sessions(self) -> list[str]:
         return sorted(self._turns)
 
     def last_active(self, session_id: str) -> float | None:
-        return self._last_user.get(session_id)
+        users = [ts for ts, m in self._turns.get(session_id, []) if m.role == "user"]
+        return max(users) if users else None
 
 
 class FakeLongTermStore:
