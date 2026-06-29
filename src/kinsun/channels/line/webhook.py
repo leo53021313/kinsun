@@ -13,9 +13,14 @@ from kinsun.speech.asr import ASRError
 
 NON_AUDIO_PROMPT = "金孫現在聽得懂語音喔，您可以按住麥克風跟我說說話。"
 FALLBACK_PROMPT = "金孫剛剛沒聽清楚，您可以再說一次嗎？"
+BIND_FIRST_PROMPT = (
+    "金孫需要先完成綁定才能陪您聊天喔。請把家人給您的邀請碼貼到這裡，或回覆「設定」開始。"
+)
 
 
-def _handle_events(events, pipeline: VoicePipeline, messenger: LineMessenger, binding) -> None:
+def _handle_events(
+    events, pipeline: VoicePipeline, messenger: LineMessenger, binding, gate
+) -> None:
     for event in events:
         message = getattr(event, "message", None)
         reply_token = getattr(event, "reply_token", None)
@@ -31,6 +36,9 @@ def _handle_events(events, pipeline: VoicePipeline, messenger: LineMessenger, bi
         if mtype != "audio":
             messenger.reply_text(reply_token, NON_AUDIO_PROMPT)
             continue
+        if not gate.allows(session_id):
+            messenger.reply_text(reply_token, BIND_FIRST_PROMPT)
+            continue
         try:
             audio = messenger.get_audio(message.id)
             result = pipeline.process(audio, session_id=session_id)
@@ -39,7 +47,9 @@ def _handle_events(events, pipeline: VoicePipeline, messenger: LineMessenger, bi
             messenger.reply_text(reply_token, FALLBACK_PROMPT)
 
 
-def create_app(*, parser, pipeline: VoicePipeline, messenger: LineMessenger, binding) -> FastAPI:
+def create_app(
+    *, parser, pipeline: VoicePipeline, messenger: LineMessenger, binding, gate
+) -> FastAPI:
     app = FastAPI()
 
     @app.post("/line/webhook")
@@ -50,7 +60,7 @@ def create_app(*, parser, pipeline: VoicePipeline, messenger: LineMessenger, bin
             events = parser.parse(body.decode("utf-8"), signature)
         except InvalidSignatureError as exc:
             raise HTTPException(status_code=400, detail="invalid signature") from exc
-        _handle_events(events, pipeline, messenger, binding)
+        _handle_events(events, pipeline, messenger, binding, gate)
         return {"ok": True}
 
     return app

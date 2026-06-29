@@ -3,7 +3,12 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 from kinsun.agent import CareAgent
-from kinsun.channels.line.webhook import FALLBACK_PROMPT, NON_AUDIO_PROMPT, create_app
+from kinsun.channels.line.webhook import (
+    BIND_FIRST_PROMPT,
+    FALLBACK_PROMPT,
+    NON_AUDIO_PROMPT,
+    create_app,
+)
 from kinsun.llm import Message
 from kinsun.pipeline import VoicePipeline
 from kinsun.safety.tiers import RiskAssessment, RiskTier
@@ -105,7 +110,17 @@ class _StubBinding:
         return self.reply
 
 
-def _make_client(parser, messenger, asr=None, memory=None, binding=None):
+class _AllowGate:
+    def allows(self, line_user_id):
+        return True
+
+
+class _DenyGate:
+    def allows(self, line_user_id):
+        return False
+
+
+def _make_client(parser, messenger, asr=None, memory=None, binding=None, gate=None):
     pipeline = VoicePipeline(
         asr=asr or MockAsrClient("阿公早安"),
         agent=CareAgent(EchoLLM(), memory or NullMemory(), NullContext()),
@@ -114,7 +129,11 @@ def _make_client(parser, messenger, asr=None, memory=None, binding=None):
         notifier=_NullNotifier(),
     )
     app = create_app(
-        parser=parser, pipeline=pipeline, messenger=messenger, binding=binding or _NullBinding()
+        parser=parser,
+        pipeline=pipeline,
+        messenger=messenger,
+        binding=binding or _NullBinding(),
+        gate=gate or _AllowGate(),
     )
     return TestClient(app)
 
@@ -165,6 +184,20 @@ def test_text_non_binding_falls_back_to_prompt():
     client = _make_client(FakeParser([_text_event("閒聊")]), messenger, binding=_StubBinding(None))
     client.post("/line/webhook", content=b"{}", headers={"X-Line-Signature": "x"})
     assert messenger.replies == [("rt-2", NON_AUDIO_PROMPT)]
+
+
+def test_unconsented_voice_is_blocked():
+    messenger = FakeMessenger()
+    client = _make_client(FakeParser([_audio_event("U-x")]), messenger, gate=_DenyGate())
+    client.post("/line/webhook", content=b"{}", headers={"X-Line-Signature": "x"})
+    assert messenger.replies == [("rt-1", BIND_FIRST_PROMPT)]
+
+
+def test_consented_voice_runs_pipeline():
+    messenger = FakeMessenger()
+    client = _make_client(FakeParser([_audio_event()]), messenger, gate=_AllowGate())
+    client.post("/line/webhook", content=b"{}", headers={"X-Line-Signature": "x"})
+    assert messenger.replies == [("rt-1", "你說的是：阿公早安")]
 
 
 class BoomAsr:
