@@ -54,21 +54,22 @@ class AccountService:
         self._ttl_hours = ttl_hours
         self._max_attempts = max_attempts
 
-    def _guardian_for(self, line_user_id: str, name: str) -> Guardian:
+    def _guardian_for(self, line_user_id: str, name: str, *, tx=None) -> Guardian:
         existing = self._repo.get_guardian_by_line(line_user_id)
         if existing is not None:
             return existing
         guardian = Guardian(self._new_id(), line_user_id, name)
-        self._repo.save_guardian(guardian)
+        self._repo.save_guardian(guardian, tx=tx)
         return guardian
 
     def create_elder(self, guardian_line_id: str, guardian_name: str, elder_name: str) -> Elder:
-        guardian = self._guardian_for(guardian_line_id, guardian_name)
         elder = Elder(self._new_id(), elder_name)
-        self._repo.save_elder(elder)
-        self._repo.save_elder_guardian(
-            ElderGuardian(elder.elder_id, guardian.guardian_id, Role.PRIMARY, 1, True)
-        )
+        with self._repo.transaction() as tx:
+            guardian = self._guardian_for(guardian_line_id, guardian_name, tx=tx)
+            self._repo.save_elder(elder, tx=tx)
+            self._repo.save_elder_guardian(
+                ElderGuardian(elder.elder_id, guardian.guardian_id, Role.PRIMARY, 1, True), tx=tx
+            )
         return elder
 
     def generate_invite(self, elder_id: str, role: InviteRole) -> Invite:
@@ -89,38 +90,37 @@ class AccountService:
         if now.timestamp() > invite.expires_at:
             self._fail(invite, "expired")
 
-        if invite.role == InviteRole.ELDER:
-            elder = self._repo.get_elder(invite.elder_id)
-            if elder is None:
-                raise InviteError("not_found")
-            self._repo.save_elder(Elder(elder.elder_id, elder.name, line_user_id))
-            # 只有長輩本人綁定才代表「長輩同意」；家屬綁定不可覆寫或復活長輩的同意紀錄。
-            self._repo.save_consent(
-                Consent(invite.elder_id, consent_by, CONSENT_VERSION, now.timestamp())
-            )
-        else:
-            guardian = self._guardian_for(line_user_id, "")
-            order = max(
-                (eg.escalation_order for eg in self._repo.list_elder_guardians(invite.elder_id)),
-                default=0,
-            )
-            self._repo.save_elder_guardian(
-                ElderGuardian(
-                    invite.elder_id, guardian.guardian_id, Role.GUARDIAN, order + 1, False
+        with self._repo.transaction() as tx:
+            if invite.role == InviteRole.ELDER:
+                elder = self._repo.get_elder(invite.elder_id)
+                if elder is None:
+                    raise InviteError("not_found")
+                self._repo.save_elder(Elder(elder.elder_id, elder.name, line_user_id), tx=tx)
+                self._repo.save_consent(
+                    Consent(invite.elder_id, consent_by, CONSENT_VERSION, now.timestamp()), tx=tx
                 )
+            else:
+                guardian = self._guardian_for(line_user_id, "", tx=tx)
+                egs = self._repo.list_elder_guardians(invite.elder_id)
+                order = max((eg.escalation_order for eg in egs), default=0)
+                self._repo.save_elder_guardian(
+                    ElderGuardian(
+                        invite.elder_id, guardian.guardian_id, Role.GUARDIAN, order + 1, False
+                    ),
+                    tx=tx,
+                )
+            self._repo.save_invite(
+                Invite(
+                    invite.code,
+                    invite.elder_id,
+                    invite.role,
+                    invite.expires_at,
+                    invite.max_attempts,
+                    invite.attempts + 1,
+                    now.timestamp(),
+                ),
+                tx=tx,
             )
-
-        self._repo.save_invite(
-            Invite(
-                invite.code,
-                invite.elder_id,
-                invite.role,
-                invite.expires_at,
-                invite.max_attempts,
-                invite.attempts + 1,
-                now.timestamp(),
-            )
-        )
 
     def revoke_consent(self, elder_id: str) -> None:
         consent = self._repo.get_consent(elder_id)

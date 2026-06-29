@@ -235,3 +235,12 @@ def test_guardian_line_ids_only_primary():
     inv_elder = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
     svc.redeem_invite(inv_elder.code, "U-elder", consent_by=ConsentBy.SELF)
     assert svc.guardian_line_ids("U-elder") == ["U-son"]
+
+
+def test_create_elder_uses_repo_transaction():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    # create_elder 同時寫 elder 與 elder_guardian，且兩者皆落地
+    assert repo.get_elder(elder.elder_id).name == "阿公"
+    assert repo.list_elder_guardians(elder.elder_id)[0].role.value == "primary"
