@@ -6,6 +6,7 @@ import logging
 from collections.abc import Callable
 from datetime import datetime
 
+from kinsun.scheduler.fanout import fanout_job
 from kinsun.scheduler.scheduler import Job
 
 logger = logging.getLogger("kinsun.proactive")
@@ -22,16 +23,9 @@ def build_greeting_job(
     minute: int = 0,
     name: str = "daily-greeting",
 ) -> Job:
-    cron = f"{minute} {hour} * * *"
-
-    def run() -> None:
-        for session_id in sessions():
-            try:
-                greet_one(session_id)
-            except Exception:  # noqa: BLE001 - 單一長者失敗不影響其他
-                logger.exception("問候 session 失敗：%s", session_id)
-
-    return Job(name=name, cron=cron, run=run)
+    return fanout_job(
+        name=name, hour=hour, minute=minute, population=sessions, action=greet_one, logger=logger
+    )
 
 
 def build_inactivity_job(
@@ -45,16 +39,11 @@ def build_inactivity_job(
     minute: int = 0,
     name: str = "inactivity-care",
 ) -> Job:
-    cron = f"{minute} {hour} * * *"
+    def action(session_id: str) -> None:
+        last = last_active(session_id)
+        if last is not None and clock().timestamp() - last >= threshold_seconds:
+            care_one(session_id)
 
-    def run() -> None:
-        now_ts = clock().timestamp()
-        for session_id in sessions():
-            try:
-                last = last_active(session_id)
-                if last is not None and now_ts - last >= threshold_seconds:
-                    care_one(session_id)
-            except Exception:  # noqa: BLE001 - 單一長者失敗不影響其他
-                logger.exception("失聯關心 session 失敗：%s", session_id)
-
-    return Job(name=name, cron=cron, run=run)
+    return fanout_job(
+        name=name, hour=hour, minute=minute, population=sessions, action=action, logger=logger
+    )
