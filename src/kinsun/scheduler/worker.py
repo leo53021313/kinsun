@@ -14,15 +14,12 @@ from zoneinfo import ZoneInfo
 from kinsun.agent import CareAgent
 from kinsun.channels.line.messenger import LineApiMessenger
 from kinsun.config import Settings, load_settings
-from kinsun.episodic.embeddings import GeminiEmbedder
-from kinsun.episodic.recall import EpisodicRecaller
-from kinsun.episodic.store import SqliteVectorStore
-from kinsun.knowledge.recall import KnowledgeRecaller
-from kinsun.knowledge.store import SqliteFactStore
+from kinsun.db import ensure_schema
 from kinsun.llm import GeminiClient
 from kinsun.longterm.consolidation import run_consolidation
-from kinsun.longterm.extractor import ConsolidationExtractor
-from kinsun.memory.store import SqliteMemoryStore
+from kinsun.longterm.store import Mem0LongTermStore
+from kinsun.mem0_factory import build_mem0_memory
+from kinsun.memory.store import PgMemoryStore
 from kinsun.proactive.jobs import (
     GREETING_INTENT,
     INACTIVITY_INTENT,
@@ -36,8 +33,9 @@ from kinsun.scheduler.scheduler import Scheduler
 
 def build_scheduler(settings: Settings, *, clock: Callable[[], datetime]) -> Scheduler:
     tz = ZoneInfo(settings.timezone)
-    memory = SqliteMemoryStore(
-        settings.memory_db_path,
+    ensure_schema(settings.database_url)
+    memory = PgMemoryStore(
+        settings.database_url,
         clock=lambda: datetime.now(tz),
         max_turns=settings.memory_max_turns,
     )
@@ -46,24 +44,12 @@ def build_scheduler(settings: Settings, *, clock: Callable[[], datetime]) -> Sch
         model=settings.gemini_model,
         timeout=settings.llm_timeout_seconds,
     )
-    embedder = GeminiEmbedder(api_key=settings.gemini_api_key, model=settings.embedding_model)
-    fact_store = SqliteFactStore(settings.knowledge_db_path)
-    vector_store = SqliteVectorStore(settings.episodic_db_path)
-    extractor = ConsolidationExtractor(gemini)
-    knowledge = KnowledgeRecaller(fact_store)
-    episodic = EpisodicRecaller(embedder, vector_store, top_k=settings.episodic_top_k)
-    agent = CareAgent(gemini, memory, MemoryContext(knowledge, episodic))
+    long_term = Mem0LongTermStore(build_mem0_memory(settings), top_k=settings.longterm_top_k)
+    agent = CareAgent(gemini, memory, MemoryContext(long_term))
     messenger = LineApiMessenger(settings.line_channel_access_token)
 
     def run_one(session_id: str) -> None:
-        run_consolidation(
-            session_id,
-            short_term=memory,
-            extractor=extractor,
-            embedder=embedder,
-            fact_store=fact_store,
-            vector_store=vector_store,
-        )
+        run_consolidation(session_id, short_term=memory, long_term=long_term)
 
     def greet_one(session_id: str) -> None:
         messenger.push_text(session_id, agent.proactive(session_id, GREETING_INTENT))

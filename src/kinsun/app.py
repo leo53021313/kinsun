@@ -16,13 +16,11 @@ from kinsun.agent import CareAgent
 from kinsun.channels.line.messenger import LineApiMessenger
 from kinsun.channels.line.webhook import create_app
 from kinsun.config import load_settings
-from kinsun.episodic.embeddings import GeminiEmbedder
-from kinsun.episodic.recall import EpisodicRecaller
-from kinsun.episodic.store import SqliteVectorStore
-from kinsun.knowledge.recall import KnowledgeRecaller
-from kinsun.knowledge.store import SqliteFactStore
+from kinsun.db import ensure_schema
 from kinsun.llm import GeminiClient
-from kinsun.memory.store import SqliteMemoryStore
+from kinsun.longterm.store import Mem0LongTermStore
+from kinsun.mem0_factory import build_mem0_memory
+from kinsun.memory.store import PgMemoryStore
 from kinsun.pipeline import VoicePipeline
 from kinsun.recall import MemoryContext
 from kinsun.safety.classifier import LlmRiskClassifier
@@ -35,8 +33,9 @@ from kinsun.speech.tts import TextBubbleTts
 def build_app() -> FastAPI:
     settings = load_settings(os.environ)
     tz = ZoneInfo(settings.timezone)
-    memory = SqliteMemoryStore(
-        settings.memory_db_path,
+    ensure_schema(settings.database_url)
+    memory = PgMemoryStore(
+        settings.database_url,
         clock=lambda: datetime.now(tz),
         max_turns=settings.memory_max_turns,
     )
@@ -45,13 +44,8 @@ def build_app() -> FastAPI:
         model=settings.gemini_model,
         timeout=settings.llm_timeout_seconds,
     )
-    knowledge = KnowledgeRecaller(SqliteFactStore(settings.knowledge_db_path))
-    episodic = EpisodicRecaller(
-        GeminiEmbedder(api_key=settings.gemini_api_key, model=settings.embedding_model),
-        SqliteVectorStore(settings.episodic_db_path),
-        top_k=settings.episodic_top_k,
-    )
-    context = MemoryContext(knowledge, episodic)
+    long_term = Mem0LongTermStore(build_mem0_memory(settings), top_k=settings.longterm_top_k)
+    context = MemoryContext(long_term)
     pipeline = VoicePipeline(
         asr=build_asr_client(settings),
         agent=CareAgent(gemini, memory, context),
