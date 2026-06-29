@@ -28,3 +28,13 @@ def test_append_and_recent_roundtrip():
     assert [m.text for m in msgs][-2:] == ["你好", "您好"]
     assert store.last_active(sid) is not None
     assert sid in store.sessions()
+
+
+def test_previous_day_excludes_today():
+    from kinsun.llm import Message
+
+    store = _store()
+    sid = f"it-prevday-{os.getpid()}"
+    # 今天剛寫入的對話不應落在「前一天」整理區間內。
+    store.append(sid, Message("user", "今天說的"))
+    assert store.previous_day(sid) == []

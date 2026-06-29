@@ -18,6 +18,8 @@ def build_consolidation_job(
     minute: int = 0,
     name: str = "daily-consolidation",
 ) -> Job:
+    cron = f"{minute} {hour} * * *"
+
     def run() -> None:
         for session_id in sessions():
             try:
@@ -25,4 +27,4 @@ def build_consolidation_job(
             except Exception:  # noqa: BLE001 - 單一 session 失敗不影響其他
                 logger.exception("整理 session 失敗：%s", session_id)
 
-    return Job(name=name, hour=hour, minute=minute, run=run)
+    return Job(name=name, cron=cron, run=run)

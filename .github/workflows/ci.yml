@@ -1,0 +1,33 @@
+name: CI
+
+# 7 人協作的守門：每個對 main 的 PR（與合進 main 後）自動跑 lint、格式與測試。
+# 單元測試全離線、不需雲端金鑰；雲端整合測試（KINSUN_IT）預設 skip，故 CI 會綠。
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安裝 uv（含快取）
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: 建立環境（依 uv.lock 還原，Python 由 .python-version 決定）
+        run: uv sync --frozen
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Ruff 格式檢查
+        run: uv run ruff format --check .
+
+      - name: 跑測試
+        run: uv run pytest

@@ -95,6 +95,30 @@ def test_redeem_expired():
     assert repo.get_invite(inv.code).attempts == 1
 
 
+def test_guardian_redeem_does_not_create_elder_consent():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    inv = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
+    svc.redeem_invite(inv.code, "U-daughter", consent_by=ConsentBy.SELF)
+    # 家屬綁定不代表長輩本人同意；不應替長輩寫入同意紀錄。
+    assert repo.get_consent(elder.elder_id) is None
+
+
+def test_guardian_redeem_does_not_resurrect_revoked_consent():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    inv_e = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
+    svc.redeem_invite(inv_e.code, "U-elder", consent_by=ConsentBy.SELF)
+    svc.revoke_consent(elder.elder_id)
+    assert svc.is_consented_elder("U-elder") is False
+    # 之後有家屬加入，不可「復活」長輩已撤回的同意。
+    inv_g = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
+    svc.redeem_invite(inv_g.code, "U-daughter", consent_by=ConsentBy.SELF)
+    assert svc.is_consented_elder("U-elder") is False
+
+
 def test_revoke_consent_sets_revoked():
     repo = FakeAccountRepository()
     svc = _service(repo)
@@ -117,3 +141,97 @@ def test_guardians_of_sorted_and_permissions():
     assert svc.can_view_transcript(elder.elder_id, primary.guardian_id) is True
     assert svc.can_view_transcript(elder.elder_id, secondary.guardian_id) is False
     assert svc.can_view_transcript(elder.elder_id, "nobody") is False
+
+
+def test_get_elder():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    assert svc.get_elder(elder.elder_id).name == "阿公"
+    assert svc.get_elder("nope") is None
+
+
+def test_is_consented_elder_lifecycle():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    assert svc.is_consented_elder("U-elder") is False
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    inv = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
+    svc.redeem_invite(inv.code, "U-elder", consent_by=ConsentBy.SELF)
+    assert svc.is_consented_elder("U-elder") is True
+    svc.revoke_consent(elder.elder_id)
+    assert svc.is_consented_elder("U-elder") is False
+
+
+def test_is_consented_elder_bound_without_consent():
+    from kinsun.accounts.models import Elder
+
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    repo.save_elder(Elder("e1", "阿公", "U-elder"))
+    assert svc.is_consented_elder("U-elder") is False
+
+
+def test_preview_invite_valid_and_not_found():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    inv = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
+    p = svc.preview_invite(inv.code)
+    assert p.role == InviteRole.ELDER
+    assert p.elder_name == "阿公"
+    assert p.reason is None
+    assert svc.preview_invite("nope") is None
+
+
+def test_preview_invite_expired():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    inv = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
+    later = _service(repo, now=NOW + timedelta(hours=25))
+    assert later.preview_invite(inv.code).reason == "expired"
+
+
+def test_preview_invite_used():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    inv = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
+    svc.redeem_invite(inv.code, "U-elder", consent_by=ConsentBy.SELF)
+    assert svc.preview_invite(inv.code).reason == "used"
+
+
+def test_elders_managed_by():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    assert svc.elders_managed_by("U-son") == []
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    managed = svc.elders_managed_by("U-son")
+    assert [e.elder_id for e in managed] == [elder.elder_id]
+
+
+def test_guardian_line_ids_in_escalation_order():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    inv_elder = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
+    svc.redeem_invite(inv_elder.code, "U-elder", consent_by=ConsentBy.SELF)
+    inv_guard = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
+    svc.redeem_invite(inv_guard.code, "U-daughter", consent_by=ConsentBy.SELF)
+    assert svc.guardian_line_ids("U-elder") == ["U-son", "U-daughter"]
+
+
+def test_guardian_line_ids_unbound_elder_returns_empty():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    assert svc.guardian_line_ids("U-nobody") == []
+
+
+def test_guardian_line_ids_only_primary():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    inv_elder = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
+    svc.redeem_invite(inv_elder.code, "U-elder", consent_by=ConsentBy.SELF)
+    assert svc.guardian_line_ids("U-elder") == ["U-son"]

@@ -22,6 +22,8 @@ def build_greeting_job(
     minute: int = 0,
     name: str = "daily-greeting",
 ) -> Job:
+    cron = f"{minute} {hour} * * *"
+
     def run() -> None:
         for session_id in sessions():
             try:
@@ -29,7 +31,7 @@ def build_greeting_job(
             except Exception:  # noqa: BLE001 - 單一長者失敗不影響其他
                 logger.exception("問候 session 失敗：%s", session_id)
 
-    return Job(name=name, hour=hour, minute=minute, run=run)
+    return Job(name=name, cron=cron, run=run)
 
 
 def build_inactivity_job(
@@ -43,6 +45,8 @@ def build_inactivity_job(
     minute: int = 0,
     name: str = "inactivity-care",
 ) -> Job:
+    cron = f"{minute} {hour} * * *"
+
     def run() -> None:
         now_ts = clock().timestamp()
         for session_id in sessions():
@@ -53,4 +57,4 @@ def build_inactivity_job(
             except Exception:  # noqa: BLE001 - 單一長者失敗不影響其他
                 logger.exception("失聯關心 session 失敗：%s", session_id)
 
-    return Job(name=name, hour=hour, minute=minute, run=run)
+    return Job(name=name, cron=cron, run=run)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import secrets
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from kinsun.accounts.models import (
@@ -26,6 +27,13 @@ class InviteError(Exception):
     def __init__(self, reason: str) -> None:
         self.reason = reason
         super().__init__(reason)
+
+
+@dataclass(frozen=True)
+class InvitePreview:
+    role: InviteRole
+    elder_name: str
+    reason: str | None
 
 
 class AccountService:
@@ -86,6 +94,10 @@ class AccountService:
             if elder is None:
                 raise InviteError("not_found")
             self._repo.save_elder(Elder(elder.elder_id, elder.name, line_user_id))
+            # 只有長輩本人綁定才代表「長輩同意」；家屬綁定不可覆寫或復活長輩的同意紀錄。
+            self._repo.save_consent(
+                Consent(invite.elder_id, consent_by, CONSENT_VERSION, now.timestamp())
+            )
         else:
             guardian = self._guardian_for(line_user_id, "")
             order = max(
@@ -98,9 +110,6 @@ class AccountService:
                 )
             )
 
-        self._repo.save_consent(
-            Consent(invite.elder_id, consent_by, CONSENT_VERSION, now.timestamp())
-        )
         self._repo.save_invite(
             Invite(
                 invite.code,
@@ -129,6 +138,53 @@ class AccountService:
 
     def guardians_of(self, elder_id: str) -> list[ElderGuardian]:
         return self._repo.list_elder_guardians(elder_id)
+
+    def is_consented_elder(self, line_user_id: str) -> bool:
+        elder = self._repo.get_elder_by_line(line_user_id)
+        if elder is None:
+            return False
+        consent = self._repo.get_consent(elder.elder_id)
+        return consent is not None and consent.revoked_at is None
+
+    def get_elder(self, elder_id: str):
+        return self._repo.get_elder(elder_id)
+
+    def preview_invite(self, code: str) -> InvitePreview | None:
+        invite = self._repo.get_invite(code)
+        if invite is None:
+            return None
+        elder = self._repo.get_elder(invite.elder_id)
+        elder_name = elder.name if elder is not None else ""
+        reason: str | None = None
+        if invite.used_at is not None:
+            reason = "used"
+        elif invite.attempts >= invite.max_attempts:
+            reason = "too_many_attempts"
+        elif self._clock().timestamp() > invite.expires_at:
+            reason = "expired"
+        return InvitePreview(invite.role, elder_name, reason)
+
+    def elders_managed_by(self, line_user_id: str) -> list[Elder]:
+        guardian = self._repo.get_guardian_by_line(line_user_id)
+        if guardian is None:
+            return []
+        elders: list[Elder] = []
+        for elder_id in self._repo.elder_ids_of_guardian(guardian.guardian_id):
+            elder = self._repo.get_elder(elder_id)
+            if elder is not None:
+                elders.append(elder)
+        return elders
+
+    def guardian_line_ids(self, elder_line_id: str) -> list[str]:
+        elder = self._repo.get_elder_by_line(elder_line_id)
+        if elder is None:
+            return []
+        line_ids: list[str] = []
+        for eg in self._repo.list_elder_guardians(elder.elder_id):
+            guardian = self._repo.get_guardian(eg.guardian_id)
+            if guardian is not None and guardian.line_user_id:
+                line_ids.append(guardian.line_user_id)
+        return line_ids
 
     def can_view_transcript(self, elder_id: str, guardian_id: str) -> bool:
         eg = self._repo.get_elder_guardian(elder_id, guardian_id)

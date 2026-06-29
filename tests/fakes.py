@@ -2,29 +2,40 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from kinsun.llm import Message
+from kinsun.memory.store import previous_day_bounds
+
+_TPE = timezone(timedelta(hours=8))
+_DEFAULT_NOW = datetime(2026, 6, 29, 3, 0, tzinfo=_TPE)
 
 
 class FakeMemoryStore:
-    def __init__(self) -> None:
-        self._turns: dict[str, list[Message]] = {}
-        self._last_user: dict[str, float] = {}
-        self._clock = 0.0
+    """以時間戳記錄每輪對話，可模擬「今天」與「前一天」的日界查詢。"""
 
-    def append(self, session_id: str, message: Message) -> None:
-        self._turns.setdefault(session_id, []).append(message)
-        if message.role == "user":
-            self._clock += 1.0
-            self._last_user[session_id] = self._clock
+    def __init__(self, now: datetime | None = None) -> None:
+        self._now = now or _DEFAULT_NOW
+        self._turns: dict[str, list[tuple[float, Message]]] = {}
+
+    def append(self, session_id: str, message: Message, *, at: datetime | None = None) -> None:
+        ts = (at or self._now).timestamp()
+        self._turns.setdefault(session_id, []).append((ts, message))
 
     def recent(self, session_id: str) -> list[Message]:
-        return list(self._turns.get(session_id, []))
+        midnight = self._now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        return [m for ts, m in self._turns.get(session_id, []) if ts >= midnight]
+
+    def previous_day(self, session_id: str) -> list[Message]:
+        start, end = previous_day_bounds(self._now)
+        return [m for ts, m in self._turns.get(session_id, []) if start <= ts < end]
 
     def sessions(self) -> list[str]:
         return sorted(self._turns)
 
     def last_active(self, session_id: str) -> float | None:
-        return self._last_user.get(session_id)
+        users = [ts for ts, m in self._turns.get(session_id, []) if m.role == "user"]
+        return max(users) if users else None
 
 
 class FakeLongTermStore:
@@ -63,6 +74,15 @@ class FakeAccountRepository:
     def get_guardian_by_line(self, line_user_id):
         return self.guardians_by_line.get(line_user_id)
 
+    def get_elder_by_line(self, line_user_id):
+        for elder in self.elders.values():
+            if elder.line_user_id == line_user_id:
+                return elder
+        return None
+
+    def get_guardian(self, guardian_id):
+        return self.guardians.get(guardian_id)
+
     def save_elder_guardian(self, eg):
         self.elder_guardians[(eg.elder_id, eg.guardian_id)] = eg
 
@@ -72,6 +92,9 @@ class FakeAccountRepository:
     def list_elder_guardians(self, elder_id):
         rows = [v for (e, _), v in self.elder_guardians.items() if e == elder_id]
         return sorted(rows, key=lambda x: x.escalation_order)
+
+    def elder_ids_of_guardian(self, guardian_id):
+        return sorted(e for (e, g) in self.elder_guardians if g == guardian_id)
 
     def save_consent(self, c):
         self.consents[c.elder_id] = c
@@ -84,3 +107,46 @@ class FakeAccountRepository:
 
     def get_invite(self, code):
         return self.invites.get(code)
+
+
+class FakeBindingSessionStore:
+    def __init__(self) -> None:
+        self._sessions = {}
+
+    def get(self, line_user_id):
+        return self._sessions.get(line_user_id)
+
+    def save(self, session):
+        self._sessions[session.line_user_id] = session
+
+    def delete(self, line_user_id):
+        self._sessions.pop(line_user_id, None)
+
+
+class FakeScheduleStateStore:
+    def __init__(self) -> None:
+        self._last: dict[str, datetime] = {}
+
+    def get_last_run(self, job_name: str) -> datetime | None:
+        return self._last.get(job_name)
+
+    def set_last_run(self, job_name: str, when: datetime) -> None:
+        self._last[job_name] = when
+
+
+class FakeMedicationStore:
+    def __init__(self) -> None:
+        self._meds = {}
+
+    def add(self, med):
+        self._meds[med.med_id] = med
+
+    def list_for_elder(self, elder_id):
+        rows = [m for m in self._meds.values() if m.elder_id == elder_id]
+        return sorted(rows, key=lambda m: m.name)
+
+    def list_for_slot(self, slot):
+        return [m for m in self._meds.values() if slot in m.slots]
+
+    def remove(self, med_id):
+        self._meds.pop(med_id, None)

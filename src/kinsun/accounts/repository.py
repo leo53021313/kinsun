@@ -26,9 +26,12 @@ class AccountRepository(Protocol):
     def get_elder(self, elder_id: str) -> Elder | None: ...
     def save_guardian(self, guardian: Guardian) -> None: ...
     def get_guardian_by_line(self, line_user_id: str) -> Guardian | None: ...
+    def get_guardian(self, guardian_id: str) -> Guardian | None: ...
+    def get_elder_by_line(self, line_user_id: str) -> Elder | None: ...
     def save_elder_guardian(self, eg: ElderGuardian) -> None: ...
     def get_elder_guardian(self, elder_id: str, guardian_id: str) -> ElderGuardian | None: ...
     def list_elder_guardians(self, elder_id: str) -> list[ElderGuardian]: ...
+    def elder_ids_of_guardian(self, guardian_id: str) -> list[str]: ...
     def save_consent(self, consent: Consent) -> None: ...
     def get_consent(self, elder_id: str) -> Consent | None: ...
     def save_invite(self, invite: Invite) -> None: ...
@@ -85,6 +88,20 @@ class PgAccountRepository:
         )
         return Guardian(*rows[0]) if rows else None
 
+    def get_guardian(self, guardian_id: str) -> Guardian | None:
+        rows = self._query(
+            "SELECT guardian_id, line_user_id, name FROM guardians WHERE guardian_id = %s",
+            (guardian_id,),
+        )
+        return Guardian(*rows[0]) if rows else None
+
+    def get_elder_by_line(self, line_user_id: str) -> Elder | None:
+        rows = self._query(
+            "SELECT elder_id, name, line_user_id FROM elders WHERE line_user_id = %s",
+            (line_user_id,),
+        )
+        return Elder(*rows[0]) if rows else None
+
     def save_elder_guardian(self, eg: ElderGuardian) -> None:
         self._exec(
             "INSERT INTO elder_guardians "
@@ -120,6 +137,13 @@ class PgAccountRepository:
             (elder_id,),
         )
         return [self._to_eg(r) for r in rows]
+
+    def elder_ids_of_guardian(self, guardian_id: str) -> list[str]:
+        rows = self._query(
+            "SELECT elder_id FROM elder_guardians WHERE guardian_id = %s ORDER BY elder_id",
+            (guardian_id,),
+        )
+        return [r[0] for r in rows]
 
     def save_consent(self, consent: Consent) -> None:
         self._exec(

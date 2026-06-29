@@ -11,6 +11,8 @@ from collections.abc import Callable
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from kinsun.accounts.repository import PgAccountRepository
+from kinsun.accounts.service import AccountService
 from kinsun.agent import CareAgent
 from kinsun.channels.line.messenger import LineApiMessenger
 from kinsun.config import Settings, load_settings
@@ -18,6 +20,9 @@ from kinsun.db import ensure_schema
 from kinsun.llm import GeminiClient
 from kinsun.longterm.consolidation import run_consolidation
 from kinsun.longterm.store import Mem0LongTermStore
+from kinsun.medication.jobs import build_medication_slot_job
+from kinsun.medication.models import MedicationSlot
+from kinsun.medication.store import PgMedicationStore
 from kinsun.mem0_factory import build_mem0_memory
 from kinsun.memory.store import PgMemoryStore
 from kinsun.proactive.jobs import (
@@ -29,6 +34,7 @@ from kinsun.proactive.jobs import (
 from kinsun.recall import MemoryContext
 from kinsun.scheduler.jobs import build_consolidation_job
 from kinsun.scheduler.scheduler import Scheduler
+from kinsun.scheduler.state import PgScheduleStateStore
 
 
 def build_scheduler(settings: Settings, *, clock: Callable[[], datetime]) -> Scheduler:
@@ -47,6 +53,8 @@ def build_scheduler(settings: Settings, *, clock: Callable[[], datetime]) -> Sch
     long_term = Mem0LongTermStore(build_mem0_memory(settings), top_k=settings.longterm_top_k)
     agent = CareAgent(gemini, memory, MemoryContext(long_term))
     messenger = LineApiMessenger(settings.line_channel_access_token)
+    accounts = AccountService(PgAccountRepository(settings.database_url), clock=clock)
+    med_store = PgMedicationStore(settings.database_url)
 
     def run_one(session_id: str) -> None:
         run_consolidation(session_id, short_term=memory, long_term=long_term)
@@ -73,7 +81,26 @@ def build_scheduler(settings: Settings, *, clock: Callable[[], datetime]) -> Sch
             hour=settings.inactivity_hour,
         ),
     ]
-    return Scheduler(jobs, clock)
+    med_slots = [
+        (MedicationSlot.MORNING, settings.medication_morning_hour, "medication-morning"),
+        (MedicationSlot.NOON, settings.medication_noon_hour, "medication-noon"),
+        (MedicationSlot.EVENING, settings.medication_evening_hour, "medication-evening"),
+        (MedicationSlot.BEDTIME, settings.medication_bedtime_hour, "medication-bedtime"),
+    ]
+    for slot, hour, name in med_slots:
+        jobs.append(
+            build_medication_slot_job(
+                slot=slot,
+                meds_at_slot=lambda s=slot: med_store.list_for_slot(s),
+                lookup_elder=accounts.get_elder,
+                is_consented=accounts.is_consented_elder,
+                push=messenger.push_text,
+                hour=hour,
+                name=name,
+            )
+        )
+    state = PgScheduleStateStore(settings.database_url, tz)
+    return Scheduler(jobs, clock, state)
 
 
 def serve(scheduler: Scheduler, *, tick_seconds: int) -> None:
