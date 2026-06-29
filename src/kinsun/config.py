@@ -20,19 +20,14 @@ class Settings:
     asr_endpoint: str
     asr_timeout_seconds: float
     llm_timeout_seconds: float
-    memory_db_path: str
     memory_max_turns: int
     timezone: str
-    knowledge_db_path: str
-    episodic_db_path: str
-    episodic_top_k: int
     embedding_model: str
     consolidation_hour: int
     scheduler_tick_seconds: int
     greeting_hour: int
     inactivity_hour: int
     inactivity_days: int
-    accounts_db_path: str
     invite_ttl_hours: int
     invite_max_attempts: int
     database_url: str
@@ -59,19 +54,14 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         asr_endpoint=env.get("ASR_ENDPOINT", ""),
         asr_timeout_seconds=float(env.get("ASR_TIMEOUT_SECONDS", "15")),
         llm_timeout_seconds=float(env.get("LLM_TIMEOUT_SECONDS", "30")),
-        memory_db_path=env.get("MEMORY_DB_PATH", "kinsun_memory.db"),
         memory_max_turns=int(env.get("MEMORY_MAX_TURNS", "200")),
         timezone=env.get("TIMEZONE", "Asia/Taipei"),
-        knowledge_db_path=env.get("KNOWLEDGE_DB_PATH", "kinsun_knowledge.db"),
-        episodic_db_path=env.get("EPISODIC_DB_PATH", "kinsun_episodic.db"),
-        episodic_top_k=int(env.get("EPISODIC_TOP_K", "3")),
         embedding_model=env.get("EMBEDDING_MODEL", "gemini-embedding-001"),
         consolidation_hour=int(env.get("CONSOLIDATION_HOUR", "3")),
         scheduler_tick_seconds=int(env.get("SCHEDULER_TICK_SECONDS", "60")),
         greeting_hour=int(env.get("GREETING_HOUR", "8")),
         inactivity_hour=int(env.get("INACTIVITY_HOUR", "10")),
         inactivity_days=int(env.get("INACTIVITY_DAYS", "2")),
-        accounts_db_path=env.get("ACCOUNTS_DB_PATH", "kinsun_accounts.db"),
         invite_ttl_hours=int(env.get("INVITE_TTL_HOURS", "24")),
         invite_max_attempts=int(env.get("INVITE_MAX_ATTEMPTS", "5")),
         database_url=_require(env, "DATABASE_URL"),

@@ -4,8 +4,8 @@ from itertools import count
 import pytest
 
 from kinsun.accounts.models import ConsentBy, InviteRole, Role
-from kinsun.accounts.repository import SqliteAccountRepository
 from kinsun.accounts.service import AccountService, InviteError
+from tests.fakes import FakeAccountRepository
 
 TPE = timezone(timedelta(hours=8))
 NOW = datetime(2026, 6, 29, 10, 0, tzinfo=TPE)
@@ -20,7 +20,7 @@ def _service(repo, *, now=NOW):
 
 
 def test_create_elder_makes_primary_guardian():
-    repo = SqliteAccountRepository(":memory:")
+    repo = FakeAccountRepository()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     assert elder.name == "阿公"
@@ -31,7 +31,7 @@ def test_create_elder_makes_primary_guardian():
 
 
 def test_generate_invite_sets_ttl_and_limit():
-    repo = SqliteAccountRepository(":memory:")
+    repo = FakeAccountRepository()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
@@ -42,7 +42,7 @@ def test_generate_invite_sets_ttl_and_limit():
 
 
 def test_redeem_elder_binds_line():
-    repo = SqliteAccountRepository(":memory:")
+    repo = FakeAccountRepository()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
@@ -53,7 +53,7 @@ def test_redeem_elder_binds_line():
 
 
 def test_redeem_guardian_adds_relation():
-    repo = SqliteAccountRepository(":memory:")
+    repo = FakeAccountRepository()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
@@ -66,14 +66,14 @@ def test_redeem_guardian_adds_relation():
 
 
 def test_redeem_unknown_code():
-    svc = _service(SqliteAccountRepository(":memory:"))
+    svc = _service(FakeAccountRepository())
     with pytest.raises(InviteError) as exc:
         svc.redeem_invite("nope", "U-x", consent_by=ConsentBy.SELF)
     assert exc.value.reason == "not_found"
 
 
 def test_redeem_twice_is_used():
-    repo = SqliteAccountRepository(":memory:")
+    repo = FakeAccountRepository()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
@@ -84,7 +84,7 @@ def test_redeem_twice_is_used():
 
 
 def test_redeem_expired():
-    repo = SqliteAccountRepository(":memory:")
+    repo = FakeAccountRepository()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
@@ -96,7 +96,7 @@ def test_redeem_expired():
 
 
 def test_revoke_consent_sets_revoked():
-    repo = SqliteAccountRepository(":memory:")
+    repo = FakeAccountRepository()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
@@ -106,7 +106,7 @@ def test_revoke_consent_sets_revoked():
 
 
 def test_guardians_of_sorted_and_permissions():
-    repo = SqliteAccountRepository(":memory:")
+    repo = FakeAccountRepository()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
