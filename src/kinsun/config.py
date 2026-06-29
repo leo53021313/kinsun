@@ -35,6 +35,7 @@ class Settings:
     neo4j_username: str
     neo4j_password: str
     longterm_top_k: int
+    binding_session_ttl_minutes: int
 
 
 def _require(env: Mapping[str, str], key: str) -> str:
@@ -69,4 +70,5 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         neo4j_username=_require(env, "NEO4J_USERNAME"),
         neo4j_password=_require(env, "NEO4J_PASSWORD"),
         longterm_top_k=int(env.get("LONGTERM_TOP_K", "5")),
+        binding_session_ttl_minutes=int(env.get("BINDING_SESSION_TTL_MINUTES", "10")),
     )
