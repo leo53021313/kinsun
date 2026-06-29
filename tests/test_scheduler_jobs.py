@@ -7,7 +7,7 @@ def test_runs_for_each_session():
     job.run()
     assert done == ["u1", "u2"]
     assert job.name == "daily-consolidation"
-    assert job.hour == 3
+    assert job.cron == "0 3 * * *"
 
 
 def test_one_session_failure_does_not_block_others():
