@@ -82,6 +82,9 @@ class FakeAccountRepository:
         rows = [v for (e, _), v in self.elder_guardians.items() if e == elder_id]
         return sorted(rows, key=lambda x: x.escalation_order)
 
+    def elder_ids_of_guardian(self, guardian_id):
+        return sorted(e for (e, g) in self.elder_guardians if g == guardian_id)
+
     def save_consent(self, c):
         self.consents[c.elder_id] = c
 

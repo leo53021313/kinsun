@@ -5,6 +5,7 @@ from __future__ import annotations
 import secrets
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from kinsun.accounts.models import (
@@ -26,6 +27,13 @@ class InviteError(Exception):
     def __init__(self, reason: str) -> None:
         self.reason = reason
         super().__init__(reason)
+
+
+@dataclass(frozen=True)
+class InvitePreview:
+    role: InviteRole
+    elder_name: str
+    reason: str | None
 
 
 class AccountService:
@@ -129,6 +137,32 @@ class AccountService:
 
     def guardians_of(self, elder_id: str) -> list[ElderGuardian]:
         return self._repo.list_elder_guardians(elder_id)
+
+    def preview_invite(self, code: str) -> InvitePreview | None:
+        invite = self._repo.get_invite(code)
+        if invite is None:
+            return None
+        elder = self._repo.get_elder(invite.elder_id)
+        elder_name = elder.name if elder is not None else ""
+        reason: str | None = None
+        if invite.used_at is not None:
+            reason = "used"
+        elif invite.attempts >= invite.max_attempts:
+            reason = "too_many_attempts"
+        elif self._clock().timestamp() > invite.expires_at:
+            reason = "expired"
+        return InvitePreview(invite.role, elder_name, reason)
+
+    def elders_managed_by(self, line_user_id: str) -> list[Elder]:
+        guardian = self._repo.get_guardian_by_line(line_user_id)
+        if guardian is None:
+            return []
+        elders: list[Elder] = []
+        for elder_id in self._repo.elder_ids_of_guardian(guardian.guardian_id):
+            elder = self._repo.get_elder(elder_id)
+            if elder is not None:
+                elders.append(elder)
+        return elders
 
     def guardian_line_ids(self, elder_line_id: str) -> list[str]:
         elder = self._repo.get_elder_by_line(elder_line_id)
