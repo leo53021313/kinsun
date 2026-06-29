@@ -29,6 +29,12 @@ ACCOUNTS_DDL = (
     "attempts INTEGER NOT NULL, used_at DOUBLE PRECISION);"
 )
 
+BINDING_DDL = (
+    "CREATE TABLE IF NOT EXISTS binding_sessions ("
+    "line_user_id TEXT PRIMARY KEY, state TEXT NOT NULL, data TEXT NOT NULL, "
+    "updated_at DOUBLE PRECISION NOT NULL);"
+)
+
 
 def connect(database_url: str) -> psycopg.Connection:
     return psycopg.connect(database_url)
@@ -38,4 +44,5 @@ def ensure_schema(database_url: str) -> None:
     with connect(database_url) as conn:
         conn.execute(MEMORY_DDL)
         conn.execute(ACCOUNTS_DDL)
+        conn.execute(BINDING_DDL)
         conn.commit()
