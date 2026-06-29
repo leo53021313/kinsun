@@ -35,6 +35,11 @@ class Settings:
     accounts_db_path: str
     invite_ttl_hours: int
     invite_max_attempts: int
+    database_url: str
+    neo4j_uri: str
+    neo4j_username: str
+    neo4j_password: str
+    longterm_top_k: int
 
 
 def _require(env: Mapping[str, str], key: str) -> str:
@@ -69,4 +74,9 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         accounts_db_path=env.get("ACCOUNTS_DB_PATH", "kinsun_accounts.db"),
         invite_ttl_hours=int(env.get("INVITE_TTL_HOURS", "24")),
         invite_max_attempts=int(env.get("INVITE_MAX_ATTEMPTS", "5")),
+        database_url=_require(env, "DATABASE_URL"),
+        neo4j_uri=_require(env, "NEO4J_URI"),
+        neo4j_username=_require(env, "NEO4J_USERNAME"),
+        neo4j_password=_require(env, "NEO4J_PASSWORD"),
+        longterm_top_k=int(env.get("LONGTERM_TOP_K", "5")),
     )

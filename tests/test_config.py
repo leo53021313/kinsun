@@ -6,6 +6,10 @@ BASE_ENV = {
     "LINE_CHANNEL_SECRET": "secret",
     "LINE_CHANNEL_ACCESS_TOKEN": "token",
     "GEMINI_API_KEY": "key",
+    "DATABASE_URL": "postgresql://u:p@h:5432/db",
+    "NEO4J_URI": "neo4j+s://x",
+    "NEO4J_USERNAME": "neo4j",
+    "NEO4J_PASSWORD": "pw",
 }
 
 
@@ -30,6 +34,24 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.accounts_db_path == "kinsun_accounts.db"
     assert settings.invite_ttl_hours == 24
     assert settings.invite_max_attempts == 5
+    assert settings.database_url == "postgresql://u:p@h:5432/db"
+    assert settings.neo4j_uri == "neo4j+s://x"
+    assert settings.neo4j_username == "neo4j"
+    assert settings.neo4j_password == "pw"
+    assert settings.longterm_top_k == 5
+
+
+def test_load_settings_requires_database_url():
+    env = {
+        "LINE_CHANNEL_SECRET": "s",
+        "LINE_CHANNEL_ACCESS_TOKEN": "t",
+        "GEMINI_API_KEY": "k",
+        "NEO4J_URI": "x",
+        "NEO4J_USERNAME": "u",
+        "NEO4J_PASSWORD": "p",
+    }
+    with pytest.raises(ConfigError):
+        load_settings(env)
 
 
 def test_load_settings_missing_required_raises():

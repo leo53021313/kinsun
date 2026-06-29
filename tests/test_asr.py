@@ -7,6 +7,10 @@ BASE_ENV = {
     "LINE_CHANNEL_SECRET": "s",
     "LINE_CHANNEL_ACCESS_TOKEN": "t",
     "GEMINI_API_KEY": "k",
+    "DATABASE_URL": "postgresql://u:p@h:5432/db",
+    "NEO4J_URI": "neo4j+s://x",
+    "NEO4J_USERNAME": "neo4j",
+    "NEO4J_PASSWORD": "pw",
 }
 
 
