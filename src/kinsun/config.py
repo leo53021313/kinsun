@@ -33,6 +33,10 @@ class Settings:
     database_url: str
     longterm_top_k: int
     binding_session_ttl_minutes: int
+    medication_morning_hour: int
+    medication_noon_hour: int
+    medication_evening_hour: int
+    medication_bedtime_hour: int
 
 
 def _require(env: Mapping[str, str], key: str) -> str:
@@ -65,4 +69,8 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         database_url=_require(env, "DATABASE_URL"),
         longterm_top_k=int(env.get("LONGTERM_TOP_K", "5")),
         binding_session_ttl_minutes=int(env.get("BINDING_SESSION_TTL_MINUTES", "10")),
+        medication_morning_hour=int(env.get("MEDICATION_MORNING_HOUR", "8")),
+        medication_noon_hour=int(env.get("MEDICATION_NOON_HOUR", "12")),
+        medication_evening_hour=int(env.get("MEDICATION_EVENING_HOUR", "18")),
+        medication_bedtime_hour=int(env.get("MEDICATION_BEDTIME_HOUR", "21")),
     )
