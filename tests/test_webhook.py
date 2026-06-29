@@ -66,11 +66,19 @@ def _audio_event(user_id="U-1"):
     )
 
 
-def _text_event():
+def _text_event(text="設定", user_id="U-2"):
     return SimpleNamespace(
         reply_token="rt-2",
-        message=SimpleNamespace(type="text", id="m-2"),
-        source=SimpleNamespace(user_id="U-2"),
+        message=SimpleNamespace(type="text", id="m-2", text=text),
+        source=SimpleNamespace(user_id=user_id),
+    )
+
+
+def _sticker_event():
+    return SimpleNamespace(
+        reply_token="rt-3",
+        message=SimpleNamespace(type="sticker", id="m-3"),
+        source=SimpleNamespace(user_id="U-3"),
     )
 
 
@@ -82,7 +90,22 @@ class FakeParser:
         return self._events
 
 
-def _make_client(parser, messenger, asr=None, memory=None):
+class _NullBinding:
+    def handle(self, session_id: str, text: str):
+        return None
+
+
+class _StubBinding:
+    def __init__(self, reply):
+        self.reply = reply
+        self.calls: list[tuple[str, str]] = []
+
+    def handle(self, session_id: str, text: str):
+        self.calls.append((session_id, text))
+        return self.reply
+
+
+def _make_client(parser, messenger, asr=None, memory=None, binding=None):
     pipeline = VoicePipeline(
         asr=asr or MockAsrClient("阿公早安"),
         agent=CareAgent(EchoLLM(), memory or NullMemory(), NullContext()),
@@ -90,7 +113,9 @@ def _make_client(parser, messenger, asr=None, memory=None):
         detector=_NullDetector(),
         notifier=_NullNotifier(),
     )
-    app = create_app(parser=parser, pipeline=pipeline, messenger=messenger)
+    app = create_app(
+        parser=parser, pipeline=pipeline, messenger=messenger, binding=binding or _NullBinding()
+    )
     return TestClient(app)
 
 
@@ -119,9 +144,25 @@ def test_missing_user_id_degrades_to_unknown():
     assert memory.sessions == ["unknown", "unknown"]
 
 
-def test_non_audio_message_replies_prompt():
+def test_sticker_message_replies_prompt():
     messenger = FakeMessenger()
-    client = _make_client(FakeParser([_text_event()]), messenger)
+    client = _make_client(FakeParser([_sticker_event()]), messenger)
+    client.post("/line/webhook", content=b"{}", headers={"X-Line-Signature": "x"})
+    assert messenger.replies == [("rt-3", NON_AUDIO_PROMPT)]
+
+
+def test_text_message_routes_to_binding():
+    messenger = FakeMessenger()
+    binding = _StubBinding("已建立檔案")
+    client = _make_client(FakeParser([_text_event("設定", "U-9")]), messenger, binding=binding)
+    client.post("/line/webhook", content=b"{}", headers={"X-Line-Signature": "x"})
+    assert binding.calls == [("U-9", "設定")]
+    assert messenger.replies == [("rt-2", "已建立檔案")]
+
+
+def test_text_non_binding_falls_back_to_prompt():
+    messenger = FakeMessenger()
+    client = _make_client(FakeParser([_text_event("閒聊")]), messenger, binding=_StubBinding(None))
     client.post("/line/webhook", content=b"{}", headers={"X-Line-Signature": "x"})
     assert messenger.replies == [("rt-2", NON_AUDIO_PROMPT)]
 

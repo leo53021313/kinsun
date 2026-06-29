@@ -9,6 +9,7 @@ class LineMessenger(Protocol):
     def get_audio(self, message_id: str) -> bytes: ...
     def reply_text(self, reply_token: str, text: str) -> None: ...
     def push_text(self, user_id: str, text: str) -> None: ...
+    def display_name(self, user_id: str) -> str: ...
 
 
 class LineApiMessenger:
@@ -57,3 +58,11 @@ class LineApiMessenger:
                     messages=[self._TextMessage(text=text)],
                 )
             )
+
+    def display_name(self, user_id: str) -> str:
+        try:
+            with self._ApiClient(self._configuration) as api_client:
+                api = self._MessagingApi(api_client)
+                return api.get_profile(user_id).display_name
+        except Exception:  # noqa: BLE001
+            return ""

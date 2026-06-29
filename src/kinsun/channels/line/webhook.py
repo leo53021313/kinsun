@@ -15,17 +15,22 @@ NON_AUDIO_PROMPT = "金孫現在聽得懂語音喔，您可以按住麥克風跟
 FALLBACK_PROMPT = "金孫剛剛沒聽清楚，您可以再說一次嗎？"
 
 
-def _handle_events(events, pipeline: VoicePipeline, messenger: LineMessenger) -> None:
+def _handle_events(events, pipeline: VoicePipeline, messenger: LineMessenger, binding) -> None:
     for event in events:
         message = getattr(event, "message", None)
         reply_token = getattr(event, "reply_token", None)
         if message is None or reply_token is None:
             continue
-        if getattr(message, "type", None) != "audio":
-            messenger.reply_text(reply_token, NON_AUDIO_PROMPT)
-            continue
         source = getattr(event, "source", None)
         session_id = getattr(source, "user_id", None) or "unknown"
+        mtype = getattr(message, "type", None)
+        if mtype == "text":
+            reply = binding.handle(session_id, getattr(message, "text", "") or "")
+            messenger.reply_text(reply_token, reply if reply is not None else NON_AUDIO_PROMPT)
+            continue
+        if mtype != "audio":
+            messenger.reply_text(reply_token, NON_AUDIO_PROMPT)
+            continue
         try:
             audio = messenger.get_audio(message.id)
             result = pipeline.process(audio, session_id=session_id)
@@ -34,7 +39,7 @@ def _handle_events(events, pipeline: VoicePipeline, messenger: LineMessenger) ->
             messenger.reply_text(reply_token, FALLBACK_PROMPT)
 
 
-def create_app(*, parser, pipeline: VoicePipeline, messenger: LineMessenger) -> FastAPI:
+def create_app(*, parser, pipeline: VoicePipeline, messenger: LineMessenger, binding) -> FastAPI:
     app = FastAPI()
 
     @app.post("/line/webhook")
@@ -45,7 +50,7 @@ def create_app(*, parser, pipeline: VoicePipeline, messenger: LineMessenger) -> 
             events = parser.parse(body.decode("utf-8"), signature)
         except InvalidSignatureError as exc:
             raise HTTPException(status_code=400, detail="invalid signature") from exc
-        _handle_events(events, pipeline, messenger)
+        _handle_events(events, pipeline, messenger, binding)
         return {"ok": True}
 
     return app
