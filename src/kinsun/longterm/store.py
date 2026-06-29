@@ -12,6 +12,9 @@ logger = logging.getLogger(__name__)
 
 _PREFIX = "\n以下為這位長者的長期記憶（部分為長者自述、未必經確認，請勿當成醫療診斷）：\n"
 
+# 每輪固定增補檢索：讓用藥/慢性病等穩定健康事實即使與當下話題無關也浮現。
+HEALTH_QUERY = "用藥 慢性病 過敏 回診 健康狀況"
+
 
 class LongTermStore(Protocol):
     def add(
@@ -38,9 +41,10 @@ def _format_memories_for_prompt(result: dict) -> str:
 
 
 class Mem0LongTermStore:
-    def __init__(self, memory, *, top_k: int = 5) -> None:
+    def __init__(self, memory, *, top_k: int = 5, health_top_k: int = 3) -> None:
         self._memory = memory
         self._top_k = top_k
+        self._health_top_k = health_top_k
 
     def add(
         self, session_id: str, messages: list[Message], *, provenance: str = prov.SELF_CLAIMED
@@ -48,12 +52,30 @@ class Mem0LongTermStore:
         payload = [{"role": m.role, "content": m.text} for m in messages]
         self._memory.add(payload, user_id=session_id, metadata={"provenance": provenance})
 
-    def search(self, session_id: str, query: str, *, top_k: int | None = None) -> str:
+    def _search_raw(self, query: str, session_id: str, top_k: int) -> list[dict]:
         try:
-            result = self._memory.search(query, user_id=session_id, limit=top_k or self._top_k)
-            if not isinstance(result, dict):
-                result = {"results": result or []}
-            return _format_memories_for_prompt(result)
+            result = self._memory.search(query, user_id=session_id, limit=top_k)
         except Exception as exc:  # noqa: BLE001 — 記憶壞掉不可中斷對話
             logger.warning("長期記憶檢索失敗，退化為無記憶：%s", exc)
-            return ""
+            return []
+        if isinstance(result, dict):
+            return result.get("results") or []
+        return result or []
+
+    @staticmethod
+    def _dedup(items: list[dict]) -> list[dict]:
+        seen = set()
+        out = []
+        for item in items:
+            key = item.get("id") or item.get("memory") or item.get("text")
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(item)
+        return out
+
+    def search(self, session_id: str, query: str, *, top_k: int | None = None) -> str:
+        user_items = self._search_raw(query, session_id, top_k or self._top_k)
+        health_items = self._search_raw(HEALTH_QUERY, session_id, self._health_top_k)
+        merged = self._dedup(user_items + health_items)
+        return _format_memories_for_prompt({"results": merged})
