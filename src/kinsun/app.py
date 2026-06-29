@@ -32,6 +32,8 @@ from kinsun.safety.detector import RiskDetector
 from kinsun.safety.notifier import LineGuardianNotifier
 from kinsun.speech.asr import build_asr_client
 from kinsun.speech.tts import TextBubbleTts
+from kinsun.tools.registry import ToolRegistry
+from kinsun.tools.weather import WEATHER_SPEC, build_weather_handler
 
 
 def build_app() -> FastAPI:
@@ -57,9 +59,11 @@ def build_app() -> FastAPI:
         max_attempts=settings.invite_max_attempts,
     )
     messenger = LineApiMessenger(settings.line_channel_access_token)
+    registry = ToolRegistry()
+    registry.register(WEATHER_SPEC, build_weather_handler())
     pipeline = VoicePipeline(
         asr=build_asr_client(settings),
-        agent=CareAgent(gemini, memory, context),
+        agent=CareAgent(gemini, memory, context, tools=registry),
         tts=TextBubbleTts(),
         detector=RiskDetector(LlmRiskClassifier(gemini)),
         notifier=LineGuardianNotifier(accounts, messenger),
