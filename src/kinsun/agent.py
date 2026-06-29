@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from kinsun.llm import LLMClient, Message
+from kinsun.llm import LLMClient, Message, ToolResult
 from kinsun.memory.store import MemoryStore
 from kinsun.recall import MemoryContext
 
@@ -18,21 +18,51 @@ _PROACTIVE_DIRECTIVE = (
     "（系統提示，非長者發話）請主動關心長者：{intent}。用一句溫暖、口語、簡短的話開啟對話。"
 )
 
+FALLBACK_REPLY = "金孫剛剛想了一下沒講清楚，您可以再說一次嗎？"
+
 
 class CareAgent:
-    def __init__(self, llm: LLMClient, memory: MemoryStore, context: MemoryContext) -> None:
+    def __init__(
+        self,
+        llm: LLMClient,
+        memory: MemoryStore,
+        context: MemoryContext,
+        *,
+        tools=None,
+        max_tool_iters: int = 3,
+    ) -> None:
         self._llm = llm
         self._memory = memory
         self._context = context
+        self._tools = tools
+        self._max_tool_iters = max_tool_iters
 
     def handle(self, session_id: str, user_text: str) -> str:
         system_prompt = SYSTEM_PROMPT + self._context.recall(session_id, user_text)
-        history = self._memory.recent(session_id)
         user_msg = Message("user", user_text)
-        reply = self._llm.generate(system_prompt=system_prompt, messages=[*history, user_msg])
+        base = [*self._memory.recent(session_id), user_msg]
+        if self._tools is None:
+            reply = self._llm.generate(system_prompt=system_prompt, messages=base)
+        else:
+            reply = self._run_tool_loop(system_prompt, base)
         self._memory.append(session_id, user_msg)
         self._memory.append(session_id, Message("assistant", reply))
         return reply
+
+    def _run_tool_loop(self, system_prompt: str, base: list[Message]) -> str:
+        results: list[ToolResult] = []
+        for _ in range(self._max_tool_iters):
+            turn = self._llm.generate_tool_turn(
+                system_prompt=system_prompt,
+                messages=base,
+                tools=self._tools.specs(),
+                tool_results=results,
+            )
+            if not turn.tool_calls:
+                return turn.text or FALLBACK_REPLY
+            for call in turn.tool_calls:
+                results.append(ToolResult(call, self._tools.dispatch(call.name, call.arguments)))
+        return FALLBACK_REPLY
 
     def proactive(self, session_id: str, intent: str) -> str:
         system_prompt = SYSTEM_PROMPT + self._context.recall(session_id, intent)

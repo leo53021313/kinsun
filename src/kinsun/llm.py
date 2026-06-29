@@ -43,6 +43,14 @@ class ToolTurn:
 
 class LLMClient(Protocol):
     def generate(self, *, system_prompt: str, messages: list[Message]) -> str: ...
+    def generate_tool_turn(
+        self,
+        *,
+        system_prompt: str,
+        messages: list[Message],
+        tools: list[ToolSpec],
+        tool_results: list[ToolResult],
+    ) -> ToolTurn: ...
 
 
 def _to_contents(messages: list[Message]) -> list[dict]:
