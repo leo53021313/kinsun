@@ -149,6 +149,9 @@ class AccountService:
     def get_elder(self, elder_id: str):
         return self._repo.get_elder(elder_id)
 
+    def elder_by_line(self, line_user_id: str):
+        return self._repo.get_elder_by_line(line_user_id)
+
     def preview_invite(self, code: str) -> InvitePreview | None:
         invite = self._repo.get_invite(code)
         if invite is None:

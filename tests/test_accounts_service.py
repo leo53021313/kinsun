@@ -244,3 +244,13 @@ def test_create_elder_uses_repo_transaction():
     # create_elder 同時寫 elder 與 elder_guardian，且兩者皆落地
     assert repo.get_elder(elder.elder_id).name == "阿公"
     assert repo.list_elder_guardians(elder.elder_id)[0].role.value == "primary"
+
+
+def test_elder_by_line():
+    from kinsun.accounts.models import Elder
+
+    repo = FakeAccountRepository()
+    repo.save_elder(Elder("e1", "阿公", "U-elder"))
+    svc = _service(repo)
+    assert svc.elder_by_line("U-elder").elder_id == "e1"
+    assert svc.elder_by_line("nope") is None
