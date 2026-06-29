@@ -29,6 +29,7 @@ from kinsun.proactive.jobs import (
 from kinsun.recall import MemoryContext
 from kinsun.scheduler.jobs import build_consolidation_job
 from kinsun.scheduler.scheduler import Scheduler
+from kinsun.scheduler.state import PgScheduleStateStore
 
 
 def build_scheduler(settings: Settings, *, clock: Callable[[], datetime]) -> Scheduler:
@@ -73,7 +74,8 @@ def build_scheduler(settings: Settings, *, clock: Callable[[], datetime]) -> Sch
             hour=settings.inactivity_hour,
         ),
     ]
-    return Scheduler(jobs, clock)
+    state = PgScheduleStateStore(settings.database_url, tz)
+    return Scheduler(jobs, clock, state)
 
 
 def serve(scheduler: Scheduler, *, tick_seconds: int) -> None:
