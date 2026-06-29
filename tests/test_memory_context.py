@@ -1,27 +1,11 @@
 from kinsun.recall import MemoryContext
+from tests.fakes import FakeLongTermStore
 
 
-class _Knowledge:
-    def __init__(self, text):
-        self._text = text
-
-    def recall(self, session_id):
-        return self._text
+def test_recall_delegates_to_longterm_search():
+    ctx = MemoryContext(FakeLongTermStore(search_result="記憶內容"))
+    assert ctx.recall("sess1", "今天好嗎") == "記憶內容"
 
 
-class _Episodic:
-    def __init__(self, text):
-        self._text = text
-
-    def recall(self, session_id, query):
-        return self._text
-
-
-def test_combines_knowledge_and_episodic():
-    ctx = MemoryContext(_Knowledge("【事實】"), _Episodic("【情緒】"))
-    assert ctx.recall("u1", "嗨") == "【事實】【情緒】"
-
-
-def test_handles_blank_sources():
-    ctx = MemoryContext(_Knowledge(""), _Episodic("【情緒】"))
-    assert ctx.recall("u1", "嗨") == "【情緒】"
+def test_recall_empty_when_no_memory():
+    assert MemoryContext(FakeLongTermStore()).recall("sess1", "x") == ""
