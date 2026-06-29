@@ -26,6 +26,8 @@ class AccountRepository(Protocol):
     def get_elder(self, elder_id: str) -> Elder | None: ...
     def save_guardian(self, guardian: Guardian) -> None: ...
     def get_guardian_by_line(self, line_user_id: str) -> Guardian | None: ...
+    def get_guardian(self, guardian_id: str) -> Guardian | None: ...
+    def get_elder_by_line(self, line_user_id: str) -> Elder | None: ...
     def save_elder_guardian(self, eg: ElderGuardian) -> None: ...
     def get_elder_guardian(self, elder_id: str, guardian_id: str) -> ElderGuardian | None: ...
     def list_elder_guardians(self, elder_id: str) -> list[ElderGuardian]: ...
@@ -84,6 +86,20 @@ class PgAccountRepository:
             (line_user_id,),
         )
         return Guardian(*rows[0]) if rows else None
+
+    def get_guardian(self, guardian_id: str) -> Guardian | None:
+        rows = self._query(
+            "SELECT guardian_id, line_user_id, name FROM guardians WHERE guardian_id = %s",
+            (guardian_id,),
+        )
+        return Guardian(*rows[0]) if rows else None
+
+    def get_elder_by_line(self, line_user_id: str) -> Elder | None:
+        rows = self._query(
+            "SELECT elder_id, name, line_user_id FROM elders WHERE line_user_id = %s",
+            (line_user_id,),
+        )
+        return Elder(*rows[0]) if rows else None
 
     def save_elder_guardian(self, eg: ElderGuardian) -> None:
         self._exec(

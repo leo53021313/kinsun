@@ -12,6 +12,8 @@ from zoneinfo import ZoneInfo
 from fastapi import FastAPI
 from linebot.v3 import WebhookParser
 
+from kinsun.accounts.repository import PgAccountRepository
+from kinsun.accounts.service import AccountService
 from kinsun.agent import CareAgent
 from kinsun.channels.line.messenger import LineApiMessenger
 from kinsun.channels.line.webhook import create_app
@@ -25,7 +27,7 @@ from kinsun.pipeline import VoicePipeline
 from kinsun.recall import MemoryContext
 from kinsun.safety.classifier import LlmRiskClassifier
 from kinsun.safety.detector import RiskDetector
-from kinsun.safety.notifier import LogNotifier
+from kinsun.safety.notifier import LineGuardianNotifier
 from kinsun.speech.asr import build_asr_client
 from kinsun.speech.tts import TextBubbleTts
 
@@ -46,13 +48,19 @@ def build_app() -> FastAPI:
     )
     long_term = Mem0LongTermStore(build_mem0_memory(settings), top_k=settings.longterm_top_k)
     context = MemoryContext(long_term)
+    accounts = AccountService(
+        PgAccountRepository(settings.database_url),
+        clock=lambda: datetime.now(tz),
+        ttl_hours=settings.invite_ttl_hours,
+        max_attempts=settings.invite_max_attempts,
+    )
+    messenger = LineApiMessenger(settings.line_channel_access_token)
     pipeline = VoicePipeline(
         asr=build_asr_client(settings),
         agent=CareAgent(gemini, memory, context),
         tts=TextBubbleTts(),
         detector=RiskDetector(LlmRiskClassifier(gemini)),
-        notifier=LogNotifier(),
+        notifier=LineGuardianNotifier(accounts, messenger),
     )
-    messenger = LineApiMessenger(settings.line_channel_access_token)
     parser = WebhookParser(settings.line_channel_secret)
     return create_app(parser=parser, pipeline=pipeline, messenger=messenger)

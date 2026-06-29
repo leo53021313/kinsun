@@ -63,6 +63,15 @@ class FakeAccountRepository:
     def get_guardian_by_line(self, line_user_id):
         return self.guardians_by_line.get(line_user_id)
 
+    def get_elder_by_line(self, line_user_id):
+        for elder in self.elders.values():
+            if elder.line_user_id == line_user_id:
+                return elder
+        return None
+
+    def get_guardian(self, guardian_id):
+        return self.guardians.get(guardian_id)
+
     def save_elder_guardian(self, eg):
         self.elder_guardians[(eg.elder_id, eg.guardian_id)] = eg
 
