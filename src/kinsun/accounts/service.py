@@ -138,6 +138,13 @@ class AccountService:
     def guardians_of(self, elder_id: str) -> list[ElderGuardian]:
         return self._repo.list_elder_guardians(elder_id)
 
+    def is_consented_elder(self, line_user_id: str) -> bool:
+        elder = self._repo.get_elder_by_line(line_user_id)
+        if elder is None:
+            return False
+        consent = self._repo.get_consent(elder.elder_id)
+        return consent is not None and consent.revoked_at is None
+
     def preview_invite(self, code: str) -> InvitePreview | None:
         invite = self._repo.get_invite(code)
         if invite is None:

@@ -119,6 +119,27 @@ def test_guardians_of_sorted_and_permissions():
     assert svc.can_view_transcript(elder.elder_id, "nobody") is False
 
 
+def test_is_consented_elder_lifecycle():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    assert svc.is_consented_elder("U-elder") is False
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    inv = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
+    svc.redeem_invite(inv.code, "U-elder", consent_by=ConsentBy.SELF)
+    assert svc.is_consented_elder("U-elder") is True
+    svc.revoke_consent(elder.elder_id)
+    assert svc.is_consented_elder("U-elder") is False
+
+
+def test_is_consented_elder_bound_without_consent():
+    from kinsun.accounts.models import Elder
+
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    repo.save_elder(Elder("e1", "阿公", "U-elder"))
+    assert svc.is_consented_elder("U-elder") is False
+
+
 def test_preview_invite_valid_and_not_found():
     repo = FakeAccountRepository()
     svc = _service(repo)
