@@ -111,6 +111,8 @@ class Database:
             with self._pool.connection() as conn:
                 conn.execute(sql, params)
                 conn.commit()
+        except StoreError:
+            raise
         except Exception as exc:  # noqa: BLE001 - 一律翻成 StoreError
             raise StoreError(str(exc)) from exc
 
@@ -118,6 +120,8 @@ class Database:
         try:
             with self._pool.connection() as conn:
                 return conn.execute(sql, params).fetchall()
+        except StoreError:
+            raise
         except Exception as exc:  # noqa: BLE001
             raise StoreError(str(exc)) from exc
 
@@ -125,6 +129,8 @@ class Database:
         try:
             with self._pool.connection() as conn:
                 return conn.execute(sql, params).fetchone()
+        except StoreError:
+            raise
         except Exception as exc:  # noqa: BLE001
             raise StoreError(str(exc)) from exc
 
@@ -167,6 +173,7 @@ class _Errors:
     @contextmanager
     def transaction(self) -> Iterator[Executor]:
         try:
+            # _Errors 只用來包 Database（有 transaction()）；Executor Protocol 僅涵蓋三個基本操作
             with self._inner.transaction() as tx:  # type: ignore[attr-defined]
                 yield _Errors(tx, self._wrap)
         except StoreError as exc:

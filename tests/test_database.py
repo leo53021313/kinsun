@@ -73,6 +73,18 @@ def test_failure_raises_store_error():
         db.execute("INSERT INTO t VALUES (%s)", ("a",))
 
 
+def test_query_failure_raises_store_error():
+    db = Database(_FakePool(_FakeConn(boom=True)))
+    with pytest.raises(StoreError):
+        db.query("SELECT 1")
+
+
+def test_query_one_failure_raises_store_error():
+    db = Database(_FakePool(_FakeConn(boom=True)))
+    with pytest.raises(StoreError):
+        db.query_one("SELECT 1")
+
+
 def test_transaction_yields_executor():
     conn = _FakeConn(rows=[("ok",)])
     db = Database(_FakePool(conn))
