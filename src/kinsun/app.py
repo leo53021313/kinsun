@@ -16,6 +16,7 @@ from kinsun.accounts.repository import PgAccountRepository
 from kinsun.accounts.service import AccountService
 from kinsun.agent import CareAgent
 from kinsun.binding.flow import BindingFlow
+from kinsun.binding.gate import ConsentGate
 from kinsun.binding.session import PgBindingSessionStore
 from kinsun.channels.line.messenger import LineApiMessenger
 from kinsun.channels.line.webhook import create_app
@@ -75,5 +76,8 @@ def build_app() -> FastAPI:
         clock=lambda: datetime.now(tz),
         session_ttl_seconds=settings.binding_session_ttl_minutes * 60,
     )
+    gate = ConsentGate(accounts)
     parser = WebhookParser(settings.line_channel_secret)
-    return create_app(parser=parser, pipeline=pipeline, messenger=messenger, binding=binding)
+    return create_app(
+        parser=parser, pipeline=pipeline, messenger=messenger, binding=binding, gate=gate
+    )
