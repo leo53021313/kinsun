@@ -9,3 +9,25 @@ def test_recall_delegates_to_longterm_search():
 
 def test_recall_empty_when_no_memory():
     assert MemoryContext(FakeLongTermStore()).recall("sess1", "x") == ""
+
+
+class _FakeFacts:
+    def __init__(self, text):
+        self._text = text
+
+    def facts(self, session_id):
+        return self._text
+
+
+def test_recall_appends_fact_providers():
+    ctx = MemoryContext(
+        FakeLongTermStore(search_result="長期記憶內容\n"),
+        facts=[_FakeFacts("用藥A\n"), _FakeFacts("用藥B\n")],
+    )
+    out = ctx.recall("sess1", "今天好嗎")
+    assert out == "長期記憶內容\n用藥A\n用藥B\n"
+
+
+def test_recall_no_facts_is_just_longterm():
+    ctx = MemoryContext(FakeLongTermStore(search_result="只有長期記憶"))
+    assert ctx.recall("sess1", "x") == "只有長期記憶"

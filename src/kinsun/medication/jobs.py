@@ -6,6 +6,7 @@ import logging
 from collections.abc import Callable
 
 from kinsun.medication.models import SLOT_LABELS, Medication, MedicationSlot
+from kinsun.scheduler.fanout import fanout_job
 from kinsun.scheduler.scheduler import Job
 
 logger = logging.getLogger("kinsun.medication")
@@ -22,22 +23,29 @@ def build_medication_slot_job(
     minute: int = 0,
     name: str,
 ) -> Job:
-    cron = f"{minute} {hour} * * *"
     label = SLOT_LABELS[slot]
 
-    def run() -> None:
+    def population() -> list[tuple[str, list[str]]]:
         by_elder: dict[str, list[str]] = {}
         for med in meds_at_slot():
             by_elder.setdefault(med.elder_id, []).append(med.name)
-        for elder_id, names in by_elder.items():
-            try:
-                elder = lookup_elder(elder_id)
-                if elder is None or not elder.line_user_id:
-                    continue
-                if not is_consented(elder.line_user_id):
-                    continue
-                push(elder.line_user_id, f"{elder.name}，{label}該吃藥囉：{'、'.join(names)}")
-            except Exception:  # noqa: BLE001 - 單一長輩失敗不影響其他
-                logger.exception("用藥提醒失敗 elder=%s", elder_id)
+        return list(by_elder.items())
 
-    return Job(name=name, cron=cron, run=run)
+    def action(item: tuple[str, list[str]]) -> None:
+        elder_id, names = item
+        elder = lookup_elder(elder_id)
+        if elder is None or not elder.line_user_id:
+            return
+        if not is_consented(elder.line_user_id):
+            return
+        push(elder.line_user_id, f"{elder.name}，{label}該吃藥囉：{'、'.join(names)}")
+
+    return fanout_job(
+        name=name,
+        hour=hour,
+        minute=minute,
+        population=population,
+        action=action,
+        item_id=lambda item: item[0],
+        logger=logger,
+    )

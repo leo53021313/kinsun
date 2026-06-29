@@ -26,11 +26,11 @@ def test_fake_session_round_trip():
 @pytest.mark.skipif(os.environ.get("KINSUN_IT") != "1", reason="需雲端 key")
 def test_pg_session_round_trip():
     from kinsun.binding.session import PgBindingSessionStore
-    from kinsun.db import ensure_schema
+    from kinsun.db import Database, ensure_schema
 
     url = os.environ["DATABASE_URL"]
     ensure_schema(url)
-    store = PgBindingSessionStore(url)
+    store = PgBindingSessionStore(Database.open(url))
     store.save(BindingSession("U-pg", BindingState.AWAIT_CODE, {"k": "v"}, 123.0))
     got = store.get("U-pg")
     assert got.state == BindingState.AWAIT_CODE

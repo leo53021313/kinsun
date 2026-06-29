@@ -8,13 +8,13 @@ pytestmark = pytest.mark.skipif(os.environ.get("KINSUN_IT") != "1", reason="éœ€é
 
 
 def _store():
-    from kinsun.db import ensure_schema
+    from kinsun.db import Database, ensure_schema
     from kinsun.memory.store import PgMemoryStore
 
     url = os.environ["DATABASE_URL"]
     ensure_schema(url)
     tz = ZoneInfo("Asia/Taipei")
-    return PgMemoryStore(url, clock=lambda: datetime.now(tz), max_turns=20)
+    return PgMemoryStore(Database.open(url), clock=lambda: datetime.now(tz), max_turns=20)
 
 
 def test_append_and_recent_roundtrip():

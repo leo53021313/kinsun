@@ -6,7 +6,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Protocol
 
-from kinsun.db import connect
+from kinsun.db import Database, _Errors
 from kinsun.llm import Message
 
 
@@ -36,73 +36,47 @@ class MemoryStore(Protocol):
 class PgMemoryStore:
     """短期記憶的 Postgres（Supabase）實作；介面同 MemoryStore。"""
 
-    def __init__(
-        self, database_url: str, clock: Callable[[], datetime], max_turns: int = 20
-    ) -> None:
-        self._url = database_url
+    def __init__(self, db: Database, clock: Callable[[], datetime], max_turns: int = 20) -> None:
+        self._db = _Errors(db, lambda m: MemoryError(f"記憶存取失敗：{m}"))
         self._clock = clock
         self._max_turns = max_turns
 
     def append(self, session_id: str, message: Message) -> None:
         created_at = self._clock().timestamp()
-        try:
-            with connect(self._url) as conn:
-                conn.execute(
-                    "INSERT INTO turns (session_id, role, text, created_at) "
-                    "VALUES (%s, %s, %s, %s)",
-                    (session_id, message.role, message.text, created_at),
-                )
-                conn.commit()
-        except Exception as exc:  # noqa: BLE001
-            raise MemoryError(f"寫入記憶失敗：{exc}") from exc
+        self._db.execute(
+            "INSERT INTO turns (session_id, role, text, created_at) VALUES (%s, %s, %s, %s)",
+            (session_id, message.role, message.text, created_at),
+        )
 
     def recent(self, session_id: str) -> list[Message]:
         start = self._start_of_today()
-        try:
-            with connect(self._url) as conn:
-                rows = conn.execute(
-                    "SELECT role, text FROM turns WHERE session_id = %s AND created_at >= %s "
-                    "ORDER BY created_at DESC, id DESC LIMIT %s",
-                    (session_id, start, self._max_turns),
-                ).fetchall()
-        except Exception as exc:  # noqa: BLE001
-            raise MemoryError(f"讀取記憶失敗：{exc}") from exc
+        rows = self._db.query(
+            "SELECT role, text FROM turns WHERE session_id = %s AND created_at >= %s "
+            "ORDER BY created_at DESC, id DESC LIMIT %s",
+            (session_id, start, self._max_turns),
+        )
         return [Message(role=r, text=t) for r, t in reversed(rows)]
 
     def previous_day(self, session_id: str) -> list[Message]:
         """整理批次用：回傳『剛結束的那一天』整天的對話（時序由舊到新）。"""
         start, end = previous_day_bounds(self._clock())
-        try:
-            with connect(self._url) as conn:
-                rows = conn.execute(
-                    "SELECT role, text FROM turns "
-                    "WHERE session_id = %s AND created_at >= %s AND created_at < %s "
-                    "ORDER BY created_at ASC, id ASC LIMIT %s",
-                    (session_id, start, end, self._max_turns),
-                ).fetchall()
-        except Exception as exc:  # noqa: BLE001
-            raise MemoryError(f"讀取記憶失敗：{exc}") from exc
+        rows = self._db.query(
+            "SELECT role, text FROM turns "
+            "WHERE session_id = %s AND created_at >= %s AND created_at < %s "
+            "ORDER BY created_at ASC, id ASC LIMIT %s",
+            (session_id, start, end, self._max_turns),
+        )
         return [Message(role=r, text=t) for r, t in rows]
 
     def sessions(self) -> list[str]:
-        try:
-            with connect(self._url) as conn:
-                rows = conn.execute(
-                    "SELECT DISTINCT session_id FROM turns ORDER BY session_id"
-                ).fetchall()
-        except Exception as exc:  # noqa: BLE001
-            raise MemoryError(f"列出 session 失敗：{exc}") from exc
+        rows = self._db.query("SELECT DISTINCT session_id FROM turns ORDER BY session_id")
         return [r[0] for r in rows]
 
     def last_active(self, session_id: str) -> float | None:
-        try:
-            with connect(self._url) as conn:
-                row = conn.execute(
-                    "SELECT MAX(created_at) FROM turns WHERE session_id = %s AND role = 'user'",
-                    (session_id,),
-                ).fetchone()
-        except Exception as exc:  # noqa: BLE001
-            raise MemoryError(f"查詢最後互動失敗：{exc}") from exc
+        row = self._db.query_one(
+            "SELECT MAX(created_at) FROM turns WHERE session_id = %s AND role = 'user'",
+            (session_id,),
+        )
         return row[0] if row and row[0] is not None else None
 
     def _start_of_today(self) -> float:

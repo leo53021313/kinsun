@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Protocol
 
 from kinsun.accounts.models import (
@@ -14,7 +16,7 @@ from kinsun.accounts.models import (
     InviteRole,
     Role,
 )
-from kinsun.db import connect
+from kinsun.db import Database, Executor, _Errors
 
 
 class AccountError(Exception):
@@ -22,45 +24,36 @@ class AccountError(Exception):
 
 
 class AccountRepository(Protocol):
-    def save_elder(self, elder: Elder) -> None: ...
+    def save_elder(self, elder: Elder, *, tx: Executor | None = None) -> None: ...
     def get_elder(self, elder_id: str) -> Elder | None: ...
-    def save_guardian(self, guardian: Guardian) -> None: ...
+    def save_guardian(self, guardian: Guardian, *, tx: Executor | None = None) -> None: ...
     def get_guardian_by_line(self, line_user_id: str) -> Guardian | None: ...
     def get_guardian(self, guardian_id: str) -> Guardian | None: ...
     def get_elder_by_line(self, line_user_id: str) -> Elder | None: ...
-    def save_elder_guardian(self, eg: ElderGuardian) -> None: ...
+    def save_elder_guardian(self, eg: ElderGuardian, *, tx: Executor | None = None) -> None: ...
     def get_elder_guardian(self, elder_id: str, guardian_id: str) -> ElderGuardian | None: ...
     def list_elder_guardians(self, elder_id: str) -> list[ElderGuardian]: ...
     def elder_ids_of_guardian(self, guardian_id: str) -> list[str]: ...
-    def save_consent(self, consent: Consent) -> None: ...
+    def save_consent(self, consent: Consent, *, tx: Executor | None = None) -> None: ...
     def get_consent(self, elder_id: str) -> Consent | None: ...
-    def save_invite(self, invite: Invite) -> None: ...
+    def save_invite(self, invite: Invite, *, tx: Executor | None = None) -> None: ...
     def get_invite(self, code: str) -> Invite | None: ...
+    def transaction(self) -> object: ...
 
 
 class PgAccountRepository:
     """帳號綁定的 Postgres（Supabase）實作；介面同 AccountRepository。"""
 
-    def __init__(self, database_url: str) -> None:
-        self._url = database_url
+    def __init__(self, db: Database) -> None:
+        self._db = _Errors(db, lambda m: AccountError(f"帳號存取失敗：{m}"))
 
-    def _exec(self, sql: str, params: tuple) -> None:
-        try:
-            with connect(self._url) as conn:
-                conn.execute(sql, params)
-                conn.commit()
-        except Exception as exc:  # noqa: BLE001
-            raise AccountError(f"寫入失敗：{exc}") from exc
+    @contextmanager
+    def transaction(self) -> Iterator[Executor]:
+        with self._db.transaction() as tx:
+            yield tx
 
-    def _query(self, sql: str, params: tuple) -> list[tuple]:
-        try:
-            with connect(self._url) as conn:
-                return conn.execute(sql, params).fetchall()
-        except Exception as exc:  # noqa: BLE001
-            raise AccountError(f"讀取失敗：{exc}") from exc
-
-    def save_elder(self, elder: Elder) -> None:
-        self._exec(
+    def save_elder(self, elder: Elder, *, tx: Executor | None = None) -> None:
+        (tx or self._db).execute(
             "INSERT INTO elders (elder_id, name, line_user_id) VALUES (%s, %s, %s) "
             "ON CONFLICT (elder_id) DO UPDATE SET "
             "name = EXCLUDED.name, line_user_id = EXCLUDED.line_user_id",
@@ -68,13 +61,13 @@ class PgAccountRepository:
         )
 
     def get_elder(self, elder_id: str) -> Elder | None:
-        rows = self._query(
+        rows = self._db.query(
             "SELECT elder_id, name, line_user_id FROM elders WHERE elder_id = %s", (elder_id,)
         )
         return Elder(*rows[0]) if rows else None
 
-    def save_guardian(self, guardian: Guardian) -> None:
-        self._exec(
+    def save_guardian(self, guardian: Guardian, *, tx: Executor | None = None) -> None:
+        (tx or self._db).execute(
             "INSERT INTO guardians (guardian_id, line_user_id, name) VALUES (%s, %s, %s) "
             "ON CONFLICT (guardian_id) DO UPDATE SET "
             "line_user_id = EXCLUDED.line_user_id, name = EXCLUDED.name",
@@ -82,28 +75,28 @@ class PgAccountRepository:
         )
 
     def get_guardian_by_line(self, line_user_id: str) -> Guardian | None:
-        rows = self._query(
+        rows = self._db.query(
             "SELECT guardian_id, line_user_id, name FROM guardians WHERE line_user_id = %s",
             (line_user_id,),
         )
         return Guardian(*rows[0]) if rows else None
 
     def get_guardian(self, guardian_id: str) -> Guardian | None:
-        rows = self._query(
+        rows = self._db.query(
             "SELECT guardian_id, line_user_id, name FROM guardians WHERE guardian_id = %s",
             (guardian_id,),
         )
         return Guardian(*rows[0]) if rows else None
 
     def get_elder_by_line(self, line_user_id: str) -> Elder | None:
-        rows = self._query(
+        rows = self._db.query(
             "SELECT elder_id, name, line_user_id FROM elders WHERE line_user_id = %s",
             (line_user_id,),
         )
         return Elder(*rows[0]) if rows else None
 
-    def save_elder_guardian(self, eg: ElderGuardian) -> None:
-        self._exec(
+    def save_elder_guardian(self, eg: ElderGuardian, *, tx: Executor | None = None) -> None:
+        (tx or self._db).execute(
             "INSERT INTO elder_guardians "
             "(elder_id, guardian_id, role, escalation_order, can_view_transcript) "
             "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (elder_id, guardian_id) DO UPDATE SET "
@@ -123,7 +116,7 @@ class PgAccountRepository:
         return ElderGuardian(elder_id, guardian_id, Role(role), order, bool(can_view))
 
     def get_elder_guardian(self, elder_id: str, guardian_id: str) -> ElderGuardian | None:
-        rows = self._query(
+        rows = self._db.query(
             "SELECT elder_id, guardian_id, role, escalation_order, can_view_transcript "
             "FROM elder_guardians WHERE elder_id = %s AND guardian_id = %s",
             (elder_id, guardian_id),
@@ -131,7 +124,7 @@ class PgAccountRepository:
         return self._to_eg(rows[0]) if rows else None
 
     def list_elder_guardians(self, elder_id: str) -> list[ElderGuardian]:
-        rows = self._query(
+        rows = self._db.query(
             "SELECT elder_id, guardian_id, role, escalation_order, can_view_transcript "
             "FROM elder_guardians WHERE elder_id = %s ORDER BY escalation_order",
             (elder_id,),
@@ -139,14 +132,14 @@ class PgAccountRepository:
         return [self._to_eg(r) for r in rows]
 
     def elder_ids_of_guardian(self, guardian_id: str) -> list[str]:
-        rows = self._query(
+        rows = self._db.query(
             "SELECT elder_id FROM elder_guardians WHERE guardian_id = %s ORDER BY elder_id",
             (guardian_id,),
         )
         return [r[0] for r in rows]
 
-    def save_consent(self, consent: Consent) -> None:
-        self._exec(
+    def save_consent(self, consent: Consent, *, tx: Executor | None = None) -> None:
+        (tx or self._db).execute(
             "INSERT INTO consents (elder_id, consent_by, version, granted_at, revoked_at) "
             "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (elder_id) DO UPDATE SET "
             "consent_by = EXCLUDED.consent_by, version = EXCLUDED.version, "
@@ -161,7 +154,7 @@ class PgAccountRepository:
         )
 
     def get_consent(self, elder_id: str) -> Consent | None:
-        rows = self._query(
+        rows = self._db.query(
             "SELECT elder_id, consent_by, version, granted_at, revoked_at "
             "FROM consents WHERE elder_id = %s",
             (elder_id,),
@@ -171,8 +164,8 @@ class PgAccountRepository:
         elder, by, version, granted, revoked = rows[0]
         return Consent(elder, ConsentBy(by), version, granted, revoked)
 
-    def save_invite(self, invite: Invite) -> None:
-        self._exec(
+    def save_invite(self, invite: Invite, *, tx: Executor | None = None) -> None:
+        (tx or self._db).execute(
             "INSERT INTO invites "
             "(code, elder_id, role, expires_at, max_attempts, attempts, used_at) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (code) DO UPDATE SET "
@@ -191,7 +184,7 @@ class PgAccountRepository:
         )
 
     def get_invite(self, code: str) -> Invite | None:
-        rows = self._query(
+        rows = self._db.query(
             "SELECT code, elder_id, role, expires_at, max_attempts, attempts, used_at "
             "FROM invites WHERE code = %s",
             (code,),

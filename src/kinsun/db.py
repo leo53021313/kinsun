@@ -1,8 +1,13 @@
-"""共用 Postgres 連線與建表 DDL（Supabase）。"""
+"""共用 Postgres 連線、連線池與建表 DDL（Supabase）。"""
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from typing import Protocol
+
 import psycopg
+from psycopg_pool import ConnectionPool
 
 MEMORY_DDL = (
     "CREATE TABLE IF NOT EXISTS turns ("
@@ -58,3 +63,118 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(SCHEDULER_DDL)
         conn.execute(MEDICATIONS_DDL)
         conn.commit()
+
+
+class StoreError(Exception):
+    """資料庫存取失敗（連線／執行／交易）；各 store 會翻成自己的領域錯誤。"""
+
+
+class Executor(Protocol):
+    """可執行 SQL 的對象：Database 本身或交易內的單一連線。"""
+
+    def execute(self, sql: str, params: tuple = ()) -> None: ...
+    def query(self, sql: str, params: tuple = ()) -> list[tuple]: ...
+    def query_one(self, sql: str, params: tuple = ()) -> tuple | None: ...
+
+
+class _ConnExecutor:
+    """包一條交易連線並提供 Executor 介面（不自行 commit；交易結束統一提交）。"""
+
+    def __init__(self, conn: psycopg.Connection) -> None:
+        self._conn = conn
+
+    def execute(self, sql: str, params: tuple = ()) -> None:
+        self._conn.execute(sql, params)
+
+    def query(self, sql: str, params: tuple = ()) -> list[tuple]:
+        return self._conn.execute(sql, params).fetchall()
+
+    def query_one(self, sql: str, params: tuple = ()) -> tuple | None:
+        return self._conn.execute(sql, params).fetchone()
+
+
+class Database:
+    """連線池 ＋ 交易 ＋ 錯誤翻譯。所有方法失敗丟 StoreError。"""
+
+    def __init__(self, pool: ConnectionPool) -> None:
+        self._pool = pool
+
+    @classmethod
+    def open(cls, url: str, *, min_size: int = 1, max_size: int = 5) -> Database:
+        return cls(ConnectionPool(url, min_size=min_size, max_size=max_size, open=True))
+
+    def close(self) -> None:
+        self._pool.close()
+
+    def execute(self, sql: str, params: tuple = ()) -> None:
+        try:
+            with self._pool.connection() as conn:
+                conn.execute(sql, params)
+                conn.commit()
+        except StoreError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 一律翻成 StoreError
+            raise StoreError(str(exc)) from exc
+
+    def query(self, sql: str, params: tuple = ()) -> list[tuple]:
+        try:
+            with self._pool.connection() as conn:
+                return conn.execute(sql, params).fetchall()
+        except StoreError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise StoreError(str(exc)) from exc
+
+    def query_one(self, sql: str, params: tuple = ()) -> tuple | None:
+        try:
+            with self._pool.connection() as conn:
+                return conn.execute(sql, params).fetchone()
+        except StoreError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise StoreError(str(exc)) from exc
+
+    @contextmanager
+    def transaction(self) -> Iterator[Executor]:
+        try:
+            with self._pool.connection() as conn, conn.transaction():
+                yield _ConnExecutor(conn)
+        except StoreError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise StoreError(str(exc)) from exc
+
+
+class _Errors:
+    """把內層 Executor 丟的 StoreError 翻成某 store 的領域錯誤；本身也是 Executor。"""
+
+    def __init__(self, inner: Executor, wrap: Callable[[str], Exception]) -> None:
+        self._inner = inner
+        self._wrap = wrap
+
+    def execute(self, sql: str, params: tuple = ()) -> None:
+        try:
+            self._inner.execute(sql, params)
+        except StoreError as exc:
+            raise self._wrap(str(exc)) from exc
+
+    def query(self, sql: str, params: tuple = ()) -> list[tuple]:
+        try:
+            return self._inner.query(sql, params)
+        except StoreError as exc:
+            raise self._wrap(str(exc)) from exc
+
+    def query_one(self, sql: str, params: tuple = ()) -> tuple | None:
+        try:
+            return self._inner.query_one(sql, params)
+        except StoreError as exc:
+            raise self._wrap(str(exc)) from exc
+
+    @contextmanager
+    def transaction(self) -> Iterator[Executor]:
+        try:
+            # _Errors 只用來包 Database（有 transaction()）；Executor Protocol 僅涵蓋三個基本操作
+            with self._inner.transaction() as tx:  # type: ignore[attr-defined]
+                yield _Errors(tx, self._wrap)
+        except StoreError as exc:
+            raise self._wrap(str(exc)) from exc

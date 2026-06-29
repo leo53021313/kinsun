@@ -7,8 +7,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
-from kinsun.accounts.repository import AccountError
-from kinsun.db import connect
+from kinsun.db import Database, _Errors
 
 
 class BindingState(StrEnum):
@@ -32,6 +31,10 @@ class BindingSession:
     updated_at: float
 
 
+class BindingSessionError(Exception):
+    """綁定會話讀寫失敗。"""
+
+
 class BindingSessionStore(Protocol):
     def get(self, line_user_id: str) -> BindingSession | None: ...
     def save(self, session: BindingSession) -> None: ...
@@ -39,49 +42,32 @@ class BindingSessionStore(Protocol):
 
 
 class PgBindingSessionStore:
-    def __init__(self, database_url: str) -> None:
-        self._url = database_url
+    def __init__(self, db: Database) -> None:
+        self._db = _Errors(db, lambda m: BindingSessionError(f"綁定會話存取失敗：{m}"))
 
     def get(self, line_user_id: str) -> BindingSession | None:
-        try:
-            with connect(self._url) as conn:
-                rows = conn.execute(
-                    "SELECT line_user_id, state, data, updated_at "
-                    "FROM binding_sessions WHERE line_user_id = %s",
-                    (line_user_id,),
-                ).fetchall()
-        except Exception as exc:  # noqa: BLE001
-            raise AccountError(f"讀取綁定會話失敗：{exc}") from exc
+        rows = self._db.query(
+            "SELECT line_user_id, state, data, updated_at "
+            "FROM binding_sessions WHERE line_user_id = %s",
+            (line_user_id,),
+        )
         if not rows:
             return None
         line, state, data, updated = rows[0]
         return BindingSession(line, BindingState(state), json.loads(data), updated)
 
     def save(self, session: BindingSession) -> None:
-        try:
-            with connect(self._url) as conn:
-                conn.execute(
-                    "INSERT INTO binding_sessions (line_user_id, state, data, updated_at) "
-                    "VALUES (%s, %s, %s, %s) ON CONFLICT (line_user_id) DO UPDATE SET "
-                    "state = EXCLUDED.state, data = EXCLUDED.data, "
-                    "updated_at = EXCLUDED.updated_at",
-                    (
-                        session.line_user_id,
-                        session.state.value,
-                        json.dumps(session.data),
-                        session.updated_at,
-                    ),
-                )
-                conn.commit()
-        except Exception as exc:  # noqa: BLE001
-            raise AccountError(f"寫入綁定會話失敗：{exc}") from exc
+        self._db.execute(
+            "INSERT INTO binding_sessions (line_user_id, state, data, updated_at) "
+            "VALUES (%s, %s, %s, %s) ON CONFLICT (line_user_id) DO UPDATE SET "
+            "state = EXCLUDED.state, data = EXCLUDED.data, updated_at = EXCLUDED.updated_at",
+            (
+                session.line_user_id,
+                session.state.value,
+                json.dumps(session.data),
+                session.updated_at,
+            ),
+        )
 
     def delete(self, line_user_id: str) -> None:
-        try:
-            with connect(self._url) as conn:
-                conn.execute(
-                    "DELETE FROM binding_sessions WHERE line_user_id = %s", (line_user_id,)
-                )
-                conn.commit()
-        except Exception as exc:  # noqa: BLE001
-            raise AccountError(f"刪除綁定會話失敗：{exc}") from exc
+        self._db.execute("DELETE FROM binding_sessions WHERE line_user_id = %s", (line_user_id,))
