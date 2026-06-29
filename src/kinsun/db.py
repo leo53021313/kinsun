@@ -40,6 +40,11 @@ SCHEDULER_DDL = (
     "job_name TEXT PRIMARY KEY, last_run_at DOUBLE PRECISION NOT NULL);"
 )
 
+MEDICATIONS_DDL = (
+    "CREATE TABLE IF NOT EXISTS medications ("
+    "med_id TEXT PRIMARY KEY, elder_id TEXT NOT NULL, name TEXT NOT NULL, slots TEXT NOT NULL);"
+)
+
 
 def connect(database_url: str) -> psycopg.Connection:
     return psycopg.connect(database_url)
@@ -51,4 +56,5 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(ACCOUNTS_DDL)
         conn.execute(BINDING_DDL)
         conn.execute(SCHEDULER_DDL)
+        conn.execute(MEDICATIONS_DDL)
         conn.commit()

@@ -123,3 +123,21 @@ class FakeScheduleStateStore:
 
     def set_last_run(self, job_name: str, when: datetime) -> None:
         self._last[job_name] = when
+
+
+class FakeMedicationStore:
+    def __init__(self) -> None:
+        self._meds = {}
+
+    def add(self, med):
+        self._meds[med.med_id] = med
+
+    def list_for_elder(self, elder_id):
+        rows = [m for m in self._meds.values() if m.elder_id == elder_id]
+        return sorted(rows, key=lambda m: m.name)
+
+    def list_for_slot(self, slot):
+        return [m for m in self._meds.values() if slot in m.slots]
+
+    def remove(self, med_id):
+        self._meds.pop(med_id, None)
