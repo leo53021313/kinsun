@@ -4,6 +4,7 @@ from kinsun.pipeline import VoicePipeline
 from kinsun.safety.tiers import RiskAssessment, RiskTier
 from kinsun.speech.asr import MockAsrClient
 from kinsun.speech.tts import TextBubbleTts
+from tests.fakes import FakeRiskEventStore
 
 
 class EchoLLM:
@@ -40,13 +41,14 @@ class SpyNotifier:
         self.calls.append((session_id, assessment.tier))
 
 
-def _pipeline(detector, notifier):
+def _pipeline(detector, notifier, risk_events=None):
     return VoicePipeline(
         asr=MockAsrClient("阿公早安"),
         agent=CareAgent(EchoLLM(), NullMemory(), NullContext()),
         tts=TextBubbleTts(),
         detector=detector,
         notifier=notifier,
+        risk_events=risk_events or FakeRiskEventStore(),
     )
 
 
@@ -60,4 +62,35 @@ def test_pipeline_replies_and_runs_detection():
 def test_pipeline_notifies_on_l2_or_above():
     notifier = SpyNotifier()
     _pipeline(StubDetector(RiskTier.L3), notifier).process(b"\x00", session_id="u1")
+    assert notifier.calls == [("u1", RiskTier.L3)]
+
+
+class _BoomRiskEvents:
+    def record(self, session_id, assessment):
+        raise RuntimeError("db down")
+
+    def list_for_session(self, session_id):
+        return []
+
+
+def test_pipeline_records_risk_event_on_l2():
+    notifier = SpyNotifier()
+    events = FakeRiskEventStore()
+    _pipeline(StubDetector(RiskTier.L2), notifier, events).process(b"\x00", session_id="u1")
+    assert [s for s, _ in events.recorded] == ["u1"]
+    assert notifier.calls == [("u1", RiskTier.L2)]
+
+
+def test_pipeline_does_not_record_below_l2():
+    events = FakeRiskEventStore()
+    _pipeline(StubDetector(RiskTier.L1), SpyNotifier(), events).process(b"\x00", session_id="u1")
+    assert events.recorded == []
+
+
+def test_pipeline_record_failure_does_not_break():
+    notifier = SpyNotifier()
+    result = _pipeline(StubDetector(RiskTier.L3), notifier, _BoomRiskEvents()).process(
+        b"\x00", session_id="u1"
+    )
+    assert result.text == "你說的是：阿公早安"
     assert notifier.calls == [("u1", RiskTier.L3)]
