@@ -5,10 +5,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from kinsun.accounts.service import AccountService
+from kinsun.appointment.service import AppointmentService
 from kinsun.medication.service import MedicationService
 from kinsun.web.api import create_api_router
 from kinsun.web.auth import AuthError
-from tests.fakes import FakeAccountRepository, FakeMedicationStore
+from tests.fakes import FakeAccountRepository, FakeAppointmentStore, FakeMedicationStore
 
 TPE = timezone(timedelta(hours=8))
 NOW = datetime(2026, 7, 10, tzinfo=TPE)
@@ -37,7 +38,11 @@ def _setup(user_id="U-son"):
     app = FastAPI()
     app.include_router(
         create_api_router(
-            verifier=_FakeVerifier(user_id), accounts=accounts, medications=medications
+            verifier=_FakeVerifier(user_id),
+            accounts=accounts,
+            medications=medications,
+            appointments=AppointmentService(FakeAppointmentStore()),
+            clock=lambda: NOW,
         )
     )
     return TestClient(app), elder.elder_id
