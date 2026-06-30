@@ -55,3 +55,37 @@ export async function updateMedication(
 export async function deleteMedication(elderId: string, medId: string): Promise<void> {
   await apiFetch(`/api/elders/${elderId}/medications/${medId}`, { method: "DELETE" });
 }
+
+export type Appointment = { appt_id: string; date: string; label: string };
+
+export async function listAppointments(elderId: string): Promise<Appointment[]> {
+  const res = await apiFetch(`/api/elders/${elderId}/appointments`);
+  return ((await res.json()) as { appointments: Appointment[] }).appointments;
+}
+
+export async function addAppointment(
+  elderId: string,
+  date: string,
+  label: string,
+): Promise<void> {
+  await apiFetch(`/api/elders/${elderId}/appointments`, {
+    method: "POST",
+    body: JSON.stringify({ date, label }),
+  });
+}
+
+export async function updateAppointment(
+  elderId: string,
+  apptId: string,
+  date: string,
+  label: string,
+): Promise<void> {
+  await apiFetch(`/api/elders/${elderId}/appointments/${apptId}`, {
+    method: "PUT",
+    body: JSON.stringify({ date, label }),
+  });
+}
+
+export async function deleteAppointment(elderId: string, apptId: string): Promise<void> {
+  await apiFetch(`/api/elders/${elderId}/appointments/${apptId}`, { method: "DELETE" });
+}

@@ -22,7 +22,9 @@ export function EldersPage() {
       <ul>
         {elders.map((e) => (
           <li key={e.elder_id}>
-            <Link to={`/elders/${e.elder_id}/medications`}>{e.name}</Link>
+            {e.name}：<Link to={`/elders/${e.elder_id}/medications`}>用藥</Link>
+            {" / "}
+            <Link to={`/elders/${e.elder_id}/appointments`}>回診</Link>
           </li>
         ))}
       </ul>
