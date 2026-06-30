@@ -89,3 +89,21 @@ export async function updateAppointment(
 export async function deleteAppointment(elderId: string, apptId: string): Promise<void> {
   await apiFetch(`/api/elders/${elderId}/appointments/${apptId}`, { method: "DELETE" });
 }
+
+export async function createElder(
+  elderName: string,
+  guardianName: string,
+): Promise<{ elder_id: string; name: string; invite_code: string }> {
+  const res = await apiFetch("/api/elders", {
+    method: "POST",
+    body: JSON.stringify({ elder_name: elderName, guardian_name: guardianName }),
+  });
+  return (await res.json()) as { elder_id: string; name: string; invite_code: string };
+}
+
+export async function generateGuardianInvite(
+  elderId: string,
+): Promise<{ invite_code: string }> {
+  const res = await apiFetch(`/api/elders/${elderId}/guardian-invites`, { method: "POST" });
+  return (await res.json()) as { invite_code: string };
+}
