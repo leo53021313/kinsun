@@ -254,3 +254,14 @@ def test_elder_by_line():
     svc = _service(repo)
     assert svc.elder_by_line("U-elder").elder_id == "e1"
     assert svc.elder_by_line("nope") is None
+
+
+def test_guardian_line_ids_of_elder_by_id():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    inv = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
+    svc.redeem_invite(inv.code, "U-daughter", consent_by=ConsentBy.SELF)
+    # 用 elder_id 直接查，不需長輩本人綁定 LINE
+    assert svc.guardian_line_ids_of_elder(elder.elder_id) == ["U-son", "U-daughter"]
+    assert svc.guardian_line_ids_of_elder("nope") == []
