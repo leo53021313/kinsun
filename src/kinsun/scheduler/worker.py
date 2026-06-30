@@ -5,6 +5,7 @@ CLI：PYTHONPATH=src uv run python -m kinsun.scheduler
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 import uuid
@@ -39,9 +40,12 @@ from kinsun.proactive.jobs import (
 )
 from kinsun.recall import MemoryContext
 from kinsun.reports.reminders import PgReminderLogStore
+from kinsun.reports.summaries import PgConversationSummaryStore, summarize_day
 from kinsun.scheduler.jobs import build_consolidation_job
 from kinsun.scheduler.scheduler import Scheduler
 from kinsun.scheduler.state import PgScheduleStateStore
+
+logger = logging.getLogger("kinsun.scheduler.worker")
 
 
 def build_scheduler(
@@ -66,6 +70,7 @@ def build_scheduler(
     appt_store = PgAppointmentStore(db)
     appointments = AppointmentService(appt_store)
     reminder_logs = PgReminderLogStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex)
+    summaries = PgConversationSummaryStore(db, clock=clock)
     context = MemoryContext(
         long_term,
         facts=[
@@ -78,6 +83,16 @@ def build_scheduler(
 
     def run_one(session_id: str) -> None:
         run_consolidation(session_id, short_term=memory, long_term=long_term)
+        try:
+            summarize_day(
+                session_id,
+                short_term=memory,
+                summarizer=gemini,
+                summaries=summaries,
+                clock=clock,
+            )
+        except Exception:  # noqa: BLE001 - 摘要失敗不影響整理與其他長輩
+            logger.warning("對話摘要失敗 session=%s", session_id)
 
     def greet_one(session_id: str) -> None:
         messenger.push_text(session_id, agent.proactive(session_id, GREETING_INTENT))
