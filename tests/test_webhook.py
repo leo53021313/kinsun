@@ -14,6 +14,7 @@ from kinsun.pipeline import VoicePipeline
 from kinsun.safety.tiers import RiskAssessment, RiskTier
 from kinsun.speech.asr import ASRError, MockAsrClient
 from kinsun.speech.tts import TextBubbleTts
+from tests.fakes import FakeRiskEventStore
 
 
 class _NullDetector:
@@ -129,6 +130,7 @@ def _make_client(
         tts=TextBubbleTts(),
         detector=_NullDetector(),
         notifier=_NullNotifier(),
+        risk_events=FakeRiskEventStore(),
     )
     app = create_app(
         parser=parser,
