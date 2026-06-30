@@ -225,3 +225,7 @@ __marimo__/
 
 # 參考用的外部 repo（hermes-agent、mem0 等），僅供架構/程式碼借鏡，不得進版控
 temp/
+
+# 前端（LIFF）
+frontend/node_modules/
+frontend/dist/
