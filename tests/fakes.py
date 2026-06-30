@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from kinsun.llm import Message
 from kinsun.memory.store import previous_day_bounds
 from kinsun.reports.reminders import ReminderLog
+from kinsun.reports.summaries import ConversationSummary
 from kinsun.safety.events import RiskEvent
 
 _TPE = timezone(timedelta(hours=8))
@@ -205,3 +206,19 @@ class FakeReminderLogStore:
             for i, (e, k, c) in enumerate(self.recorded)
             if e == elder_id
         ]
+
+
+class FakeConversationSummaryStore:
+    def __init__(self) -> None:
+        self._rows: dict[tuple, str] = {}
+
+    def upsert(self, session_id, date, content):
+        self._rows[(session_id, date)] = content
+
+    def list_for_session(self, session_id):
+        items = sorted(
+            ((d, c) for (s, d), c in self._rows.items() if s == session_id),
+            key=lambda x: x[0],
+            reverse=True,
+        )
+        return [ConversationSummary(session_id, d, c, 0.0) for d, c in items]

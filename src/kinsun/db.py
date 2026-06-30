@@ -73,6 +73,13 @@ REMINDER_LOGS_DDL = (
     "ON reminder_logs (elder_id, created_at);"
 )
 
+CONVERSATION_SUMMARIES_DDL = (
+    "CREATE TABLE IF NOT EXISTS conversation_summaries ("
+    "session_id TEXT NOT NULL, date TEXT NOT NULL, "
+    "content TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL, "
+    "PRIMARY KEY (session_id, date));"
+)
+
 
 def connect(database_url: str) -> psycopg.Connection:
     return psycopg.connect(database_url)
@@ -88,6 +95,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(APPOINTMENTS_DDL)
         conn.execute(RISK_EVENTS_DDL)
         conn.execute(REMINDER_LOGS_DDL)
+        conn.execute(CONVERSATION_SUMMARIES_DDL)
         conn.commit()
 
 
