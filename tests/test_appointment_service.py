@@ -29,3 +29,13 @@ def test_remove():
     appt = svc.add("e1", "2026-07-15", "x")
     svc.remove(appt.appt_id)
     assert svc.list_for_elder("e1") == []
+
+
+def test_update_replaces_date_and_label():
+    svc = _svc()
+    appt = svc.add("e1", "2026-07-15", "舊")
+    svc.update(appt.appt_id, "e1", "2026-08-01", "新")
+    rows = svc.list_for_elder("e1")
+    assert len(rows) == 1
+    assert rows[0].date == "2026-08-01"
+    assert rows[0].label == "新"
