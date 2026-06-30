@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from linebot.v3 import WebhookParser
 
 from kinsun.accounts.repository import PgAccountRepository
@@ -43,6 +45,8 @@ from kinsun.speech.asr import build_asr_client
 from kinsun.speech.tts import TextBubbleTts
 from kinsun.tools.registry import ToolRegistry
 from kinsun.tools.weather import WEATHER_SPEC, build_weather_handler
+from kinsun.web.api import create_api_router
+from kinsun.web.auth import LineIdTokenVerifier
 
 
 def build_app() -> FastAPI:
@@ -104,7 +108,7 @@ def build_app() -> FastAPI:
     )
     gate = ConsentGate(accounts)
     parser = WebhookParser(settings.line_channel_secret)
-    return create_app(
+    app = create_app(
         parser=parser,
         pipeline=pipeline,
         messenger=messenger,
@@ -112,3 +116,9 @@ def build_app() -> FastAPI:
         gate=gate,
         on_shutdown=db.close,
     )
+    verifier = LineIdTokenVerifier(settings.liff_channel_id, settings.liff_timeout_seconds)
+    app.include_router(create_api_router(verifier=verifier, accounts=accounts))
+    dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+    if dist.is_dir():
+        app.mount("/liff", StaticFiles(directory=dist, html=True), name="liff")
+    return app

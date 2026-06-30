@@ -34,6 +34,8 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.medication_evening_hour == 18
     assert settings.medication_bedtime_hour == 21
     assert settings.appointment_reminder_hour == 8
+    assert settings.liff_channel_id == ""
+    assert settings.liff_timeout_seconds == 10
 
 
 def test_load_settings_requires_database_url():
