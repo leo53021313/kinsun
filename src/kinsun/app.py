@@ -117,7 +117,9 @@ def build_app() -> FastAPI:
         on_shutdown=db.close,
     )
     verifier = LineIdTokenVerifier(settings.liff_channel_id, settings.liff_timeout_seconds)
-    app.include_router(create_api_router(verifier=verifier, accounts=accounts))
+    app.include_router(
+        create_api_router(verifier=verifier, accounts=accounts, medications=medications)
+    )
     dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     if dist.is_dir():
         app.mount("/liff", StaticFiles(directory=dist, html=True), name="liff")
