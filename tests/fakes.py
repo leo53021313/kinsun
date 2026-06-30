@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from kinsun.llm import Message
 from kinsun.memory.store import previous_day_bounds
+from kinsun.safety.events import RiskEvent
 
 _TPE = timezone(timedelta(hours=8))
 _DEFAULT_NOW = datetime(2026, 6, 29, 3, 0, tzinfo=_TPE)
@@ -173,3 +174,18 @@ class FakeAppointmentStore:
 
     def remove(self, appt_id):
         self._appts.pop(appt_id, None)
+
+
+class FakeRiskEventStore:
+    def __init__(self) -> None:
+        self.recorded: list[tuple] = []
+
+    def record(self, session_id, assessment):
+        self.recorded.append((session_id, assessment))
+
+    def list_for_session(self, session_id):
+        return [
+            RiskEvent(str(i), s, a.tier, a.reason, float(i))
+            for i, (s, a) in enumerate(self.recorded)
+            if s == session_id
+        ]

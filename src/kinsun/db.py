@@ -57,6 +57,14 @@ APPOINTMENTS_DDL = (
     "CREATE INDEX IF NOT EXISTS idx_appt_date ON appointments (appt_date);"
 )
 
+RISK_EVENTS_DDL = (
+    "CREATE TABLE IF NOT EXISTS risk_events ("
+    "event_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, "
+    "tier INTEGER NOT NULL, reason TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS idx_risk_events_session_created "
+    "ON risk_events (session_id, created_at);"
+)
+
 
 def connect(database_url: str) -> psycopg.Connection:
     return psycopg.connect(database_url)
@@ -70,6 +78,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(SCHEDULER_DDL)
         conn.execute(MEDICATIONS_DDL)
         conn.execute(APPOINTMENTS_DDL)
+        conn.execute(RISK_EVENTS_DDL)
         conn.commit()
 
 

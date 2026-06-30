@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -40,6 +41,7 @@ from kinsun.pipeline import VoicePipeline
 from kinsun.recall import MemoryContext
 from kinsun.safety.classifier import LlmRiskClassifier
 from kinsun.safety.detector import RiskDetector
+from kinsun.safety.events import PgRiskEventStore
 from kinsun.safety.notifier import LineGuardianNotifier
 from kinsun.speech.asr import build_asr_client
 from kinsun.speech.tts import TextBubbleTts
@@ -89,6 +91,9 @@ def build_app() -> FastAPI:
         tts=TextBubbleTts(),
         detector=RiskDetector(LlmRiskClassifier(gemini)),
         notifier=LineGuardianNotifier(accounts, messenger),
+        risk_events=PgRiskEventStore(
+            db, clock=lambda: datetime.now(tz), new_id=lambda: uuid.uuid4().hex
+        ),
     )
     binding_sessions = PgBindingSessionStore(db)
     medication_menu = MedicationMenu(
