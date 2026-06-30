@@ -3,7 +3,7 @@ from kinsun.appointment.jobs import build_appointment_reminder_job
 from kinsun.appointment.models import Appointment
 
 
-def _job(appts_by_date, *, elders, consented, guardians, hour=8):
+def _job(appts_by_date, *, elders, consented, guardians, hour=8, record=None):
     pushed = []
     job = build_appointment_reminder_job(
         appts_on=lambda d: appts_by_date.get(d, []),
@@ -14,6 +14,7 @@ def _job(appts_by_date, *, elders, consented, guardians, hour=8):
         guardian_line_ids=lambda eid: guardians.get(eid, []),
         push=lambda line, text: pushed.append((line, text)),
         hour=hour,
+        record=record,
     )
     return job, pushed
 
@@ -43,6 +44,21 @@ def test_elder_skipped_without_consent_but_guardians_notified():
     )
     job.run()
     assert pushed == [("U-son", "【金孫提醒】阿公 今天要回診——回診。")]
+
+
+def test_records_reminder_per_event():
+    elders = {"e1": Elder("e1", "阿公", "U-elder")}
+    appts = {"2026-07-15": [Appointment("a1", "e1", "2026-07-15", "心臟科回診")]}
+    recorded = []
+    job, _ = _job(
+        appts,
+        elders=elders,
+        consented={"U-elder": True},
+        guardians={"e1": ["U-son"]},
+        record=lambda e, k, c: recorded.append((e, k, c)),
+    )
+    job.run()
+    assert recorded == [("e1", "appointment", "今天回診：心臟科回診")]
 
 
 def test_unbound_elder_still_notifies_guardians():

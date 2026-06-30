@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import time
+import uuid
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -37,6 +38,7 @@ from kinsun.proactive.jobs import (
     build_inactivity_job,
 )
 from kinsun.recall import MemoryContext
+from kinsun.reports.reminders import PgReminderLogStore
 from kinsun.scheduler.jobs import build_consolidation_job
 from kinsun.scheduler.scheduler import Scheduler
 from kinsun.scheduler.state import PgScheduleStateStore
@@ -63,6 +65,7 @@ def build_scheduler(
     med_store = PgMedicationStore(db)
     appt_store = PgAppointmentStore(db)
     appointments = AppointmentService(appt_store)
+    reminder_logs = PgReminderLogStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex)
     context = MemoryContext(
         long_term,
         facts=[
@@ -114,6 +117,7 @@ def build_scheduler(
                 push=messenger.push_text,
                 hour=hour,
                 name=name,
+                record=reminder_logs.record,
             )
         )
     jobs.append(
@@ -126,6 +130,7 @@ def build_scheduler(
             guardian_line_ids=accounts.guardian_line_ids_of_elder,
             push=messenger.push_text,
             hour=settings.appointment_reminder_hour,
+            record=reminder_logs.record,
         )
     )
     state = PgScheduleStateStore(db, tz)

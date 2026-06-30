@@ -6,6 +6,7 @@ import logging
 from collections.abc import Callable
 
 from kinsun.appointment.models import Appointment
+from kinsun.reports.reminders import safe_record
 from kinsun.scheduler.fanout import fanout_job
 from kinsun.scheduler.scheduler import Job
 
@@ -24,6 +25,7 @@ def build_appointment_reminder_job(
     hour: int,
     minute: int = 0,
     name: str = "appointment-reminder",
+    record: Callable[[str, str, str], None] | None = None,
 ) -> Job:
     def population() -> list[tuple[Appointment, str]]:
         items = [(a, "today") for a in appts_on(today())]
@@ -43,6 +45,7 @@ def build_appointment_reminder_job(
             )
         for line_id in guardian_line_ids(appt.elder_id):
             push(line_id, f"【金孫提醒】{elder.name} {when_word}要回診——{appt.label}。")
+        safe_record(record, appt.elder_id, "appointment", f"{when_word}回診：{appt.label}")
 
     return fanout_job(
         name=name,

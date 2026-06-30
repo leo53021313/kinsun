@@ -6,6 +6,7 @@ import logging
 from collections.abc import Callable
 
 from kinsun.medication.models import SLOT_LABELS, Medication, MedicationSlot
+from kinsun.reports.reminders import safe_record
 from kinsun.scheduler.fanout import fanout_job
 from kinsun.scheduler.scheduler import Job
 
@@ -22,6 +23,7 @@ def build_medication_slot_job(
     hour: int,
     minute: int = 0,
     name: str,
+    record: Callable[[str, str, str], None] | None = None,
 ) -> Job:
     label = SLOT_LABELS[slot]
 
@@ -39,6 +41,7 @@ def build_medication_slot_job(
         if not is_consented(elder.line_user_id):
             return
         push(elder.line_user_id, f"{elder.name}，{label}該吃藥囉：{'、'.join(names)}")
+        safe_record(record, elder_id, "medication", f"{label}用藥：{'、'.join(names)}")
 
     return fanout_job(
         name=name,

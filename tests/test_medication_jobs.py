@@ -7,7 +7,7 @@ def _med(elder_id, name, slots):
     return Medication("x", elder_id, name, slots)
 
 
-def _job(meds, *, elders, consented, hour=8):
+def _job(meds, *, elders, consented, hour=8, record=None):
     pushed = []
     job = build_medication_slot_job(
         slot=MedicationSlot.MORNING,
@@ -17,6 +17,7 @@ def _job(meds, *, elders, consented, hour=8):
         push=lambda line, text: pushed.append((line, text)),
         hour=hour,
         name="medication-morning",
+        record=record,
     )
     return job, pushed
 
@@ -44,6 +45,32 @@ def test_skips_unconsented_and_unbound():
     job, pushed = _job(meds, elders=elders, consented=consented)
     job.run()
     assert pushed == []
+
+
+def test_records_reminder_when_pushed():
+    elders = {"e1": Elder("e1", "阿公", "U-elder")}
+    recorded = []
+    job, _ = _job(
+        [_med("e1", "降血壓藥", (MedicationSlot.MORNING,))],
+        elders=elders,
+        consented={"U-elder": True},
+        record=lambda e, k, c: recorded.append((e, k, c)),
+    )
+    job.run()
+    assert recorded == [("e1", "medication", "早上用藥：降血壓藥")]
+
+
+def test_does_not_record_when_unconsented():
+    elders = {"e1": Elder("e1", "阿公", "U-elder")}
+    recorded = []
+    job, _ = _job(
+        [_med("e1", "藥", (MedicationSlot.MORNING,))],
+        elders=elders,
+        consented={"U-elder": False},
+        record=lambda e, k, c: recorded.append((e, k, c)),
+    )
+    job.run()
+    assert recorded == []
 
 
 def test_single_elder_failure_isolated():

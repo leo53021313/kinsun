@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from kinsun.llm import Message
 from kinsun.memory.store import previous_day_bounds
+from kinsun.reports.reminders import ReminderLog
 from kinsun.safety.events import RiskEvent
 
 _TPE = timezone(timedelta(hours=8))
@@ -188,4 +189,19 @@ class FakeRiskEventStore:
             RiskEvent(str(i), s, a.tier, a.reason, float(i))
             for i, (s, a) in enumerate(self.recorded)
             if s == session_id
+        ]
+
+
+class FakeReminderLogStore:
+    def __init__(self) -> None:
+        self.recorded: list[tuple] = []
+
+    def record(self, elder_id, kind, content):
+        self.recorded.append((elder_id, kind, content))
+
+    def list_for_elder(self, elder_id):
+        return [
+            ReminderLog(str(i), e, k, c, float(i))
+            for i, (e, k, c) in enumerate(self.recorded)
+            if e == elder_id
         ]
