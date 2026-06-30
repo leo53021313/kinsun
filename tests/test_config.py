@@ -33,6 +33,7 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.medication_noon_hour == 12
     assert settings.medication_evening_hour == 18
     assert settings.medication_bedtime_hour == 21
+    assert settings.appointment_reminder_hour == 8
 
 
 def test_load_settings_requires_database_url():

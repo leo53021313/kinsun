@@ -178,16 +178,19 @@ class AccountService:
                 elders.append(elder)
         return elders
 
-    def guardian_line_ids(self, elder_line_id: str) -> list[str]:
-        elder = self._repo.get_elder_by_line(elder_line_id)
-        if elder is None:
-            return []
+    def guardian_line_ids_of_elder(self, elder_id: str) -> list[str]:
         line_ids: list[str] = []
-        for eg in self._repo.list_elder_guardians(elder.elder_id):
+        for eg in self._repo.list_elder_guardians(elder_id):
             guardian = self._repo.get_guardian(eg.guardian_id)
             if guardian is not None and guardian.line_user_id:
                 line_ids.append(guardian.line_user_id)
         return line_ids
+
+    def guardian_line_ids(self, elder_line_id: str) -> list[str]:
+        elder = self._repo.get_elder_by_line(elder_line_id)
+        if elder is None:
+            return []
+        return self.guardian_line_ids_of_elder(elder.elder_id)
 
     def can_view_transcript(self, elder_id: str, guardian_id: str) -> bool:
         eg = self._repo.get_elder_guardian(elder_id, guardian_id)

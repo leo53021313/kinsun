@@ -15,6 +15,10 @@ from linebot.v3 import WebhookParser
 from kinsun.accounts.repository import PgAccountRepository
 from kinsun.accounts.service import AccountService
 from kinsun.agent import CareAgent
+from kinsun.appointment.facts import AppointmentFacts
+from kinsun.appointment.flow import AppointmentMenu
+from kinsun.appointment.service import AppointmentService
+from kinsun.appointment.store import PgAppointmentStore
 from kinsun.binding.flow import BindingFlow
 from kinsun.binding.gate import ConsentGate
 from kinsun.binding.session import PgBindingSessionStore
@@ -64,7 +68,14 @@ def build_app() -> FastAPI:
         max_attempts=settings.invite_max_attempts,
     )
     medications = MedicationService(PgMedicationStore(db))
-    context = MemoryContext(long_term, facts=[MedicationFacts(accounts, medications)])
+    appointments = AppointmentService(PgAppointmentStore(db))
+    context = MemoryContext(
+        long_term,
+        facts=[
+            MedicationFacts(accounts, medications),
+            AppointmentFacts(accounts, appointments, clock=lambda: datetime.now(tz)),
+        ],
+    )
     messenger = LineApiMessenger(settings.line_channel_access_token)
     registry = ToolRegistry()
     registry.register(WEATHER_SPEC, build_weather_handler())
@@ -79,11 +90,15 @@ def build_app() -> FastAPI:
     medication_menu = MedicationMenu(
         medications, accounts, binding_sessions, clock=lambda: datetime.now(tz)
     )
+    appointment_menu = AppointmentMenu(
+        appointments, accounts, binding_sessions, clock=lambda: datetime.now(tz)
+    )
     binding = BindingFlow(
         accounts,
         binding_sessions,
         messenger,
         medication_menu,
+        appointment_menu,
         clock=lambda: datetime.now(tz),
         session_ttl_seconds=settings.binding_session_ttl_minutes * 60,
     )

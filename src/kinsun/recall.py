@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Protocol
 
 from kinsun.longterm.store import LongTermStore
+
+logger = logging.getLogger("kinsun.recall")
 
 
 class FactProvider(Protocol):
@@ -21,5 +24,8 @@ class MemoryContext:
     def recall(self, session_id: str, query: str) -> str:
         out = self._long_term.search(session_id, query)
         for provider in self._facts:
-            out += provider.facts(session_id)
+            try:
+                out += provider.facts(session_id)
+            except Exception:  # noqa: BLE001 - 事實提供者失敗不可中斷對話
+                logger.warning("事實提供者失敗，略過該段")
         return out

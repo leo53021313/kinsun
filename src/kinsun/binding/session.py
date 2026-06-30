@@ -21,6 +21,11 @@ class BindingState(StrEnum):
     MED_ADD_NAME = "med_add_name"
     MED_ADD_SLOTS = "med_add_slots"
     MED_DEL_PICK = "med_del_pick"
+    APPT_MENU = "appt_menu"
+    APPT_PICK_ELDER = "appt_pick_elder"
+    APPT_ADD_LABEL = "appt_add_label"
+    APPT_ADD_DATE = "appt_add_date"
+    APPT_DEL_PICK = "appt_del_pick"
 
 
 @dataclass(frozen=True)
