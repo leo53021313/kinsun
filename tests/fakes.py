@@ -155,3 +155,21 @@ class FakeMedicationStore:
 
     def remove(self, med_id):
         self._meds.pop(med_id, None)
+
+
+class FakeAppointmentStore:
+    def __init__(self) -> None:
+        self._appts = {}
+
+    def add(self, appt):
+        self._appts[appt.appt_id] = appt
+
+    def list_for_elder(self, elder_id):
+        rows = [a for a in self._appts.values() if a.elder_id == elder_id]
+        return sorted(rows, key=lambda a: a.date)
+
+    def list_for_date(self, date):
+        return [a for a in self._appts.values() if a.date == date]
+
+    def remove(self, appt_id):
+        self._appts.pop(appt_id, None)
