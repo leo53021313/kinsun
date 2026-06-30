@@ -133,9 +133,7 @@ def test_delete_removes():
     client, elder_id = _setup()
     appt_id = _add(client, elder_id)
     assert (
-        client.delete(
-            f"/api/elders/{elder_id}/appointments/{appt_id}", headers=_auth()
-        ).status_code
+        client.delete(f"/api/elders/{elder_id}/appointments/{appt_id}", headers=_auth()).status_code
         == 204
     )
     listed = client.get(f"/api/elders/{elder_id}/appointments", headers=_auth()).json()
@@ -145,9 +143,7 @@ def test_delete_removes():
 def test_delete_rejects_appt_not_under_elder():
     client, elder_id = _setup()
     assert (
-        client.delete(
-            f"/api/elders/{elder_id}/appointments/ghost", headers=_auth()
-        ).status_code
+        client.delete(f"/api/elders/{elder_id}/appointments/ghost", headers=_auth()).status_code
         == 404
     )
 
