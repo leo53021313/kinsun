@@ -3,10 +3,17 @@ from itertools import count
 
 from kinsun.accounts.models import ConsentBy, InviteRole
 from kinsun.accounts.service import AccountService
+from kinsun.appointment.flow import AppointmentMenu
+from kinsun.appointment.service import AppointmentService
 from kinsun.binding.flow import BindingFlow
 from kinsun.medication.flow import MedicationMenu
 from kinsun.medication.service import MedicationService
-from tests.fakes import FakeAccountRepository, FakeBindingSessionStore, FakeMedicationStore
+from tests.fakes import (
+    FakeAccountRepository,
+    FakeAppointmentStore,
+    FakeBindingSessionStore,
+    FakeMedicationStore,
+)
 
 TPE = timezone(timedelta(hours=8))
 NOW = datetime(2026, 6, 29, 10, 0, tzinfo=TPE)
@@ -24,7 +31,12 @@ def _build_flow(accounts, sessions, profiles, *, clock):
     med_ids = (f"m{i}" for i in count(1))
     medications = MedicationService(FakeMedicationStore(), new_id=lambda: next(med_ids))
     menu = MedicationMenu(medications, accounts, sessions, clock=clock)
-    return BindingFlow(accounts, sessions, profiles, menu, clock=clock, session_ttl_seconds=600)
+    appt_ids = (f"a{i}" for i in count(1))
+    appointments = AppointmentService(FakeAppointmentStore(), new_id=lambda: next(appt_ids))
+    appt_menu = AppointmentMenu(appointments, accounts, sessions, clock=clock)
+    return BindingFlow(
+        accounts, sessions, profiles, menu, appt_menu, clock=clock, session_ttl_seconds=600
+    )
 
 
 def _flow(repo=None, *, now=NOW, profiles=None, code="ABCDEFGHIJKLMNOP"):
@@ -132,6 +144,12 @@ def test_menu_shows_medication_and_delegates():
     flow, _, _ = _flow()
     assert "用藥提醒" in flow.handle("U-1", "設定")
     assert "新增用藥" in flow.handle("U-1", "4")
+
+
+def test_menu_shows_appointment_and_delegates():
+    flow, _, _ = _flow()
+    assert "回診提醒" in flow.handle("U-1", "設定")
+    assert "新增回診" in flow.handle("U-1", "5")
 
 
 def test_session_timeout_resets():

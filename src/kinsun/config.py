@@ -37,6 +37,7 @@ class Settings:
     medication_noon_hour: int
     medication_evening_hour: int
     medication_bedtime_hour: int
+    appointment_reminder_hour: int
 
 
 def _require(env: Mapping[str, str], key: str) -> str:
@@ -73,4 +74,5 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         medication_noon_hour=int(env.get("MEDICATION_NOON_HOUR", "12")),
         medication_evening_hour=int(env.get("MEDICATION_EVENING_HOUR", "18")),
         medication_bedtime_hour=int(env.get("MEDICATION_BEDTIME_HOUR", "21")),
+        appointment_reminder_hour=int(env.get("APPOINTMENT_REMINDER_HOUR", "8")),
     )

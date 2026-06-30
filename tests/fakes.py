@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 from kinsun.llm import Message
@@ -61,13 +62,17 @@ class FakeAccountRepository:
         self.consents = {}
         self.invites = {}
 
-    def save_elder(self, elder):
+    @contextmanager
+    def transaction(self):
+        yield None
+
+    def save_elder(self, elder, *, tx=None):
         self.elders[elder.elder_id] = elder
 
     def get_elder(self, elder_id):
         return self.elders.get(elder_id)
 
-    def save_guardian(self, g):
+    def save_guardian(self, g, *, tx=None):
         self.guardians[g.guardian_id] = g
         self.guardians_by_line[g.line_user_id] = g
 
@@ -83,7 +88,7 @@ class FakeAccountRepository:
     def get_guardian(self, guardian_id):
         return self.guardians.get(guardian_id)
 
-    def save_elder_guardian(self, eg):
+    def save_elder_guardian(self, eg, *, tx=None):
         self.elder_guardians[(eg.elder_id, eg.guardian_id)] = eg
 
     def get_elder_guardian(self, elder_id, guardian_id):
@@ -96,13 +101,13 @@ class FakeAccountRepository:
     def elder_ids_of_guardian(self, guardian_id):
         return sorted(e for (e, g) in self.elder_guardians if g == guardian_id)
 
-    def save_consent(self, c):
+    def save_consent(self, c, *, tx=None):
         self.consents[c.elder_id] = c
 
     def get_consent(self, elder_id):
         return self.consents.get(elder_id)
 
-    def save_invite(self, i):
+    def save_invite(self, i, *, tx=None):
         self.invites[i.code] = i
 
     def get_invite(self, code):
@@ -150,3 +155,21 @@ class FakeMedicationStore:
 
     def remove(self, med_id):
         self._meds.pop(med_id, None)
+
+
+class FakeAppointmentStore:
+    def __init__(self) -> None:
+        self._appts = {}
+
+    def add(self, appt):
+        self._appts[appt.appt_id] = appt
+
+    def list_for_elder(self, elder_id):
+        rows = [a for a in self._appts.values() if a.elder_id == elder_id]
+        return sorted(rows, key=lambda a: a.date)
+
+    def list_for_date(self, date):
+        return [a for a in self._appts.values() if a.date == date]
+
+    def remove(self, appt_id):
+        self._appts.pop(appt_id, None)

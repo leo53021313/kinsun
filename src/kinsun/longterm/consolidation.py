@@ -35,18 +35,23 @@ def main(argv: list[str] | None = None) -> int:
     session_id = args[0]
     settings = load_settings(os.environ)
     tz = ZoneInfo(settings.timezone)
+    from kinsun.db import Database
     from kinsun.longterm.store import Mem0LongTermStore
     from kinsun.mem0_factory import build_mem0_memory
     from kinsun.memory.store import PgMemoryStore
 
-    short_term = PgMemoryStore(
-        settings.database_url,
-        clock=lambda: datetime.now(tz),
-        max_turns=settings.memory_max_turns,
-    )
-    long_term = Mem0LongTermStore(build_mem0_memory(settings), top_k=settings.longterm_top_k)
-    written = run_consolidation(session_id, short_term=short_term, long_term=long_term)
-    print(f"已整理：{written} 筆今日對話寫入長期記憶")
+    db = Database.open(settings.database_url)
+    try:
+        short_term = PgMemoryStore(
+            db,
+            clock=lambda: datetime.now(tz),
+            max_turns=settings.memory_max_turns,
+        )
+        long_term = Mem0LongTermStore(build_mem0_memory(settings), top_k=settings.longterm_top_k)
+        written = run_consolidation(session_id, short_term=short_term, long_term=long_term)
+        print(f"已整理：{written} 筆今日對話寫入長期記憶")
+    finally:
+        db.close()
     return 0
 
 

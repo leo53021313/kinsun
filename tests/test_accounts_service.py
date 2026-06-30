@@ -235,3 +235,33 @@ def test_guardian_line_ids_only_primary():
     inv_elder = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
     svc.redeem_invite(inv_elder.code, "U-elder", consent_by=ConsentBy.SELF)
     assert svc.guardian_line_ids("U-elder") == ["U-son"]
+
+
+def test_create_elder_uses_repo_transaction():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    # create_elder 同時寫 elder 與 elder_guardian，且兩者皆落地
+    assert repo.get_elder(elder.elder_id).name == "阿公"
+    assert repo.list_elder_guardians(elder.elder_id)[0].role.value == "primary"
+
+
+def test_elder_by_line():
+    from kinsun.accounts.models import Elder
+
+    repo = FakeAccountRepository()
+    repo.save_elder(Elder("e1", "阿公", "U-elder"))
+    svc = _service(repo)
+    assert svc.elder_by_line("U-elder").elder_id == "e1"
+    assert svc.elder_by_line("nope") is None
+
+
+def test_guardian_line_ids_of_elder_by_id():
+    repo = FakeAccountRepository()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    inv = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
+    svc.redeem_invite(inv.code, "U-daughter", consent_by=ConsentBy.SELF)
+    # 用 elder_id 直接查，不需長輩本人綁定 LINE
+    assert svc.guardian_line_ids_of_elder(elder.elder_id) == ["U-son", "U-daughter"]
+    assert svc.guardian_line_ids_of_elder("nope") == []
