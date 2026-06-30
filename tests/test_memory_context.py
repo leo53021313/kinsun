@@ -31,3 +31,16 @@ def test_recall_appends_fact_providers():
 def test_recall_no_facts_is_just_longterm():
     ctx = MemoryContext(FakeLongTermStore(search_result="只有長期記憶"))
     assert ctx.recall("sess1", "x") == "只有長期記憶"
+
+
+class _BoomFacts:
+    def facts(self, session_id):
+        raise RuntimeError("db down")
+
+
+def test_recall_skips_failing_fact_provider():
+    ctx = MemoryContext(
+        FakeLongTermStore(search_result="長期\n"),
+        facts=[_BoomFacts(), _FakeFacts("用藥A\n")],
+    )
+    assert ctx.recall("s", "x") == "長期\n用藥A\n"
