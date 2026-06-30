@@ -37,7 +37,9 @@ def _client(verifier, accounts):
     app = FastAPI()
     app.include_router(
         create_api_router(
-            verifier=verifier, accounts=accounts, medications=MedicationService(FakeMedicationStore())
+            verifier=verifier,
+            accounts=accounts,
+            medications=MedicationService(FakeMedicationStore()),
         )
     )
     return TestClient(app)
