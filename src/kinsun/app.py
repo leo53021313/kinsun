@@ -118,7 +118,13 @@ def build_app() -> FastAPI:
     )
     verifier = LineIdTokenVerifier(settings.liff_channel_id, settings.liff_timeout_seconds)
     app.include_router(
-        create_api_router(verifier=verifier, accounts=accounts, medications=medications)
+        create_api_router(
+            verifier=verifier,
+            accounts=accounts,
+            medications=medications,
+            appointments=appointments,
+            clock=lambda: datetime.now(tz),
+        )
     )
     dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     if dist.is_dir():
