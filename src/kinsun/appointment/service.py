@@ -10,9 +10,7 @@ from kinsun.appointment.store import AppointmentStore
 
 
 class AppointmentService:
-    def __init__(
-        self, store: AppointmentStore, *, new_id: Callable[[], str] | None = None
-    ) -> None:
+    def __init__(self, store: AppointmentStore, *, new_id: Callable[[], str] | None = None) -> None:
         self._store = store
         self._new_id = new_id or (lambda: uuid.uuid4().hex)
 

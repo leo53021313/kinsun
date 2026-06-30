@@ -8,12 +8,16 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from kinsun.accounts.repository import PgAccountRepository
 from kinsun.accounts.service import AccountService
 from kinsun.agent import CareAgent
+from kinsun.appointment.facts import AppointmentFacts
+from kinsun.appointment.jobs import build_appointment_reminder_job
+from kinsun.appointment.service import AppointmentService
+from kinsun.appointment.store import PgAppointmentStore
 from kinsun.channels.line.messenger import LineApiMessenger
 from kinsun.config import Settings, load_settings
 from kinsun.db import Database, ensure_schema
@@ -57,7 +61,15 @@ def build_scheduler(
     long_term = Mem0LongTermStore(build_mem0_memory(settings), top_k=settings.longterm_top_k)
     accounts = AccountService(PgAccountRepository(db), clock=clock)
     med_store = PgMedicationStore(db)
-    context = MemoryContext(long_term, facts=[MedicationFacts(accounts, med_store)])
+    appt_store = PgAppointmentStore(db)
+    appointments = AppointmentService(appt_store)
+    context = MemoryContext(
+        long_term,
+        facts=[
+            MedicationFacts(accounts, med_store),
+            AppointmentFacts(accounts, appointments, clock=clock),
+        ],
+    )
     agent = CareAgent(gemini, memory, context)
     messenger = LineApiMessenger(settings.line_channel_access_token)
 
@@ -104,6 +116,18 @@ def build_scheduler(
                 name=name,
             )
         )
+    jobs.append(
+        build_appointment_reminder_job(
+            appts_on=appt_store.list_for_date,
+            today=lambda: clock().date().isoformat(),
+            tomorrow=lambda: (clock().date() + timedelta(days=1)).isoformat(),
+            lookup_elder=accounts.get_elder,
+            is_consented=accounts.is_consented_elder,
+            guardian_line_ids=accounts.guardian_line_ids_of_elder,
+            push=messenger.push_text,
+            hour=settings.appointment_reminder_hour,
+        )
+    )
     state = PgScheduleStateStore(db, tz)
     return Scheduler(jobs, clock, state), db
 
