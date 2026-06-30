@@ -20,7 +20,9 @@ def test_pg_risk_events_round_trip():
     session_id = f"it-{uuid.uuid4().hex}"
     ids = (f"re{i}" for i in count(1))
     times = iter([datetime(2026, 7, 10, 9, tzinfo=TPE), datetime(2026, 7, 10, 10, tzinfo=TPE)])
-    store = PgRiskEventStore(Database.open(url), clock=lambda: next(times), new_id=lambda: next(ids))
+    store = PgRiskEventStore(
+        Database.open(url), clock=lambda: next(times), new_id=lambda: next(ids)
+    )
     store.record(session_id, RiskAssessment(RiskTier.L2, 0.9, "胸痛"))
     store.record(session_id, RiskAssessment(RiskTier.L3, 0.95, "昏倒"))
     events = store.list_for_session(session_id)
