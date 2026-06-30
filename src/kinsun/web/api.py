@@ -8,6 +8,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 
+from kinsun.accounts.models import InviteRole
 from kinsun.accounts.service import AccountService
 from kinsun.appointment.service import AppointmentService
 from kinsun.medication.models import SLOT_ORDER, MedicationSlot
@@ -23,6 +24,11 @@ class MedicationIn(BaseModel):
 class AppointmentIn(BaseModel):
     date: str
     label: str
+
+
+class CreateElderIn(BaseModel):
+    elder_name: str
+    guardian_name: str = ""
 
 
 def _med_json(med) -> dict:
@@ -86,6 +92,23 @@ def create_api_router(
     def my_elders(line_user_id: str = Depends(current_guardian)) -> dict:
         elders = accounts.elders_managed_by(line_user_id)
         return {"elders": [{"elder_id": e.elder_id, "name": e.name} for e in elders]}
+
+    @router.post("/elders", status_code=201)
+    def create_elder(body: CreateElderIn, line_user_id: str = Depends(current_guardian)) -> dict:
+        name = body.elder_name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="elder_name required")
+        elder = accounts.create_elder(line_user_id, body.guardian_name, name)
+        invite = accounts.generate_invite(elder.elder_id, InviteRole.ELDER)
+        return {"elder_id": elder.elder_id, "name": elder.name, "invite_code": invite.code}
+
+    @router.post("/elders/{elder_id}/guardian-invites", status_code=201)
+    def create_guardian_invite(
+        elder_id: str, line_user_id: str = Depends(current_guardian)
+    ) -> dict:
+        assert_manages(line_user_id, elder_id)
+        invite = accounts.generate_invite(elder_id, InviteRole.GUARDIAN)
+        return {"invite_code": invite.code}
 
     @router.get("/elders/{elder_id}/medications")
     def list_medications(elder_id: str, line_user_id: str = Depends(current_guardian)) -> dict:
