@@ -18,7 +18,9 @@ def test_pg_reminder_logs_round_trip():
     elder_id = f"it-{uuid.uuid4().hex}"
     ids = (f"rl{i}" for i in count(1))
     times = iter([datetime(2026, 7, 10, 9, tzinfo=TPE), datetime(2026, 7, 10, 10, tzinfo=TPE)])
-    store = PgReminderLogStore(Database.open(url), clock=lambda: next(times), new_id=lambda: next(ids))
+    store = PgReminderLogStore(
+        Database.open(url), clock=lambda: next(times), new_id=lambda: next(ids)
+    )
     store.record(elder_id, "medication", "早上用藥：A")
     store.record(elder_id, "appointment", "明天回診：B")
     rows = store.list_for_elder(elder_id)
