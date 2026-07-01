@@ -36,6 +36,7 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.appointment_reminder_hour == 8
     assert settings.liff_channel_id == ""
     assert settings.liff_timeout_seconds == 10
+    assert settings.rich_menu_id == ""
 
 
 def test_load_settings_requires_database_url():

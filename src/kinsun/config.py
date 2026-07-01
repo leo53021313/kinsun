@@ -40,6 +40,7 @@ class Settings:
     appointment_reminder_hour: int
     liff_channel_id: str
     liff_timeout_seconds: float
+    rich_menu_id: str
 
 
 def _require(env: Mapping[str, str], key: str) -> str:
@@ -79,4 +80,5 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         appointment_reminder_hour=int(env.get("APPOINTMENT_REMINDER_HOUR", "8")),
         liff_channel_id=env.get("LIFF_CHANNEL_ID", ""),
         liff_timeout_seconds=float(env.get("LIFF_TIMEOUT_SECONDS", "10")),
+        rich_menu_id=env.get("RICH_MENU_ID", ""),
     )

@@ -107,6 +107,10 @@ def build_app() -> FastAPI:
     appointment_menu = AppointmentMenu(
         appointments, accounts, binding_sessions, clock=lambda: datetime.now(tz)
     )
+    def _link_menu(line: str) -> None:
+        messenger.link_rich_menu(line, settings.rich_menu_id)
+
+    on_guardian_bound = _link_menu if settings.rich_menu_id else None
     binding = BindingFlow(
         accounts,
         binding_sessions,
@@ -115,6 +119,7 @@ def build_app() -> FastAPI:
         appointment_menu,
         clock=lambda: datetime.now(tz),
         session_ttl_seconds=settings.binding_session_ttl_minutes * 60,
+        on_guardian_bound=on_guardian_bound,
     )
     gate = ConsentGate(accounts)
     parser = WebhookParser(settings.line_channel_secret)
