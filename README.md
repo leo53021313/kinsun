@@ -120,11 +120,22 @@ $env:PYTHONPATH="src"; uv run python -m kinsun.rag.ingest --input data/rag/demo_
 啟動大型 crawler：
 
 ```bash
-PYTHONPATH=src uv run python -m kinsun.rag.ingest --max-pages 80
+PYTHONPATH=src uv run python -m kinsun.rag.ingest --max-pages 20 --delay 2 --embedding-delay 6 --embedding-retries 5
 ```
 
 ```powershell
-$env:PYTHONPATH="src"; uv run python -m kinsun.rag.ingest --max-pages 80
+$env:PYTHONPATH="src"; uv run python -m kinsun.rag.ingest --max-pages 20 --delay 2 --embedding-delay 6 --embedding-retries 5
+```
+
+免費 Gemini 額度建議使用上述保守設定；預設值也已採同樣策略。若仍遇到 `429`，把 `--embedding-delay` 提高到 `10` 或 `15`。也可在 `.env` 固定設定：
+
+```dotenv
+RAG_CRAWLER_MAX_PAGES=20
+RAG_CRAWLER_DELAY_SECONDS=2
+RAG_EMBEDDING_DELAY_SECONDS=6
+RAG_EMBEDDING_RETRIES=5
+RAG_EMBEDDING_RETRY_INITIAL_DELAY_SECONDS=30
+RAG_EMBEDDING_RETRY_MAX_DELAY_SECONDS=300
 ```
 
 指定單一來源重建：

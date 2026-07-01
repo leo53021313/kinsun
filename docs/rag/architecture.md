@@ -61,6 +61,7 @@ Crawler 行為：
 - 只爬 `Source.allowed_domains`。
 - BFS URL discovery，`max_pages_per_source` 控制規模。
 - 每頁限速與重試，單頁失敗不終止整批。
+- Gemini embedding 另有獨立節流與 429／暫時性錯誤退避重試，避免免費額度被瞬間打滿。
 - HTML 使用標準庫解析並去除 script/style/nav/footer。
 - PDF 文字抽取為可選 `pypdf`；未安裝時該頁記為失敗，不影響 HTML 主線。
 
@@ -69,7 +70,7 @@ CLI：
 ```bash
 uv run python -m kinsun.rag.ingest --source hpa_elder_health --max-pages 30
 uv run python -m kinsun.rag.ingest --input data/rag/demo_seed.jsonl --no-crawl
-uv run python -m kinsun.rag.ingest --reset --max-pages 80
+uv run python -m kinsun.rag.ingest --reset --max-pages 20 --delay 2 --embedding-delay 6
 ```
 
 ## Retrieval 與回答

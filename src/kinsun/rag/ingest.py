@@ -25,8 +25,8 @@ from kinsun.rag.vector_store import PgVectorStore
 
 
 def main() -> None:
-    args = _parse_args()
     _load_dotenv(Path(".env"))
+    args = _parse_args()
     database_url = _require_env("DATABASE_URL")
     gemini_api_key = _require_env("GEMINI_API_KEY")
     embedding_model = os.environ.get("EMBEDDING_MODEL", "gemini-embedding-001")
@@ -39,6 +39,10 @@ def main() -> None:
         embedder = GeminiEmbeddingModel(
             api_key=gemini_api_key,
             model=embedding_model,
+            request_delay_seconds=args.embedding_delay,
+            max_retries=args.embedding_retries,
+            retry_initial_delay_seconds=args.embedding_retry_initial_delay,
+            retry_max_delay_seconds=args.embedding_retry_max_delay,
         )
         pipeline = IngestionPipeline(
             store=store,
@@ -103,13 +107,66 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--input", help="JSONL seed 文件路徑")
     parser.add_argument("--no-crawl", action="store_true", help="只匯入 --input，不啟動 crawler")
     parser.add_argument("--reset", action="store_true", help="先清空 RAG 文件與 chunk")
-    parser.add_argument("--max-pages", type=int, default=80, help="每個來源最多爬取頁數")
-    parser.add_argument("--delay", type=float, default=0.5, help="每頁之間的秒數")
+    parser.add_argument(
+        "--max-pages",
+        type=int,
+        default=_env_int("RAG_CRAWLER_MAX_PAGES", 20),
+        help="每個來源最多爬取頁數",
+    )
+    parser.add_argument(
+        "--delay",
+        type=float,
+        default=_env_float("RAG_CRAWLER_DELAY_SECONDS", 2.0),
+        help="每頁之間的秒數",
+    )
     parser.add_argument("--timeout", type=float, default=20.0, help="HTTP timeout 秒數")
     parser.add_argument("--retries", type=int, default=2, help="單頁重試次數")
     parser.add_argument("--max-chunk-chars", type=int, default=700, help="chunk 最大字數")
+    parser.add_argument(
+        "--embedding-delay",
+        type=float,
+        default=_env_float("RAG_EMBEDDING_DELAY_SECONDS", 6.0),
+        help="Gemini embedding 每次呼叫前等待秒數",
+    )
+    parser.add_argument(
+        "--embedding-retries",
+        type=int,
+        default=_env_int("RAG_EMBEDDING_RETRIES", 5),
+        help="Gemini embedding 429／暫時性錯誤重試次數",
+    )
+    parser.add_argument(
+        "--embedding-retry-initial-delay",
+        type=float,
+        default=_env_float("RAG_EMBEDDING_RETRY_INITIAL_DELAY_SECONDS", 30.0),
+        help="Gemini embedding 第一次重試等待秒數",
+    )
+    parser.add_argument(
+        "--embedding-retry-max-delay",
+        type=float,
+        default=_env_float("RAG_EMBEDDING_RETRY_MAX_DELAY_SECONDS", 300.0),
+        help="Gemini embedding 重試等待秒數上限",
+    )
     parser.add_argument("--job-id", default="manual", help="寫入 audit log 的 job/operator id")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.max_pages <= 0:
+        parser.error("--max-pages 必須大於 0")
+    if args.delay < 0:
+        parser.error("--delay 不可小於 0")
+    if args.timeout <= 0:
+        parser.error("--timeout 必須大於 0")
+    if args.retries < 0:
+        parser.error("--retries 不可小於 0")
+    if args.max_chunk_chars <= 0:
+        parser.error("--max-chunk-chars 必須大於 0")
+    if args.embedding_delay < 0:
+        parser.error("--embedding-delay 不可小於 0")
+    if args.embedding_retries < 0:
+        parser.error("--embedding-retries 不可小於 0")
+    if args.embedding_retry_initial_delay < 0:
+        parser.error("--embedding-retry-initial-delay 不可小於 0")
+    if args.embedding_retry_max_delay < 0:
+        parser.error("--embedding-retry-max-delay 不可小於 0")
+    return args
 
 
 def _require_env(key: str) -> str:
@@ -117,6 +174,26 @@ def _require_env(key: str) -> str:
     if not value:
         raise RuntimeError(f"缺少必要環境變數：{key}")
     return value
+
+
+def _env_int(key: str, default: int) -> int:
+    value = os.environ.get(key)
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise RuntimeError(f"{key} 必須是整數") from exc
+
+
+def _env_float(key: str, default: float) -> float:
+    value = os.environ.get(key)
+    if not value:
+        return default
+    try:
+        return float(value)
+    except ValueError as exc:
+        raise RuntimeError(f"{key} 必須是數字") from exc
 
 
 def _load_dotenv(path: Path) -> None:
