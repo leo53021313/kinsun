@@ -35,12 +35,17 @@ from kinsun.medication.store import PgMedicationStore
 from kinsun.mem0_factory import build_mem0_memory
 from kinsun.memory.store import PgMemoryStore
 from kinsun.pipeline import VoicePipeline
+from kinsun.rag.embeddings import GeminiEmbeddingModel
+from kinsun.rag.retriever import HealthEducationRetriever
+from kinsun.rag.service import HealthEducationRagService
+from kinsun.rag.vector_store import PgVectorStore
 from kinsun.recall import MemoryContext
 from kinsun.safety.classifier import LlmRiskClassifier
 from kinsun.safety.detector import RiskDetector
 from kinsun.safety.notifier import LineGuardianNotifier
 from kinsun.speech.asr import build_asr_client
 from kinsun.speech.tts import TextBubbleTts
+from kinsun.tools.health_rag import HEALTH_RAG_SPEC, build_health_rag_handler
 from kinsun.tools.registry import ToolRegistry
 from kinsun.tools.weather import WEATHER_SPEC, build_weather_handler
 
@@ -79,6 +84,21 @@ def build_app() -> FastAPI:
     messenger = LineApiMessenger(settings.line_channel_access_token)
     registry = ToolRegistry()
     registry.register(WEATHER_SPEC, build_weather_handler())
+    rag_store = PgVectorStore(db)
+    rag_embedder = GeminiEmbeddingModel(
+        api_key=settings.gemini_api_key,
+        model=settings.embedding_model,
+    )
+    rag_retriever = HealthEducationRetriever(
+        vector_store=rag_store,
+        embedding_model=rag_embedder,
+    )
+    rag_service = HealthEducationRagService(
+        rag_retriever,
+        llm=gemini,
+        top_k=settings.rag_top_k,
+    )
+    registry.register(HEALTH_RAG_SPEC, build_health_rag_handler(rag_service))
     pipeline = VoicePipeline(
         asr=build_asr_client(settings),
         agent=CareAgent(gemini, memory, context, tools=registry),

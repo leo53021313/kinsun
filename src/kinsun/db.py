@@ -57,6 +57,45 @@ APPOINTMENTS_DDL = (
     "CREATE INDEX IF NOT EXISTS idx_appt_date ON appointments (appt_date);"
 )
 
+RAG_DDL = (
+    "CREATE EXTENSION IF NOT EXISTS vector;"
+    "CREATE TABLE IF NOT EXISTS rag_sources ("
+    "source_id TEXT PRIMARY KEY, title TEXT NOT NULL, url TEXT NOT NULL, "
+    "publisher TEXT NOT NULL, source_type TEXT NOT NULL, trust_level TEXT NOT NULL, "
+    "copyright_status TEXT NOT NULL, recommended_status TEXT NOT NULL, "
+    "approved_for_rag BOOLEAN NOT NULL, allowed_domains TEXT NOT NULL, notes TEXT NOT NULL);"
+    "CREATE TABLE IF NOT EXISTS rag_documents ("
+    "document_id TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES rag_sources(source_id), "
+    "url TEXT NOT NULL, title TEXT NOT NULL, publisher TEXT NOT NULL, text TEXT NOT NULL, "
+    "content_hash TEXT NOT NULL, source_type TEXT NOT NULL, language TEXT NOT NULL, "
+    "topic TEXT NOT NULL, audience TEXT NOT NULL, medical_scope TEXT NOT NULL, "
+    "trust_level TEXT NOT NULL, copyright_status TEXT NOT NULL, "
+    "published_at DATE, updated_at DATE, retrieved_at DATE NOT NULL);"
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_rag_documents_source_hash "
+    "ON rag_documents (source_id, content_hash);"
+    "CREATE INDEX IF NOT EXISTS idx_rag_documents_source ON rag_documents (source_id);"
+    "CREATE TABLE IF NOT EXISTS rag_chunks ("
+    "chunk_id TEXT PRIMARY KEY, document_id TEXT NOT NULL REFERENCES rag_documents(document_id) "
+    "ON DELETE CASCADE, source_id TEXT NOT NULL REFERENCES rag_sources(source_id), "
+    "text TEXT NOT NULL, embedding vector(768), title TEXT NOT NULL, publisher TEXT NOT NULL, "
+    "source_url TEXT NOT NULL, source_type TEXT NOT NULL, language TEXT NOT NULL, "
+    "topic TEXT NOT NULL, audience TEXT NOT NULL, medical_scope TEXT NOT NULL, "
+    "trust_level TEXT NOT NULL, approved_for_rag BOOLEAN NOT NULL, "
+    "copyright_status TEXT NOT NULL, source_published_at DATE, source_updated_at DATE, "
+    "retrieved_at DATE NOT NULL, last_reviewed_at DATE, version TEXT);"
+    "CREATE INDEX IF NOT EXISTS idx_rag_chunks_source_topic ON rag_chunks (source_id, topic);"
+    "CREATE INDEX IF NOT EXISTS idx_rag_chunks_embedding "
+    "ON rag_chunks USING hnsw (embedding vector_cosine_ops);"
+    "CREATE TABLE IF NOT EXISTS rag_crawl_jobs ("
+    "job_id TEXT PRIMARY KEY, source_id TEXT NOT NULL, started_at DOUBLE PRECISION NOT NULL, "
+    "finished_at DOUBLE PRECISION, status TEXT NOT NULL, page_count INTEGER NOT NULL, "
+    "error_message TEXT);"
+    "CREATE TABLE IF NOT EXISTS rag_ingestion_audit_logs ("
+    "id BIGSERIAL PRIMARY KEY, source_id TEXT NOT NULL, fetched_at DOUBLE PRECISION NOT NULL, "
+    "content_hash TEXT NOT NULL, chunk_count INTEGER NOT NULL, parser_used TEXT NOT NULL, "
+    "status TEXT NOT NULL, error_message TEXT, operator_or_job_id TEXT NOT NULL);"
+)
+
 
 def connect(database_url: str) -> psycopg.Connection:
     return psycopg.connect(database_url)
@@ -70,6 +109,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(SCHEDULER_DDL)
         conn.execute(MEDICATIONS_DDL)
         conn.execute(APPOINTMENTS_DDL)
+        conn.execute(RAG_DDL)
         conn.commit()
 
 

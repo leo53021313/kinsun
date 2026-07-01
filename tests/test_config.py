@@ -34,6 +34,7 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.medication_evening_hour == 18
     assert settings.medication_bedtime_hour == 21
     assert settings.appointment_reminder_hour == 8
+    assert settings.rag_top_k == 5
 
 
 def test_load_settings_requires_database_url():
