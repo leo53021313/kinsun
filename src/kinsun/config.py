@@ -2,12 +2,34 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import os
+from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
+from pathlib import Path
 
 
 class ConfigError(Exception):
     """設定錯誤（缺必填環境變數等）。"""
+
+
+def load_dotenv(
+    path: Path | None = None, *, environ: MutableMapping[str, str] | None = None
+) -> None:
+    """讀取 .env（若存在）填入環境變數；只補缺、不覆蓋既有變數（真實環境優先）。
+
+    不依賴第三方套件（跨平台、無需 python-dotenv）。值中的 `=` 只切第一個。
+    預設路徑為專案根目錄的 .env（相對本檔位置，與 cwd 無關）。
+    """
+    env = os.environ if environ is None else environ
+    dotenv = Path(__file__).resolve().parents[2] / ".env" if path is None else path
+    if not dotenv.is_file():
+        return
+    for raw in dotenv.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        env.setdefault(key.strip(), value.strip())
 
 
 @dataclass(frozen=True)

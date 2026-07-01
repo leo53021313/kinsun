@@ -27,7 +27,7 @@ from kinsun.binding.gate import ConsentGate
 from kinsun.binding.session import PgBindingSessionStore
 from kinsun.channels.line.messenger import LineApiMessenger
 from kinsun.channels.line.webhook import create_app
-from kinsun.config import load_settings
+from kinsun.config import load_dotenv, load_settings
 from kinsun.db import Database, ensure_schema
 from kinsun.llm import GeminiClient
 from kinsun.longterm.store import Mem0LongTermStore
@@ -53,6 +53,7 @@ from kinsun.web.auth import LineIdTokenVerifier
 
 
 def build_app() -> FastAPI:
+    load_dotenv()
     settings = load_settings(os.environ)
     tz = ZoneInfo(settings.timezone)
     ensure_schema(settings.database_url)

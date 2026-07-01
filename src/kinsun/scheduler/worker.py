@@ -21,7 +21,7 @@ from kinsun.appointment.jobs import build_appointment_reminder_job
 from kinsun.appointment.service import AppointmentService
 from kinsun.appointment.store import PgAppointmentStore
 from kinsun.channels.line.messenger import LineApiMessenger
-from kinsun.config import Settings, load_settings
+from kinsun.config import Settings, load_dotenv, load_settings
 from kinsun.db import Database, ensure_schema
 from kinsun.llm import GeminiClient
 from kinsun.longterm.consolidation import run_consolidation
@@ -159,6 +159,7 @@ def serve(scheduler: Scheduler, *, tick_seconds: int) -> None:
 
 
 def main() -> int:
+    load_dotenv()
     settings = load_settings(os.environ)
     tz = ZoneInfo(settings.timezone)
     scheduler, db = build_scheduler(settings, clock=lambda: datetime.now(tz))

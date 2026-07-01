@@ -1,6 +1,6 @@
 import pytest
 
-from kinsun.config import ConfigError, Settings, load_settings
+from kinsun.config import ConfigError, Settings, load_dotenv, load_settings
 
 BASE_ENV = {
     "LINE_CHANNEL_SECRET": "secret",
@@ -59,3 +59,25 @@ def test_load_settings_overrides_from_env():
     settings = load_settings(env)
     assert settings.asr_backend == "dgx"
     assert settings.asr_endpoint == "http://dgx:8001"
+
+
+def test_load_dotenv_fills_missing_only(tmp_path):
+    envfile = tmp_path / ".env"
+    envfile.write_text(
+        "# 註解\n\nA=1\nB = two \n"
+        "DATABASE_URL=postgresql://u:p@h:5432/db?sslmode=require\n"
+        "EXISTING=fromfile\n",
+        encoding="utf-8",
+    )
+    environ = {"EXISTING": "fromenv"}
+    load_dotenv(envfile, environ=environ)
+    assert environ["A"] == "1"
+    assert environ["B"] == "two"  # 去除前後空白
+    assert environ["DATABASE_URL"].endswith("sslmode=require")  # 值含 = 不被切斷
+    assert environ["EXISTING"] == "fromenv"  # 既有變數不被覆蓋
+
+
+def test_load_dotenv_missing_file_is_noop(tmp_path):
+    environ = {}
+    load_dotenv(tmp_path / "nope.env", environ=environ)
+    assert environ == {}
