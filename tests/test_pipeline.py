@@ -1,3 +1,5 @@
+import pytest
+
 from kinsun.agent import CareAgent
 from kinsun.llm import Message
 from kinsun.pipeline import VoicePipeline
@@ -85,6 +87,27 @@ def test_pipeline_does_not_record_below_l2():
     events = FakeRiskEventStore()
     _pipeline(StubDetector(RiskTier.L1), SpyNotifier(), events).process(b"\x00", session_id="u1")
     assert events.recorded == []
+
+
+class _BoomAgent:
+    def handle(self, session_id, user_text):
+        raise RuntimeError("llm down")
+
+
+def test_pipeline_notifies_before_reply_generation():
+    """危急通知不可依賴回覆生成：agent 生成回覆丟例外時，家屬通知仍須先送出。"""
+    notifier = SpyNotifier()
+    pipeline = VoicePipeline(
+        asr=MockAsrClient("阿公早安"),
+        agent=_BoomAgent(),
+        tts=TextBubbleTts(),
+        detector=StubDetector(RiskTier.L3),
+        notifier=notifier,
+        risk_events=FakeRiskEventStore(),
+    )
+    with pytest.raises(RuntimeError):
+        pipeline.process(b"\x00", session_id="u1")
+    assert notifier.calls == [("u1", RiskTier.L3)]
 
 
 def test_pipeline_record_failure_does_not_break():

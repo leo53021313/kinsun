@@ -38,11 +38,13 @@ class VoicePipeline:
     ) -> TtsResult:
         user_text = self._asr.transcribe(audio, content_type=content_type)
         assessment = self._detector.assess(user_text)
-        reply_text = self._agent.handle(session_id, user_text)
+        # 危急通知須獨立於回覆生成：先落庫＋通知家屬，才產生回覆。
+        # 否則 agent 生成回覆時若丟例外，會讓已偵測到的危急漏通知。
         if assessment.tier >= RiskTier.L2:
             try:
                 self._risk_events.record(session_id, assessment)
             except Exception:  # noqa: BLE001 - 落庫失敗不可中斷對話
                 logger.warning("危急事件落庫失敗")
             self._notifier.notify(session_id, assessment)
+        reply_text = self._agent.handle(session_id, user_text)
         return self._tts.synthesize(reply_text)
