@@ -116,3 +116,17 @@ uv run pytest
 1. `npm --prefix frontend install && npm --prefix frontend run build` 產出 `frontend/dist`，後端才會供應 `/liff`。
 2. 在 LINE Developers 建一個與 Messaging API **同 provider** 的 LINE Login channel + LIFF app，endpoint 指向 `https://<host>/liff`。
 3. 後端 `.env` 設 `LIFF_CHANNEL_ID`（該 Login channel ID）；前端 `VITE_LIFF_ID` 設 LIFF ID。
+
+### 家屬圖文選單（Rich Menu，可選）
+
+讓已綁定家屬在 LINE 底部有「開啟家屬儀表板」按鈕。
+
+1. 準備一張選單圖（2500×843、≤1MB、png/jpeg）。
+2. 佈建（對真 LINE 執行一次）：
+   ```bash
+   LINE_CHANNEL_ACCESS_TOKEN=... LIFF_ID=<你的 LIFF ID> \
+   PYTHONPATH=src uv run python -m kinsun.channels.line.richmenu <image_path>
+   ```
+   會印出 `rich_menu_id`。
+3. 把它設為後端環境變數 `RICH_MENU_ID`。之後家屬一綁定（建立長輩或兌換家屬邀請碼）即自動獲得選單。
+   `RICH_MENU_ID` 未設則此功能停用、綁定照常。

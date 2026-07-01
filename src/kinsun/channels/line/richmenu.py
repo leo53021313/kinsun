@@ -46,9 +46,9 @@ def build_rich_menu_request(liff_id: str) -> RichMenuRequest:
 def setup_rich_menu(access_token: str, liff_id: str, image_path: str) -> str:
     config = Configuration(access_token=access_token)
     with ApiClient(config) as client:
-        rich_menu_id = MessagingApi(client).create_rich_menu(
-            build_rich_menu_request(liff_id)
-        ).rich_menu_id
+        rich_menu_id = (
+            MessagingApi(client).create_rich_menu(build_rich_menu_request(liff_id)).rich_menu_id
+        )
         with open(image_path, "rb") as image:
             MessagingApiBlob(client).set_rich_menu_image(rich_menu_id, body=image.read())
     return rich_menu_id
