@@ -27,7 +27,7 @@ class _FakeProfiles:
         return self._name
 
 
-def _build_flow(accounts, sessions, profiles, *, clock):
+def _build_flow(accounts, sessions, profiles, *, clock, on_guardian_bound=None):
     med_ids = (f"m{i}" for i in count(1))
     medications = MedicationService(FakeMedicationStore(), new_id=lambda: next(med_ids))
     menu = MedicationMenu(medications, accounts, sessions, clock=clock)
@@ -35,18 +35,31 @@ def _build_flow(accounts, sessions, profiles, *, clock):
     appointments = AppointmentService(FakeAppointmentStore(), new_id=lambda: next(appt_ids))
     appt_menu = AppointmentMenu(appointments, accounts, sessions, clock=clock)
     return BindingFlow(
-        accounts, sessions, profiles, menu, appt_menu, clock=clock, session_ttl_seconds=600
+        accounts,
+        sessions,
+        profiles,
+        menu,
+        appt_menu,
+        clock=clock,
+        session_ttl_seconds=600,
+        on_guardian_bound=on_guardian_bound,
     )
 
 
-def _flow(repo=None, *, now=NOW, profiles=None, code="ABCDEFGHIJKLMNOP"):
+def _flow(repo=None, *, now=NOW, profiles=None, code="ABCDEFGHIJKLMNOP", on_guardian_bound=None):
     repo = repo or FakeAccountRepository()
     ids = (f"id{i}" for i in count(1))
     accounts = AccountService(
         repo, clock=lambda: now, new_id=lambda: next(ids), new_code=lambda: code
     )
     sessions = FakeBindingSessionStore()
-    flow = _build_flow(accounts, sessions, profiles or _FakeProfiles(), clock=lambda: now)
+    flow = _build_flow(
+        accounts,
+        sessions,
+        profiles or _FakeProfiles(),
+        clock=lambda: now,
+        on_guardian_bound=on_guardian_bound,
+    )
     return flow, accounts, repo
 
 
@@ -150,6 +163,48 @@ def test_menu_shows_appointment_and_delegates():
     flow, _, _ = _flow()
     assert "回診提醒" in flow.handle("U-1", "設定")
     assert "新增回診" in flow.handle("U-1", "5")
+
+
+def test_create_elder_links_menu():
+    bound = []
+    flow, _, _ = _flow(profiles=_FakeProfiles("林小明"), on_guardian_bound=bound.append)
+    flow.handle("U-son", "設定")
+    flow.handle("U-son", "1")
+    flow.handle("U-son", "阿公")
+    assert bound == ["U-son"]
+
+
+def test_guardian_redeem_links_menu():
+    bound = []
+    flow, accounts, _ = _flow(on_guardian_bound=bound.append)
+    elder = accounts.create_elder("U-son", "兒子", "阿公")
+    inv = accounts.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
+    flow.handle("U-daughter", inv.code)
+    flow.handle("U-daughter", "是")
+    assert bound == ["U-daughter"]
+
+
+def test_elder_redeem_does_not_link_menu():
+    bound = []
+    flow, accounts, _ = _flow(on_guardian_bound=bound.append)
+    elder = accounts.create_elder("U-son", "兒子", "阿公")
+    inv = accounts.generate_invite(elder.elder_id, InviteRole.ELDER)
+    flow.handle("U-elder", "設定")
+    flow.handle("U-elder", "3")
+    flow.handle("U-elder", inv.code)
+    flow.handle("U-elder", "是")
+    assert bound == []
+
+
+def test_link_failure_does_not_break_binding():
+    def boom(line):
+        raise RuntimeError("link fail")
+
+    flow, accounts, _ = _flow(on_guardian_bound=boom)
+    elder = accounts.create_elder("U-son", "兒子", "阿公")
+    inv = accounts.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
+    flow.handle("U-daughter", inv.code)
+    assert "綁定成功" in flow.handle("U-daughter", "是")
 
 
 def test_session_timeout_resets():

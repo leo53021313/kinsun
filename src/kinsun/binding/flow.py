@@ -54,6 +54,7 @@ class BindingFlow:
         *,
         clock: Callable[[], datetime],
         session_ttl_seconds: int = 600,
+        on_guardian_bound: Callable[[str], None] | None = None,
     ) -> None:
         self._accounts = accounts
         self._sessions = sessions
@@ -62,6 +63,15 @@ class BindingFlow:
         self._appointment = appointment
         self._clock = clock
         self._ttl = session_ttl_seconds
+        self._on_guardian_bound = on_guardian_bound
+
+    def _guardian_bound(self, line: str) -> None:
+        if self._on_guardian_bound is None:
+            return
+        try:
+            self._on_guardian_bound(line)
+        except Exception:  # noqa: BLE001 - link 選單失敗不可中斷綁定
+            logger.exception("link 圖文選單失敗 line=%s", line)
 
     def handle(self, line_user_id: str, text: str) -> str | None:
         try:
@@ -146,6 +156,7 @@ class BindingFlow:
         elder = self._accounts.create_elder(line, display, name)
         invite = self._accounts.generate_invite(elder.elder_id, InviteRole.ELDER)
         self._sessions.delete(line)
+        self._guardian_bound(line)
         return (
             f"已建立『{elder.name}』的檔案，您是主要家屬。"
             f"請把這組綁定碼交給『{elder.name}』，在金孫聊天視窗貼上：\n"
@@ -197,6 +208,7 @@ class BindingFlow:
             self._sessions.delete(line)
             if session.data.get("role") == InviteRole.ELDER.value:
                 return "綁定成功！您可以開始用語音跟金孫聊天囉。"
+            self._guardian_bound(line)
             return "綁定成功！長輩有狀況時，金孫會通知您。"
         if text in _NO:
             self._sessions.delete(line)
