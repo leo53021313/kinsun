@@ -54,7 +54,7 @@ class Mem0LongTermStore:
 
     def _search_raw(self, query: str, session_id: str, top_k: int) -> list[dict]:
         try:
-            result = self._memory.search(query, user_id=session_id, limit=top_k)
+            result = self._memory.search(query, filters={"user_id": session_id}, top_k=top_k)
         except Exception as exc:  # noqa: BLE001 — 記憶壞掉不可中斷對話
             logger.warning("長期記憶檢索失敗，退化為無記憶：%s", exc)
             return []

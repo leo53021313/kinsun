@@ -26,3 +26,11 @@ def test_build_mem0_config_shape():
 def test_build_mem0_config_includes_custom_instructions():
     cfg = build_mem0_config(load_settings(_ENV))
     assert cfg["custom_instructions"] == CUSTOM_FACT_EXTRACTION_PROMPT
+
+
+def test_build_mem0_config_sets_consistent_embedding_dims():
+    """embedder 輸出維度必須與向量庫維度一致，否則向量查詢會維度不符（1536 vs 768）。"""
+    cfg = build_mem0_config(load_settings(_ENV))
+    embedder_dims = cfg["embedder"]["config"]["embedding_dims"]
+    store_dims = cfg["vector_store"]["config"]["embedding_model_dims"]
+    assert embedder_dims == store_dims == 768

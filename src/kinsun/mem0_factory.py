@@ -5,6 +5,10 @@ from __future__ import annotations
 from kinsun.config import Settings
 from kinsun.longterm import provenance
 
+# Gemini embedder 與 Supabase 向量庫的維度必須一致，否則向量查詢會維度不符。
+# mem0 gemini embedder 預設輸出 768 維，但 supabase 向量庫預設建 1536 維 → 兩邊都明確鎖 768。
+_EMBEDDING_DIMS = 768
+
 
 def build_mem0_config(settings: Settings) -> dict:
     return {
@@ -14,13 +18,14 @@ def build_mem0_config(settings: Settings) -> dict:
         },
         "embedder": {
             "provider": "gemini",
-            "config": {"model": settings.embedding_model},
+            "config": {"model": settings.embedding_model, "embedding_dims": _EMBEDDING_DIMS},
         },
         "vector_store": {
             "provider": "supabase",
             "config": {
                 "connection_string": settings.database_url,
                 "collection_name": "kinsun_memories",
+                "embedding_model_dims": _EMBEDDING_DIMS,
                 "index_method": "hnsw",
                 "index_measure": "cosine_distance",
             },
