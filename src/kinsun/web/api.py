@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
@@ -13,6 +13,8 @@ from kinsun.accounts.service import AccountService
 from kinsun.appointment.service import AppointmentService
 from kinsun.medication.models import SLOT_ORDER, MedicationSlot
 from kinsun.medication.service import MedicationService
+from kinsun.reports.reminders import ReminderLogStore
+from kinsun.safety.events import RiskEventStore
 from kinsun.web.auth import AuthError, LiffVerifier
 
 
@@ -46,6 +48,8 @@ def create_api_router(
     medications: MedicationService,
     appointments: AppointmentService,
     clock: Callable[[], datetime],
+    risk_events: RiskEventStore,
+    reminder_logs: ReminderLogStore,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
 
@@ -187,5 +191,27 @@ def create_api_router(
         assert_manages(line_user_id, elder_id)
         assert_appt_under_elder(elder_id, appt_id)
         appointments.remove(appt_id)
+
+    @router.get("/elders/{elder_id}/health-report")
+    def health_report(elder_id: str, line_user_id: str = Depends(current_guardian)) -> dict:
+        assert_manages(line_user_id, elder_id)
+        cutoff = (clock() - timedelta(days=30)).timestamp()
+        elder = accounts.get_elder(elder_id)
+        session_id = elder.line_user_id if elder else None
+        risks = (
+            [e for e in risk_events.list_for_session(session_id) if e.created_at >= cutoff]
+            if session_id
+            else []
+        )
+        reminders = [r for r in reminder_logs.list_for_elder(elder_id) if r.created_at >= cutoff]
+        return {
+            "risk_events": [
+                {"tier": int(e.tier), "reason": e.reason, "created_at": e.created_at} for e in risks
+            ],
+            "reminders": [
+                {"kind": r.kind, "content": r.content, "created_at": r.created_at}
+                for r in reminders
+            ],
+        }
 
     return router

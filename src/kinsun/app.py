@@ -39,6 +39,7 @@ from kinsun.mem0_factory import build_mem0_memory
 from kinsun.memory.store import PgMemoryStore
 from kinsun.pipeline import VoicePipeline
 from kinsun.recall import MemoryContext
+from kinsun.reports.reminders import PgReminderLogStore
 from kinsun.safety.classifier import LlmRiskClassifier
 from kinsun.safety.detector import RiskDetector
 from kinsun.safety.events import PgRiskEventStore
@@ -85,15 +86,19 @@ def build_app() -> FastAPI:
     messenger = LineApiMessenger(settings.line_channel_access_token)
     registry = ToolRegistry()
     registry.register(WEATHER_SPEC, build_weather_handler())
+    risk_events = PgRiskEventStore(
+        db, clock=lambda: datetime.now(tz), new_id=lambda: uuid.uuid4().hex
+    )
+    reminder_logs = PgReminderLogStore(
+        db, clock=lambda: datetime.now(tz), new_id=lambda: uuid.uuid4().hex
+    )
     pipeline = VoicePipeline(
         asr=build_asr_client(settings),
         agent=CareAgent(gemini, memory, context, tools=registry),
         tts=TextBubbleTts(),
         detector=RiskDetector(LlmRiskClassifier(gemini)),
         notifier=LineGuardianNotifier(accounts, messenger),
-        risk_events=PgRiskEventStore(
-            db, clock=lambda: datetime.now(tz), new_id=lambda: uuid.uuid4().hex
-        ),
+        risk_events=risk_events,
     )
     binding_sessions = PgBindingSessionStore(db)
     medication_menu = MedicationMenu(
@@ -129,6 +134,8 @@ def build_app() -> FastAPI:
             medications=medications,
             appointments=appointments,
             clock=lambda: datetime.now(tz),
+            risk_events=risk_events,
+            reminder_logs=reminder_logs,
         )
     )
     dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"

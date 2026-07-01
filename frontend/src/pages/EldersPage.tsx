@@ -67,6 +67,8 @@ export function EldersPage() {
             {" / "}
             <Link to={`/elders/${e.elder_id}/appointments`}>回診</Link>
             {" / "}
+            <Link to={`/elders/${e.elder_id}/health-report`}>健康報告</Link>
+            {" / "}
             <button type="button" onClick={() => invite(e.elder_id)}>
               邀請家屬
             </button>

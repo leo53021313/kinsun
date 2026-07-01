@@ -107,3 +107,13 @@ export async function generateGuardianInvite(
   const res = await apiFetch(`/api/elders/${elderId}/guardian-invites`, { method: "POST" });
   return (await res.json()) as { invite_code: string };
 }
+
+export type RiskEventItem = { tier: number; reason: string; created_at: number };
+export type ReminderItem = { kind: string; content: string; created_at: number };
+
+export async function getHealthReport(
+  elderId: string,
+): Promise<{ risk_events: RiskEventItem[]; reminders: ReminderItem[] }> {
+  const res = await apiFetch(`/api/elders/${elderId}/health-report`);
+  return (await res.json()) as { risk_events: RiskEventItem[]; reminders: ReminderItem[] };
+}
