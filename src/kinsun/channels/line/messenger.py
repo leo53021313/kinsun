@@ -10,6 +10,7 @@ class LineMessenger(Protocol):
     def reply_text(self, reply_token: str, text: str) -> None: ...
     def push_text(self, user_id: str, text: str) -> None: ...
     def display_name(self, user_id: str) -> str: ...
+    def link_rich_menu(self, user_id: str, rich_menu_id: str) -> None: ...
 
 
 class LineApiMessenger:
@@ -66,3 +67,8 @@ class LineApiMessenger:
                 return api.get_profile(user_id).display_name
         except Exception:  # noqa: BLE001
             return ""
+
+    def link_rich_menu(self, user_id: str, rich_menu_id: str) -> None:
+        with self._ApiClient(self._configuration) as api_client:
+            api = self._MessagingApi(api_client)
+            api.link_rich_menu_id_to_user(user_id, rich_menu_id)
