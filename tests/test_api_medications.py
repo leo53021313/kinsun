@@ -9,7 +9,13 @@ from kinsun.appointment.service import AppointmentService
 from kinsun.medication.service import MedicationService
 from kinsun.web.api import create_api_router
 from kinsun.web.auth import AuthError
-from tests.fakes import FakeAccountRepository, FakeAppointmentStore, FakeMedicationStore
+from tests.fakes import (
+    FakeAccountRepository,
+    FakeAppointmentStore,
+    FakeMedicationStore,
+    FakeReminderLogStore,
+    FakeRiskEventStore,
+)
 
 TPE = timezone(timedelta(hours=8))
 NOW = datetime(2026, 7, 10, tzinfo=TPE)
@@ -43,6 +49,8 @@ def _setup(user_id="U-son"):
             medications=medications,
             appointments=AppointmentService(FakeAppointmentStore()),
             clock=lambda: NOW,
+            risk_events=FakeRiskEventStore(),
+            reminder_logs=FakeReminderLogStore(),
         )
     )
     return TestClient(app), elder.elder_id
