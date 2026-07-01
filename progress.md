@@ -1,7 +1,7 @@
 # 金孫 KinSun — 開發進度與注意事項
 
 > 聽懂國台語的長輩 AI 語音陪伴守護 Agent（AIPE03 第五組）。
-> 本檔為**進度快照**，最後更新：2026-06-29。規範請見 [AGENTS.md](AGENTS.md)（唯一真實來源）。
+> 本檔為**進度快照**，最後更新：2026-07-01。規範請見 [AGENTS.md](AGENTS.md)（唯一真實來源）。
 
 ---
 
@@ -57,7 +57,8 @@ LINE 語音 → webhook → VoicePipeline
 | 7 | 帳號綁定核心 | 5 實體 + `PgAccountRepository` + `AccountService`（建檔/邀請/兌換/同意/家屬清單/權限） | #12 |
 | 8 | 危急真實家屬通知 | `LineGuardianNotifier`：tier≥L2 → 查 `guardian_line_ids` → 依升級順序 push 全部家屬 | #15 |
 
-**測試現況：** `uv run pytest` → 86 passed、3 skipped（雲端整合 opt-in，需 `KINSUN_IT=1`）；89 收集。ruff/format/pre-commit 全綠。
+**測試現況：** `uv run pytest` → 264 passed、12 skipped（雲端整合 opt-in，需 `KINSUN_IT=1`）。ruff/format/pre-commit 全綠。
+> ⚠️ 全部單元測試皆離線注入 fake，**綠燈 ≠ 真整合可行**（見 §9）。驗真功能務必用真金鑰真啟動。
 
 ---
 
@@ -129,7 +130,7 @@ brainstorm（談清楚、設計通過才動工）
 
 ---
 
-## 8. 進行中：長者/家屬端綁定流程（規劃中，尚未實作）
+## 8. 長者/家屬端綁定流程（✅ 已實作，見 §9；以下為原始設計決策存檔）
 
 **已鎖定決策（brainstorming）：**
 - 範圍：**只做綁定指令入口**（綁定閘門另案）。
@@ -144,3 +145,27 @@ brainstorm（談清楚、設計通過才動工）
 - (b) 家屬姓名是否真抓 LINE 暱稱（不抓則存空字串，可省 `messenger.display_name`）。
 
 > 確認後流程：spec → 計畫 → TDD 實作（同既有工作流）。
+
+---
+
+## 9. 2026-07-01 更新：首次真雲端啟動與整合修復
+
+> 本節校正 §3/§7/§8 的過時處：**綁定入口、用藥提醒、回診提醒、家屬 LIFF（前端＋REST API）、
+> 危急事件與提醒紀錄持久化、對話摘要、家屬圖文選單（Rich Menu）皆已實作並在測試中**。
+
+**首次對真 Supabase / mem0 / Gemini 啟動所發現並修復的整合問題**（離線 fake 測試看不到）：
+
+| 問題 | 修復 |
+|------|------|
+| 缺 `vecs` 依賴 → `build_app` ImportError、根本起不來 | 補 `vecs` 至依賴 |
+| mem0 2.0.10 `search()` 不接受頂層 `user_id`/`limit` → 長期記憶每輪退化成無記憶 | 改 `filters={"user_id":…}` + `top_k` |
+| gemini embedder（768 維）與 supabase 向量庫（預設 1536 維）不符 → 向量查詢全失敗 | 兩邊明確鎖 768 |
+| 危急通知排在回覆生成之後，agent 例外會漏通知家屬 | 通知移到回覆生成之前 |
+| `.env` 不會被自動載入（無 dotenv／uvicorn 無 `--env-file`） | 新增 `config.load_dotenv()`，於 app/scheduler 進入點呼叫 |
+| mem0 PostHog 遙測對外回傳（隱私） | 預設 `MEM0_TELEMETRY=False` |
+| mem0 抽取的記憶為英文 | 抽取 prompt 要求台灣繁體中文 |
+
+**待議（尚未處理）：** mem0 supabase store 不支援 BM25 關鍵字檢索；entity linking 因未裝 spaCy 而降級
+（`mem0ai[nlp]`）；`vecs` 連帶引入 `psycopg2-binary`（DGX ARM64 部署留意）。
+
+> ⚠️ **關鍵教訓：** 全部單元測試皆離線注入 fake，**綠燈 ≠ 真整合可行**。驗真功能務必用真金鑰真啟動。
