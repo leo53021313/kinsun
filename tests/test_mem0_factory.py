@@ -1,6 +1,6 @@
 from kinsun.config import load_settings
 from kinsun.longterm.provenance import CUSTOM_FACT_EXTRACTION_PROMPT
-from kinsun.mem0_factory import build_mem0_config
+from kinsun.mem0_factory import _disable_telemetry, build_mem0_config
 
 _ENV = {
     "LINE_CHANNEL_SECRET": "s",
@@ -34,3 +34,13 @@ def test_build_mem0_config_sets_consistent_embedding_dims():
     embedder_dims = cfg["embedder"]["config"]["embedding_dims"]
     store_dims = cfg["vector_store"]["config"]["embedding_model_dims"]
     assert embedder_dims == store_dims == 768
+
+
+def test_disable_telemetry_sets_env_only_if_absent():
+    """關閉 mem0 遙測（隱私），但尊重使用者顯式設定。"""
+    env = {}
+    _disable_telemetry(env)
+    assert env["MEM0_TELEMETRY"] == "False"
+    explicit = {"MEM0_TELEMETRY": "True"}
+    _disable_telemetry(explicit)
+    assert explicit["MEM0_TELEMETRY"] == "True"
