@@ -206,8 +206,7 @@ def create_api_router(
         reminders = [r for r in reminder_logs.list_for_elder(elder_id) if r.created_at >= cutoff]
         return {
             "risk_events": [
-                {"tier": int(e.tier), "reason": e.reason, "created_at": e.created_at}
-                for e in risks
+                {"tier": int(e.tier), "reason": e.reason, "created_at": e.created_at} for e in risks
             ],
             "reminders": [
                 {"kind": r.kind, "content": r.content, "created_at": r.created_at}
