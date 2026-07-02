@@ -22,9 +22,11 @@ from kinsun.appointment.facts import AppointmentFacts
 from kinsun.appointment.flow import AppointmentMenu
 from kinsun.appointment.service import AppointmentService
 from kinsun.appointment.store import PgAppointmentStore
+from kinsun.audio.publisher import build_audio_publisher
 from kinsun.binding.flow import BindingFlow
 from kinsun.binding.gate import AllowAllGate, ConsentGate
 from kinsun.binding.session import PgBindingSessionStore
+from kinsun.channels.inbound import VoiceReplyDelivery
 from kinsun.channels.line.messenger import LineApiMessenger
 from kinsun.channels.line.webhook import create_app
 from kinsun.config import load_dotenv, load_settings
@@ -45,7 +47,7 @@ from kinsun.safety.detector import RiskDetector
 from kinsun.safety.events import PgRiskEventStore
 from kinsun.safety.notifier import LineGuardianNotifier
 from kinsun.speech.asr import build_asr_client
-from kinsun.speech.tts import TextBubbleTts
+from kinsun.speech.tts import build_tts_client
 from kinsun.tools.registry import ToolRegistry
 from kinsun.tools.weather import WEATHER_SPEC, build_weather_handler
 from kinsun.web.api import create_api_router
@@ -96,7 +98,7 @@ def build_app() -> FastAPI:
     pipeline = VoicePipeline(
         asr=build_asr_client(settings),
         agent=CareAgent(gemini, memory, context, tools=registry),
-        tts=TextBubbleTts(),
+        tts=build_tts_client(settings),
         detector=RiskDetector(LlmRiskClassifier(gemini)),
         notifier=LineGuardianNotifier(accounts, messenger),
         risk_events=risk_events,
@@ -124,6 +126,14 @@ def build_app() -> FastAPI:
         on_guardian_bound=on_guardian_bound,
     )
     gate = ConsentGate(accounts) if settings.binding_gate_enabled else AllowAllGate()
+    publisher = (
+        build_audio_publisher(
+            settings, clock=lambda: datetime.now(tz), new_id=lambda: uuid.uuid4().hex
+        )
+        if settings.tts_backend == "dgx"
+        else None
+    )
+    voice = VoiceReplyDelivery(publisher, settings.tts_reply_text)
     parser = WebhookParser(settings.line_channel_secret)
     app = create_app(
         parser=parser,
@@ -131,6 +141,7 @@ def build_app() -> FastAPI:
         messenger=messenger,
         binding=binding,
         gate=gate,
+        voice=voice,
         on_shutdown=db.close,
     )
     verifier = LineIdTokenVerifier(settings.liff_channel_id, settings.liff_timeout_seconds)
