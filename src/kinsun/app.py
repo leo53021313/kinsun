@@ -23,7 +23,7 @@ from kinsun.appointment.flow import AppointmentMenu
 from kinsun.appointment.service import AppointmentService
 from kinsun.appointment.store import PgAppointmentStore
 from kinsun.binding.flow import BindingFlow
-from kinsun.binding.gate import ConsentGate
+from kinsun.binding.gate import AllowAllGate, ConsentGate
 from kinsun.binding.session import PgBindingSessionStore
 from kinsun.channels.line.messenger import LineApiMessenger
 from kinsun.channels.line.webhook import create_app
@@ -123,7 +123,7 @@ def build_app() -> FastAPI:
         session_ttl_seconds=settings.binding_session_ttl_minutes * 60,
         on_guardian_bound=on_guardian_bound,
     )
-    gate = ConsentGate(accounts)
+    gate = ConsentGate(accounts) if settings.binding_gate_enabled else AllowAllGate()
     parser = WebhookParser(settings.line_channel_secret)
     app = create_app(
         parser=parser,

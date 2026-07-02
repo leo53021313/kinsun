@@ -63,6 +63,11 @@ class Settings:
     liff_channel_id: str
     liff_timeout_seconds: float
     rich_menu_id: str
+    binding_gate_enabled: bool
+
+
+def _parse_bool(raw: str) -> bool:
+    return raw.strip().lower() not in {"0", "false", "no"}
 
 
 def _require(env: Mapping[str, str], key: str) -> str:
@@ -103,4 +108,5 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         liff_channel_id=env.get("LIFF_CHANNEL_ID", ""),
         liff_timeout_seconds=float(env.get("LIFF_TIMEOUT_SECONDS", "10")),
         rich_menu_id=env.get("RICH_MENU_ID", ""),
+        binding_gate_enabled=_parse_bool(env.get("BINDING_GATE_ENABLED", "true")),
     )

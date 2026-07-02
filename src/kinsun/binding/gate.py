@@ -22,3 +22,13 @@ class ConsentGate:
         except Exception:  # noqa: BLE001
             logger.exception("同意檢查失敗，放行 line=%s", line_user_id)
             return True
+
+
+class AllowAllGate:
+    """全放行閘門：`BINDING_GATE_ENABLED=false` 時使用（demo／開發），不查綁定狀態。"""
+
+    def __init__(self) -> None:
+        logger.warning("綁定閘門已停用（BINDING_GATE_ENABLED=false），所有使用者可直接對話")
+
+    def allows(self, line_user_id: str) -> bool:
+        return True

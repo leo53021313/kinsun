@@ -37,6 +37,7 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.liff_channel_id == ""
     assert settings.liff_timeout_seconds == 10
     assert settings.rich_menu_id == ""
+    assert settings.binding_gate_enabled is True
 
 
 def test_load_settings_requires_database_url():
@@ -59,6 +60,18 @@ def test_load_settings_overrides_from_env():
     settings = load_settings(env)
     assert settings.asr_backend == "dgx"
     assert settings.asr_endpoint == "http://dgx:8001"
+
+
+def test_load_settings_binding_gate_disabled():
+    for raw in ("false", "0", "no", "False"):
+        settings = load_settings({**BASE_ENV, "BINDING_GATE_ENABLED": raw})
+        assert settings.binding_gate_enabled is False, raw
+
+
+def test_load_settings_binding_gate_enabled_values():
+    for raw in ("true", "1", "yes", "True"):
+        settings = load_settings({**BASE_ENV, "BINDING_GATE_ENABLED": raw})
+        assert settings.binding_gate_enabled is True, raw
 
 
 def test_load_dotenv_fills_missing_only(tmp_path):
