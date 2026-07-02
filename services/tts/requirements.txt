@@ -1,4 +1,8 @@
 # 僅在 DGX Spark（Linux + ARM64/aarch64 + GPU）安裝。
-# 台語 TTS 引擎與其依賴待模型選定後補上並於 DGX 實機驗證、鎖定版本。
+# 版本於 DGX 上以實機驗證後鎖定；torch 用 NVIDIA 對應 aarch64/CUDA 版本。
+# CosyVoice 3 依 FunAudioLLM/CosyVoice repo 安裝（含 cosyvoice 套件與其依賴）。
+# 系統需 ffmpeg（wav→m4a）。
 fastapi
 uvicorn
+torch
+torchaudio
