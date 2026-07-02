@@ -86,6 +86,8 @@
 
 ## 附錄 C：需人工同步的項目（核可後生效）
 
+> **執行狀態（2026-07-03，於 DGX 實機）**：本專案主要開發／部署機 DGX 上的 `.env` 已同步 7 鍵、開發用 Supabase／Postgres 六表已重建並以整合測試驗真（詳見本節末「DGX 執行紀錄」）。其餘開發者本機環境仍須各自比照本節同步。
+
 - 本機與 DGX 實際 `.env`（不在版控）：#8、#10、#11、#12、#13 需手動同步改鍵。批次四已完成程式碼與 `.env.example` 改動，實際部署環境（尤其 DGX）的 `.env` 須人工同步下列 7 鍵（舊名 → 新名，值不變）：
 
   | # | 舊鍵 | 新鍵 |
@@ -121,6 +123,10 @@
   2. 依需要 `DROP TABLE IF EXISTS turns, risk_events, conversation_summaries, medications, appointments, reminder_logs CASCADE;`（`elders`／`guardians`／`binding_sessions` 等其餘表未改名，不受影響、不需一併 drop）。
   3. 重啟應用程式，讓啟動流程呼叫 `kinsun.db.ensure_schema()` 以新版 DDL 重建上述表；或直接對照本節「受影響資料表與欄位對照」手動執行等效 `CREATE TABLE IF NOT EXISTS`（見 `src/kinsun/db.py` 的 `MEMORY_DDL`／`RISK_EVENTS_DDL`／`CONVERSATION_SUMMARIES_DDL`／`MEDICATIONS_DDL`／`APPOINTMENTS_DDL`／`REMINDER_LOGS_DDL`）。
   4. 重建後以 `list_for_elder`／`list_for_line_user` 等既有查詢或直接 `SELECT` 驗證新欄位可正常讀寫。
+
+  **DGX 執行紀錄（2026-07-03）**：於 DGX 實機對開發用 Postgres（`DATABASE_URL` 指向的 Supabase 專案）執行 DROP 六表 → `ensure_schema()` 重建，六表新欄位皆與上表相符（重建前 `turns` 有 14 筆測試對話、其餘為空，資料可丟已丟）。以 `KINSUN_IT=1` 跑 Postgres 整合測試，於乾淨表上 28 項全通過，端到端驗證新 schema 讀寫正常。`.env` 7 鍵亦確認已同步。
+
+  > 附帶發現（既有測試衛生問題，非本次改名引入，供日後另修）：`test_pg_reminder_logs_round_trip`、`test_pg_risk_events_round_trip` 使用固定主鍵（`rl1` 等）且測試後不清理，只在乾淨資料庫上通過一次，重複執行會因主鍵重複而失敗。建議這類 round-trip 整合測試改用隨機 ID 或於 teardown 刪除自身資料。
 
 ## 執行批次對照
 
