@@ -120,7 +120,7 @@ brainstorm（談清楚、設計通過才動工）
 | **A. 綁定入口** ⭐ | 長者/家屬端綁定流程（LINE 引導式對話）、綁定閘門 | **解鎖危急通知/用藥提醒**；目前 `AccountService` 無使用者入口 |
 | B. 照護功能 | 用藥提醒（accounts + scheduler 已備） | — |
 | | 衛教 RAG / 工具 | ⚠️ **Jerry 進行中**，避免撞車 |
-| C. 真模型接 DGX | 真 ASR 已硬化（healthz/併發/GPU 實機驗證，見 §10）；TTS 已接**國語** CosyVoice 3（程式碼完成，DGX 實機驗證待做；台語模型後續只需換 `services/tts` 的合成實作，契約不變） | 見 §10 |
+| C. 真模型接 DGX | 真 ASR 已硬化、TTS 已接**國語** CosyVoice 3，**兩者皆 DGX 實機驗證通過、端到端打通**（見 §10）；台語模型後續只需換 `services/tts` 的合成實作，契約不變 | 見 §10 |
 | D. 安全/治理 | 危急通知 v2（升級鏈/ack/多通道/節流）、對話安全 3 議題 | 見策略文件 |
 
 **策略/待議文件：**
@@ -176,7 +176,8 @@ brainstorm（談清楚、設計通過才動工）
 
 > 對應設計文件：[真模型接 DGX 設計（C 切片）](docs/superpowers/specs/2026-07-02-真模型接DGX-C-design.md)。
 > 本節校正 §1/§7 的過時處：ASR／TTS 已從純 mock／文字泡泡，補上可切換真模型的完整程式碼路徑。
-> **重要：** TTS 全鏈路是**程式碼實作完成**，**DGX 實機驗證尚未進行**（見下方「未完成」）——請勿誤讀為已上線。
+> **更新（2026-07-02 晚）：** TTS/ASR 模型服務**已於 DGX（GB10 / aarch64 / CUDA 13）實機驗證通過**，
+> 端到端 text→TTS→m4a→ASR→text 打通（見下方「DGX 實機驗證結果」）。剩真 LINE 帳號的語音收發需部署 app 才能驗。
 
 ### 已完成（程式碼＋離線 fake 測試，`uv run pytest` 303 passed／12 skipped 全綠）
 
@@ -201,15 +202,27 @@ brainstorm（談清楚、設計通過才動工）
     `audio_retention_days`、`audio_upload_timeout_seconds`）、組裝、`TTS_BACKEND=dgx` 時註冊每日音檔清理 job。
   * 文件同步：`services/tts/README.md`、`services/asr/README.md`、專案 `README.md` 環境變數、本節。
 
-### 未完成——DGX 實機驗證清單（在 DGX 上逐項驗證前，TTS 不可視為可用）
+### DGX 實機驗證結果（2026-07-02，GB10 / aarch64 / CUDA 13、torch 2.12.1+cu130）
 
-1. **CosyVoice 3 能否在 aarch64 + CUDA 裝起來**（最大風險）：`ttsfrd` 只有 x86 wheel，
-   需退用 `WeTextProcessing`（`pynini` 在 ARM 可能要編譯）；裝不起來需回頭議備案引擎（如 BreezyVoice），契約不變。
-2. 參考語音錄製與試聽（金孫聲音定調），單句合成延遲與音質是否可接受。
-3. wav→m4a 轉檔後 LINE 實機是否可正常播放（`AudioMessage`）。
-4. ASR／TTS 併發行為：同時多請求不卡死、超載回 503、應用層正確退化為文字。
-5. 端到端：LINE 語音進 → 真 ASR → 真 TTS → LINE 語音出，延遲需壓在 reply token 有效期內。
-6. `services/asr`、`services/tts` 的 `requirements.txt` 依實機驗證結果鎖定版本（torch/transformers/torchaudio/CosyVoice 依賴）。
+實機跑通後，把 `services/tts/server.py`／`services/asr/server.py` 依真實 API 鎖定並修了三個實機才會現形的問題：
+
+1. ✅ **CosyVoice 3 在 aarch64 + CUDA 裝得起來並跑通**（最大風險已解）：改用 repo 的 `CosyVoice3`／`AutoModel`
+   （`CosyVoice3.__init__` 無 `load_jit` 參數）；CosyVoice repo 與 `third_party/Matcha-TTS` 以 `TTS_COSY_DIR`／
+   `TTS_MATCHA_DIR` 加入 `sys.path`；單句 RTF≈0.7（快於即時）。
+2. ✅ **aarch64 音檔 I/O**：torchaudio 走 torchcodec（`.so` 載不起來）→ 服務改用 `soundfile` 讀寫。
+3. ✅ **zero-shot instruct 前綴**：逐字稿須加 `You are a helpful assistant.<|endofprompt|>`，否則 LLM 立刻 EOS、無語音。
+4. ✅ **TTS m4a 轉檔**：mp4/m4a 的 `moov` atom 需可 seek 輸出，`-f ipod pipe:1` 會失敗 → 改走可 seek 暫存檔再讀回；
+   `ffprobe` 確認輸出為 AAC/24kHz/單聲道，`X-Duration-Ms` 與實際時長一致。
+5. ✅ **ASR m4a 解碼**：HF 的 `ffmpeg_read` 把 bytes 灌 stdin(pipe)、`moov` 在檔尾的 m4a 解成 partial file 而失敗
+   （LINE 語音多屬此類）→ 服務改自行以 ffmpeg 從可 seek 暫存檔解成 16k 單聲道 numpy 陣列再餵 pipeline。
+6. ✅ **端到端**：把 CosyVoice 3 合成的金孫語音 m4a 餵入 ASR，辨識回近乎一致的文字（僅「您/你」同音差異）。
+7. ✅ **healthz／併發／預載**：兩服務 `GET /healthz`、`_PRELOAD=1` 啟動即載入、`503` 超載保護實機皆正常。
+8. ✅ `requirements.txt` 鎖定 torch 2.12.1+cu130、transformers 5.x；TTS 補 `soundfile`。
+
+**仍待做：**
+* 錄製並定調正式**金孫參考語音**（驗證暫用 CosyVoice 內附範例聲）。
+* 以真 LINE 帳號驗語音收發（需部署 app + 公開 URL + Supabase 上傳；模型端 m4a 已確認可播、可辨識）。
+* 服務端逐請求 timeout（目前僅呼叫端 `DgxTtsClient`／`DgxAsrClient` 有 urlopen 逾時）。
 
 > 台語語音仍是**後續**工作：本次先接**國語** CosyVoice 3（使用者指定），
 > 待台語模型選定／訓練完成後，只需替換 `services/tts/server.py` 的合成實作，契約與應用層不動。
