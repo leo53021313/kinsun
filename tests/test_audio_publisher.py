@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -76,12 +77,17 @@ def test_cleanup_deletes_expired_date_folders(monkeypatch):
     calls = []
 
     def fake_urlopen(req, timeout=None):
-        calls.append((req.get_method(), req.full_url, req.data))
+        method = req.get_method()
+        url = req.full_url
+        body = json.loads(req.data.decode("utf-8")) if req.data else None
+        calls.append((method, url, body))
 
         class _R:
+            def __init__(self, payload: bytes) -> None:
+                self._payload = payload
+
             def read(self):
-                # list bucket 回三個日期資料夾
-                return b'[{"name":"20260628"},{"name":"20260630"},{"name":"20260702"}]'
+                return self._payload
 
             def __enter__(self):
                 return self
@@ -89,7 +95,19 @@ def test_cleanup_deletes_expired_date_folders(monkeypatch):
             def __exit__(self, *a):
                 return False
 
-        return _R()
+        if method == "POST":
+            # list 端點：依 prefix 回不同層級的內容
+            prefix = body["prefix"]
+            if prefix == "tts/":
+                # 頂層：三個日期資料夾
+                return _R(b'[{"name":"20260628"},{"name":"20260630"},{"name":"20260702"}]')
+            if prefix == "tts/20260628/":
+                return _R(b'[{"name":"a.m4a"},{"name":"b.m4a"}]')
+            if prefix == "tts/20260630/":
+                return _R(b'[{"name":"c.m4a"}]')
+            return _R(b"[]")
+        # DELETE：bulk 刪除
+        return _R(b"{}")
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
     pub = SupabaseAudioPublisher(
@@ -101,10 +119,16 @@ def test_cleanup_deletes_expired_date_folders(monkeypatch):
         new_id=lambda: "x",
     )
     pub.cleanup(retention_days=2)  # 保留 20260701~ ；刪 0628、0630
-    deleted = [url for method, url, _ in calls if method == "DELETE"]
-    assert any("20260628" in u for u in deleted)
-    assert any("20260630" in u for u in deleted)
-    assert not any("20260702" in u for u in deleted)
+
+    deletes = [(url, body) for method, url, body in calls if method == "DELETE"]
+    assert deletes, "應觸發至少一次 bulk DELETE"
+    for url, _ in deletes:
+        assert url == "https://proj.supabase.co/storage/v1/object/tts-audio"
+    all_paths = [p for _, body in deletes for p in body["paths"]]
+    assert "tts/20260628/a.m4a" in all_paths
+    assert "tts/20260628/b.m4a" in all_paths
+    assert "tts/20260630/c.m4a" in all_paths
+    assert not any("20260702" in p for p in all_paths)
 
 
 def test_build_requires_supabase_config():

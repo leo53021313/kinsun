@@ -87,17 +87,46 @@ class SupabaseAudioPublisher:
             raise AudioPublishError(f"音檔清單讀取失敗：{exc}") from exc
         return [r["name"] for r in rows if isinstance(r, dict) and "name" in r]
 
-    def _delete_folder(self, folder: str) -> None:
-        del_url = f"{self._base}/storage/v1/object/{self._bucket}/tts/{folder}"
+    def _list_files(self, folder: str) -> list[str]:
+        """列出 tts/{folder}/ 前綴下的所有物件，回傳完整路徑（bucket 內 key）。"""
+        list_url = f"{self._base}/storage/v1/object/list/{self._bucket}"
+        prefix = f"tts/{folder}/"
+        body = json.dumps({"prefix": prefix, "limit": 1000}).encode("utf-8")
         request = urllib.request.Request(
-            del_url,
-            headers={"Authorization": f"Bearer {self._key}"},
-            method="DELETE",
+            list_url,
+            data=body,
+            headers={"Authorization": f"Bearer {self._key}", "Content-Type": "application/json"},
+            method="POST",
         )
+        with urllib.request.urlopen(request, timeout=self._timeout) as response:
+            rows = json.loads(response.read().decode("utf-8"))
+        return [f"{prefix}{r['name']}" for r in rows if isinstance(r, dict) and "name" in r]
+
+    def _delete_folder(self, folder: str) -> None:
+        """刪除 folder 下所有物件：先列出檔案，再一次 bulk DELETE。
+
+        Supabase Storage 沒有「刪資料夾」這種操作（資料夾是虛擬的），
+        必須先列出前綴下的實際物件 key，再對 bucket 層級的 DELETE 端點
+        送出 {"paths": [...]}。任何一步失敗都只記警告，不中斷其他資料夾清理。
+        """
         try:
+            paths = self._list_files(folder)
+            if not paths:
+                return
+            del_url = f"{self._base}/storage/v1/object/{self._bucket}"
+            body = json.dumps({"paths": paths}).encode("utf-8")
+            request = urllib.request.Request(
+                del_url,
+                data=body,
+                headers={
+                    "Authorization": f"Bearer {self._key}",
+                    "Content-Type": "application/json",
+                },
+                method="DELETE",
+            )
             with urllib.request.urlopen(request, timeout=self._timeout) as response:
                 response.read()
-        except (urllib.error.URLError, OSError) as exc:
+        except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
             logger.warning("音檔資料夾刪除失敗 folder=%s：%s", folder, exc)
 
 
