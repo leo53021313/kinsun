@@ -70,12 +70,12 @@ class LineGuardianNotifier:
             # 注意：此處刻意保留 line_id（而非 line_user_id），
             # 避免與外層 line_user_id（長輩本人）參數同名遮蔽，
             # 導致迴圈結束後的 log 誤用「最後一位家屬」的 LINE ID。
-            for line_id in targets:
+            for guardian_line_user_id in targets:
                 try:
-                    self._pusher.push_text(line_id, text)
+                    self._pusher.push_text(guardian_line_user_id, text)
                     sent += 1
                 except Exception:  # noqa: BLE001
-                    logger.exception("推播家屬失敗 line_id=%s", line_id)
+                    logger.exception("推播家屬失敗 guardian_line_user_id=%s", guardian_line_user_id)
             logger.warning(
                 "已通知家屬 session=%s tier=%s 成功=%d/%d",
                 line_user_id,
