@@ -228,7 +228,7 @@ def test_deliver_shows_transcript_when_enabled():
         _voice_msg(cap),
         TtsResult(text="好喔", audio=b"A", duration_ms=100, transcript="今天天氣真好"),
     )
-    assert cap.voice_sent == [("http://x/a.m4a", 100, "🎤 辨識：今天天氣真好\n好喔")]
+    assert cap.voice_sent == [("http://x/a.m4a", 100, "辨識：今天天氣真好\n\n回復：好喔")]
 
 
 def test_deliver_no_transcript_when_disabled():

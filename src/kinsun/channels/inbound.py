@@ -45,12 +45,13 @@ class VoiceReplyDelivery:
         self._show_transcript = show_transcript
 
     def _compose_text(self, result: TtsResult, *, include_reply: bool) -> str | None:
-        parts = []
+        # debug 模式：「辨識：…」空一行「回復：…」；非 debug 就只回覆文字。
         if self._show_transcript and result.transcript:
-            parts.append(f"🎤 辨識：{result.transcript}")
-        if include_reply:
-            parts.append(result.text)
-        return "\n".join(parts) if parts else None
+            parts = [f"辨識：{result.transcript}"]
+            if include_reply:
+                parts.append(f"回復：{result.text}")
+            return "\n\n".join(parts)
+        return result.text if include_reply else None
 
     def deliver(self, msg: InboundMessage, result: TtsResult) -> None:
         if result.audio is None or self._publisher is None or msg.reply_voice is None:
@@ -82,5 +83,6 @@ def dispatch(msg: InboundMessage, *, pipeline, binding, gate, voice=None) -> Non
             voice.deliver(msg, result)
         else:
             msg.reply(result.text)
-    except (ASRError, LLMError, MemoryError):
+    except (ASRError, LLMError, MemoryError) as exc:
+        logger.warning("語音管線失敗（回退提示）：%s: %s", type(exc).__name__, exc)
         msg.reply(FALLBACK_PROMPT)
