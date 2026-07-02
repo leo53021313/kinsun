@@ -70,11 +70,11 @@ def create_api_router(
         if elder_id not in {e.elder_id for e in accounts.elders_managed_by(line_user_id)}:
             raise HTTPException(status_code=404, detail="elder not found")
 
-    def assert_med_under_elder(elder_id: str, medication_id: str) -> None:
+    def assert_medication_under_elder(elder_id: str, medication_id: str) -> None:
         if medication_id not in {m.medication_id for m in medications.list_for_elder(elder_id)}:
             raise HTTPException(status_code=404, detail="medication not found")
 
-    def assert_appt_under_elder(elder_id: str, appointment_id: str) -> None:
+    def assert_appointment_under_elder(elder_id: str, appointment_id: str) -> None:
         if appointment_id not in {a.appointment_id for a in appointments.list_for_elder(elder_id)}:
             raise HTTPException(status_code=404, detail="appointment not found")
 
@@ -142,7 +142,7 @@ def create_api_router(
         line_user_id: str = Depends(current_guardian),
     ) -> dict:
         assert_manages(line_user_id, elder_id)
-        assert_med_under_elder(elder_id, medication_id)
+        assert_medication_under_elder(elder_id, medication_id)
         name = body.name.strip()
         if not name:
             raise HTTPException(status_code=400, detail="name required")
@@ -154,7 +154,7 @@ def create_api_router(
         elder_id: str, medication_id: str, line_user_id: str = Depends(current_guardian)
     ) -> None:
         assert_manages(line_user_id, elder_id)
-        assert_med_under_elder(elder_id, medication_id)
+        assert_medication_under_elder(elder_id, medication_id)
         medications.remove(medication_id)
 
     @router.get("/elders/{elder_id}/appointments")
@@ -183,7 +183,7 @@ def create_api_router(
         line_user_id: str = Depends(current_guardian),
     ) -> dict:
         assert_manages(line_user_id, elder_id)
-        assert_appt_under_elder(elder_id, appointment_id)
+        assert_appointment_under_elder(elder_id, appointment_id)
         label = body.label.strip()
         if not label:
             raise HTTPException(status_code=400, detail="label required")
@@ -195,7 +195,7 @@ def create_api_router(
         elder_id: str, appointment_id: str, line_user_id: str = Depends(current_guardian)
     ) -> None:
         assert_manages(line_user_id, elder_id)
-        assert_appt_under_elder(elder_id, appointment_id)
+        assert_appointment_under_elder(elder_id, appointment_id)
         appointments.remove(appointment_id)
 
     @router.get("/elders/{elder_id}/health-report")
