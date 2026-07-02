@@ -63,7 +63,7 @@ def build_scheduler(
     gemini = GeminiClient(
         api_key=settings.gemini_api_key,
         model=settings.gemini_model,
-        timeout=settings.llm_timeout_seconds,
+        timeout=settings.gemini_timeout_seconds,
     )
     long_term = Mem0LongTermStore(build_mem0_memory(settings), top_k=settings.longterm_top_k)
     accounts = AccountService(PgAccountStore(db), clock=clock)
@@ -103,18 +103,20 @@ def build_scheduler(
 
     jobs = [
         build_consolidation_job(
-            sessions=memory.sessions, run_one=run_one, hour=settings.consolidation_hour
+            sessions=memory.sessions,
+            run_one=run_one,
+            hour=settings.longterm_consolidation_hour,
         ),
         build_greeting_job(
-            sessions=memory.sessions, greet_one=greet_one, hour=settings.greeting_hour
+            sessions=memory.sessions, greet_one=greet_one, hour=settings.proactive_greeting_hour
         ),
         build_inactivity_job(
             sessions=memory.sessions,
             last_active=memory.last_active,
             clock=clock,
-            threshold_seconds=settings.inactivity_days * 86400,
+            threshold_seconds=settings.proactive_inactivity_days * 86400,
             care_one=care_one,
-            hour=settings.inactivity_hour,
+            hour=settings.proactive_inactivity_hour,
         ),
     ]
     med_slots = [
@@ -154,7 +156,7 @@ def build_scheduler(
         jobs.append(
             build_audio_cleanup_job(
                 cleanup=lambda: publisher.cleanup(retention_days=settings.audio_retention_days),
-                hour=settings.consolidation_hour,
+                hour=settings.longterm_consolidation_hour,
             )
         )
     state = PgScheduleStateStore(db, tz)
@@ -174,8 +176,10 @@ def main() -> int:
     scheduler, db = build_scheduler(settings, clock=lambda: datetime.now(tz))
     print(
         f"排程器啟動：每 {settings.scheduler_tick_seconds}s 檢查；"
-        f"整理 {settings.consolidation_hour}:00、問候 {settings.greeting_hour}:00、"
-        f"失聯關心 {settings.inactivity_hour}:00（{settings.inactivity_days} 天門檻）。"
+        f"整理 {settings.longterm_consolidation_hour}:00、"
+        f"問候 {settings.proactive_greeting_hour}:00、"
+        f"失聯關心 {settings.proactive_inactivity_hour}:00"
+        f"（{settings.proactive_inactivity_days} 天門檻）。"
     )
     try:
         serve(scheduler, tick_seconds=settings.scheduler_tick_seconds)

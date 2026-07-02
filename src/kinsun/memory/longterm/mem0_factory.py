@@ -21,7 +21,10 @@ def build_mem0_config(settings: Settings) -> dict:
         },
         "embedder": {
             "provider": "gemini",
-            "config": {"model": settings.embedding_model, "embedding_dims": _EMBEDDING_DIMS},
+            "config": {
+                "model": settings.longterm_embedding_model,
+                "embedding_dims": _EMBEDDING_DIMS,
+            },
         },
         "vector_store": {
             "provider": "supabase",

@@ -7,7 +7,7 @@ _ENV = {
     "LINE_CHANNEL_ACCESS_TOKEN": "t",
     "GEMINI_API_KEY": "k",
     "GEMINI_MODEL": "gemini-x",
-    "EMBEDDING_MODEL": "models/gemini-embedding-001",
+    "LONGTERM_EMBEDDING_MODEL": "models/gemini-embedding-001",
     "DATABASE_URL": "postgresql://u:p@h:5432/db",
 }
 

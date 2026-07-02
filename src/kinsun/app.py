@@ -68,7 +68,7 @@ def build_app() -> FastAPI:
     gemini = GeminiClient(
         api_key=settings.gemini_api_key,
         model=settings.gemini_model,
-        timeout=settings.llm_timeout_seconds,
+        timeout=settings.gemini_timeout_seconds,
     )
     long_term = Mem0LongTermStore(build_mem0_memory(settings), top_k=settings.longterm_top_k)
     accounts = AccountService(
@@ -134,7 +134,7 @@ def build_app() -> FastAPI:
         else None
     )
     voice = VoiceReplyDelivery(
-        publisher, settings.tts_reply_text, show_transcript=settings.debug_show_transcript
+        publisher, settings.tts_reply_text, show_transcript=settings.asr_debug_show_transcript
     )
     parser = WebhookParser(settings.line_channel_secret)
     app = create_app(

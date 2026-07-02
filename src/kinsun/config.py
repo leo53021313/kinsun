@@ -41,15 +41,15 @@ class Settings:
     asr_backend: str
     asr_endpoint: str
     asr_timeout_seconds: float
-    llm_timeout_seconds: float
+    gemini_timeout_seconds: float
     memory_max_turns: int
     timezone: str
-    embedding_model: str
-    consolidation_hour: int
+    longterm_embedding_model: str
+    longterm_consolidation_hour: int
     scheduler_tick_seconds: int
-    greeting_hour: int
-    inactivity_hour: int
-    inactivity_days: int
+    proactive_greeting_hour: int
+    proactive_inactivity_hour: int
+    proactive_inactivity_days: int
     invite_ttl_hours: int
     invite_max_attempts: int
     database_url: str
@@ -73,7 +73,7 @@ class Settings:
     audio_bucket: str
     audio_retention_days: int
     audio_upload_timeout_seconds: float
-    debug_show_transcript: bool
+    asr_debug_show_transcript: bool
 
 
 def _parse_bool(raw: str) -> bool:
@@ -96,15 +96,15 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         asr_backend=env.get("ASR_BACKEND", "mock"),
         asr_endpoint=env.get("ASR_ENDPOINT", ""),
         asr_timeout_seconds=float(env.get("ASR_TIMEOUT_SECONDS", "15")),
-        llm_timeout_seconds=float(env.get("LLM_TIMEOUT_SECONDS", "30")),
+        gemini_timeout_seconds=float(env.get("GEMINI_TIMEOUT_SECONDS", "30")),
         memory_max_turns=int(env.get("MEMORY_MAX_TURNS", "200")),
         timezone=env.get("TIMEZONE", "Asia/Taipei"),
-        embedding_model=env.get("EMBEDDING_MODEL", "gemini-embedding-001"),
-        consolidation_hour=int(env.get("CONSOLIDATION_HOUR", "3")),
+        longterm_embedding_model=env.get("LONGTERM_EMBEDDING_MODEL", "gemini-embedding-001"),
+        longterm_consolidation_hour=int(env.get("LONGTERM_CONSOLIDATION_HOUR", "3")),
         scheduler_tick_seconds=int(env.get("SCHEDULER_TICK_SECONDS", "60")),
-        greeting_hour=int(env.get("GREETING_HOUR", "8")),
-        inactivity_hour=int(env.get("INACTIVITY_HOUR", "10")),
-        inactivity_days=int(env.get("INACTIVITY_DAYS", "2")),
+        proactive_greeting_hour=int(env.get("PROACTIVE_GREETING_HOUR", "8")),
+        proactive_inactivity_hour=int(env.get("PROACTIVE_INACTIVITY_HOUR", "10")),
+        proactive_inactivity_days=int(env.get("PROACTIVE_INACTIVITY_DAYS", "2")),
         invite_ttl_hours=int(env.get("INVITE_TTL_HOURS", "24")),
         invite_max_attempts=int(env.get("INVITE_MAX_ATTEMPTS", "5")),
         database_url=_require(env, "DATABASE_URL"),
@@ -128,5 +128,5 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         audio_bucket=env.get("AUDIO_BUCKET", "tts-audio"),
         audio_retention_days=int(env.get("AUDIO_RETENTION_DAYS", "2")),
         audio_upload_timeout_seconds=float(env.get("AUDIO_UPLOAD_TIMEOUT_SECONDS", "10")),
-        debug_show_transcript=_parse_bool(env.get("DEBUG_SHOW_TRANSCRIPT", "false")),
+        asr_debug_show_transcript=_parse_bool(env.get("ASR_DEBUG_SHOW_TRANSCRIPT", "false")),
     )

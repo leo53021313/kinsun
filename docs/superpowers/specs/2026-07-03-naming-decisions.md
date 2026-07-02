@@ -86,7 +86,19 @@
 
 ## 附錄 C：需人工同步的項目（核可後生效）
 
-- 本機與 DGX 實際 `.env`（不在版控）：#8、#10、#11、#12、#13 需手動同步改鍵（舊名 → 新名清單將於批次四完成後更新於此）。
+- 本機與 DGX 實際 `.env`（不在版控）：#8、#10、#11、#12、#13 需手動同步改鍵。批次四已完成程式碼與 `.env.example` 改動，實際部署環境（尤其 DGX）的 `.env` 須人工同步下列 7 鍵（舊名 → 新名，值不變）：
+
+  | # | 舊鍵 | 新鍵 |
+  |---|------|------|
+  | 8 | `LLM_TIMEOUT_SECONDS` | `GEMINI_TIMEOUT_SECONDS` |
+  | 10 | `CONSOLIDATION_HOUR` | `LONGTERM_CONSOLIDATION_HOUR` |
+  | 11 | `GREETING_HOUR` | `PROACTIVE_GREETING_HOUR` |
+  | 11 | `INACTIVITY_HOUR` | `PROACTIVE_INACTIVITY_HOUR` |
+  | 11 | `INACTIVITY_DAYS` | `PROACTIVE_INACTIVITY_DAYS` |
+  | 12 | `EMBEDDING_MODEL` | `LONGTERM_EMBEDDING_MODEL` |
+  | 13 | `DEBUG_SHOW_TRANSCRIPT` | `ASR_DEBUG_SHOW_TRANSCRIPT` |
+
+  未同步改鍵會導致 `load_settings` 讀不到值而退回預設值（非例外），故不會立即報錯，務必逐一確認。
 - Supabase／Postgres 開發庫：#28、#29、#31、#32 開發庫直接重建（資料可丟，無遷移）。
 
 ## 執行批次對照

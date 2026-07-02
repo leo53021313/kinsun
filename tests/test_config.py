@@ -18,12 +18,12 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.gemini_model == "gemini-3.1-flash-lite"
     assert settings.memory_max_turns == 200
     assert settings.timezone == "Asia/Taipei"
-    assert settings.embedding_model == "gemini-embedding-001"
-    assert settings.consolidation_hour == 3
+    assert settings.longterm_embedding_model == "gemini-embedding-001"
+    assert settings.longterm_consolidation_hour == 3
     assert settings.scheduler_tick_seconds == 60
-    assert settings.greeting_hour == 8
-    assert settings.inactivity_hour == 10
-    assert settings.inactivity_days == 2
+    assert settings.proactive_greeting_hour == 8
+    assert settings.proactive_inactivity_hour == 10
+    assert settings.proactive_inactivity_days == 2
     assert settings.invite_ttl_hours == 24
     assert settings.invite_max_attempts == 5
     assert settings.database_url == "postgresql://u:p@h:5432/db"
@@ -118,10 +118,10 @@ def test_load_dotenv_missing_file_is_noop(tmp_path):
     assert environ == {}
 
 
-def test_load_settings_debug_show_transcript_default_false():
-    assert load_settings(BASE_ENV).debug_show_transcript is False
+def test_load_settings_asr_debug_show_transcript_default_false():
+    assert load_settings(BASE_ENV).asr_debug_show_transcript is False
 
 
-def test_load_settings_debug_show_transcript_true():
-    s = load_settings({**BASE_ENV, "DEBUG_SHOW_TRANSCRIPT": "true"})
-    assert s.debug_show_transcript is True
+def test_load_settings_asr_debug_show_transcript_true():
+    s = load_settings({**BASE_ENV, "ASR_DEBUG_SHOW_TRANSCRIPT": "true"})
+    assert s.asr_debug_show_transcript is True
