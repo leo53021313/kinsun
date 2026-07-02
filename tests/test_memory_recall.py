@@ -1,4 +1,4 @@
-from kinsun.recall import MemoryContext
+from kinsun.memory.recall import MemoryContext
 from tests.fakes import FakeLongTermStore
 
 

@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 from kinsun.llm import Message
-from kinsun.memory.store import previous_day_bounds
+from kinsun.memory.shortterm import previous_day_bounds
 from kinsun.reports.reminders import ReminderLog
 from kinsun.reports.summaries import ConversationSummary
 from kinsun.safety.events import RiskEvent

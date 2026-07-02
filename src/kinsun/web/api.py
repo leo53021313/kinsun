@@ -10,9 +10,9 @@ from pydantic import BaseModel
 
 from kinsun.accounts.models import InviteRole
 from kinsun.accounts.service import AccountService
-from kinsun.appointment.service import AppointmentService
-from kinsun.medication.models import SLOT_ORDER, MedicationSlot
-from kinsun.medication.service import MedicationService
+from kinsun.appointments.service import AppointmentService
+from kinsun.medications.models import SLOT_ORDER, MedicationSlot
+from kinsun.medications.service import MedicationService
 from kinsun.reports.reminders import ReminderLogStore
 from kinsun.safety.events import RiskEventStore
 from kinsun.web.auth import AuthError, LiffVerifier

@@ -9,7 +9,7 @@ pytestmark = pytest.mark.skipif(os.environ.get("KINSUN_IT") != "1", reason="éœ€é
 
 def _store():
     from kinsun.db import Database, ensure_schema
-    from kinsun.memory.store import PgMemoryStore
+    from kinsun.memory.shortterm import PgMemoryStore
 
     url = os.environ["DATABASE_URL"]
     ensure_schema(url)

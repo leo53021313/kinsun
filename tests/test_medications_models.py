@@ -1,4 +1,4 @@
-from kinsun.medication.models import MedicationSlot, slots_label
+from kinsun.medications.models import MedicationSlot, slots_label
 
 
 def test_slot_values():

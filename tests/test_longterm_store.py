@@ -1,5 +1,9 @@
 from kinsun.llm import Message
-from kinsun.longterm.store import HEALTH_QUERY, Mem0LongTermStore, _format_memories_for_prompt
+from kinsun.memory.longterm.store import (
+    HEALTH_QUERY,
+    Mem0LongTermStore,
+    _format_memories_for_prompt,
+)
 
 # 比照 mem0 2.0.10：entity 參數（user_id/agent_id/run_id）不可走頂層 kwargs，必須用 filters。
 _ENTITY_PARAMS = frozenset({"user_id", "agent_id", "run_id"})

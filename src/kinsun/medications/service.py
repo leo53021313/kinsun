@@ -5,8 +5,8 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable
 
-from kinsun.medication.models import Medication, MedicationSlot
-from kinsun.medication.store import MedicationStore
+from kinsun.medications.models import Medication, MedicationSlot
+from kinsun.medications.store import MedicationStore
 
 
 class MedicationService:

@@ -1,6 +1,6 @@
 from kinsun.accounts.models import Elder
-from kinsun.medication.jobs import build_medication_slot_job
-from kinsun.medication.models import Medication, MedicationSlot
+from kinsun.medications.jobs import build_medication_slot_job
+from kinsun.medications.models import Medication, MedicationSlot
 
 
 def _med(elder_id, name, slots):

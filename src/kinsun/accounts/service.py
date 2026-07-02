@@ -18,7 +18,7 @@ from kinsun.accounts.models import (
     InviteRole,
     Role,
 )
-from kinsun.accounts.repository import AccountRepository
+from kinsun.accounts.store import AccountRepository
 
 CONSENT_VERSION = "1.0"
 

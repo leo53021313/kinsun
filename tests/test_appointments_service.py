@@ -1,6 +1,6 @@
 from itertools import count
 
-from kinsun.appointment.service import AppointmentService
+from kinsun.appointments.service import AppointmentService
 from tests.fakes import FakeAppointmentStore
 
 

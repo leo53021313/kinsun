@@ -13,33 +13,33 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from kinsun.accounts.repository import PgAccountRepository
 from kinsun.accounts.service import AccountService
+from kinsun.accounts.store import PgAccountRepository
 from kinsun.agent import CareAgent
-from kinsun.appointment.facts import AppointmentFacts
-from kinsun.appointment.jobs import build_appointment_reminder_job
-from kinsun.appointment.service import AppointmentService
-from kinsun.appointment.store import PgAppointmentStore
+from kinsun.appointments.facts import AppointmentFacts
+from kinsun.appointments.jobs import build_appointment_reminder_job
+from kinsun.appointments.service import AppointmentService
+from kinsun.appointments.store import PgAppointmentStore
 from kinsun.audio.publisher import build_audio_publisher
 from kinsun.channels.line.messenger import LineApiMessenger
 from kinsun.config import Settings, load_dotenv, load_settings
 from kinsun.db import Database, ensure_schema
 from kinsun.llm import GeminiClient
-from kinsun.longterm.consolidation import run_consolidation
-from kinsun.longterm.store import Mem0LongTermStore
-from kinsun.medication.facts import MedicationFacts
-from kinsun.medication.jobs import build_medication_slot_job
-from kinsun.medication.models import MedicationSlot
-from kinsun.medication.store import PgMedicationStore
-from kinsun.mem0_factory import build_mem0_memory
-from kinsun.memory.store import PgMemoryStore
+from kinsun.medications.facts import MedicationFacts
+from kinsun.medications.jobs import build_medication_slot_job
+from kinsun.medications.models import MedicationSlot
+from kinsun.medications.store import PgMedicationStore
+from kinsun.memory.longterm.consolidation import run_consolidation
+from kinsun.memory.longterm.mem0_factory import build_mem0_memory
+from kinsun.memory.longterm.store import Mem0LongTermStore
+from kinsun.memory.recall import MemoryContext
+from kinsun.memory.shortterm import PgMemoryStore
 from kinsun.proactive.jobs import (
     GREETING_INTENT,
     INACTIVITY_INTENT,
     build_greeting_job,
     build_inactivity_job,
 )
-from kinsun.recall import MemoryContext
 from kinsun.reports.reminders import PgReminderLogStore
 from kinsun.reports.summaries import PgConversationSummaryStore, summarize_day
 from kinsun.scheduler.jobs import build_audio_cleanup_job, build_consolidation_job

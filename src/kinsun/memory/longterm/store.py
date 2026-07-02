@@ -6,7 +6,7 @@ import logging
 from typing import Protocol
 
 from kinsun.llm import Message
-from kinsun.longterm import provenance as prov
+from kinsun.memory.longterm import provenance as prov
 
 logger = logging.getLogger(__name__)
 

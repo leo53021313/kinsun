@@ -4,9 +4,9 @@ from datetime import datetime, timedelta, timezone
 
 from kinsun.accounts.models import Elder
 from kinsun.accounts.service import AccountService
-from kinsun.medication.facts import MedicationFacts
-from kinsun.medication.models import MedicationSlot
-from kinsun.medication.service import MedicationService
+from kinsun.medications.facts import MedicationFacts
+from kinsun.medications.models import MedicationSlot
+from kinsun.medications.service import MedicationService
 from tests.fakes import FakeAccountRepository, FakeMedicationStore
 
 TPE = timezone(timedelta(hours=8))

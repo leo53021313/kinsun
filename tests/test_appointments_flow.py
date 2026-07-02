@@ -2,8 +2,8 @@ from datetime import datetime, timedelta, timezone
 from itertools import count
 
 from kinsun.accounts.service import AccountService
-from kinsun.appointment.flow import AppointmentMenu, _parse_date
-from kinsun.appointment.service import AppointmentService
+from kinsun.appointments.flow import AppointmentMenu, _parse_date
+from kinsun.appointments.service import AppointmentService
 from kinsun.binding.session import BindingState
 from tests.fakes import FakeAccountRepository, FakeAppointmentStore, FakeBindingSessionStore
 

@@ -3,8 +3,8 @@ from itertools import count
 
 from kinsun.accounts.models import Elder
 from kinsun.accounts.service import AccountService
-from kinsun.appointment.facts import AppointmentFacts
-from kinsun.appointment.service import AppointmentService
+from kinsun.appointments.facts import AppointmentFacts
+from kinsun.appointments.service import AppointmentService
 from tests.fakes import FakeAccountRepository, FakeAppointmentStore
 
 TPE = timezone(timedelta(hours=8))

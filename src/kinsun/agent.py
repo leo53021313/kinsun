@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from kinsun.llm import LLMClient, Message, ToolResult
-from kinsun.memory.store import MemoryStore
-from kinsun.recall import MemoryContext
+from kinsun.memory.recall import MemoryContext
+from kinsun.memory.shortterm import MemoryStore
 
 SYSTEM_PROMPT = (
     "你是「金孫」，一位溫暖、有耐心的台灣長輩陪伴助理。"

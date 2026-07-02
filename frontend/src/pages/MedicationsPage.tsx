@@ -8,7 +8,7 @@ import {
   listMedications,
   updateMedication,
 } from "../api";
-import { SLOTS, slotLabel } from "../meds";
+import { SLOTS, slotLabel } from "../medicationSlots";
 
 export function MedicationsPage() {
   const { elderId = "" } = useParams();

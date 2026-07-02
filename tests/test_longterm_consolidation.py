@@ -1,8 +1,8 @@
 from datetime import datetime, timedelta, timezone
 
 from kinsun.llm import Message
-from kinsun.longterm import provenance
-from kinsun.longterm.consolidation import run_consolidation
+from kinsun.memory.longterm import provenance
+from kinsun.memory.longterm.consolidation import run_consolidation
 from tests.fakes import FakeLongTermStore, FakeMemoryStore
 
 TPE = timezone(timedelta(hours=8))

@@ -7,7 +7,7 @@ pytestmark = pytest.mark.skipif(os.environ.get("KINSUN_IT") != "1", reason="éœ€é
 
 def test_elder_and_invite_roundtrip():
     from kinsun.accounts.models import Elder, Invite, InviteRole
-    from kinsun.accounts.repository import PgAccountRepository
+    from kinsun.accounts.store import PgAccountRepository
     from kinsun.db import Database, ensure_schema
 
     url = os.environ["DATABASE_URL"]
@@ -21,7 +21,7 @@ def test_elder_and_invite_roundtrip():
 
 def test_get_elder_by_line_and_get_guardian():
     from kinsun.accounts.models import Elder, Guardian
-    from kinsun.accounts.repository import PgAccountRepository
+    from kinsun.accounts.store import PgAccountRepository
     from kinsun.db import Database, ensure_schema
 
     url = os.environ["DATABASE_URL"]
@@ -37,7 +37,7 @@ def test_get_elder_by_line_and_get_guardian():
 
 def test_elder_ids_of_guardian():
     from kinsun.accounts.models import ElderGuardian, Role
-    from kinsun.accounts.repository import PgAccountRepository
+    from kinsun.accounts.store import PgAccountRepository
     from kinsun.db import Database, ensure_schema
 
     url = os.environ["DATABASE_URL"]

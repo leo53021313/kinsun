@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 from typing import Protocol
 
-from kinsun.longterm.store import LongTermStore
+from kinsun.memory.longterm.store import LongTermStore
 
-logger = logging.getLogger("kinsun.recall")
+logger = logging.getLogger("kinsun.memory.recall")
 
 
 class FactProvider(Protocol):

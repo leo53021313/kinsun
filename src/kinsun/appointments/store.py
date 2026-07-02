@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from kinsun.appointment.models import Appointment
+from kinsun.appointments.models import Appointment
 from kinsun.db import Database, _Errors
 
 

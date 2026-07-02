@@ -1,7 +1,7 @@
 from itertools import count
 
-from kinsun.medication.models import MedicationSlot
-from kinsun.medication.service import MedicationService
+from kinsun.medications.models import MedicationSlot
+from kinsun.medications.service import MedicationService
 from tests.fakes import FakeMedicationStore
 
 

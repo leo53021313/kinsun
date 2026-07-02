@@ -1,6 +1,6 @@
 from kinsun.config import load_settings
-from kinsun.longterm.provenance import CUSTOM_FACT_EXTRACTION_PROMPT
-from kinsun.mem0_factory import _disable_telemetry, build_mem0_config
+from kinsun.memory.longterm.mem0_factory import _disable_telemetry, build_mem0_config
+from kinsun.memory.longterm.provenance import CUSTOM_FACT_EXTRACTION_PROMPT
 
 _ENV = {
     "LINE_CHANNEL_SECRET": "s",

@@ -5,8 +5,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from kinsun.accounts.service import AccountService
-from kinsun.appointment.service import AppointmentService
-from kinsun.medication.service import MedicationService
+from kinsun.appointments.service import AppointmentService
+from kinsun.medications.service import MedicationService
 from kinsun.reports.reminders import ReminderLog
 from kinsun.safety.events import RiskEvent
 from kinsun.safety.tiers import RiskTier

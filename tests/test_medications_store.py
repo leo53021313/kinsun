@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from kinsun.medication.models import Medication, MedicationSlot
+from kinsun.medications.models import Medication, MedicationSlot
 from tests.fakes import FakeMedicationStore
 
 
@@ -24,7 +24,7 @@ def test_fake_store_round_trip():
 @pytest.mark.skipif(os.environ.get("KINSUN_IT") != "1", reason="需雲端 key")
 def test_pg_store_round_trip():
     from kinsun.db import Database, ensure_schema
-    from kinsun.medication.store import PgMedicationStore
+    from kinsun.medications.store import PgMedicationStore
 
     url = os.environ["DATABASE_URL"]
     ensure_schema(url)

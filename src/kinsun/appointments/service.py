@@ -5,8 +5,8 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable
 
-from kinsun.appointment.models import Appointment
-from kinsun.appointment.store import AppointmentStore
+from kinsun.appointments.models import Appointment
+from kinsun.appointments.store import AppointmentStore
 
 
 class AppointmentService:

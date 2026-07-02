@@ -1,4 +1,4 @@
-from kinsun.longterm import provenance
+from kinsun.memory.longterm import provenance
 
 
 def test_constants_and_labels():

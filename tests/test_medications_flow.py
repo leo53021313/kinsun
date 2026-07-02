@@ -3,9 +3,9 @@ from itertools import count
 
 from kinsun.accounts.service import AccountService
 from kinsun.binding.session import BindingState
-from kinsun.medication.flow import MedicationMenu, _parse_slots
-from kinsun.medication.models import MedicationSlot
-from kinsun.medication.service import MedicationService
+from kinsun.medications.flow import MedicationMenu, _parse_slots
+from kinsun.medications.models import MedicationSlot
+from kinsun.medications.service import MedicationService
 from tests.fakes import FakeAccountRepository, FakeBindingSessionStore, FakeMedicationStore
 
 TPE = timezone(timedelta(hours=8))

@@ -5,12 +5,12 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
-from kinsun.medication.models import SLOT_LABELS, Medication, MedicationSlot
+from kinsun.medications.models import SLOT_LABELS, Medication, MedicationSlot
 from kinsun.reports.reminders import safe_record
 from kinsun.scheduler.fanout import fanout_job
 from kinsun.scheduler.scheduler import Job
 
-logger = logging.getLogger("kinsun.medication")
+logger = logging.getLogger("kinsun.medications")
 
 
 def build_medication_slot_job(

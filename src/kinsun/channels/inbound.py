@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from kinsun.llm import LLMError
-from kinsun.memory.store import MemoryError
+from kinsun.memory.shortterm import MemoryError
 from kinsun.speech.asr import ASRError
 from kinsun.speech.tts import TtsResult
 

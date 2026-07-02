@@ -1,6 +1,6 @@
 from kinsun.accounts.models import Elder
-from kinsun.appointment.jobs import build_appointment_reminder_job
-from kinsun.appointment.models import Appointment
+from kinsun.appointments.jobs import build_appointment_reminder_job
+from kinsun.appointments.models import Appointment
 
 
 def _job(appts_by_date, *, elders, consented, guardians, hour=8, record=None):

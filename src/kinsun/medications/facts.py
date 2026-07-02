@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from kinsun.medication.models import slots_label
+from kinsun.medications.models import slots_label
 
 _PREFIX = "\n這位長者目前固定服用的藥（系統設定的提醒時段，僅供參考、非醫療指示）：\n"
 

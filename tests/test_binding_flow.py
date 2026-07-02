@@ -3,11 +3,11 @@ from itertools import count
 
 from kinsun.accounts.models import ConsentBy, InviteRole
 from kinsun.accounts.service import AccountService
-from kinsun.appointment.flow import AppointmentMenu
-from kinsun.appointment.service import AppointmentService
+from kinsun.appointments.flow import AppointmentMenu
+from kinsun.appointments.service import AppointmentService
 from kinsun.binding.flow import BindingFlow
-from kinsun.medication.flow import MedicationMenu
-from kinsun.medication.service import MedicationService
+from kinsun.medications.flow import MedicationMenu
+from kinsun.medications.service import MedicationService
 from tests.fakes import (
     FakeAccountRepository,
     FakeAppointmentStore,

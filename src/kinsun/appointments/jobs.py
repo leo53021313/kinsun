@@ -5,12 +5,12 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
-from kinsun.appointment.models import Appointment
+from kinsun.appointments.models import Appointment
 from kinsun.reports.reminders import safe_record
 from kinsun.scheduler.fanout import fanout_job
 from kinsun.scheduler.scheduler import Job
 
-logger = logging.getLogger("kinsun.appointment")
+logger = logging.getLogger("kinsun.appointments")
 
 
 def build_appointment_reminder_job(

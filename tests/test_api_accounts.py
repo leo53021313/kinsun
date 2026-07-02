@@ -6,8 +6,8 @@ from fastapi.testclient import TestClient
 
 from kinsun.accounts.models import InviteRole
 from kinsun.accounts.service import AccountService
-from kinsun.appointment.service import AppointmentService
-from kinsun.medication.service import MedicationService
+from kinsun.appointments.service import AppointmentService
+from kinsun.medications.service import MedicationService
 from kinsun.web.api import create_api_router
 from kinsun.web.auth import AuthError
 from tests.fakes import (

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from kinsun.db import Database, _Errors
-from kinsun.medication.models import Medication, MedicationSlot
+from kinsun.medications.models import Medication, MedicationSlot
 
 
 class MedicationError(Exception):

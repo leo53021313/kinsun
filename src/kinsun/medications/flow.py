@@ -1,36 +1,40 @@
-"""回診提醒的引導式設定（被引導流程委派，共用 session）。"""
+"""用藥提醒的引導式設定（被引導流程委派，共用 session）。"""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
 
-from kinsun.appointment.service import AppointmentService
 from kinsun.binding.session import BindingSession, BindingSessionStore, BindingState
+from kinsun.medications.models import SLOT_ORDER, MedicationSlot, slots_label
+from kinsun.medications.service import MedicationService
 
-_APPT_MENU = "回診提醒：請回覆數字：\n1️⃣ 新增回診\n2️⃣ 查看回診\n3️⃣ 刪除回診"
-_DATE_PROMPT = "請問回診日期？請用 2026-07-15 這種格式（年-月-日）。"
+_MED_MENU = "用藥提醒：請回覆數字：\n1️⃣ 新增用藥\n2️⃣ 查看用藥\n3️⃣ 刪除用藥"
+_SLOT_PROMPT = (
+    "請問什麼時候吃？回覆數字（可複選）：\n"
+    "1 早上　2 中午　3 晚上　4 睡前\n（例如「1 3」表示早上和晚上）"
+)
 _FULLWIDTH = str.maketrans("０１２３４５６７８９", "0123456789")
 
 
-def _parse_date(text: str) -> str | None:
-    try:
-        parsed = datetime.strptime(text.strip(), "%Y-%m-%d").date()
-    except ValueError:
+def _parse_slots(text: str) -> tuple[MedicationSlot, ...] | None:
+    digits = [c for c in text.translate(_FULLWIDTH) if c in "1234"]
+    if not digits:
         return None
-    return parsed.isoformat()
+    chosen = {SLOT_ORDER[int(d) - 1] for d in digits}
+    return tuple(s for s in SLOT_ORDER if s in chosen)
 
 
-class AppointmentMenu:
+class MedicationMenu:
     def __init__(
         self,
-        appointments: AppointmentService,
+        medications: MedicationService,
         accounts,
         sessions: BindingSessionStore,
         *,
         clock: Callable[[], datetime],
     ) -> None:
-        self._appts = appointments
+        self._meds = medications
         self._accounts = accounts
         self._sessions = sessions
         self._clock = clock
@@ -39,19 +43,19 @@ class AppointmentMenu:
         self._sessions.save(BindingSession(line, state, data, self._clock().timestamp()))
 
     def open(self, line: str) -> str:
-        self._save(line, BindingState.APPT_MENU, {})
-        return _APPT_MENU
+        self._save(line, BindingState.MED_MENU, {})
+        return _MED_MENU
 
     def step(self, session: BindingSession, text: str, line: str) -> str:
         state = session.state
-        if state == BindingState.APPT_MENU:
+        if state == BindingState.MED_MENU:
             return self._menu(text, line)
-        if state == BindingState.APPT_PICK_ELDER:
+        if state == BindingState.MED_PICK_ELDER:
             return self._pick_elder(session, text, line)
-        if state == BindingState.APPT_ADD_LABEL:
-            return self._add_label(session, text, line)
-        if state == BindingState.APPT_ADD_DATE:
-            return self._add_date(session, text, line)
+        if state == BindingState.MED_ADD_NAME:
+            return self._add_name(session, text, line)
+        if state == BindingState.MED_ADD_SLOTS:
+            return self._add_slots(session, text, line)
         return self._del_pick(session, text, line)
 
     def _menu(self, text: str, line: str) -> str:
@@ -65,7 +69,7 @@ class AppointmentMenu:
             return self._begin(action, elders[0].elder_id, elders[0].name, line)
         self._save(
             line,
-            BindingState.APPT_PICK_ELDER,
+            BindingState.MED_PICK_ELDER,
             {"action": action, "elders": [[e.elder_id, e.name] for e in elders]},
         )
         listing = "\n".join(f"{i + 1}. {e.name}" for i, e in enumerate(elders))
@@ -82,52 +86,49 @@ class AppointmentMenu:
     def _begin(self, action: str, elder_id: str, elder_name: str, line: str) -> str:
         if action == "add":
             self._save(
-                line, BindingState.APPT_ADD_LABEL, {"elder_id": elder_id, "elder_name": elder_name}
+                line, BindingState.MED_ADD_NAME, {"elder_id": elder_id, "elder_name": elder_name}
             )
-            return f"請問要幫『{elder_name}』記哪一個回診？（例：上午10點 心臟科回診 林口長庚）"
+            return f"請問要幫『{elder_name}』新增什麼藥？（回覆藥名）"
         if action == "view":
             self._sessions.delete(line)
             return self._view(elder_id, elder_name)
-        appts = self._appts.list_for_elder(elder_id)
-        if not appts:
+        meds = self._meds.list_for_elder(elder_id)
+        if not meds:
             self._sessions.delete(line)
-            return f"『{elder_name}』目前沒有設定回診。"
-        items = [[a.appt_id, f"{a.date} {a.label}"] for a in appts]
-        self._save(line, BindingState.APPT_DEL_PICK, {"appts": items})
+            return f"『{elder_name}』目前沒有設定用藥。"
+        items = [[m.med_id, f"{m.name}（{slots_label(m.slots)}）"] for m in meds]
+        self._save(line, BindingState.MED_DEL_PICK, {"meds": items})
         listing = "\n".join(f"{i + 1}. {label}" for i, (_, label) in enumerate(items))
         return "請回覆要刪除的編號：\n" + listing
 
     def _view(self, elder_id: str, elder_name: str) -> str:
-        today = self._clock().date().isoformat()
-        ups = self._appts.upcoming(elder_id, today)
-        if not ups:
-            return f"『{elder_name}』目前沒有即將到來的回診。"
-        lines = "\n".join(f"• {a.date} {a.label}" for a in ups)
-        return f"『{elder_name}』即將到來的回診：\n" + lines
+        meds = self._meds.list_for_elder(elder_id)
+        if not meds:
+            return f"『{elder_name}』目前沒有設定用藥。"
+        lines = "\n".join(f"• {m.name}（{slots_label(m.slots)}）" for m in meds)
+        return f"『{elder_name}』的用藥：\n" + lines
 
-    def _add_label(self, session: BindingSession, text: str, line: str) -> str:
+    def _add_name(self, session: BindingSession, text: str, line: str) -> str:
         data = dict(session.data)
-        data["label"] = text
-        self._save(line, BindingState.APPT_ADD_DATE, data)
-        return _DATE_PROMPT
+        data["name"] = text
+        self._save(line, BindingState.MED_ADD_SLOTS, data)
+        return _SLOT_PROMPT
 
-    def _add_date(self, session: BindingSession, text: str, line: str) -> str:
-        date = _parse_date(text)
-        if date is None:
-            return "請用 2026-07-15 這種格式（年-月-日）。"
-        if date < self._clock().date().isoformat():
-            return "這個日期已經過了，請輸入今天以後的日期。"
+    def _add_slots(self, session: BindingSession, text: str, line: str) -> str:
+        slots = _parse_slots(text)
+        if slots is None:
+            return "請回覆 1～4 的數字（可複選），例如「1 3」。"
         data = session.data
-        self._appts.add(data["elder_id"], date, data["label"])
+        self._meds.add(data["elder_id"], data["name"], slots)
         self._sessions.delete(line)
-        return f"已為『{data['elder_name']}』新增回診：{date} {data['label']}。"
+        return f"已為『{data['elder_name']}』新增『{data['name']}』（{slots_label(slots)}）。"
 
     def _del_pick(self, session: BindingSession, text: str, line: str) -> str:
-        appts = session.data["appts"]
+        meds = session.data["meds"]
         choice = text.translate(_FULLWIDTH)
-        if not choice.isdigit() or not (1 <= int(choice) <= len(appts)):
+        if not choice.isdigit() or not (1 <= int(choice) <= len(meds)):
             return "請回覆清單中的編號。"
-        appt_id, label = appts[int(choice) - 1]
-        self._appts.remove(appt_id)
+        med_id, label = meds[int(choice) - 1]
+        self._meds.remove(med_id)
         self._sessions.delete(line)
         return f"已刪除『{label}』。"

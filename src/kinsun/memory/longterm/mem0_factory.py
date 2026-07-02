@@ -6,7 +6,7 @@ import os
 from collections.abc import MutableMapping
 
 from kinsun.config import Settings
-from kinsun.longterm import provenance
+from kinsun.memory.longterm import provenance
 
 # Gemini embedder 與 Supabase 向量庫的維度必須一致，否則向量查詢會維度不符。
 # mem0 gemini embedder 預設輸出 768 維，但 supabase 向量庫預設建 1536 維 → 兩邊都明確鎖 768。

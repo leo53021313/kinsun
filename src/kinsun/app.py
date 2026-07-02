@@ -15,13 +15,13 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from linebot.v3 import WebhookParser
 
-from kinsun.accounts.repository import PgAccountRepository
 from kinsun.accounts.service import AccountService
+from kinsun.accounts.store import PgAccountRepository
 from kinsun.agent import CareAgent
-from kinsun.appointment.facts import AppointmentFacts
-from kinsun.appointment.flow import AppointmentMenu
-from kinsun.appointment.service import AppointmentService
-from kinsun.appointment.store import PgAppointmentStore
+from kinsun.appointments.facts import AppointmentFacts
+from kinsun.appointments.flow import AppointmentMenu
+from kinsun.appointments.service import AppointmentService
+from kinsun.appointments.store import PgAppointmentStore
 from kinsun.audio.publisher import build_audio_publisher
 from kinsun.binding.flow import BindingFlow
 from kinsun.binding.gate import AllowAllGate, ConsentGate
@@ -32,15 +32,15 @@ from kinsun.channels.line.webhook import create_app
 from kinsun.config import load_dotenv, load_settings
 from kinsun.db import Database, ensure_schema
 from kinsun.llm import GeminiClient
-from kinsun.longterm.store import Mem0LongTermStore
-from kinsun.medication.facts import MedicationFacts
-from kinsun.medication.flow import MedicationMenu
-from kinsun.medication.service import MedicationService
-from kinsun.medication.store import PgMedicationStore
-from kinsun.mem0_factory import build_mem0_memory
-from kinsun.memory.store import PgMemoryStore
+from kinsun.medications.facts import MedicationFacts
+from kinsun.medications.flow import MedicationMenu
+from kinsun.medications.service import MedicationService
+from kinsun.medications.store import PgMedicationStore
+from kinsun.memory.longterm.mem0_factory import build_mem0_memory
+from kinsun.memory.longterm.store import Mem0LongTermStore
+from kinsun.memory.recall import MemoryContext
+from kinsun.memory.shortterm import PgMemoryStore
 from kinsun.pipeline import VoicePipeline
-from kinsun.recall import MemoryContext
 from kinsun.reports.reminders import PgReminderLogStore
 from kinsun.safety.classifier import LlmRiskClassifier
 from kinsun.safety.detector import RiskDetector
