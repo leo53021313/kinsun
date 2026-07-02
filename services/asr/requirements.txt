@@ -1,7 +1,10 @@
 # 僅在 DGX Spark（Linux + ARM64/aarch64 + GPU）安裝。
-# 版本於 DGX 上以實機驗證後再鎖定；torch 請使用 NVIDIA 官方對應 aarch64/CUDA 的版本。
-# 系統需 ffmpeg（HF pipeline 解 m4a/非 wav 音檔的依賴）。
+# DGX 實機驗證（2026-07-02，GB10 / aarch64 / CUDA 13）鎖定：torch 2.12.1+cu130、transformers 5.x。
+# 系統需 ffmpeg：服務自行以 ffmpeg 把音檔 bytes 解成 16k 單聲道 f32le 再餵給 pipeline
+#   （HF 內建 ffmpeg_read 走 stdin pipe 不可 seek，moov 在檔尾的 m4a 會解成 partial file）。
+# numpy 為 transformers/torch 的相依，服務直接使用（解碼後包成陣列）。
 fastapi
 uvicorn
 transformers
 torch
+numpy

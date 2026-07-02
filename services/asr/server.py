@@ -12,10 +12,15 @@ from __future__ import annotations
 
 import asyncio
 import os
+import subprocess
+import tempfile
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
+
+# Breeze-ASR-26（Whisper 系）輸入取樣率。
+_TARGET_SR = 16000
 
 ASR_MODEL_ID = os.environ.get("ASR_MODEL_ID", "MediaTek-Research/Breeze-ASR-26")
 ASR_MAX_CONCURRENCY = int(os.environ.get("ASR_MAX_CONCURRENCY", "1"))
@@ -45,8 +50,47 @@ def _get_model():
     return _model
 
 
+def _decode_to_mono16k(audio: bytes):
+    """把任意容器的音檔 bytes 解成 16k 單聲道 float32 numpy 陣列。
+
+    HF pipeline 內建的 ffmpeg_read 是把 bytes 灌進 ffmpeg stdin(pipe) 解碼；
+    m4a 的 moov atom 在檔尾時 pipe 不可 seek 會解成 partial file → 失敗
+    （LINE 語音多為此類 m4a）。改成寫可 seek 的暫存檔、自行以 ffmpeg 解碼，
+    輸出 raw f32le 再包成 numpy 陣列餵給 pipeline（陣列會略過 ffmpeg_read）。
+    """
+    import numpy as np
+
+    with tempfile.NamedTemporaryFile(suffix=".audio", delete=False) as tmp:
+        tmp.write(audio)
+        tmp_path = tmp.name
+    try:
+        proc = subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-i",
+                tmp_path,
+                "-ac",
+                "1",
+                "-ar",
+                str(_TARGET_SR),
+                "-f",
+                "f32le",
+                "pipe:1",
+            ],
+            capture_output=True,
+            check=True,
+        )
+    finally:
+        os.unlink(tmp_path)
+    return np.frombuffer(proc.stdout, dtype=np.float32).copy()
+
+
 def _transcribe(audio: bytes) -> str:
-    return _get_model()(audio)["text"]
+    array = _decode_to_mono16k(audio)
+    result = _get_model()({"raw": array, "sampling_rate": _TARGET_SR})
+    return result["text"]
 
 
 @asynccontextmanager

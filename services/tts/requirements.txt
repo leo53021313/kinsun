@@ -1,8 +1,12 @@
 # 僅在 DGX Spark（Linux + ARM64/aarch64 + GPU）安裝。
-# 版本於 DGX 上以實機驗證後鎖定；torch 用 NVIDIA 對應 aarch64/CUDA 版本。
-# CosyVoice 3 依 FunAudioLLM/CosyVoice repo 安裝（含 cosyvoice 套件與其依賴）。
+# DGX 實機驗證（2026-07-02，GB10 / aarch64 / CUDA 13）鎖定：torch 2.12.1+cu130。
+# CosyVoice 3 非 pip 套件：clone FunAudioLLM/CosyVoice repo（含 cosyvoice 套件與
+#   third_party/Matcha-TTS），以 TTS_COSY_DIR／TTS_MATCHA_DIR 加入 sys.path。
+#   其依賴（含 onnxruntime、hyperpyyaml 等）依 CosyVoice repo 的 requirements.aarch64.txt 安裝。
+# soundfile：aarch64 上 torchaudio 走 torchcodec（.so 載不起來）→ 以 soundfile 讀寫音檔。
 # 系統需 ffmpeg（wav→m4a）。
 fastapi
 uvicorn
 torch
 torchaudio
+soundfile
