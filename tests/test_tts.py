@@ -1,9 +1,8 @@
-import io
 import urllib.error
 
 import pytest
 
-from kinsun.speech.tts import DgxTtsClient, TTSError, TextBubbleTts, TtsResult, build_tts_client
+from kinsun.speech.tts import DgxTtsClient, TextBubbleTts, TTSError, TtsResult, build_tts_client
 
 
 def test_text_bubble_returns_text_without_audio():
@@ -56,9 +55,7 @@ def test_dgx_tts_returns_audio_and_duration(monkeypatch):
 
 
 def test_dgx_tts_missing_duration_header_raises(monkeypatch):
-    monkeypatch.setattr(
-        "urllib.request.urlopen", lambda req, timeout=None: _FakeResp(b"A", None)
-    )
+    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout=None: _FakeResp(b"A", None))
     with pytest.raises(TTSError):
         DgxTtsClient("http://dgx:8002/synthesize", 30.0).synthesize("嗨")
 
