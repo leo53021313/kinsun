@@ -53,7 +53,7 @@ class VoiceReplyDelivery:
             msg.reply(result.text)
 
 
-def dispatch(msg: InboundMessage, *, pipeline, binding, gate) -> None:
+def dispatch(msg: InboundMessage, *, pipeline, binding, gate, voice=None) -> None:
     if msg.kind == "text":
         reply = binding.handle(msg.session_id, msg.text)
         msg.reply(reply if reply is not None else NON_AUDIO_PROMPT)
@@ -66,6 +66,9 @@ def dispatch(msg: InboundMessage, *, pipeline, binding, gate) -> None:
         return
     try:
         result = pipeline.process(msg.audio, session_id=msg.session_id)
-        msg.reply(result.text)
+        if voice is not None:
+            voice.deliver(msg, result)
+        else:
+            msg.reply(result.text)
     except (ASRError, LLMError, MemoryError):
         msg.reply(FALLBACK_PROMPT)

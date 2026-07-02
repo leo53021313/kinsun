@@ -51,6 +51,22 @@ class _Gate:
         return self._allow
 
 
+class _VoicePipeline:
+    def __init__(self, result):
+        self._result = result
+
+    def process(self, audio, *, session_id):
+        return self._result
+
+
+class _SpyVoice:
+    def __init__(self):
+        self.delivered = []
+
+    def deliver(self, msg, result):
+        self.delivered.append((msg.session_id, result.text))
+
+
 def _msg(kind, *, reply, text="", audio=b"", session_id="U-1"):
     return InboundMessage(session_id, kind, text, audio, reply)
 
@@ -192,3 +208,15 @@ def test_deliver_text_when_publisher_none():
         _voice_msg(cap), TtsResult(text="泡泡", audio=None)
     )
     assert cap.text_sent == ["泡泡"]
+
+
+def test_audio_success_routes_to_voice_when_present():
+    voice = _SpyVoice()
+    dispatch(
+        _msg("audio", audio=b"x", reply=_Replies()),
+        pipeline=_VoicePipeline(TtsResult(text="語音回覆", audio=b"A", duration_ms=100)),
+        binding=_Binding(None),
+        gate=_Gate(True),
+        voice=voice,
+    )
+    assert voice.delivered == [("U-1", "語音回覆")]
