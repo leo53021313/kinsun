@@ -72,7 +72,7 @@ agent.py            CareAgent（金孫 persona + 安全邊界）
 pipeline.py         VoicePipeline（ASR→偵測→Agent→通知→TTS）
 speech/             asr.py、tts.py（DGX 服務的呼叫端，mock 可切）
 audio/              publisher.py（TTS 音檔上傳 Supabase 託管）
-channels/           inbound.py、line/（webhook、messenger、richmenu）
+channels/           inbound.py、line/（channel、webhook、messenger、richmenu）
 safety/             tiers/keywords/classifier/detector/notifier/events
 memory/             shortterm.py（短期）、longterm/（Mem0、provenance、
                     consolidation、mem0_factory）、recall.py（情境聚合）
