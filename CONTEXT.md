@@ -33,11 +33,11 @@ _Avoid_: 授權、許可
 _Avoid_: 平台、介面、端點
 
 **入站訊息（InboundMessage）**：
-通道轉接器把原始事件正規化後、與通道無關的領域型別：`session_id`、種類（文字／語音）、文字內容、語音 bytes，以及一個可呼叫的回覆 handle。分派邏輯只認這個型別，不碰 LINE SDK。
+通道轉接器把原始事件正規化後、與通道無關的領域型別：`line_user_id`、種類（文字／語音）、文字內容、語音 bytes，以及一個可呼叫的回覆 handle。分派邏輯只認這個型別，不碰 LINE SDK。
 _Avoid_: event、payload
 
 **會話（Session）**：
-一位長輩的對話脈絡，以 LINE user_id 識別（即 `session_id`）。
+一位長輩的對話脈絡，以 LINE user_id 識別（即 `line_user_id`）。
 
 ### 記憶與情境
 

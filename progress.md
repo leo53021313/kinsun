@@ -54,7 +54,7 @@ LINE 語音 → webhook → VoicePipeline
 | 4 | 記憶層雲端遷移 | Mem0＋Supabase pgvector 取代自建 SQLite（註：原規劃的 Neo4j graph 經實測 mem0 2.0.10 不支援，已於 MEM-UP 移除，關係感知改靠 v1.1 entity linking／多訊號檢索） | #14 |
 | 5 | 排程引擎 | `Scheduler`（每日一次、錯誤隔離）、worker 常駐 | — |
 | 6 | 主動關懷 | 定時問候 + 失聯關心 job（共用排程器、走 CareAgent + 記憶） | — |
-| 7 | 帳號綁定核心 | 5 實體 + `PgAccountRepository` + `AccountService`（建檔/邀請/兌換/同意/家屬清單/權限） | #12 |
+| 7 | 帳號綁定核心 | 5 實體 + `PgAccountStore` + `AccountService`（建檔/邀請/兌換/同意/家屬清單/權限） | #12 |
 | 8 | 危急真實家屬通知 | `LineGuardianNotifier`：tier≥L2 → 查 `guardian_line_ids` → 依升級順序 push 全部家屬 | #15 |
 
 **測試現況：** `uv run pytest` → 303 passed、12 skipped（雲端整合 opt-in，需 `KINSUN_IT=1`）。ruff/format/pre-commit 全綠。
@@ -78,7 +78,7 @@ memory/             PgMemoryStore（短期）
 longterm/           Mem0LongTermStore、provenance、consolidation
 scheduler/          Scheduler、jobs、worker
 proactive/          問候 + 失聯 job
-accounts/           models、PgAccountRepository、AccountService
+accounts/           models、PgAccountStore、AccountService
 ```
 
 > 🧹 小清理：`knowledge/`、`episodic/` 為雲端遷移後留下的空目錄，可刪。
