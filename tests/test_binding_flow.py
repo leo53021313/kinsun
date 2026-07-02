@@ -197,7 +197,7 @@ def test_elder_redeem_does_not_link_menu():
 
 
 def test_link_failure_does_not_break_binding():
-    def boom(line):
+    def boom(line_user_id):
         raise RuntimeError("link fail")
 
     flow, accounts, _ = _flow(on_guardian_bound=boom)

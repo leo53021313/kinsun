@@ -58,8 +58,8 @@ class PgBindingSessionStore:
         )
         if not rows:
             return None
-        line, state, data, updated = rows[0]
-        return BindingSession(line, BindingState(state), json.loads(data), updated)
+        line_user_id, state, data, updated = rows[0]
+        return BindingSession(line_user_id, BindingState(state), json.loads(data), updated)
 
     def save(self, session: BindingSession) -> None:
         self._db.execute(
