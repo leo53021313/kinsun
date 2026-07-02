@@ -150,7 +150,7 @@ def test_audio_message_replies_agent_output():
     assert messenger.replies == [("rt-1", "你說的是：阿公早安")]
 
 
-def test_session_id_threaded_to_memory():
+def test_line_user_id_threaded_to_memory():
     messenger = FakeMessenger()
     memory = RecordingMemory()
     client = _make_client(FakeParser([_audio_event("U-42")]), messenger, memory=memory)

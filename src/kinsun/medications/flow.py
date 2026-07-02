@@ -39,65 +39,67 @@ class MedicationMenu:
         self._sessions = sessions
         self._clock = clock
 
-    def _save(self, line: str, state: BindingState, data: dict) -> None:
-        self._sessions.save(BindingSession(line, state, data, self._clock().timestamp()))
+    def _save(self, line_user_id: str, state: BindingState, data: dict) -> None:
+        self._sessions.save(BindingSession(line_user_id, state, data, self._clock().timestamp()))
 
-    def open(self, line: str) -> str:
-        self._save(line, BindingState.MED_MENU, {})
+    def open(self, line_user_id: str) -> str:
+        self._save(line_user_id, BindingState.MED_MENU, {})
         return _MED_MENU
 
-    def step(self, session: BindingSession, text: str, line: str) -> str:
+    def step(self, session: BindingSession, text: str, line_user_id: str) -> str:
         state = session.state
         if state == BindingState.MED_MENU:
-            return self._menu(text, line)
+            return self._menu(text, line_user_id)
         if state == BindingState.MED_PICK_ELDER:
-            return self._pick_elder(session, text, line)
+            return self._pick_elder(session, text, line_user_id)
         if state == BindingState.MED_ADD_NAME:
-            return self._add_name(session, text, line)
+            return self._add_name(session, text, line_user_id)
         if state == BindingState.MED_ADD_SLOTS:
-            return self._add_slots(session, text, line)
-        return self._del_pick(session, text, line)
+            return self._add_slots(session, text, line_user_id)
+        return self._del_pick(session, text, line_user_id)
 
-    def _menu(self, text: str, line: str) -> str:
+    def _menu(self, text: str, line_user_id: str) -> str:
         action = {"1": "add", "2": "view", "3": "del"}.get(text.translate(_FULLWIDTH))
         if action is None:
             return "請回覆 1、2 或 3。"
-        elders = self._accounts.elders_managed_by(line)
+        elders = self._accounts.elders_managed_by(line_user_id)
         if not elders:
             return "您還沒有長輩檔案，請先回覆「設定」並選 1 建立。"
         if len(elders) == 1:
-            return self._begin(action, elders[0].elder_id, elders[0].name, line)
+            return self._begin(action, elders[0].elder_id, elders[0].name, line_user_id)
         self._save(
-            line,
+            line_user_id,
             BindingState.MED_PICK_ELDER,
             {"action": action, "elders": [[e.elder_id, e.name] for e in elders]},
         )
         listing = "\n".join(f"{i + 1}. {e.name}" for i, e in enumerate(elders))
         return "請回覆數字選擇長輩：\n" + listing
 
-    def _pick_elder(self, session: BindingSession, text: str, line: str) -> str:
+    def _pick_elder(self, session: BindingSession, text: str, line_user_id: str) -> str:
         elders = session.data["elders"]
         choice = text.translate(_FULLWIDTH)
         if not choice.isdigit() or not (1 <= int(choice) <= len(elders)):
             return "請回覆清單中的數字。"
         elder_id, elder_name = elders[int(choice) - 1]
-        return self._begin(session.data["action"], elder_id, elder_name, line)
+        return self._begin(session.data["action"], elder_id, elder_name, line_user_id)
 
-    def _begin(self, action: str, elder_id: str, elder_name: str, line: str) -> str:
+    def _begin(self, action: str, elder_id: str, elder_name: str, line_user_id: str) -> str:
         if action == "add":
             self._save(
-                line, BindingState.MED_ADD_NAME, {"elder_id": elder_id, "elder_name": elder_name}
+                line_user_id,
+                BindingState.MED_ADD_NAME,
+                {"elder_id": elder_id, "elder_name": elder_name},
             )
             return f"請問要幫『{elder_name}』新增什麼藥？（回覆藥名）"
         if action == "view":
-            self._sessions.delete(line)
+            self._sessions.delete(line_user_id)
             return self._view(elder_id, elder_name)
         meds = self._meds.list_for_elder(elder_id)
         if not meds:
-            self._sessions.delete(line)
+            self._sessions.delete(line_user_id)
             return f"『{elder_name}』目前沒有設定用藥。"
         items = [[m.medication_id, f"{m.name}（{slots_label(m.slots)}）"] for m in meds]
-        self._save(line, BindingState.MED_DEL_PICK, {"meds": items})
+        self._save(line_user_id, BindingState.MED_DEL_PICK, {"meds": items})
         listing = "\n".join(f"{i + 1}. {label}" for i, (_, label) in enumerate(items))
         return "請回覆要刪除的編號：\n" + listing
 
@@ -108,27 +110,27 @@ class MedicationMenu:
         lines = "\n".join(f"• {m.name}（{slots_label(m.slots)}）" for m in meds)
         return f"『{elder_name}』的用藥：\n" + lines
 
-    def _add_name(self, session: BindingSession, text: str, line: str) -> str:
+    def _add_name(self, session: BindingSession, text: str, line_user_id: str) -> str:
         data = dict(session.data)
         data["name"] = text
-        self._save(line, BindingState.MED_ADD_SLOTS, data)
+        self._save(line_user_id, BindingState.MED_ADD_SLOTS, data)
         return _SLOT_PROMPT
 
-    def _add_slots(self, session: BindingSession, text: str, line: str) -> str:
+    def _add_slots(self, session: BindingSession, text: str, line_user_id: str) -> str:
         slots = _parse_slots(text)
         if slots is None:
             return "請回覆 1～4 的數字（可複選），例如「1 3」。"
         data = session.data
         self._meds.save(data["elder_id"], data["name"], slots)
-        self._sessions.delete(line)
+        self._sessions.delete(line_user_id)
         return f"已為『{data['elder_name']}』新增『{data['name']}』（{slots_label(slots)}）。"
 
-    def _del_pick(self, session: BindingSession, text: str, line: str) -> str:
+    def _del_pick(self, session: BindingSession, text: str, line_user_id: str) -> str:
         meds = session.data["meds"]
         choice = text.translate(_FULLWIDTH)
         if not choice.isdigit() or not (1 <= int(choice) <= len(meds)):
             return "請回覆清單中的編號。"
         medication_id, label = meds[int(choice) - 1]
         self._meds.remove(medication_id)
-        self._sessions.delete(line)
+        self._sessions.delete(line_user_id)
         return f"已刪除『{label}』。"

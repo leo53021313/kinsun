@@ -111,8 +111,8 @@ def build_app() -> FastAPI:
         appointments, accounts, binding_sessions, clock=lambda: datetime.now(tz)
     )
 
-    def _link_menu(line: str) -> None:
-        messenger.link_rich_menu(line, settings.rich_menu_id)
+    def _link_menu(line_user_id: str) -> None:
+        messenger.link_rich_menu(line_user_id, settings.rich_menu_id)
 
     on_guardian_bound = _link_menu if settings.rich_menu_id else None
     binding = BindingFlow(

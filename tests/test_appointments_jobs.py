@@ -10,9 +10,9 @@ def _job(appts_by_date, *, elders, consented, guardians, hour=8, record=None):
         today=lambda: "2026-07-15",
         tomorrow=lambda: "2026-07-16",
         lookup_elder=lambda eid: elders.get(eid),
-        is_consented_elder=lambda line: consented.get(line, False),
+        is_consented_elder=lambda line_user_id: consented.get(line_user_id, False),
         guardian_line_ids=lambda eid: guardians.get(eid, []),
-        push=lambda line, text: pushed.append((line, text)),
+        push=lambda line_user_id, text: pushed.append((line_user_id, text)),
         hour=hour,
         record=record,
     )
