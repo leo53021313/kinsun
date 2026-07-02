@@ -10,7 +10,7 @@ from kinsun.safety.events import RiskEventStore
 from kinsun.safety.notifier import Notifier
 from kinsun.safety.tiers import RiskTier
 from kinsun.speech.asr import ASRClient
-from kinsun.speech.tts import TTSClient, TtsResult
+from kinsun.speech.tts import TTSClient, TTSError, TtsResult
 
 logger = logging.getLogger("kinsun.pipeline")
 
@@ -47,4 +47,8 @@ class VoicePipeline:
                 logger.warning("危急事件落庫失敗")
             self._notifier.notify(session_id, assessment)
         reply_text = self._agent.handle(session_id, user_text)
-        return self._tts.synthesize(reply_text)
+        try:
+            return self._tts.synthesize(reply_text)
+        except TTSError:
+            logger.warning("TTS 合成失敗，退化為純文字回覆")
+            return TtsResult(text=reply_text, audio=None)

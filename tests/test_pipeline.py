@@ -5,7 +5,7 @@ from kinsun.llm import Message
 from kinsun.pipeline import VoicePipeline
 from kinsun.safety.tiers import RiskAssessment, RiskTier
 from kinsun.speech.asr import MockAsrClient
-from kinsun.speech.tts import TextBubbleTts
+from kinsun.speech.tts import TextBubbleTts, TTSError, TtsResult
 from tests.fakes import FakeRiskEventStore
 
 
@@ -117,3 +117,23 @@ def test_pipeline_record_failure_does_not_break():
     )
     assert result.text == "你說的是：阿公早安"
     assert notifier.calls == [("u1", RiskTier.L3)]
+
+
+class _BoomTts:
+    def synthesize(self, text):
+        raise TTSError("tts down")
+
+
+def test_pipeline_tts_failure_degrades_to_text():
+    pipeline = VoicePipeline(
+        asr=MockAsrClient("阿公早安"),
+        agent=CareAgent(EchoLLM(), NullMemory(), NullContext()),
+        tts=_BoomTts(),
+        detector=StubDetector(RiskTier.L0),
+        notifier=SpyNotifier(),
+        risk_events=FakeRiskEventStore(),
+    )
+    result = pipeline.process(b"\x00", session_id="u1")
+    assert isinstance(result, TtsResult)
+    assert result.text == "你說的是：阿公早安"
+    assert result.audio is None
