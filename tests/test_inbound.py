@@ -5,9 +5,11 @@ from kinsun.channels.inbound import (
     FALLBACK_PROMPT,
     NON_AUDIO_PROMPT,
     InboundMessage,
+    VoiceReplyDelivery,
     dispatch,
 )
 from kinsun.speech.asr import ASRError
+from kinsun.speech.tts import TtsResult
 
 
 class _Replies:
@@ -118,3 +120,75 @@ def test_audio_pipeline_error_replies_fallback():
         gate=_Gate(True),
     )
     assert r.sent == [FALLBACK_PROMPT]
+
+
+class _VoiceCapture:
+    def __init__(self):
+        self.text_sent = []
+        self.voice_sent = []
+
+    def reply(self, text):
+        self.text_sent.append(text)
+
+    def reply_voice(self, url, duration_ms, text):
+        self.voice_sent.append((url, duration_ms, text))
+
+
+class _Publisher:
+    def __init__(self, url="http://x/a.m4a", boom=False):
+        self._url = url
+        self._boom = boom
+
+    def publish(self, audio, *, content_type):
+        if self._boom:
+            from kinsun.audio.publisher import AudioPublishError
+
+            raise AudioPublishError("boom")
+        return self._url
+
+
+def _voice_msg(cap):
+    return InboundMessage("U-1", "audio", "", b"x", cap.reply, cap.reply_voice)
+
+
+def test_deliver_text_when_no_audio():
+    cap = _VoiceCapture()
+    VoiceReplyDelivery(_Publisher(), include_text=True).deliver(
+        _voice_msg(cap), TtsResult(text="純文字", audio=None)
+    )
+    assert cap.text_sent == ["純文字"]
+    assert cap.voice_sent == []
+
+
+def test_deliver_voice_with_text():
+    cap = _VoiceCapture()
+    VoiceReplyDelivery(_Publisher(), include_text=True).deliver(
+        _voice_msg(cap), TtsResult(text="嗨", audio=b"A", duration_ms=800)
+    )
+    assert cap.voice_sent == [("http://x/a.m4a", 800, "嗨")]
+    assert cap.text_sent == []
+
+
+def test_deliver_voice_without_text_when_disabled():
+    cap = _VoiceCapture()
+    VoiceReplyDelivery(_Publisher(), include_text=False).deliver(
+        _voice_msg(cap), TtsResult(text="嗨", audio=b"A", duration_ms=800)
+    )
+    assert cap.voice_sent == [("http://x/a.m4a", 800, None)]
+
+
+def test_deliver_falls_back_to_text_on_publish_error():
+    cap = _VoiceCapture()
+    VoiceReplyDelivery(_Publisher(boom=True), include_text=True).deliver(
+        _voice_msg(cap), TtsResult(text="退化文字", audio=b"A", duration_ms=800)
+    )
+    assert cap.text_sent == ["退化文字"]
+    assert cap.voice_sent == []
+
+
+def test_deliver_text_when_publisher_none():
+    cap = _VoiceCapture()
+    VoiceReplyDelivery(None, include_text=True).deliver(
+        _voice_msg(cap), TtsResult(text="泡泡", audio=None)
+    )
+    assert cap.text_sent == ["泡泡"]

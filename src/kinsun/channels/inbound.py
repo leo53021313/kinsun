@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from kinsun.llm import LLMError
 from kinsun.memory.store import MemoryError
 from kinsun.speech.asr import ASRError
+from kinsun.speech.tts import TtsResult
 
 logger = logging.getLogger("kinsun.inbound")
 
@@ -30,6 +31,26 @@ class InboundMessage:
     audio: bytes
     reply: Callable[[str], None]
     reply_voice: Callable[[str, int, str | None], None] | None = None
+
+
+class VoiceReplyDelivery:
+    """把 TtsResult 發成 LINE 回覆：有音檔→上傳→語音（可附文字）；否則→文字泡泡。
+    上傳或語音回覆失敗一律退回文字，絕不讓回覆消失。"""
+
+    def __init__(self, publisher, include_text: bool) -> None:
+        self._publisher = publisher
+        self._include_text = include_text
+
+    def deliver(self, msg: InboundMessage, result: TtsResult) -> None:
+        if result.audio is None or self._publisher is None or msg.reply_voice is None:
+            msg.reply(result.text)
+            return
+        try:
+            url = self._publisher.publish(result.audio, content_type="audio/mp4")
+            msg.reply_voice(url, result.duration_ms, result.text if self._include_text else None)
+        except Exception:  # noqa: BLE001 - 任何失敗都退回文字
+            logger.warning("語音回覆失敗，退回文字泡泡")
+            msg.reply(result.text)
 
 
 def dispatch(msg: InboundMessage, *, pipeline, binding, gate) -> None:
