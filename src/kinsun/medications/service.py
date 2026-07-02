@@ -23,11 +23,11 @@ class MedicationService:
         return self._store.list_for_elder(elder_id)
 
     def update(
-        self, med_id: str, elder_id: str, name: str, slots: tuple[MedicationSlot, ...]
+        self, medication_id: str, elder_id: str, name: str, slots: tuple[MedicationSlot, ...]
     ) -> Medication:
-        med = Medication(med_id, elder_id, name, tuple(slots))
+        med = Medication(medication_id, elder_id, name, tuple(slots))
         self._store.save(med)
         return med
 
-    def remove(self, med_id: str) -> None:
-        self._store.remove(med_id)
+    def remove(self, medication_id: str) -> None:
+        self._store.remove(medication_id)

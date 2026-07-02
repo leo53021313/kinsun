@@ -29,7 +29,7 @@ SLOT_LABELS = {
 
 @dataclass(frozen=True)
 class Medication:
-    med_id: str
+    medication_id: str
     elder_id: str
     name: str
     slots: tuple[MedicationSlot, ...]

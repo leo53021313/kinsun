@@ -29,16 +29,20 @@ class AppointmentIn(BaseModel):
 
 
 class CreateElderIn(BaseModel):
-    elder_name: str
+    name: str
     guardian_name: str = ""
 
 
-def _med_json(med) -> dict:
-    return {"med_id": med.med_id, "name": med.name, "slots": [s.value for s in med.slots]}
+def _medication_json(med) -> dict:
+    return {
+        "medication_id": med.medication_id,
+        "name": med.name,
+        "slots": [s.value for s in med.slots],
+    }
 
 
-def _appt_json(appt) -> dict:
-    return {"appt_id": appt.appt_id, "date": appt.date, "label": appt.label}
+def _appointment_json(appt) -> dict:
+    return {"appointment_id": appt.appointment_id, "date": appt.date, "label": appt.label}
 
 
 def create_api_router(
@@ -66,12 +70,12 @@ def create_api_router(
         if elder_id not in {e.elder_id for e in accounts.elders_managed_by(line_user_id)}:
             raise HTTPException(status_code=404, detail="elder not found")
 
-    def assert_med_under_elder(elder_id: str, med_id: str) -> None:
-        if med_id not in {m.med_id for m in medications.list_for_elder(elder_id)}:
+    def assert_med_under_elder(elder_id: str, medication_id: str) -> None:
+        if medication_id not in {m.medication_id for m in medications.list_for_elder(elder_id)}:
             raise HTTPException(status_code=404, detail="medication not found")
 
-    def assert_appt_under_elder(elder_id: str, appt_id: str) -> None:
-        if appt_id not in {a.appt_id for a in appointments.list_for_elder(elder_id)}:
+    def assert_appt_under_elder(elder_id: str, appointment_id: str) -> None:
+        if appointment_id not in {a.appointment_id for a in appointments.list_for_elder(elder_id)}:
             raise HTTPException(status_code=404, detail="appointment not found")
 
     def parse_slots(raw: list[str]) -> tuple[MedicationSlot, ...]:
@@ -99,9 +103,9 @@ def create_api_router(
 
     @router.post("/elders", status_code=201)
     def create_elder(body: CreateElderIn, line_user_id: str = Depends(current_guardian)) -> dict:
-        name = body.elder_name.strip()
+        name = body.name.strip()
         if not name:
-            raise HTTPException(status_code=400, detail="elder_name required")
+            raise HTTPException(status_code=400, detail="name required")
         elder = accounts.create_elder(line_user_id, body.guardian_name, name)
         invite = accounts.generate_invite(elder.elder_id, InviteRole.ELDER)
         return {"elder_id": elder.elder_id, "name": elder.name, "invite_code": invite.code}
@@ -117,7 +121,7 @@ def create_api_router(
     @router.get("/elders/{elder_id}/medications")
     def list_medications(elder_id: str, line_user_id: str = Depends(current_guardian)) -> dict:
         assert_manages(line_user_id, elder_id)
-        return {"medications": [_med_json(m) for m in medications.list_for_elder(elder_id)]}
+        return {"medications": [_medication_json(m) for m in medications.list_for_elder(elder_id)]}
 
     @router.post("/elders/{elder_id}/medications", status_code=201)
     def create_medication(
@@ -128,35 +132,37 @@ def create_api_router(
         if not name:
             raise HTTPException(status_code=400, detail="name required")
         slots = parse_slots(body.slots)
-        return _med_json(medications.save(elder_id, name, slots))
+        return _medication_json(medications.save(elder_id, name, slots))
 
-    @router.put("/elders/{elder_id}/medications/{med_id}")
+    @router.put("/elders/{elder_id}/medications/{medication_id}")
     def update_medication(
         elder_id: str,
-        med_id: str,
+        medication_id: str,
         body: MedicationIn,
         line_user_id: str = Depends(current_guardian),
     ) -> dict:
         assert_manages(line_user_id, elder_id)
-        assert_med_under_elder(elder_id, med_id)
+        assert_med_under_elder(elder_id, medication_id)
         name = body.name.strip()
         if not name:
             raise HTTPException(status_code=400, detail="name required")
         slots = parse_slots(body.slots)
-        return _med_json(medications.update(med_id, elder_id, name, slots))
+        return _medication_json(medications.update(medication_id, elder_id, name, slots))
 
-    @router.delete("/elders/{elder_id}/medications/{med_id}", status_code=204)
+    @router.delete("/elders/{elder_id}/medications/{medication_id}", status_code=204)
     def delete_medication(
-        elder_id: str, med_id: str, line_user_id: str = Depends(current_guardian)
+        elder_id: str, medication_id: str, line_user_id: str = Depends(current_guardian)
     ) -> None:
         assert_manages(line_user_id, elder_id)
-        assert_med_under_elder(elder_id, med_id)
-        medications.remove(med_id)
+        assert_med_under_elder(elder_id, medication_id)
+        medications.remove(medication_id)
 
     @router.get("/elders/{elder_id}/appointments")
     def list_appointments(elder_id: str, line_user_id: str = Depends(current_guardian)) -> dict:
         assert_manages(line_user_id, elder_id)
-        return {"appointments": [_appt_json(a) for a in appointments.list_for_elder(elder_id)]}
+        return {
+            "appointments": [_appointment_json(a) for a in appointments.list_for_elder(elder_id)]
+        }
 
     @router.post("/elders/{elder_id}/appointments", status_code=201)
     def create_appointment(
@@ -167,30 +173,30 @@ def create_api_router(
         if not label:
             raise HTTPException(status_code=400, detail="label required")
         date = parse_appt_date(body.date)
-        return _appt_json(appointments.save(elder_id, date, label))
+        return _appointment_json(appointments.save(elder_id, date, label))
 
-    @router.put("/elders/{elder_id}/appointments/{appt_id}")
+    @router.put("/elders/{elder_id}/appointments/{appointment_id}")
     def update_appointment(
         elder_id: str,
-        appt_id: str,
+        appointment_id: str,
         body: AppointmentIn,
         line_user_id: str = Depends(current_guardian),
     ) -> dict:
         assert_manages(line_user_id, elder_id)
-        assert_appt_under_elder(elder_id, appt_id)
+        assert_appt_under_elder(elder_id, appointment_id)
         label = body.label.strip()
         if not label:
             raise HTTPException(status_code=400, detail="label required")
         date = parse_appt_date(body.date)
-        return _appt_json(appointments.update(appt_id, elder_id, date, label))
+        return _appointment_json(appointments.update(appointment_id, elder_id, date, label))
 
-    @router.delete("/elders/{elder_id}/appointments/{appt_id}", status_code=204)
+    @router.delete("/elders/{elder_id}/appointments/{appointment_id}", status_code=204)
     def delete_appointment(
-        elder_id: str, appt_id: str, line_user_id: str = Depends(current_guardian)
+        elder_id: str, appointment_id: str, line_user_id: str = Depends(current_guardian)
     ) -> None:
         assert_manages(line_user_id, elder_id)
-        assert_appt_under_elder(elder_id, appt_id)
-        appointments.remove(appt_id)
+        assert_appt_under_elder(elder_id, appointment_id)
+        appointments.remove(appointment_id)
 
     @router.get("/elders/{elder_id}/health-report")
     def health_report(elder_id: str, line_user_id: str = Depends(current_guardian)) -> dict:

@@ -16,7 +16,7 @@ class AppointmentStore(Protocol):
     def save(self, appt: Appointment) -> None: ...
     def list_for_elder(self, elder_id: str) -> list[Appointment]: ...
     def list_for_date(self, date: str) -> list[Appointment]: ...
-    def remove(self, appt_id: str) -> None: ...
+    def remove(self, appointment_id: str) -> None: ...
 
 
 class PgAppointmentStore:
@@ -24,8 +24,8 @@ class PgAppointmentStore:
         self._db = _Errors(db, lambda m: AppointmentError(f"回診資料存取失敗：{m}"))
 
     def _to_appt(self, row: tuple) -> Appointment:
-        appt_id, elder_id, appt_date, label = row
-        return Appointment(appt_id, elder_id, appt_date, label)
+        appointment_id, elder_id, appt_date, label = row
+        return Appointment(appointment_id, elder_id, appt_date, label)
 
     def save(self, appt: Appointment) -> None:
         self._db.execute(
@@ -33,7 +33,7 @@ class PgAppointmentStore:
             "VALUES (%s, %s, %s, %s) ON CONFLICT (appt_id) DO UPDATE SET "
             "elder_id = EXCLUDED.elder_id, appt_date = EXCLUDED.appt_date, "
             "label = EXCLUDED.label",
-            (appt.appt_id, appt.elder_id, appt.date, appt.label),
+            (appt.appointment_id, appt.elder_id, appt.date, appt.label),
         )
 
     def list_for_elder(self, elder_id: str) -> list[Appointment]:
@@ -51,5 +51,5 @@ class PgAppointmentStore:
         )
         return [self._to_appt(r) for r in rows]
 
-    def remove(self, appt_id: str) -> None:
-        self._db.execute("DELETE FROM appointments WHERE appt_id = %s", (appt_id,))
+    def remove(self, appointment_id: str) -> None:
+        self._db.execute("DELETE FROM appointments WHERE appt_id = %s", (appointment_id,))

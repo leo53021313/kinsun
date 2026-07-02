@@ -62,7 +62,7 @@ def _auth():
 def test_create_elder_returns_binding_code():
     client, accounts = _setup()
     res = client.post(
-        "/api/elders", headers=_auth(), json={"elder_name": "阿公", "guardian_name": "兒子"}
+        "/api/elders", headers=_auth(), json={"name": "阿公", "guardian_name": "兒子"}
     )
     assert res.status_code == 201
     code = res.json()["invite_code"]
@@ -72,15 +72,13 @@ def test_create_elder_returns_binding_code():
 
 def test_create_elder_rejects_empty_name():
     client, _ = _setup()
-    res = client.post(
-        "/api/elders", headers=_auth(), json={"elder_name": "  ", "guardian_name": "兒子"}
-    )
+    res = client.post("/api/elders", headers=_auth(), json={"name": "  ", "guardian_name": "兒子"})
     assert res.status_code == 400
 
 
 def test_create_elder_requires_token():
     client, _ = _setup()
-    assert client.post("/api/elders", json={"elder_name": "阿公"}).status_code == 401
+    assert client.post("/api/elders", json={"name": "阿公"}).status_code == 401
 
 
 def test_guardian_invite_for_managed_elder():

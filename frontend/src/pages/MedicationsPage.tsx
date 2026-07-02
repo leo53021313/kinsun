@@ -56,14 +56,14 @@ export function MedicationsPage() {
   }
 
   function startEdit(med: Medication) {
-    setEditingId(med.med_id);
+    setEditingId(med.medication_id);
     setName(med.name);
     setSlots(med.slots);
   }
 
-  async function remove(medId: string) {
+  async function remove(medicationId: string) {
     try {
-      await deleteMedication(elderId, medId);
+      await deleteMedication(elderId, medicationId);
       reload();
     } catch {
       setError("刪除失敗，請稍後再試");
@@ -80,12 +80,12 @@ export function MedicationsPage() {
       {error && <p>{error}</p>}
       <ul>
         {meds.map((m) => (
-          <li key={m.med_id}>
+          <li key={m.medication_id}>
             {m.name}（{m.slots.map(slotLabel).join("、")}）
             <button type="button" onClick={() => startEdit(m)}>
               編輯
             </button>
-            <button type="button" onClick={() => remove(m.med_id)}>
+            <button type="button" onClick={() => remove(m.medication_id)}>
               刪除
             </button>
           </li>

@@ -92,7 +92,7 @@ class AppointmentMenu:
         if not appts:
             self._sessions.delete(line)
             return f"『{elder_name}』目前沒有設定回診。"
-        items = [[a.appt_id, f"{a.date} {a.label}"] for a in appts]
+        items = [[a.appointment_id, f"{a.date} {a.label}"] for a in appts]
         self._save(line, BindingState.APPT_DEL_PICK, {"appts": items})
         listing = "\n".join(f"{i + 1}. {label}" for i, (_, label) in enumerate(items))
         return "請回覆要刪除的編號：\n" + listing
@@ -127,7 +127,7 @@ class AppointmentMenu:
         choice = text.translate(_FULLWIDTH)
         if not choice.isdigit() or not (1 <= int(choice) <= len(appts)):
             return "請回覆清單中的編號。"
-        appt_id, label = appts[int(choice) - 1]
-        self._appts.remove(appt_id)
+        appointment_id, label = appts[int(choice) - 1]
+        self._appts.remove(appointment_id)
         self._sessions.delete(line)
         return f"已刪除『{label}』。"

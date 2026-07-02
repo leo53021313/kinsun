@@ -53,6 +53,6 @@ def build_appointment_reminder_job(
         minute=minute,
         population=population,
         action=action,
-        item_id=lambda item: item[0].appt_id,
+        item_id=lambda item: item[0].appointment_id,
         logger=logger,
     )

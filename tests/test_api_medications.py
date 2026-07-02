@@ -66,7 +66,7 @@ def _add(client, elder_id, name="藥", slots=("morning",)):
         headers=_auth(),
         json={"name": name, "slots": list(slots)},
     )
-    return res.json()["med_id"]
+    return res.json()["medication_id"]
 
 
 def test_list_requires_management():
@@ -113,9 +113,9 @@ def test_add_rejects_bad_slots():
 
 def test_update_changes_med():
     client, elder_id = _setup()
-    med_id = _add(client, elder_id, "舊", ["morning"])
+    medication_id = _add(client, elder_id, "舊", ["morning"])
     res = client.put(
-        f"/api/elders/{elder_id}/medications/{med_id}",
+        f"/api/elders/{elder_id}/medications/{medication_id}",
         headers=_auth(),
         json={"name": "新", "slots": ["evening"]},
     )
@@ -137,9 +137,11 @@ def test_update_rejects_med_not_under_elder():
 
 def test_delete_removes():
     client, elder_id = _setup()
-    med_id = _add(client, elder_id)
+    medication_id = _add(client, elder_id)
     assert (
-        client.delete(f"/api/elders/{elder_id}/medications/{med_id}", headers=_auth()).status_code
+        client.delete(
+            f"/api/elders/{elder_id}/medications/{medication_id}", headers=_auth()
+        ).status_code
         == 204
     )
     listed = client.get(f"/api/elders/{elder_id}/medications", headers=_auth()).json()

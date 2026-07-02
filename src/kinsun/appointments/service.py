@@ -25,10 +25,10 @@ class AppointmentService:
     def upcoming(self, elder_id: str, today: str) -> list[Appointment]:
         return [a for a in self._store.list_for_elder(elder_id) if a.date >= today]
 
-    def update(self, appt_id: str, elder_id: str, date: str, label: str) -> Appointment:
-        appt = Appointment(appt_id, elder_id, date, label)
+    def update(self, appointment_id: str, elder_id: str, date: str, label: str) -> Appointment:
+        appt = Appointment(appointment_id, elder_id, date, label)
         self._store.save(appt)
         return appt
 
-    def remove(self, appt_id: str) -> None:
-        self._store.remove(appt_id)
+    def remove(self, appointment_id: str) -> None:
+        self._store.remove(appointment_id)

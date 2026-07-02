@@ -53,14 +53,14 @@ export function AppointmentsPage() {
   }
 
   function startEdit(appt: Appointment) {
-    setEditingId(appt.appt_id);
+    setEditingId(appt.appointment_id);
     setDate(appt.date);
     setLabel(appt.label);
   }
 
-  async function remove(apptId: string) {
+  async function remove(appointmentId: string) {
     try {
-      await deleteAppointment(elderId, apptId);
+      await deleteAppointment(elderId, appointmentId);
       reload();
     } catch {
       setError("刪除失敗，請稍後再試");
@@ -77,12 +77,12 @@ export function AppointmentsPage() {
       {error && <p>{error}</p>}
       <ul>
         {appts.map((a) => (
-          <li key={a.appt_id}>
+          <li key={a.appointment_id}>
             {a.date} {a.label}
             <button type="button" onClick={() => startEdit(a)}>
               編輯
             </button>
-            <button type="button" onClick={() => remove(a.appt_id)}>
+            <button type="button" onClick={() => remove(a.appointment_id)}>
               刪除
             </button>
           </li>

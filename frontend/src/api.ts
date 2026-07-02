@@ -1,7 +1,7 @@
 import liff from "@line/liff";
 
 export type Elder = { elder_id: string; name: string };
-export type Medication = { med_id: string; name: string; slots: string[] };
+export type Medication = { medication_id: string; name: string; slots: string[] };
 
 export class ApiError extends Error {
   constructor(public status: number) {
@@ -42,21 +42,21 @@ export async function addMedication(
 
 export async function updateMedication(
   elderId: string,
-  medId: string,
+  medicationId: string,
   name: string,
   slots: string[],
 ): Promise<void> {
-  await apiFetch(`/api/elders/${elderId}/medications/${medId}`, {
+  await apiFetch(`/api/elders/${elderId}/medications/${medicationId}`, {
     method: "PUT",
     body: JSON.stringify({ name, slots }),
   });
 }
 
-export async function deleteMedication(elderId: string, medId: string): Promise<void> {
-  await apiFetch(`/api/elders/${elderId}/medications/${medId}`, { method: "DELETE" });
+export async function deleteMedication(elderId: string, medicationId: string): Promise<void> {
+  await apiFetch(`/api/elders/${elderId}/medications/${medicationId}`, { method: "DELETE" });
 }
 
-export type Appointment = { appt_id: string; date: string; label: string };
+export type Appointment = { appointment_id: string; date: string; label: string };
 
 export async function listAppointments(elderId: string): Promise<Appointment[]> {
   const res = await apiFetch(`/api/elders/${elderId}/appointments`);
@@ -76,18 +76,18 @@ export async function addAppointment(
 
 export async function updateAppointment(
   elderId: string,
-  apptId: string,
+  appointmentId: string,
   date: string,
   label: string,
 ): Promise<void> {
-  await apiFetch(`/api/elders/${elderId}/appointments/${apptId}`, {
+  await apiFetch(`/api/elders/${elderId}/appointments/${appointmentId}`, {
     method: "PUT",
     body: JSON.stringify({ date, label }),
   });
 }
 
-export async function deleteAppointment(elderId: string, apptId: string): Promise<void> {
-  await apiFetch(`/api/elders/${elderId}/appointments/${apptId}`, { method: "DELETE" });
+export async function deleteAppointment(elderId: string, appointmentId: string): Promise<void> {
+  await apiFetch(`/api/elders/${elderId}/appointments/${appointmentId}`, { method: "DELETE" });
 }
 
 export async function createElder(
@@ -96,7 +96,7 @@ export async function createElder(
 ): Promise<{ elder_id: string; name: string; invite_code: string }> {
   const res = await apiFetch("/api/elders", {
     method: "POST",
-    body: JSON.stringify({ elder_name: elderName, guardian_name: guardianName }),
+    body: JSON.stringify({ name: elderName, guardian_name: guardianName }),
   });
   return (await res.json()) as { elder_id: string; name: string; invite_code: string };
 }

@@ -6,8 +6,8 @@ from kinsun.appointments.models import Appointment
 from tests.fakes import FakeAppointmentStore
 
 
-def _appt(appt_id, elder_id, date, label):
-    return Appointment(appt_id, elder_id, date, label)
+def _appt(appointment_id, elder_id, date, label):
+    return Appointment(appointment_id, elder_id, date, label)
 
 
 def test_fake_store_round_trip():
@@ -15,7 +15,7 @@ def test_fake_store_round_trip():
     store.save(_appt("a1", "e1", "2026-07-15", "心臟科回診"))
     store.save(_appt("a2", "e1", "2026-07-01", "眼科回診"))
     assert [a.date for a in store.list_for_elder("e1")] == ["2026-07-01", "2026-07-15"]
-    assert [a.appt_id for a in store.list_for_date("2026-07-15")] == ["a1"]
+    assert [a.appointment_id for a in store.list_for_date("2026-07-15")] == ["a1"]
     store.remove("a1")
     assert store.list_for_date("2026-07-15") == []
 
@@ -31,5 +31,7 @@ def test_pg_store_round_trip():
     store.save(_appt("ap", "ep", "2026-08-20", "測試回診"))
     got = store.list_for_elder("ep")[0]
     assert got.label == "測試回診"
-    assert [a.appt_id for a in store.list_for_date("2026-08-20") if a.appt_id == "ap"] == ["ap"]
+    assert [
+        a.appointment_id for a in store.list_for_date("2026-08-20") if a.appointment_id == "ap"
+    ] == ["ap"]
     store.remove("ap")

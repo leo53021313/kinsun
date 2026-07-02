@@ -147,7 +147,7 @@ class FakeMedicationStore:
         self._meds = {}
 
     def save(self, med):
-        self._meds[med.med_id] = med
+        self._meds[med.medication_id] = med
 
     def list_for_elder(self, elder_id):
         rows = [m for m in self._meds.values() if m.elder_id == elder_id]
@@ -156,8 +156,8 @@ class FakeMedicationStore:
     def list_for_slot(self, slot):
         return [m for m in self._meds.values() if slot in m.slots]
 
-    def remove(self, med_id):
-        self._meds.pop(med_id, None)
+    def remove(self, medication_id):
+        self._meds.pop(medication_id, None)
 
 
 class FakeAppointmentStore:
@@ -165,7 +165,7 @@ class FakeAppointmentStore:
         self._appts = {}
 
     def save(self, appt):
-        self._appts[appt.appt_id] = appt
+        self._appts[appt.appointment_id] = appt
 
     def list_for_elder(self, elder_id):
         rows = [a for a in self._appts.values() if a.elder_id == elder_id]
@@ -174,8 +174,8 @@ class FakeAppointmentStore:
     def list_for_date(self, date):
         return [a for a in self._appts.values() if a.date == date]
 
-    def remove(self, appt_id):
-        self._appts.pop(appt_id, None)
+    def remove(self, appointment_id):
+        self._appts.pop(appointment_id, None)
 
 
 class FakeRiskEventStore:

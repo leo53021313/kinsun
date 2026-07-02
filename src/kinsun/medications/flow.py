@@ -96,7 +96,7 @@ class MedicationMenu:
         if not meds:
             self._sessions.delete(line)
             return f"『{elder_name}』目前沒有設定用藥。"
-        items = [[m.med_id, f"{m.name}（{slots_label(m.slots)}）"] for m in meds]
+        items = [[m.medication_id, f"{m.name}（{slots_label(m.slots)}）"] for m in meds]
         self._save(line, BindingState.MED_DEL_PICK, {"meds": items})
         listing = "\n".join(f"{i + 1}. {label}" for i, (_, label) in enumerate(items))
         return "請回覆要刪除的編號：\n" + listing
@@ -128,7 +128,7 @@ class MedicationMenu:
         choice = text.translate(_FULLWIDTH)
         if not choice.isdigit() or not (1 <= int(choice) <= len(meds)):
             return "請回覆清單中的編號。"
-        med_id, label = meds[int(choice) - 1]
-        self._meds.remove(med_id)
+        medication_id, label = meds[int(choice) - 1]
+        self._meds.remove(medication_id)
         self._sessions.delete(line)
         return f"已刪除『{label}』。"

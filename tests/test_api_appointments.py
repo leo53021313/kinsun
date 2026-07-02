@@ -66,7 +66,7 @@ def _add(client, elder_id, date="2026-08-01", label="回診"):
         headers=_auth(),
         json={"date": date, "label": label},
     )
-    return res.json()["appt_id"]
+    return res.json()["appointment_id"]
 
 
 def test_list_requires_management():
@@ -115,9 +115,9 @@ def test_add_rejects_bad_date_and_empty_label():
 
 def test_update_changes_appt():
     client, elder_id = _setup()
-    appt_id = _add(client, elder_id, "2026-08-01", "舊")
+    appointment_id = _add(client, elder_id, "2026-08-01", "舊")
     res = client.put(
-        f"/api/elders/{elder_id}/appointments/{appt_id}",
+        f"/api/elders/{elder_id}/appointments/{appointment_id}",
         headers=_auth(),
         json={"date": "2026-08-05", "label": "新"},
     )
@@ -139,9 +139,11 @@ def test_update_rejects_appt_not_under_elder():
 
 def test_delete_removes():
     client, elder_id = _setup()
-    appt_id = _add(client, elder_id)
+    appointment_id = _add(client, elder_id)
     assert (
-        client.delete(f"/api/elders/{elder_id}/appointments/{appt_id}", headers=_auth()).status_code
+        client.delete(
+            f"/api/elders/{elder_id}/appointments/{appointment_id}", headers=_auth()
+        ).status_code
         == 204
     )
     listed = client.get(f"/api/elders/{elder_id}/appointments", headers=_auth()).json()
