@@ -26,8 +26,8 @@ class _Pipeline:
         self._boom = boom
         self.calls = []
 
-    def process(self, audio, *, session_id):
-        self.calls.append((audio, session_id))
+    def process(self, audio, *, line_user_id):
+        self.calls.append((audio, line_user_id))
         if self._boom is not None:
             raise self._boom
         return SimpleNamespace(text=self._text)
@@ -38,8 +38,8 @@ class _Binding:
         self._reply = reply
         self.calls = []
 
-    def handle(self, session_id, text):
-        self.calls.append((session_id, text))
+    def handle(self, line_user_id, text):
+        self.calls.append((line_user_id, text))
         return self._reply
 
 
@@ -47,7 +47,7 @@ class _Gate:
     def __init__(self, allow):
         self._allow = allow
 
-    def allows(self, session_id):
+    def allows(self, line_user_id):
         return self._allow
 
 
@@ -55,7 +55,7 @@ class _VoicePipeline:
     def __init__(self, result):
         self._result = result
 
-    def process(self, audio, *, session_id):
+    def process(self, audio, *, line_user_id):
         return self._result
 
 
@@ -64,11 +64,11 @@ class _SpyVoice:
         self.delivered = []
 
     def deliver(self, msg, result):
-        self.delivered.append((msg.session_id, result.text))
+        self.delivered.append((msg.line_user_id, result.text))
 
 
-def _msg(kind, *, reply, text="", audio=b"", session_id="U-1"):
-    return InboundMessage(session_id, kind, text, audio, reply)
+def _msg(kind, *, reply, text="", audio=b"", line_user_id="U-1"):
+    return InboundMessage(line_user_id, kind, text, audio, reply)
 
 
 def test_text_routes_to_binding():

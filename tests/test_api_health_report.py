@@ -11,7 +11,7 @@ from kinsun.reports.reminders import ReminderLog
 from kinsun.safety.events import RiskEvent
 from kinsun.safety.tiers import RiskTier
 from kinsun.web.api import create_api_router
-from tests.fakes import FakeAccountRepository, FakeAppointmentStore, FakeMedicationStore
+from tests.fakes import FakeAccountStore, FakeAppointmentStore, FakeMedicationStore
 
 TPE = timezone(timedelta(hours=8))
 NOW = datetime(2026, 7, 30, 12, 0, tzinfo=TPE)
@@ -20,18 +20,18 @@ OLD = (NOW - timedelta(days=40)).timestamp()
 
 
 class _FakeVerifier:
-    def __init__(self, user_id="U-son"):
-        self._user_id = user_id
+    def __init__(self, line_user_id="U-son"):
+        self._line_user_id = line_user_id
 
     def verify(self, id_token):
-        return self._user_id
+        return self._line_user_id
 
 
 class _RiskEvents:
     def __init__(self, events):
         self._events = events
 
-    def list_for_session(self, session_id):
+    def list_for_line_user(self, line_user_id):
         return self._events
 
 
@@ -43,8 +43,8 @@ class _Reminders:
         return self._logs
 
 
-def _client(user_id, *, risks, reminders, bind_elder=True):
-    repo = FakeAccountRepository()
+def _client(line_user_id, *, risks, reminders, bind_elder=True):
+    repo = FakeAccountStore()
     ids = (f"id{i}" for i in count(1))
     accounts = AccountService(
         repo, clock=lambda: NOW, new_id=lambda: next(ids), new_code=lambda: "c"
@@ -57,7 +57,7 @@ def _client(user_id, *, risks, reminders, bind_elder=True):
     app = FastAPI()
     app.include_router(
         create_api_router(
-            verifier=_FakeVerifier(user_id),
+            verifier=_FakeVerifier(line_user_id),
             accounts=accounts,
             medications=MedicationService(FakeMedicationStore()),
             appointments=AppointmentService(FakeAppointmentStore()),

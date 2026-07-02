@@ -18,7 +18,7 @@ from kinsun.accounts.models import (
     InviteRole,
     Role,
 )
-from kinsun.accounts.store import AccountRepository
+from kinsun.accounts.store import AccountStore
 
 CONSENT_VERSION = "1.0"
 
@@ -39,7 +39,7 @@ class InvitePreview:
 class AccountService:
     def __init__(
         self,
-        repo: AccountRepository,
+        repo: AccountStore,
         *,
         clock: Callable[[], datetime],
         new_id: Callable[[], str] | None = None,
@@ -186,8 +186,8 @@ class AccountService:
                 line_ids.append(guardian.line_user_id)
         return line_ids
 
-    def guardian_line_ids(self, elder_line_id: str) -> list[str]:
-        elder = self._repo.get_elder_by_line(elder_line_id)
+    def guardian_line_ids(self, line_user_id: str) -> list[str]:
+        elder = self._repo.get_elder_by_line(line_user_id)
         if elder is None:
             return []
         return self.guardian_line_ids_of_elder(elder.elder_id)

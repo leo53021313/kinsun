@@ -11,7 +11,7 @@ from kinsun.medications.service import MedicationService
 from kinsun.web.api import create_api_router
 from kinsun.web.auth import AuthError
 from tests.fakes import (
-    FakeAccountRepository,
+    FakeAccountStore,
     FakeAppointmentStore,
     FakeMedicationStore,
     FakeReminderLogStore,
@@ -23,18 +23,18 @@ NOW = datetime(2026, 7, 10, tzinfo=TPE)
 
 
 class _FakeVerifier:
-    def __init__(self, user_id="U-son", boom=False):
-        self._user_id = user_id
+    def __init__(self, line_user_id="U-son", boom=False):
+        self._line_user_id = line_user_id
         self._boom = boom
 
     def verify(self, id_token):
         if self._boom:
             raise AuthError("bad")
-        return self._user_id
+        return self._line_user_id
 
 
-def _setup(user_id="U-son"):
-    repo = FakeAccountRepository()
+def _setup(line_user_id="U-son"):
+    repo = FakeAccountStore()
     ids = (f"id{i}" for i in count(1))
     codes = (f"code{i}" for i in count(1))
     accounts = AccountService(
@@ -43,7 +43,7 @@ def _setup(user_id="U-son"):
     app = FastAPI()
     app.include_router(
         create_api_router(
-            verifier=_FakeVerifier(user_id),
+            verifier=_FakeVerifier(line_user_id),
             accounts=accounts,
             medications=MedicationService(FakeMedicationStore()),
             appointments=AppointmentService(FakeAppointmentStore()),
@@ -92,7 +92,7 @@ def test_guardian_invite_for_managed_elder():
 
 
 def test_guardian_invite_rejects_unmanaged_elder():
-    client, accounts = _setup(user_id="U-stranger")
+    client, accounts = _setup(line_user_id="U-stranger")
     elder = accounts.create_elder("U-son", "兒子", "阿公")
     res = client.post(f"/api/elders/{elder.elder_id}/guardian-invites", headers=_auth())
     assert res.status_code == 404

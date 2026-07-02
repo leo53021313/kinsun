@@ -19,18 +19,18 @@ class SpyMemory:
         self._history = history or []
         self.appended: list[tuple[str, Message]] = []
 
-    def recent(self, session_id: str) -> list[Message]:
+    def recent(self, line_user_id: str) -> list[Message]:
         return list(self._history)
 
-    def append(self, session_id: str, message: Message) -> None:
-        self.appended.append((session_id, message))
+    def append(self, line_user_id: str, message: Message) -> None:
+        self.appended.append((line_user_id, message))
 
 
 class SpyContext:
     def __init__(self, text: str = "") -> None:
         self._text = text
 
-    def recall(self, session_id: str, user_text: str) -> str:
+    def recall(self, line_user_id: str, user_text: str) -> str:
         return self._text
 
 

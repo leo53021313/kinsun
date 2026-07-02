@@ -35,7 +35,7 @@ class VoicePipeline:
         self._risk_events = risk_events
 
     def process(
-        self, audio: bytes, *, session_id: str, content_type: str = "audio/m4a"
+        self, audio: bytes, *, line_user_id: str, content_type: str = "audio/m4a"
     ) -> TtsResult:
         user_text = self._asr.transcribe(audio, content_type=content_type)
         assessment = self._detector.assess(user_text)
@@ -43,11 +43,11 @@ class VoicePipeline:
         # 否則 agent 生成回覆時若丟例外，會讓已偵測到的危急漏通知。
         if assessment.tier >= RiskTier.L2:
             try:
-                self._risk_events.record(session_id, assessment)
+                self._risk_events.record(line_user_id, assessment)
             except Exception:  # noqa: BLE001 - 落庫失敗不可中斷對話
                 logger.warning("危急事件落庫失敗")
-            self._notifier.notify(session_id, assessment)
-        reply_text = self._agent.handle(session_id, user_text)
+            self._notifier.notify(line_user_id, assessment)
+        reply_text = self._agent.handle(line_user_id, user_text)
         try:
             result = self._tts.synthesize(reply_text)
         except TTSError:

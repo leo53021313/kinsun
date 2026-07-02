@@ -16,10 +16,10 @@ class _SpyPusher:
         self.calls = []
         self._fail_on = fail_on
 
-    def push_text(self, user_id, text):
-        if user_id == self._fail_on:
+    def push_text(self, line_user_id, text):
+        if line_user_id == self._fail_on:
             raise RuntimeError("push failed")
-        self.calls.append((user_id, text))
+        self.calls.append((line_user_id, text))
 
 
 class _StubDirectory:
@@ -27,7 +27,7 @@ class _StubDirectory:
         self._line_ids = line_ids
         self._raises = raises
 
-    def guardian_line_ids(self, elder_line_id):
+    def guardian_line_ids(self, line_user_id):
         if self._raises:
             raise RuntimeError("db down")
         return list(self._line_ids)

@@ -9,7 +9,7 @@ from kinsun.binding.flow import BindingFlow
 from kinsun.medications.flow import MedicationMenu
 from kinsun.medications.service import MedicationService
 from tests.fakes import (
-    FakeAccountRepository,
+    FakeAccountStore,
     FakeAppointmentStore,
     FakeBindingSessionStore,
     FakeMedicationStore,
@@ -23,7 +23,7 @@ class _FakeProfiles:
     def __init__(self, name="王家屬"):
         self._name = name
 
-    def display_name(self, user_id):
+    def display_name(self, line_user_id):
         return self._name
 
 
@@ -47,7 +47,7 @@ def _build_flow(accounts, sessions, profiles, *, clock, on_guardian_bound=None):
 
 
 def _flow(repo=None, *, now=NOW, profiles=None, code="ABCDEFGHIJKLMNOP", on_guardian_bound=None):
-    repo = repo or FakeAccountRepository()
+    repo = repo or FakeAccountStore()
     ids = (f"id{i}" for i in count(1))
     accounts = AccountService(
         repo, clock=lambda: now, new_id=lambda: next(ids), new_code=lambda: code
@@ -208,7 +208,7 @@ def test_link_failure_does_not_break_binding():
 
 
 def test_session_timeout_resets():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     now = {"t": NOW}
     ids = (f"id{i}" for i in count(1))
     accounts = AccountService(

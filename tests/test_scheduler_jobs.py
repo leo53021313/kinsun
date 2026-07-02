@@ -13,10 +13,10 @@ def test_runs_for_each_session():
 def test_one_session_failure_does_not_block_others():
     done = []
 
-    def run_one(session_id):
-        if session_id == "u1":
+    def run_one(line_user_id):
+        if line_user_id == "u1":
             raise RuntimeError("boom")
-        done.append(session_id)
+        done.append(line_user_id)
 
     job = build_consolidation_job(sessions=lambda: ["u1", "u2"], run_one=run_one, hour=3)
     job.run()

@@ -42,16 +42,16 @@ class CareAgent:
         self._tools = tools
         self._max_tool_iters = max_tool_iters
 
-    def handle(self, session_id: str, user_text: str) -> str:
-        system_prompt = SYSTEM_PROMPT + self._context.recall(session_id, user_text)
+    def handle(self, line_user_id: str, user_text: str) -> str:
+        system_prompt = SYSTEM_PROMPT + self._context.recall(line_user_id, user_text)
         user_msg = Message("user", user_text)
-        base = [*self._memory.recent(session_id), user_msg]
+        base = [*self._memory.recent(line_user_id), user_msg]
         if self._tools is None:
             reply = self._llm.generate(system_prompt=system_prompt, messages=base)
         else:
             reply = self._run_tool_loop(system_prompt, base)
-        self._memory.append(session_id, user_msg)
-        self._memory.append(session_id, Message("assistant", reply))
+        self._memory.append(line_user_id, user_msg)
+        self._memory.append(line_user_id, Message("assistant", reply))
         return reply
 
     def _run_tool_loop(self, system_prompt: str, base: list[Message]) -> str:
@@ -69,10 +69,10 @@ class CareAgent:
                 results.append(ToolResult(call, self._tools.dispatch(call.name, call.arguments)))
         return FALLBACK_REPLY
 
-    def proactive(self, session_id: str, intent: str) -> str:
-        system_prompt = SYSTEM_PROMPT + self._context.recall(session_id, intent)
-        history = self._memory.recent(session_id)
+    def proactive(self, line_user_id: str, intent: str) -> str:
+        system_prompt = SYSTEM_PROMPT + self._context.recall(line_user_id, intent)
+        history = self._memory.recent(line_user_id)
         directive = Message("user", _PROACTIVE_DIRECTIVE.format(intent=intent))
         reply = self._llm.generate(system_prompt=system_prompt, messages=[*history, directive])
-        self._memory.append(session_id, Message("assistant", reply))
+        self._memory.append(line_user_id, Message("assistant", reply))
         return reply

@@ -3,7 +3,7 @@
 於夜間（預設凌晨 3 點）執行，整理的是「剛結束的那一天」整天對話；
 若改抓「當下這天」會只拿到凌晨剛過的片段，故用 previous_day 取日界區間。
 
-CLI：PYTHONPATH=src uv run python -m kinsun.memory.longterm.consolidation <session_id>
+CLI：PYTHONPATH=src uv run python -m kinsun.memory.longterm.consolidation <line_user_id>
 """
 
 from __future__ import annotations
@@ -19,20 +19,22 @@ from kinsun.memory.longterm.store import LongTermStore
 from kinsun.memory.shortterm import MemoryStore
 
 
-def run_consolidation(session_id: str, *, short_term: MemoryStore, long_term: LongTermStore) -> int:
-    turns = short_term.previous_day(session_id)
+def run_consolidation(
+    line_user_id: str, *, short_term: MemoryStore, long_term: LongTermStore
+) -> int:
+    turns = short_term.previous_day(line_user_id)
     if not turns:
         return 0
-    long_term.add(session_id, turns, provenance=provenance.SELF_CLAIMED)
+    long_term.add(line_user_id, turns, provenance=provenance.SELF_CLAIMED)
     return len(turns)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     if not args:
-        print("用法：python -m kinsun.memory.longterm.consolidation <session_id>")
+        print("用法：python -m kinsun.memory.longterm.consolidation <line_user_id>")
         return 1
-    session_id = args[0]
+    line_user_id = args[0]
     settings = load_settings(os.environ)
     tz = ZoneInfo(settings.timezone)
     from kinsun.db import Database
@@ -48,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
             max_turns=settings.memory_max_turns,
         )
         long_term = Mem0LongTermStore(build_mem0_memory(settings), top_k=settings.longterm_top_k)
-        written = run_consolidation(session_id, short_term=short_term, long_term=long_term)
+        written = run_consolidation(line_user_id, short_term=short_term, long_term=long_term)
         print(f"已整理：{written} 筆今日對話寫入長期記憶")
     finally:
         db.close()

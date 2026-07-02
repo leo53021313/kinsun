@@ -25,7 +25,7 @@ class InboundMessage:
     """通道中立的入站訊息。kind ∈ text/audio/other；reply 為綁定好的回覆 handle，
     reply_voice 為語音回覆 handle（url、duration_ms、text）。"""
 
-    session_id: str
+    line_user_id: str
     kind: str
     text: str
     audio: bytes
@@ -68,17 +68,17 @@ class VoiceReplyDelivery:
 
 def dispatch(msg: InboundMessage, *, pipeline, binding, gate, voice=None) -> None:
     if msg.kind == "text":
-        reply = binding.handle(msg.session_id, msg.text)
+        reply = binding.handle(msg.line_user_id, msg.text)
         msg.reply(reply if reply is not None else NON_AUDIO_PROMPT)
         return
     if msg.kind != "audio":
         msg.reply(NON_AUDIO_PROMPT)
         return
-    if not gate.allows(msg.session_id):
+    if not gate.allows(msg.line_user_id):
         msg.reply(BIND_FIRST_PROMPT)
         return
     try:
-        result = pipeline.process(msg.audio, session_id=msg.session_id)
+        result = pipeline.process(msg.audio, line_user_id=msg.line_user_id)
         if voice is not None:
             voice.deliver(msg, result)
         else:

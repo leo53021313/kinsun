@@ -18,7 +18,7 @@ def build_medication_slot_job(
     slot: MedicationSlot,
     meds_at_slot: Callable[[], list[Medication]],
     lookup_elder: Callable[[str], object],
-    is_consented: Callable[[str], bool],
+    is_consented_elder: Callable[[str], bool],
     push: Callable[[str, str], None],
     hour: int,
     minute: int = 0,
@@ -38,7 +38,7 @@ def build_medication_slot_job(
         elder = lookup_elder(elder_id)
         if elder is None or not elder.line_user_id:
             return
-        if not is_consented(elder.line_user_id):
+        if not is_consented_elder(elder.line_user_id):
             return
         push(elder.line_user_id, f"{elder.name}，{label}該吃藥囉：{'、'.join(names)}")
         safe_record(record, elder_id, "medication", f"{label}用藥：{'、'.join(names)}")

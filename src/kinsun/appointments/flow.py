@@ -118,7 +118,7 @@ class AppointmentMenu:
         if date < self._clock().date().isoformat():
             return "這個日期已經過了，請輸入今天以後的日期。"
         data = session.data
-        self._appts.add(data["elder_id"], date, data["label"])
+        self._appts.save(data["elder_id"], date, data["label"])
         self._sessions.delete(line)
         return f"已為『{data['elder_name']}』新增回診：{date} {data['label']}。"
 

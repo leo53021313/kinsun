@@ -10,7 +10,7 @@ from kinsun.medications.service import MedicationService
 from kinsun.web.api import create_api_router
 from kinsun.web.auth import AuthError
 from tests.fakes import (
-    FakeAccountRepository,
+    FakeAccountStore,
     FakeAppointmentStore,
     FakeMedicationStore,
     FakeReminderLogStore,
@@ -22,18 +22,18 @@ NOW = datetime(2026, 7, 10, tzinfo=TPE)
 
 
 class _FakeVerifier:
-    def __init__(self, user_id="U-son", boom=False):
-        self._user_id = user_id
+    def __init__(self, line_user_id="U-son", boom=False):
+        self._line_user_id = line_user_id
         self._boom = boom
 
     def verify(self, id_token):
         if self._boom:
             raise AuthError("bad")
-        return self._user_id
+        return self._line_user_id
 
 
 def _accounts():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     ids = (f"id{i}" for i in count(1))
     svc = AccountService(repo, clock=lambda: NOW, new_id=lambda: next(ids), new_code=lambda: "c")
     svc.create_elder("U-son", "兒子", "阿公")

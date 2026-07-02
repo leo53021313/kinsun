@@ -5,14 +5,14 @@ from kinsun.accounts.service import AccountService
 from kinsun.appointments.flow import AppointmentMenu, _parse_date
 from kinsun.appointments.service import AppointmentService
 from kinsun.binding.session import BindingState
-from tests.fakes import FakeAccountRepository, FakeAppointmentStore, FakeBindingSessionStore
+from tests.fakes import FakeAccountStore, FakeAppointmentStore, FakeBindingSessionStore
 
 TPE = timezone(timedelta(hours=8))
 NOW = datetime(2026, 7, 10, 10, 0, tzinfo=TPE)
 
 
 def _setup():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     ids = (f"id{i}" for i in count(1))
     accounts = AccountService(
         repo, clock=lambda: NOW, new_id=lambda: next(ids), new_code=lambda: "c"
@@ -69,8 +69,8 @@ def test_add_past_date_reprompts():
 def test_view_upcoming_only():
     menu, appointments, accounts, sessions = _setup()
     elder = accounts.elders_managed_by("U-son")[0]
-    appointments.add(elder.elder_id, "2026-07-20", "心臟科回診")
-    appointments.add(elder.elder_id, "2026-07-01", "舊回診")
+    appointments.save(elder.elder_id, "2026-07-20", "心臟科回診")
+    appointments.save(elder.elder_id, "2026-07-01", "舊回診")
     menu.open("U-son")
     reply = menu.step(sessions.get("U-son"), "2", "U-son")
     assert "心臟科回診" in reply and "舊回診" not in reply
@@ -86,7 +86,7 @@ def test_view_empty():
 def test_delete_flow():
     menu, appointments, accounts, sessions = _setup()
     elder = accounts.elders_managed_by("U-son")[0]
-    appointments.add(elder.elder_id, "2026-07-20", "心臟科回診")
+    appointments.save(elder.elder_id, "2026-07-20", "心臟科回診")
     menu.open("U-son")
     listing = menu.step(sessions.get("U-son"), "3", "U-son")
     assert "1. 2026-07-20 心臟科回診" in listing

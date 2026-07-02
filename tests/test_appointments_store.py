@@ -12,8 +12,8 @@ def _appt(appt_id, elder_id, date, label):
 
 def test_fake_store_round_trip():
     store = FakeAppointmentStore()
-    store.add(_appt("a1", "e1", "2026-07-15", "心臟科回診"))
-    store.add(_appt("a2", "e1", "2026-07-01", "眼科回診"))
+    store.save(_appt("a1", "e1", "2026-07-15", "心臟科回診"))
+    store.save(_appt("a2", "e1", "2026-07-01", "眼科回診"))
     assert [a.date for a in store.list_for_elder("e1")] == ["2026-07-01", "2026-07-15"]
     assert [a.appt_id for a in store.list_for_date("2026-07-15")] == ["a1"]
     store.remove("a1")
@@ -28,7 +28,7 @@ def test_pg_store_round_trip():
     url = os.environ["DATABASE_URL"]
     ensure_schema(url)
     store = PgAppointmentStore(Database.open(url))
-    store.add(_appt("ap", "ep", "2026-08-20", "測試回診"))
+    store.save(_appt("ap", "ep", "2026-08-20", "測試回診"))
     got = store.list_for_elder("ep")[0]
     assert got.label == "測試回診"
     assert [a.appt_id for a in store.list_for_date("2026-08-20") if a.appt_id == "ap"] == ["ap"]

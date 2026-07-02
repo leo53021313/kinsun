@@ -13,7 +13,7 @@ class AppointmentError(Exception):
 
 
 class AppointmentStore(Protocol):
-    def add(self, appt: Appointment) -> None: ...
+    def save(self, appt: Appointment) -> None: ...
     def list_for_elder(self, elder_id: str) -> list[Appointment]: ...
     def list_for_date(self, date: str) -> list[Appointment]: ...
     def remove(self, appt_id: str) -> None: ...
@@ -27,7 +27,7 @@ class PgAppointmentStore:
         appt_id, elder_id, appt_date, label = row
         return Appointment(appt_id, elder_id, appt_date, label)
 
-    def add(self, appt: Appointment) -> None:
+    def save(self, appt: Appointment) -> None:
         self._db.execute(
             "INSERT INTO appointments (appt_id, elder_id, appt_date, label) "
             "VALUES (%s, %s, %s, %s) ON CONFLICT (appt_id) DO UPDATE SET "

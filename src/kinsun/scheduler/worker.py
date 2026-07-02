@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from kinsun.accounts.service import AccountService
-from kinsun.accounts.store import PgAccountRepository
+from kinsun.accounts.store import PgAccountStore
 from kinsun.agent import CareAgent
 from kinsun.appointments.facts import AppointmentFacts
 from kinsun.appointments.jobs import build_appointment_reminder_job
@@ -66,7 +66,7 @@ def build_scheduler(
         timeout=settings.llm_timeout_seconds,
     )
     long_term = Mem0LongTermStore(build_mem0_memory(settings), top_k=settings.longterm_top_k)
-    accounts = AccountService(PgAccountRepository(db), clock=clock)
+    accounts = AccountService(PgAccountStore(db), clock=clock)
     med_store = PgMedicationStore(db)
     appt_store = PgAppointmentStore(db)
     appointments = AppointmentService(appt_store)
@@ -82,24 +82,24 @@ def build_scheduler(
     agent = CareAgent(gemini, memory, context)
     messenger = LineApiMessenger(settings.line_channel_access_token)
 
-    def run_one(session_id: str) -> None:
-        run_consolidation(session_id, short_term=memory, long_term=long_term)
+    def run_one(line_user_id: str) -> None:
+        run_consolidation(line_user_id, short_term=memory, long_term=long_term)
         try:
             summarize_day(
-                session_id,
+                line_user_id,
                 short_term=memory,
                 summarizer=gemini,
                 summaries=summaries,
                 clock=clock,
             )
         except Exception:  # noqa: BLE001 - 摘要失敗不影響整理與其他長輩
-            logger.warning("對話摘要失敗 session=%s", session_id)
+            logger.warning("對話摘要失敗 session=%s", line_user_id)
 
-    def greet_one(session_id: str) -> None:
-        messenger.push_text(session_id, agent.proactive(session_id, GREETING_INTENT))
+    def greet_one(line_user_id: str) -> None:
+        messenger.push_text(line_user_id, agent.proactive(line_user_id, GREETING_INTENT))
 
-    def care_one(session_id: str) -> None:
-        messenger.push_text(session_id, agent.proactive(session_id, INACTIVITY_INTENT))
+    def care_one(line_user_id: str) -> None:
+        messenger.push_text(line_user_id, agent.proactive(line_user_id, INACTIVITY_INTENT))
 
     jobs = [
         build_consolidation_job(
@@ -129,7 +129,7 @@ def build_scheduler(
                 slot=slot,
                 meds_at_slot=lambda s=slot: med_store.list_for_slot(s),
                 lookup_elder=accounts.get_elder,
-                is_consented=accounts.is_consented_elder,
+                is_consented_elder=accounts.is_consented_elder,
                 push=messenger.push_text,
                 hour=hour,
                 name=name,
@@ -142,7 +142,7 @@ def build_scheduler(
             today=lambda: clock().date().isoformat(),
             tomorrow=lambda: (clock().date() + timedelta(days=1)).isoformat(),
             lookup_elder=accounts.get_elder,
-            is_consented=accounts.is_consented_elder,
+            is_consented_elder=accounts.is_consented_elder,
             guardian_line_ids=accounts.guardian_line_ids_of_elder,
             push=messenger.push_text,
             hour=settings.appointment_reminder_hour,

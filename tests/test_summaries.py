@@ -16,7 +16,7 @@ class _ShortTerm:
     def __init__(self, turns):
         self._turns = turns
 
-    def previous_day(self, session_id):
+    def previous_day(self, line_user_id):
         return self._turns
 
 
@@ -40,7 +40,7 @@ def test_summarize_day_writes_summary():
         summaries=summaries,
         clock=lambda: NOW,
     )
-    rows = summaries.list_for_session("u1")
+    rows = summaries.list_for_line_user("u1")
     assert len(rows) == 1
     assert rows[0].date == "2026-07-10"
     assert rows[0].content == "阿公今天聊天氣，心情不錯"
@@ -55,7 +55,7 @@ def test_summarize_day_skips_when_no_turns():
         summaries=summaries,
         clock=lambda: NOW,
     )
-    assert summaries.list_for_session("u1") == []
+    assert summaries.list_for_line_user("u1") == []
 
 
 @pytest.mark.skipif(os.environ.get("KINSUN_IT") != "1", reason="需雲端 key")
@@ -67,9 +67,9 @@ def test_pg_summary_upsert_and_list():
     ensure_schema(url)
     sid = f"it-{uuid.uuid4().hex}"
     store = PgConversationSummaryStore(Database.open(url), clock=lambda: NOW)
-    store.upsert(sid, "2026-07-10", "v1")
-    store.upsert(sid, "2026-07-10", "v2")  # 同日覆蓋
-    store.upsert(sid, "2026-07-11", "今天")
-    rows = store.list_for_session(sid)
+    store.save(sid, "2026-07-10", "v1")
+    store.save(sid, "2026-07-10", "v2")  # 同日覆蓋
+    store.save(sid, "2026-07-11", "今天")
+    rows = store.list_for_line_user(sid)
     assert [r.date for r in rows] == ["2026-07-11", "2026-07-10"]
     assert rows[1].content == "v2"

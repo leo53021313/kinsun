@@ -15,15 +15,15 @@ class EchoLLM:
 
 
 class NullMemory:
-    def recent(self, session_id: str) -> list[Message]:
+    def recent(self, line_user_id: str) -> list[Message]:
         return []
 
-    def append(self, session_id: str, message: Message) -> None:
+    def append(self, line_user_id: str, message: Message) -> None:
         pass
 
 
 class NullContext:
-    def recall(self, session_id: str, user_text: str) -> str:
+    def recall(self, line_user_id: str, user_text: str) -> str:
         return ""
 
 
@@ -39,8 +39,8 @@ class SpyNotifier:
     def __init__(self) -> None:
         self.calls: list[tuple[str, RiskTier]] = []
 
-    def notify(self, session_id: str, assessment: RiskAssessment) -> None:
-        self.calls.append((session_id, assessment.tier))
+    def notify(self, line_user_id: str, assessment: RiskAssessment) -> None:
+        self.calls.append((line_user_id, assessment.tier))
 
 
 def _pipeline(detector, notifier, risk_events=None):
@@ -56,41 +56,41 @@ def _pipeline(detector, notifier, risk_events=None):
 
 def test_pipeline_replies_and_runs_detection():
     notifier = SpyNotifier()
-    result = _pipeline(StubDetector(RiskTier.L0), notifier).process(b"\x00", session_id="u1")
+    result = _pipeline(StubDetector(RiskTier.L0), notifier).process(b"\x00", line_user_id="u1")
     assert result.text == "你說的是：阿公早安"
     assert notifier.calls == []
 
 
 def test_pipeline_notifies_on_l2_or_above():
     notifier = SpyNotifier()
-    _pipeline(StubDetector(RiskTier.L3), notifier).process(b"\x00", session_id="u1")
+    _pipeline(StubDetector(RiskTier.L3), notifier).process(b"\x00", line_user_id="u1")
     assert notifier.calls == [("u1", RiskTier.L3)]
 
 
 class _BoomRiskEvents:
-    def record(self, session_id, assessment):
+    def record(self, line_user_id, assessment):
         raise RuntimeError("db down")
 
-    def list_for_session(self, session_id):
+    def list_for_line_user(self, line_user_id):
         return []
 
 
 def test_pipeline_records_risk_event_on_l2():
     notifier = SpyNotifier()
     events = FakeRiskEventStore()
-    _pipeline(StubDetector(RiskTier.L2), notifier, events).process(b"\x00", session_id="u1")
+    _pipeline(StubDetector(RiskTier.L2), notifier, events).process(b"\x00", line_user_id="u1")
     assert [s for s, _ in events.recorded] == ["u1"]
     assert notifier.calls == [("u1", RiskTier.L2)]
 
 
 def test_pipeline_does_not_record_below_l2():
     events = FakeRiskEventStore()
-    _pipeline(StubDetector(RiskTier.L1), SpyNotifier(), events).process(b"\x00", session_id="u1")
+    _pipeline(StubDetector(RiskTier.L1), SpyNotifier(), events).process(b"\x00", line_user_id="u1")
     assert events.recorded == []
 
 
 class _BoomAgent:
-    def handle(self, session_id, user_text):
+    def handle(self, line_user_id, user_text):
         raise RuntimeError("llm down")
 
 
@@ -106,14 +106,14 @@ def test_pipeline_notifies_before_reply_generation():
         risk_events=FakeRiskEventStore(),
     )
     with pytest.raises(RuntimeError):
-        pipeline.process(b"\x00", session_id="u1")
+        pipeline.process(b"\x00", line_user_id="u1")
     assert notifier.calls == [("u1", RiskTier.L3)]
 
 
 def test_pipeline_record_failure_does_not_break():
     notifier = SpyNotifier()
     result = _pipeline(StubDetector(RiskTier.L3), notifier, _BoomRiskEvents()).process(
-        b"\x00", session_id="u1"
+        b"\x00", line_user_id="u1"
     )
     assert result.text == "你說的是：阿公早安"
     assert notifier.calls == [("u1", RiskTier.L3)]
@@ -133,12 +133,12 @@ def test_pipeline_tts_failure_degrades_to_text():
         notifier=SpyNotifier(),
         risk_events=FakeRiskEventStore(),
     )
-    result = pipeline.process(b"\x00", session_id="u1")
+    result = pipeline.process(b"\x00", line_user_id="u1")
     assert isinstance(result, TtsResult)
     assert result.text == "你說的是：阿公早安"
     assert result.audio is None
 
 
 def test_pipeline_sets_transcript_from_asr():
-    result = _pipeline(StubDetector(RiskTier.L0), SpyNotifier()).process(b"\x00", session_id="u1")
+    result = _pipeline(StubDetector(RiskTier.L0), SpyNotifier()).process(b"\x00", line_user_id="u1")
     assert result.transcript == "阿公早安"

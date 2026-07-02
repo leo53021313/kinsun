@@ -14,9 +14,9 @@ class AppointmentService:
         self._store = store
         self._new_id = new_id or (lambda: uuid.uuid4().hex)
 
-    def add(self, elder_id: str, date: str, label: str) -> Appointment:
+    def save(self, elder_id: str, date: str, label: str) -> Appointment:
         appt = Appointment(self._new_id(), elder_id, date, label)
-        self._store.add(appt)
+        self._store.save(appt)
         return appt
 
     def list_for_elder(self, elder_id: str) -> list[Appointment]:
@@ -27,7 +27,7 @@ class AppointmentService:
 
     def update(self, appt_id: str, elder_id: str, date: str, label: str) -> Appointment:
         appt = Appointment(appt_id, elder_id, date, label)
-        self._store.add(appt)
+        self._store.save(appt)
         return appt
 
     def remove(self, appt_id: str) -> None:

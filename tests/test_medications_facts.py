@@ -7,19 +7,19 @@ from kinsun.accounts.service import AccountService
 from kinsun.medications.facts import MedicationFacts
 from kinsun.medications.models import MedicationSlot
 from kinsun.medications.service import MedicationService
-from tests.fakes import FakeAccountRepository, FakeMedicationStore
+from tests.fakes import FakeAccountStore, FakeMedicationStore
 
 TPE = timezone(timedelta(hours=8))
 NOW = datetime(2026, 6, 29, 10, 0, tzinfo=TPE)
 
 
 def _facts(*, meds):
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     repo.save_elder(Elder("e1", "阿公", "U-elder"))
     accounts = AccountService(repo, clock=lambda: NOW)
     medications = MedicationService(FakeMedicationStore(), new_id=lambda: "m1")
     for name, slots in meds:
-        medications.add("e1", name, slots)
+        medications.save("e1", name, slots)
     return MedicationFacts(accounts, medications)
 
 
@@ -36,7 +36,7 @@ def test_facts_empty_when_unknown_line():
 
 
 def test_facts_empty_when_no_meds():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     repo.save_elder(Elder("e1", "阿公", "U-elder"))
     accounts = AccountService(repo, clock=lambda: NOW)
     facts = MedicationFacts(accounts, MedicationService(FakeMedicationStore()))

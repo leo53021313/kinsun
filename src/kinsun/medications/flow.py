@@ -119,7 +119,7 @@ class MedicationMenu:
         if slots is None:
             return "請回覆 1～4 的數字（可複選），例如「1 3」。"
         data = session.data
-        self._meds.add(data["elder_id"], data["name"], slots)
+        self._meds.save(data["elder_id"], data["name"], slots)
         self._sessions.delete(line)
         return f"已為『{data['elder_name']}』新增『{data['name']}』（{slots_label(slots)}）。"
 

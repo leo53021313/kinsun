@@ -13,7 +13,7 @@ def _service(store):
 def test_add_and_list_and_remove():
     store = FakeMedicationStore()
     svc = _service(store)
-    med = svc.add("e1", "降血壓藥", (MedicationSlot.MORNING, MedicationSlot.EVENING))
+    med = svc.save("e1", "降血壓藥", (MedicationSlot.MORNING, MedicationSlot.EVENING))
     assert med.med_id == "m1"
     assert med.name == "降血壓藥"
     assert svc.list_for_elder("e1")[0].slots == (MedicationSlot.MORNING, MedicationSlot.EVENING)
@@ -24,7 +24,7 @@ def test_add_and_list_and_remove():
 def test_update_replaces_name_and_slots():
     store = FakeMedicationStore()
     svc = _service(store)
-    med = svc.add("e1", "舊", (MedicationSlot.MORNING,))
+    med = svc.save("e1", "舊", (MedicationSlot.MORNING,))
     svc.update(med.med_id, "e1", "新", (MedicationSlot.EVENING,))
     rows = svc.list_for_elder("e1")
     assert len(rows) == 1

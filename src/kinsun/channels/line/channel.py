@@ -16,7 +16,7 @@ class LineChannel:
         if message is None or reply_token is None:
             return None
         source = getattr(event, "source", None)
-        session_id = getattr(source, "user_id", None) or "unknown"
+        line_user_id = getattr(source, "user_id", None) or "unknown"
         mtype = getattr(message, "type", None)
 
         def reply(text: str) -> None:
@@ -27,10 +27,15 @@ class LineChannel:
 
         if mtype == "text":
             return InboundMessage(
-                session_id, "text", getattr(message, "text", "") or "", b"", reply, reply_voice
+                line_user_id, "text", getattr(message, "text", "") or "", b"", reply, reply_voice
             )
         if mtype == "audio":
             return InboundMessage(
-                session_id, "audio", "", self._messenger.get_audio(message.id), reply, reply_voice
+                line_user_id,
+                "audio",
+                "",
+                self._messenger.get_audio(message.id),
+                reply,
+                reply_voice,
             )
-        return InboundMessage(session_id, "other", "", b"", reply, reply_voice)
+        return InboundMessage(line_user_id, "other", "", b"", reply, reply_voice)

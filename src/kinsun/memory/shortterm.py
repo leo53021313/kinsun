@@ -26,11 +26,11 @@ def previous_day_bounds(now: datetime) -> tuple[float, float]:
 
 
 class MemoryStore(Protocol):
-    def append(self, session_id: str, message: Message) -> None: ...
-    def recent(self, session_id: str) -> list[Message]: ...
-    def previous_day(self, session_id: str) -> list[Message]: ...
+    def append(self, line_user_id: str, message: Message) -> None: ...
+    def recent(self, line_user_id: str) -> list[Message]: ...
+    def previous_day(self, line_user_id: str) -> list[Message]: ...
     def sessions(self) -> list[str]: ...
-    def last_active(self, session_id: str) -> float | None: ...
+    def last_active(self, line_user_id: str) -> float | None: ...
 
 
 class PgMemoryStore:
@@ -41,30 +41,30 @@ class PgMemoryStore:
         self._clock = clock
         self._max_turns = max_turns
 
-    def append(self, session_id: str, message: Message) -> None:
+    def append(self, line_user_id: str, message: Message) -> None:
         created_at = self._clock().timestamp()
         self._db.execute(
             "INSERT INTO turns (session_id, role, text, created_at) VALUES (%s, %s, %s, %s)",
-            (session_id, message.role, message.text, created_at),
+            (line_user_id, message.role, message.text, created_at),
         )
 
-    def recent(self, session_id: str) -> list[Message]:
+    def recent(self, line_user_id: str) -> list[Message]:
         start = self._start_of_today()
         rows = self._db.query(
             "SELECT role, text FROM turns WHERE session_id = %s AND created_at >= %s "
             "ORDER BY created_at DESC, id DESC LIMIT %s",
-            (session_id, start, self._max_turns),
+            (line_user_id, start, self._max_turns),
         )
         return [Message(role=r, text=t) for r, t in reversed(rows)]
 
-    def previous_day(self, session_id: str) -> list[Message]:
+    def previous_day(self, line_user_id: str) -> list[Message]:
         """整理批次用：回傳『剛結束的那一天』整天的對話（時序由舊到新）。"""
         start, end = previous_day_bounds(self._clock())
         rows = self._db.query(
             "SELECT role, text FROM turns "
             "WHERE session_id = %s AND created_at >= %s AND created_at < %s "
             "ORDER BY created_at ASC, id ASC LIMIT %s",
-            (session_id, start, end, self._max_turns),
+            (line_user_id, start, end, self._max_turns),
         )
         return [Message(role=r, text=t) for r, t in rows]
 
@@ -72,10 +72,10 @@ class PgMemoryStore:
         rows = self._db.query("SELECT DISTINCT session_id FROM turns ORDER BY session_id")
         return [r[0] for r in rows]
 
-    def last_active(self, session_id: str) -> float | None:
+    def last_active(self, line_user_id: str) -> float | None:
         row = self._db.query_one(
             "SELECT MAX(created_at) FROM turns WHERE session_id = %s AND role = 'user'",
-            (session_id,),
+            (line_user_id,),
         )
         return row[0] if row and row[0] is not None else None
 

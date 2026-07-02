@@ -11,7 +11,7 @@ logger = logging.getLogger("kinsun.memory.recall")
 
 
 class FactProvider(Protocol):
-    def facts(self, session_id: str) -> str: ...
+    def facts(self, line_user_id: str) -> str: ...
 
 
 class MemoryContext:
@@ -21,11 +21,11 @@ class MemoryContext:
         self._long_term = long_term
         self._facts = facts or []
 
-    def recall(self, session_id: str, query: str) -> str:
-        out = self._long_term.search(session_id, query)
+    def recall(self, line_user_id: str, query: str) -> str:
+        out = self._long_term.search(line_user_id, query)
         for provider in self._facts:
             try:
-                out += provider.facts(session_id)
+                out += provider.facts(line_user_id)
             except Exception:  # noqa: BLE001 - 事實提供者失敗不可中斷對話
                 logger.warning("事實提供者失敗，略過該段")
         return out

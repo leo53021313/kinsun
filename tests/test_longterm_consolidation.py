@@ -15,8 +15,8 @@ def test_consolidation_writes_previous_day_turns_as_self_claimed():
     long_term = FakeLongTermStore()
     written = run_consolidation("sess1", short_term=short, long_term=long_term)
     assert written == 1
-    session_id, messages, prov = long_term.added[0]
-    assert session_id == "sess1"
+    line_user_id, messages, prov = long_term.added[0]
+    assert line_user_id == "sess1"
     assert prov == provenance.SELF_CLAIMED
     assert messages[0].text == "我有高血壓"
 

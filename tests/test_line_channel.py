@@ -48,7 +48,7 @@ def test_text_event_normalized():
     msg = LineChannel(_Messenger()).inbound(_text_event())
     assert msg.kind == "text"
     assert msg.text == "設定"
-    assert msg.session_id == "U-2"
+    assert msg.line_user_id == "U-2"
     assert msg.audio == b""
 
 
@@ -74,7 +74,7 @@ def test_missing_token_returns_none():
 
 
 def test_missing_user_id_is_unknown():
-    assert LineChannel(_Messenger()).inbound(_audio_event(uid=None)).session_id == "unknown"
+    assert LineChannel(_Messenger()).inbound(_audio_event(uid=None)).line_user_id == "unknown"
 
 
 def test_reply_binds_to_messenger():

@@ -22,23 +22,23 @@ class FakeMemoryStore:
         self._now = now or _DEFAULT_NOW
         self._turns: dict[str, list[tuple[float, Message]]] = {}
 
-    def append(self, session_id: str, message: Message, *, at: datetime | None = None) -> None:
+    def append(self, line_user_id: str, message: Message, *, at: datetime | None = None) -> None:
         ts = (at or self._now).timestamp()
-        self._turns.setdefault(session_id, []).append((ts, message))
+        self._turns.setdefault(line_user_id, []).append((ts, message))
 
-    def recent(self, session_id: str) -> list[Message]:
+    def recent(self, line_user_id: str) -> list[Message]:
         midnight = self._now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
-        return [m for ts, m in self._turns.get(session_id, []) if ts >= midnight]
+        return [m for ts, m in self._turns.get(line_user_id, []) if ts >= midnight]
 
-    def previous_day(self, session_id: str) -> list[Message]:
+    def previous_day(self, line_user_id: str) -> list[Message]:
         start, end = previous_day_bounds(self._now)
-        return [m for ts, m in self._turns.get(session_id, []) if start <= ts < end]
+        return [m for ts, m in self._turns.get(line_user_id, []) if start <= ts < end]
 
     def sessions(self) -> list[str]:
         return sorted(self._turns)
 
-    def last_active(self, session_id: str) -> float | None:
-        users = [ts for ts, m in self._turns.get(session_id, []) if m.role == "user"]
+    def last_active(self, line_user_id: str) -> float | None:
+        users = [ts for ts, m in self._turns.get(line_user_id, []) if m.role == "user"]
         return max(users) if users else None
 
 
@@ -48,15 +48,15 @@ class FakeLongTermStore:
         self._search_result = search_result
 
     def add(
-        self, session_id: str, messages: list[Message], *, provenance: str = "self_claimed"
+        self, line_user_id: str, messages: list[Message], *, provenance: str = "self_claimed"
     ) -> None:
-        self.added.append((session_id, list(messages), provenance))
+        self.added.append((line_user_id, list(messages), provenance))
 
-    def search(self, session_id: str, query: str, *, top_k: int = 5) -> str:
+    def search(self, line_user_id: str, query: str, *, top_k: int = 5) -> str:
         return self._search_result
 
 
-class FakeAccountRepository:
+class FakeAccountStore:
     def __init__(self) -> None:
         self.elders = {}
         self.guardians = {}
@@ -146,7 +146,7 @@ class FakeMedicationStore:
     def __init__(self) -> None:
         self._meds = {}
 
-    def add(self, med):
+    def save(self, med):
         self._meds[med.med_id] = med
 
     def list_for_elder(self, elder_id):
@@ -164,7 +164,7 @@ class FakeAppointmentStore:
     def __init__(self) -> None:
         self._appts = {}
 
-    def add(self, appt):
+    def save(self, appt):
         self._appts[appt.appt_id] = appt
 
     def list_for_elder(self, elder_id):
@@ -182,14 +182,14 @@ class FakeRiskEventStore:
     def __init__(self) -> None:
         self.recorded: list[tuple] = []
 
-    def record(self, session_id, assessment):
-        self.recorded.append((session_id, assessment))
+    def record(self, line_user_id, assessment):
+        self.recorded.append((line_user_id, assessment))
 
-    def list_for_session(self, session_id):
+    def list_for_line_user(self, line_user_id):
         return [
             RiskEvent(str(i), s, a.tier, a.reason, float(i))
             for i, (s, a) in enumerate(self.recorded)
-            if s == session_id
+            if s == line_user_id
         ]
 
 
@@ -212,13 +212,13 @@ class FakeConversationSummaryStore:
     def __init__(self) -> None:
         self._rows: dict[tuple, str] = {}
 
-    def upsert(self, session_id, date, content):
-        self._rows[(session_id, date)] = content
+    def save(self, line_user_id, date, content):
+        self._rows[(line_user_id, date)] = content
 
-    def list_for_session(self, session_id):
+    def list_for_line_user(self, line_user_id):
         items = sorted(
-            ((d, c) for (s, d), c in self._rows.items() if s == session_id),
+            ((d, c) for (s, d), c in self._rows.items() if s == line_user_id),
             key=lambda x: x[0],
             reverse=True,
         )
-        return [ConversationSummary(session_id, d, c, 0.0) for d, c in items]
+        return [ConversationSummary(line_user_id, d, c, 0.0) for d, c in items]

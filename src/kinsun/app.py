@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from linebot.v3 import WebhookParser
 
 from kinsun.accounts.service import AccountService
-from kinsun.accounts.store import PgAccountRepository
+from kinsun.accounts.store import PgAccountStore
 from kinsun.agent import CareAgent
 from kinsun.appointments.facts import AppointmentFacts
 from kinsun.appointments.flow import AppointmentMenu
@@ -72,7 +72,7 @@ def build_app() -> FastAPI:
     )
     long_term = Mem0LongTermStore(build_mem0_memory(settings), top_k=settings.longterm_top_k)
     accounts = AccountService(
-        PgAccountRepository(db),
+        PgAccountStore(db),
         clock=lambda: datetime.now(tz),
         ttl_hours=settings.invite_ttl_hours,
         max_attempts=settings.invite_max_attempts,

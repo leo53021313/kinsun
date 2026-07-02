@@ -16,7 +16,7 @@ logger = logging.getLogger("kinsun.binding")
 
 
 class Profiles(Protocol):
-    def display_name(self, user_id: str) -> str: ...
+    def display_name(self, line_user_id: str) -> str: ...
 
 
 _TRIGGERS = {"設定", "綁定", "選單"}
@@ -65,13 +65,13 @@ class BindingFlow:
         self._ttl = session_ttl_seconds
         self._on_guardian_bound = on_guardian_bound
 
-    def _guardian_bound(self, line: str) -> None:
+    def _guardian_bound(self, line_user_id: str) -> None:
         if self._on_guardian_bound is None:
             return
         try:
-            self._on_guardian_bound(line)
+            self._on_guardian_bound(line_user_id)
         except Exception:  # noqa: BLE001 - link 選單失敗不可中斷綁定
-            logger.exception("link 圖文選單失敗 line=%s", line)
+            logger.exception("link 圖文選單失敗 line_user_id=%s", line_user_id)
 
     def handle(self, line_user_id: str, text: str) -> str | None:
         try:
@@ -84,112 +84,114 @@ class BindingFlow:
     def _now(self) -> float:
         return self._clock().timestamp()
 
-    def _save(self, line: str, state: BindingState, data: dict) -> None:
-        self._sessions.save(BindingSession(line, state, data, self._now()))
+    def _save(self, line_user_id: str, state: BindingState, data: dict) -> None:
+        self._sessions.save(BindingSession(line_user_id, state, data, self._now()))
 
-    def _handle(self, line: str, text: str) -> str | None:
-        session = self._sessions.get(line)
+    def _handle(self, line_user_id: str, text: str) -> str | None:
+        session = self._sessions.get(line_user_id)
         if session is not None and self._now() - session.updated_at > self._ttl:
-            self._sessions.delete(line)
+            self._sessions.delete(line_user_id)
             session = None
         if session is not None:
             if session.state != BindingState.AWAIT_CONFIRM and text in _GLOBAL_CANCEL:
-                self._sessions.delete(line)
+                self._sessions.delete(line_user_id)
                 return "已取消。"
-            return self._step(session, text, line)
+            return self._step(session, text, line_user_id)
         if text in _TRIGGERS:
-            self._save(line, BindingState.MENU, {})
+            self._save(line_user_id, BindingState.MENU, {})
             return _MENU
         if _CODE_RE.match(text):
             preview = self._accounts.preview_invite(text)
             if preview is not None:
                 if preview.reason is not None:
                     return _REASON_MSG[preview.reason]
-                return self._enter_confirm(line, text, preview)
+                return self._enter_confirm(line_user_id, text, preview)
         return None
 
-    def _step(self, session: BindingSession, text: str, line: str) -> str:
+    def _step(self, session: BindingSession, text: str, line_user_id: str) -> str:
         state = session.state
         if state.value.startswith("med_"):
-            return self._medication.step(session, text, line)
+            return self._medication.step(session, text, line_user_id)
         if state.value.startswith("appt_"):
-            return self._appointment.step(session, text, line)
+            return self._appointment.step(session, text, line_user_id)
         if state == BindingState.MENU:
-            return self._menu(text, line)
+            return self._menu(text, line_user_id)
         if state == BindingState.AWAIT_ELDER_NAME:
-            return self._create_elder(line, text)
+            return self._create_elder(line_user_id, text)
         if state == BindingState.AWAIT_ELDER_PICK:
-            return self._pick_elder(session, text, line)
+            return self._pick_elder(session, text, line_user_id)
         if state == BindingState.AWAIT_CODE:
-            return self._submit_code(text, line)
-        return self._confirm(session, text, line)
+            return self._submit_code(text, line_user_id)
+        return self._confirm(session, text, line_user_id)
 
-    def _menu(self, text: str, line: str) -> str:
+    def _menu(self, text: str, line_user_id: str) -> str:
         choice = text.translate(_FULLWIDTH)
         if choice == "1":
-            self._save(line, BindingState.AWAIT_ELDER_NAME, {})
+            self._save(line_user_id, BindingState.AWAIT_ELDER_NAME, {})
             return "請問長輩怎麼稱呼？（例：阿公、王媽媽）"
         if choice == "2":
-            elders = self._accounts.elders_managed_by(line)
+            elders = self._accounts.elders_managed_by(line_user_id)
             if not elders:
                 return "您還沒有長輩檔案，請先回覆「設定」並選 1 建立。"
             if len(elders) == 1:
-                return self._guardian_invite(line, elders[0].elder_id, elders[0].name)
+                return self._guardian_invite(line_user_id, elders[0].elder_id, elders[0].name)
             self._save(
-                line,
+                line_user_id,
                 BindingState.AWAIT_ELDER_PICK,
                 {"elders": [[e.elder_id, e.name] for e in elders]},
             )
             listing = "\n".join(f"{i + 1}. {e.name}" for i, e in enumerate(elders))
             return "請回覆數字選擇要邀請家屬的長輩：\n" + listing
         if choice == "3":
-            self._save(line, BindingState.AWAIT_CODE, {})
+            self._save(line_user_id, BindingState.AWAIT_CODE, {})
             return "請貼上您收到的邀請碼。"
         if choice == "4":
-            return self._medication.open(line)
+            return self._medication.open(line_user_id)
         if choice == "5":
-            return self._appointment.open(line)
+            return self._appointment.open(line_user_id)
         return "請回覆 1、2、3、4 或 5。"
 
-    def _create_elder(self, line: str, name: str) -> str:
-        display = self._profiles.display_name(line)
-        elder = self._accounts.create_elder(line, display, name)
+    def _create_elder(self, line_user_id: str, name: str) -> str:
+        display = self._profiles.display_name(line_user_id)
+        elder = self._accounts.create_elder(line_user_id, display, name)
         invite = self._accounts.generate_invite(elder.elder_id, InviteRole.ELDER)
-        self._sessions.delete(line)
-        self._guardian_bound(line)
+        self._sessions.delete(line_user_id)
+        self._guardian_bound(line_user_id)
         return (
             f"已建立『{elder.name}』的檔案，您是主要家屬。"
             f"請把這組綁定碼交給『{elder.name}』，在金孫聊天視窗貼上：\n"
             f"{invite.code}\n（24 小時內有效）"
         )
 
-    def _pick_elder(self, session: BindingSession, text: str, line: str) -> str:
+    def _pick_elder(self, session: BindingSession, text: str, line_user_id: str) -> str:
         elders = session.data["elders"]
         choice = text.translate(_FULLWIDTH)
         if not choice.isdigit() or not (1 <= int(choice) <= len(elders)):
             return "請回覆清單中的數字。"
         elder_id, elder_name = elders[int(choice) - 1]
-        return self._guardian_invite(line, elder_id, elder_name)
+        return self._guardian_invite(line_user_id, elder_id, elder_name)
 
-    def _guardian_invite(self, line: str, elder_id: str, elder_name: str) -> str:
+    def _guardian_invite(self, line_user_id: str, elder_id: str, elder_name: str) -> str:
         invite = self._accounts.generate_invite(elder_id, InviteRole.GUARDIAN)
-        self._sessions.delete(line)
+        self._sessions.delete(line_user_id)
         return (
             f"這是『{elder_name}』的家人邀請碼，請交給其他家屬，在金孫聊天視窗貼上：\n"
             f"{invite.code}\n（24 小時內有效）"
         )
 
-    def _submit_code(self, code: str, line: str) -> str:
+    def _submit_code(self, code: str, line_user_id: str) -> str:
         preview = self._accounts.preview_invite(code)
         if preview is None:
             return _REASON_MSG["not_found"]
         if preview.reason is not None:
-            self._sessions.delete(line)
+            self._sessions.delete(line_user_id)
             return _REASON_MSG[preview.reason]
-        return self._enter_confirm(line, code, preview)
+        return self._enter_confirm(line_user_id, code, preview)
 
-    def _enter_confirm(self, line: str, code: str, preview: InvitePreview) -> str:
-        self._save(line, BindingState.AWAIT_CONFIRM, {"code": code, "role": preview.role.value})
+    def _enter_confirm(self, line_user_id: str, code: str, preview: InvitePreview) -> str:
+        self._save(
+            line_user_id, BindingState.AWAIT_CONFIRM, {"code": code, "role": preview.role.value}
+        )
         if preview.role == InviteRole.ELDER:
             return (
                 f"您要綁定為『{preview.elder_name}』本人嗎？綁定後金孫會記錄您的對話，"
@@ -197,20 +199,20 @@ class BindingFlow:
             )
         return f"您要成為『{preview.elder_name}』的家人嗎？同意請回覆『是』，取消請回覆『否』。"
 
-    def _confirm(self, session: BindingSession, text: str, line: str) -> str:
+    def _confirm(self, session: BindingSession, text: str, line_user_id: str) -> str:
         if text in _YES:
             code = session.data["code"]
             try:
-                self._accounts.redeem_invite(code, line, consent_by=ConsentBy.SELF)
+                self._accounts.redeem_invite(code, line_user_id, consent_by=ConsentBy.SELF)
             except InviteError as exc:
-                self._sessions.delete(line)
+                self._sessions.delete(line_user_id)
                 return _REASON_MSG.get(exc.reason, "綁定失敗，請重新操作。")
-            self._sessions.delete(line)
+            self._sessions.delete(line_user_id)
             if session.data.get("role") == InviteRole.ELDER.value:
                 return "綁定成功！您可以開始用語音跟金孫聊天囉。"
-            self._guardian_bound(line)
+            self._guardian_bound(line_user_id)
             return "綁定成功！長輩有狀況時，金孫會通知您。"
         if text in _NO:
-            self._sessions.delete(line)
+            self._sessions.delete(line_user_id)
             return "已取消綁定。"
         return "請回覆『是』或『否』。"

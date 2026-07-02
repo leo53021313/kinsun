@@ -6,14 +6,14 @@ from kinsun.binding.session import BindingState
 from kinsun.medications.flow import MedicationMenu, _parse_slots
 from kinsun.medications.models import MedicationSlot
 from kinsun.medications.service import MedicationService
-from tests.fakes import FakeAccountRepository, FakeBindingSessionStore, FakeMedicationStore
+from tests.fakes import FakeAccountStore, FakeBindingSessionStore, FakeMedicationStore
 
 TPE = timezone(timedelta(hours=8))
 NOW = datetime(2026, 6, 29, 10, 0, tzinfo=TPE)
 
 
 def _setup():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     ids = (f"id{i}" for i in count(1))
     codes = (f"code{i}" for i in count(1))
     accounts = AccountService(
@@ -61,7 +61,7 @@ def test_add_invalid_slots_reprompts():
 def test_view_lists_meds():
     menu, medications, accounts, sessions = _setup()
     elder = accounts.elders_managed_by("U-son")[0]
-    medications.add(elder.elder_id, "鈣片", (MedicationSlot.BEDTIME,))
+    medications.save(elder.elder_id, "鈣片", (MedicationSlot.BEDTIME,))
     menu.open("U-son")
     reply = menu.step(sessions.get("U-son"), "2", "U-son")
     assert "鈣片" in reply and "睡前" in reply
@@ -77,7 +77,7 @@ def test_view_empty():
 def test_delete_flow():
     menu, medications, accounts, sessions = _setup()
     elder = accounts.elders_managed_by("U-son")[0]
-    medications.add(elder.elder_id, "鈣片", (MedicationSlot.BEDTIME,))
+    medications.save(elder.elder_id, "鈣片", (MedicationSlot.BEDTIME,))
     menu.open("U-son")
     listing = menu.step(sessions.get("U-son"), "3", "U-son")
     assert "1. 鈣片" in listing
@@ -87,7 +87,7 @@ def test_delete_flow():
 
 
 def test_no_elders_prompts_create():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     ids = (f"id{i}" for i in count(1))
     accounts = AccountService(
         repo, clock=lambda: NOW, new_id=lambda: next(ids), new_code=lambda: "c"

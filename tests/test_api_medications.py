@@ -10,7 +10,7 @@ from kinsun.medications.service import MedicationService
 from kinsun.web.api import create_api_router
 from kinsun.web.auth import AuthError
 from tests.fakes import (
-    FakeAccountRepository,
+    FakeAccountStore,
     FakeAppointmentStore,
     FakeMedicationStore,
     FakeReminderLogStore,
@@ -22,18 +22,18 @@ NOW = datetime(2026, 7, 10, tzinfo=TPE)
 
 
 class _FakeVerifier:
-    def __init__(self, user_id="U-son", boom=False):
-        self._user_id = user_id
+    def __init__(self, line_user_id="U-son", boom=False):
+        self._line_user_id = line_user_id
         self._boom = boom
 
     def verify(self, id_token):
         if self._boom:
             raise AuthError("bad")
-        return self._user_id
+        return self._line_user_id
 
 
-def _setup(user_id="U-son"):
-    repo = FakeAccountRepository()
+def _setup(line_user_id="U-son"):
+    repo = FakeAccountStore()
     ids = (f"id{i}" for i in count(1))
     accounts = AccountService(
         repo, clock=lambda: NOW, new_id=lambda: next(ids), new_code=lambda: "c"
@@ -44,7 +44,7 @@ def _setup(user_id="U-son"):
     app = FastAPI()
     app.include_router(
         create_api_router(
-            verifier=_FakeVerifier(user_id),
+            verifier=_FakeVerifier(line_user_id),
             accounts=accounts,
             medications=medications,
             appointments=AppointmentService(FakeAppointmentStore()),
@@ -70,7 +70,7 @@ def _add(client, elder_id, name="藥", slots=("morning",)):
 
 
 def test_list_requires_management():
-    client, elder_id = _setup(user_id="U-stranger")
+    client, elder_id = _setup(line_user_id="U-stranger")
     assert client.get(f"/api/elders/{elder_id}/medications", headers=_auth()).status_code == 404
 
 

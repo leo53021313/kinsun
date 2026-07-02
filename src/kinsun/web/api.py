@@ -120,7 +120,7 @@ def create_api_router(
         return {"medications": [_med_json(m) for m in medications.list_for_elder(elder_id)]}
 
     @router.post("/elders/{elder_id}/medications", status_code=201)
-    def add_medication(
+    def create_medication(
         elder_id: str, body: MedicationIn, line_user_id: str = Depends(current_guardian)
     ) -> dict:
         assert_manages(line_user_id, elder_id)
@@ -128,7 +128,7 @@ def create_api_router(
         if not name:
             raise HTTPException(status_code=400, detail="name required")
         slots = parse_slots(body.slots)
-        return _med_json(medications.add(elder_id, name, slots))
+        return _med_json(medications.save(elder_id, name, slots))
 
     @router.put("/elders/{elder_id}/medications/{med_id}")
     def update_medication(
@@ -159,7 +159,7 @@ def create_api_router(
         return {"appointments": [_appt_json(a) for a in appointments.list_for_elder(elder_id)]}
 
     @router.post("/elders/{elder_id}/appointments", status_code=201)
-    def add_appointment(
+    def create_appointment(
         elder_id: str, body: AppointmentIn, line_user_id: str = Depends(current_guardian)
     ) -> dict:
         assert_manages(line_user_id, elder_id)
@@ -167,7 +167,7 @@ def create_api_router(
         if not label:
             raise HTTPException(status_code=400, detail="label required")
         date = parse_appt_date(body.date)
-        return _appt_json(appointments.add(elder_id, date, label))
+        return _appt_json(appointments.save(elder_id, date, label))
 
     @router.put("/elders/{elder_id}/appointments/{appt_id}")
     def update_appointment(
@@ -197,10 +197,17 @@ def create_api_router(
         assert_manages(line_user_id, elder_id)
         cutoff = (clock() - timedelta(days=30)).timestamp()
         elder = accounts.get_elder(elder_id)
-        session_id = elder.line_user_id if elder else None
+        # 注意：這裡刻意用 elder_line_user_id（而非 line_user_id），
+        # 因為本函式的 line_user_id 參數已代表發出請求的家屬，
+        # 與此處要查的「長輩」LINE ID 是不同的人，同名會互相覆蓋。
+        elder_line_user_id = elder.line_user_id if elder else None
         risks = (
-            [e for e in risk_events.list_for_session(session_id) if e.created_at >= cutoff]
-            if session_id
+            [
+                e
+                for e in risk_events.list_for_line_user(elder_line_user_id)
+                if e.created_at >= cutoff
+            ]
+            if elder_line_user_id
             else []
         )
         reminders = [r for r in reminder_logs.list_for_elder(elder_id) if r.created_at >= cutoff]

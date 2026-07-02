@@ -17,14 +17,14 @@ def test_pg_risk_events_round_trip():
 
     url = os.environ["DATABASE_URL"]
     ensure_schema(url)
-    session_id = f"it-{uuid.uuid4().hex}"
+    line_user_id = f"it-{uuid.uuid4().hex}"
     ids = (f"re{i}" for i in count(1))
     times = iter([datetime(2026, 7, 10, 9, tzinfo=TPE), datetime(2026, 7, 10, 10, tzinfo=TPE)])
     store = PgRiskEventStore(
         Database.open(url), clock=lambda: next(times), new_id=lambda: next(ids)
     )
-    store.record(session_id, RiskAssessment(RiskTier.L2, 0.9, "胸痛"))
-    store.record(session_id, RiskAssessment(RiskTier.L3, 0.95, "昏倒"))
-    events = store.list_for_session(session_id)
+    store.record(line_user_id, RiskAssessment(RiskTier.L2, 0.9, "胸痛"))
+    store.record(line_user_id, RiskAssessment(RiskTier.L3, 0.95, "昏倒"))
+    events = store.list_for_line_user(line_user_id)
     assert [e.tier for e in events] == [RiskTier.L3, RiskTier.L2]
     assert events[0].reason == "昏倒"

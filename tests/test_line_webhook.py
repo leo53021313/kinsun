@@ -23,7 +23,7 @@ class _NullDetector:
 
 
 class _NullNotifier:
-    def notify(self, session_id: str, assessment: RiskAssessment) -> None:
+    def notify(self, line_user_id: str, assessment: RiskAssessment) -> None:
         pass
 
 
@@ -33,15 +33,15 @@ class EchoLLM:
 
 
 class NullMemory:
-    def recent(self, session_id: str) -> list[Message]:
+    def recent(self, line_user_id: str) -> list[Message]:
         return []
 
-    def append(self, session_id: str, message: Message) -> None:
+    def append(self, line_user_id: str, message: Message) -> None:
         pass
 
 
 class NullContext:
-    def recall(self, session_id: str, user_text: str) -> str:
+    def recall(self, line_user_id: str, user_text: str) -> str:
         return ""
 
 
@@ -49,8 +49,8 @@ class RecordingMemory(NullMemory):
     def __init__(self) -> None:
         self.sessions: list[str] = []
 
-    def append(self, session_id: str, message: Message) -> None:
-        self.sessions.append(session_id)
+    def append(self, line_user_id: str, message: Message) -> None:
+        self.sessions.append(line_user_id)
 
 
 class FakeMessenger:
@@ -64,19 +64,19 @@ class FakeMessenger:
         self.replies.append((reply_token, text))
 
 
-def _audio_event(user_id="U-1"):
+def _audio_event(line_user_id="U-1"):
     return SimpleNamespace(
         reply_token="rt-1",
         message=SimpleNamespace(type="audio", id="m-1"),
-        source=SimpleNamespace(user_id=user_id),
+        source=SimpleNamespace(user_id=line_user_id),
     )
 
 
-def _text_event(text="設定", user_id="U-2"):
+def _text_event(text="設定", line_user_id="U-2"):
     return SimpleNamespace(
         reply_token="rt-2",
         message=SimpleNamespace(type="text", id="m-2", text=text),
-        source=SimpleNamespace(user_id=user_id),
+        source=SimpleNamespace(user_id=line_user_id),
     )
 
 
@@ -97,7 +97,7 @@ class FakeParser:
 
 
 class _NullBinding:
-    def handle(self, session_id: str, text: str):
+    def handle(self, line_user_id: str, text: str):
         return None
 
 
@@ -106,8 +106,8 @@ class _StubBinding:
         self.reply = reply
         self.calls: list[tuple[str, str]] = []
 
-    def handle(self, session_id: str, text: str):
-        self.calls.append((session_id, text))
+    def handle(self, line_user_id: str, text: str):
+        self.calls.append((line_user_id, text))
         return self.reply
 
 
@@ -161,7 +161,7 @@ def test_session_id_threaded_to_memory():
 def test_missing_user_id_degrades_to_unknown():
     messenger = FakeMessenger()
     memory = RecordingMemory()
-    client = _make_client(FakeParser([_audio_event(user_id=None)]), messenger, memory=memory)
+    client = _make_client(FakeParser([_audio_event(line_user_id=None)]), messenger, memory=memory)
     resp = client.post("/line/webhook", content=b"{}", headers={"X-Line-Signature": "x"})
     assert resp.status_code == 200
     assert memory.sessions == ["unknown", "unknown"]

@@ -15,7 +15,7 @@ class _FakeFacts:
     def __init__(self, text):
         self._text = text
 
-    def facts(self, session_id):
+    def facts(self, line_user_id):
         return self._text
 
 
@@ -34,7 +34,7 @@ def test_recall_no_facts_is_just_longterm():
 
 
 class _BoomFacts:
-    def facts(self, session_id):
+    def facts(self, line_user_id):
         raise RuntimeError("db down")
 
 

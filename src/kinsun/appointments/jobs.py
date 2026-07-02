@@ -19,7 +19,7 @@ def build_appointment_reminder_job(
     today: Callable[[], str],
     tomorrow: Callable[[], str],
     lookup_elder: Callable[[str], object],
-    is_consented: Callable[[str], bool],
+    is_consented_elder: Callable[[str], bool],
     guardian_line_ids: Callable[[str], list[str]],
     push: Callable[[str, str], None],
     hour: int,
@@ -38,13 +38,13 @@ def build_appointment_reminder_job(
         if elder is None:
             return
         when_word = "今天" if when == "today" else "明天"
-        if elder.line_user_id and is_consented(elder.line_user_id):
+        if elder.line_user_id and is_consented_elder(elder.line_user_id):
             push(
                 elder.line_user_id,
                 f"{elder.name}，{when_word}要回診囉：{appt.label}。記得準時，需要的話請家人陪您去。",
             )
-        for line_id in guardian_line_ids(appt.elder_id):
-            push(line_id, f"【金孫提醒】{elder.name} {when_word}要回診——{appt.label}。")
+        for line_user_id in guardian_line_ids(appt.elder_id):
+            push(line_user_id, f"【金孫提醒】{elder.name} {when_word}要回診——{appt.label}。")
         safe_record(record, appt.elder_id, "appointment", f"{when_word}回診：{appt.label}")
 
     return fanout_job(

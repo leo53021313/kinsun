@@ -23,7 +23,7 @@ class AccountError(Exception):
     """帳號資料讀寫失敗。"""
 
 
-class AccountRepository(Protocol):
+class AccountStore(Protocol):
     def save_elder(self, elder: Elder, *, tx: Executor | None = None) -> None: ...
     def get_elder(self, elder_id: str) -> Elder | None: ...
     def save_guardian(self, guardian: Guardian, *, tx: Executor | None = None) -> None: ...
@@ -41,8 +41,8 @@ class AccountRepository(Protocol):
     def transaction(self) -> object: ...
 
 
-class PgAccountRepository:
-    """帳號綁定的 Postgres（Supabase）實作；介面同 AccountRepository。"""
+class PgAccountStore:
+    """帳號綁定的 Postgres（Supabase）實作；介面同 AccountStore。"""
 
     def __init__(self, db: Database) -> None:
         self._db = _Errors(db, lambda m: AccountError(f"帳號存取失敗：{m}"))

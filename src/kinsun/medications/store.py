@@ -13,7 +13,7 @@ class MedicationError(Exception):
 
 
 class MedicationStore(Protocol):
-    def add(self, med: Medication) -> None: ...
+    def save(self, med: Medication) -> None: ...
     def list_for_elder(self, elder_id: str) -> list[Medication]: ...
     def list_for_slot(self, slot: MedicationSlot) -> list[Medication]: ...
     def remove(self, med_id: str) -> None: ...
@@ -28,7 +28,7 @@ class PgMedicationStore:
         parsed = tuple(MedicationSlot(s) for s in slots.split(","))
         return Medication(med_id, elder_id, name, parsed)
 
-    def add(self, med: Medication) -> None:
+    def save(self, med: Medication) -> None:
         self._db.execute(
             "INSERT INTO medications (med_id, elder_id, name, slots) "
             "VALUES (%s, %s, %s, %s) ON CONFLICT (med_id) DO UPDATE SET "
