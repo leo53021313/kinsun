@@ -64,6 +64,15 @@ class Settings:
     liff_timeout_seconds: float
     rich_menu_id: str
     binding_gate_enabled: bool
+    tts_backend: str
+    tts_endpoint: str
+    tts_timeout_seconds: float
+    tts_reply_text: bool
+    supabase_url: str
+    supabase_service_key: str
+    audio_bucket: str
+    audio_retention_days: int
+    audio_upload_timeout_seconds: float
 
 
 def _parse_bool(raw: str) -> bool:
@@ -109,4 +118,13 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         liff_timeout_seconds=float(env.get("LIFF_TIMEOUT_SECONDS", "10")),
         rich_menu_id=env.get("RICH_MENU_ID", ""),
         binding_gate_enabled=_parse_bool(env.get("BINDING_GATE_ENABLED", "true")),
+        tts_backend=env.get("TTS_BACKEND", "bubble"),
+        tts_endpoint=env.get("TTS_ENDPOINT", ""),
+        tts_timeout_seconds=float(env.get("TTS_TIMEOUT_SECONDS", "30")),
+        tts_reply_text=_parse_bool(env.get("TTS_REPLY_TEXT", "true")),
+        supabase_url=env.get("SUPABASE_URL", ""),
+        supabase_service_key=env.get("SUPABASE_SERVICE_KEY", ""),
+        audio_bucket=env.get("AUDIO_BUCKET", "tts-audio"),
+        audio_retention_days=int(env.get("AUDIO_RETENTION_DAYS", "2")),
+        audio_upload_timeout_seconds=float(env.get("AUDIO_UPLOAD_TIMEOUT_SECONDS", "10")),
     )

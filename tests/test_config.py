@@ -38,6 +38,15 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.liff_timeout_seconds == 10
     assert settings.rich_menu_id == ""
     assert settings.binding_gate_enabled is True
+    assert settings.tts_backend == "bubble"
+    assert settings.tts_endpoint == ""
+    assert settings.tts_timeout_seconds == 30
+    assert settings.tts_reply_text is True
+    assert settings.supabase_url == ""
+    assert settings.supabase_service_key == ""
+    assert settings.audio_bucket == "tts-audio"
+    assert settings.audio_retention_days == 2
+    assert settings.audio_upload_timeout_seconds == 10
 
 
 def test_load_settings_requires_database_url():
@@ -72,6 +81,19 @@ def test_load_settings_binding_gate_enabled_values():
     for raw in ("true", "1", "yes", "True"):
         settings = load_settings({**BASE_ENV, "BINDING_GATE_ENABLED": raw})
         assert settings.binding_gate_enabled is True, raw
+
+
+def test_load_settings_tts_reply_text_false():
+    for raw in ("false", "0", "no", "False"):
+        settings = load_settings({**BASE_ENV, "TTS_REPLY_TEXT": raw})
+        assert settings.tts_reply_text is False, raw
+
+
+def test_load_settings_tts_overrides():
+    env = {**BASE_ENV, "TTS_BACKEND": "dgx", "TTS_ENDPOINT": "http://dgx:8002/synthesize"}
+    settings = load_settings(env)
+    assert settings.tts_backend == "dgx"
+    assert settings.tts_endpoint == "http://dgx:8002/synthesize"
 
 
 def test_load_dotenv_fills_missing_only(tmp_path):
