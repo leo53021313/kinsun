@@ -1,4 +1,4 @@
-from kinsun.scheduler.jobs import build_consolidation_job
+from kinsun.scheduler.jobs import build_audio_cleanup_job, build_consolidation_job
 
 
 def test_runs_for_each_session():
@@ -21,3 +21,12 @@ def test_one_session_failure_does_not_block_others():
     job = build_consolidation_job(sessions=lambda: ["u1", "u2"], run_one=run_one, hour=3)
     job.run()
     assert done == ["u2"]
+
+
+def test_audio_cleanup_job_runs_cleanup():
+    ran = []
+    job = build_audio_cleanup_job(cleanup=lambda: ran.append(True), hour=4)
+    assert job.name == "audio-cleanup"
+    assert job.cron == "30 4 * * *"
+    job.run()
+    assert ran == [True]

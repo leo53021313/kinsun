@@ -20,6 +20,7 @@ from kinsun.appointment.facts import AppointmentFacts
 from kinsun.appointment.jobs import build_appointment_reminder_job
 from kinsun.appointment.service import AppointmentService
 from kinsun.appointment.store import PgAppointmentStore
+from kinsun.audio.publisher import build_audio_publisher
 from kinsun.channels.line.messenger import LineApiMessenger
 from kinsun.config import Settings, load_dotenv, load_settings
 from kinsun.db import Database, ensure_schema
@@ -41,7 +42,7 @@ from kinsun.proactive.jobs import (
 from kinsun.recall import MemoryContext
 from kinsun.reports.reminders import PgReminderLogStore
 from kinsun.reports.summaries import PgConversationSummaryStore, summarize_day
-from kinsun.scheduler.jobs import build_consolidation_job
+from kinsun.scheduler.jobs import build_audio_cleanup_job, build_consolidation_job
 from kinsun.scheduler.scheduler import Scheduler
 from kinsun.scheduler.state import PgScheduleStateStore
 
@@ -148,6 +149,14 @@ def build_scheduler(
             record=reminder_logs.record,
         )
     )
+    if settings.tts_backend == "dgx":
+        publisher = build_audio_publisher(settings, clock=clock, new_id=lambda: uuid.uuid4().hex)
+        jobs.append(
+            build_audio_cleanup_job(
+                cleanup=lambda: publisher.cleanup(retention_days=settings.audio_retention_days),
+                hour=settings.consolidation_hour,
+            )
+        )
     state = PgScheduleStateStore(db, tz)
     return Scheduler(jobs, clock, state), db
 
