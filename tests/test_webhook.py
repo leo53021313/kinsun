@@ -256,3 +256,48 @@ def test_invalid_signature_returns_400():
         "/line/webhook", content=b'{"events":[]}', headers={"X-Line-Signature": "wrong"}
     )
     assert resp.status_code == 400
+
+
+class _VoiceMessenger(FakeMessenger):
+    def __init__(self):
+        super().__init__()
+        self.voice = []
+
+    def reply_voice(self, reply_token, audio_url, duration_ms, text):
+        self.voice.append((reply_token, audio_url, duration_ms, text))
+
+
+class _StubTts:
+    def synthesize(self, text):
+        from kinsun.speech.tts import TtsResult
+
+        return TtsResult(text=text, audio=b"AUDIO", duration_ms=700)
+
+
+class _StubPublisher:
+    def publish(self, audio, *, content_type):
+        return "http://cdn/a.m4a"
+
+
+def test_voice_reply_end_to_end():
+    from kinsun.channels.inbound import VoiceReplyDelivery
+
+    messenger = _VoiceMessenger()
+    pipeline = VoicePipeline(
+        asr=MockAsrClient("阿公早安"),
+        agent=CareAgent(EchoLLM(), NullMemory(), NullContext()),
+        tts=_StubTts(),
+        detector=_NullDetector(),
+        notifier=_NullNotifier(),
+        risk_events=FakeRiskEventStore(),
+    )
+    app = create_app(
+        parser=FakeParser([_audio_event()]),
+        pipeline=pipeline,
+        messenger=messenger,
+        binding=_NullBinding(),
+        gate=_AllowGate(),
+        voice=VoiceReplyDelivery(_StubPublisher(), include_text=True),
+    )
+    TestClient(app).post("/line/webhook", content=b"{}", headers={"X-Line-Signature": "x"})
+    assert messenger.voice == [("rt-1", "http://cdn/a.m4a", 700, "你說的是：阿公早安")]

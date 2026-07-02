@@ -26,12 +26,12 @@ logger = logging.getLogger("kinsun.webhook")
 __all__ = ["BIND_FIRST_PROMPT", "FALLBACK_PROMPT", "NON_AUDIO_PROMPT", "create_app"]
 
 
-def _handle_events(events, *, channel: LineChannel, pipeline, binding, gate) -> None:
+def _handle_events(events, *, channel: LineChannel, pipeline, binding, gate, voice) -> None:
     for event in events:
         try:
             msg = channel.inbound(event)
             if msg is not None:
-                dispatch(msg, pipeline=pipeline, binding=binding, gate=gate)
+                dispatch(msg, pipeline=pipeline, binding=binding, gate=gate, voice=voice)
         except Exception:  # noqa: BLE001
             # 單一事件失敗不可讓 webhook 回 500：LINE 會重送整包事件，
             # 導致重複跑管線、重複發家屬危急通知。記錄後繼續下一個事件。
@@ -45,6 +45,7 @@ def create_app(
     messenger: LineMessenger,
     binding,
     gate,
+    voice=None,
     on_shutdown: Callable[[], None] | None = None,
 ) -> FastAPI:
     channel = LineChannel(messenger)
@@ -67,7 +68,13 @@ def create_app(
             raise HTTPException(status_code=400, detail="invalid signature") from exc
         # 事件處理是阻塞的重工作（ASR/LLM/HTTP），丟到 threadpool 以免卡住事件迴圈。
         await run_in_threadpool(
-            _handle_events, events, channel=channel, pipeline=pipeline, binding=binding, gate=gate
+            _handle_events,
+            events,
+            channel=channel,
+            pipeline=pipeline,
+            binding=binding,
+            gate=gate,
+            voice=voice,
         )
         return {"ok": True}
 
