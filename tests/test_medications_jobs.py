@@ -77,10 +77,10 @@ def test_single_elder_failure_isolated():
     elders = {"e1": Elder("e1", "阿公", "U-1"), "e2": Elder("e2", "阿嬤", "U-2")}
     pushed = []
 
-    def push(line, text):
-        if line == "U-1":
+    def push(line_user_id, text):
+        if line_user_id == "U-1":
             raise RuntimeError("boom")
-        pushed.append((line, text))
+        pushed.append((line_user_id, text))
 
     job = build_medication_slot_job(
         slot=MedicationSlot.MORNING,
