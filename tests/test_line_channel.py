@@ -7,6 +7,7 @@ class _Messenger:
     def __init__(self):
         self.replied = []
         self.audio_calls = []
+        self.voice = []
 
     def get_audio(self, message_id):
         self.audio_calls.append(message_id)
@@ -14,6 +15,9 @@ class _Messenger:
 
     def reply_text(self, reply_token, text):
         self.replied.append((reply_token, text))
+
+    def reply_voice(self, reply_token, audio_url, duration_ms, text):
+        self.voice.append((reply_token, audio_url, duration_ms, text))
 
 
 def _audio_event(uid="U-1"):
@@ -78,3 +82,10 @@ def test_reply_binds_to_messenger():
     msg = LineChannel(m).inbound(_text_event())
     msg.reply("哈囉")
     assert m.replied == [("rt-2", "哈囉")]
+
+
+def test_inbound_binds_reply_voice_to_reply_token():
+    messenger = _Messenger()
+    msg = LineChannel(messenger).inbound(_audio_event())
+    msg.reply_voice("http://x/a.m4a", 500, "文字")
+    assert messenger.voice == [("rt-1", "http://x/a.m4a", 500, "文字")]

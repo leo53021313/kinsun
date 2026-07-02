@@ -21,13 +21,15 @@ BIND_FIRST_PROMPT = (
 
 @dataclass(frozen=True)
 class InboundMessage:
-    """通道中立的入站訊息。kind ∈ text/audio/other；reply 為綁定好的回覆 handle。"""
+    """通道中立的入站訊息。kind ∈ text/audio/other；reply 為綁定好的回覆 handle，
+    reply_voice 為語音回覆 handle（url、duration_ms、text）。"""
 
     session_id: str
     kind: str
     text: str
     audio: bytes
     reply: Callable[[str], None]
+    reply_voice: Callable[[str, int, str | None], None] | None = None
 
 
 def dispatch(msg: InboundMessage, *, pipeline, binding, gate) -> None:

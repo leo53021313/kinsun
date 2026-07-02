@@ -22,12 +22,15 @@ class LineChannel:
         def reply(text: str) -> None:
             self._messenger.reply_text(reply_token, text)
 
+        def reply_voice(audio_url: str, duration_ms: int, text: str | None) -> None:
+            self._messenger.reply_voice(reply_token, audio_url, duration_ms, text)
+
         if mtype == "text":
             return InboundMessage(
-                session_id, "text", getattr(message, "text", "") or "", b"", reply
+                session_id, "text", getattr(message, "text", "") or "", b"", reply, reply_voice
             )
         if mtype == "audio":
             return InboundMessage(
-                session_id, "audio", "", self._messenger.get_audio(message.id), reply
+                session_id, "audio", "", self._messenger.get_audio(message.id), reply, reply_voice
             )
-        return InboundMessage(session_id, "other", "", b"", reply)
+        return InboundMessage(session_id, "other", "", b"", reply, reply_voice)
