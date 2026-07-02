@@ -13,7 +13,7 @@ class LLMError(Exception):
 @dataclass(frozen=True)
 class Message:
     role: str  # "user" | "assistant"
-    text: str
+    content: str
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,9 @@ class LLMClient(Protocol):
 
 def _to_contents(messages: list[Message]) -> list[dict]:
     role_map = {"user": "user", "assistant": "model"}
-    return [{"role": role_map.get(m.role, "user"), "parts": [{"text": m.text}]} for m in messages]
+    return [
+        {"role": role_map.get(m.role, "user"), "parts": [{"text": m.content}]} for m in messages
+    ]
 
 
 class GeminiClient:

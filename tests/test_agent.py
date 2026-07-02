@@ -70,7 +70,7 @@ def test_proactive_composes_with_memory_and_writes_back():
 
     assert reply == "金孫回您：好的"
     assert llm.system_prompt == SYSTEM_PROMPT + "【記憶】"
-    assert "早安問候" in llm.messages[-1].text
+    assert "早安問候" in llm.messages[-1].content
     assert memory.appended == [("u1", Message("assistant", "金孫回您：好的"))]
 
 

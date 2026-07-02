@@ -11,7 +11,7 @@ from tests.fakes import FakeRiskEventStore
 
 class EchoLLM:
     def generate(self, *, system_prompt: str, messages: list[Message]) -> str:
-        return f"你說的是：{messages[-1].text}"
+        return f"你說的是：{messages[-1].content}"
 
 
 class NullMemory:

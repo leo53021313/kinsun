@@ -15,7 +15,7 @@ logger = logging.getLogger("kinsun.reports.reminders")
 
 @dataclass(frozen=True)
 class ReminderLog:
-    log_id: str
+    reminder_log_id: str
     elder_id: str
     kind: str
     content: str
@@ -41,14 +41,14 @@ class PgReminderLogStore:
 
     def record(self, elder_id: str, kind: str, content: str) -> None:
         self._db.execute(
-            "INSERT INTO reminder_logs (log_id, elder_id, kind, content, created_at) "
+            "INSERT INTO reminder_logs (reminder_log_id, elder_id, kind, content, created_at) "
             "VALUES (%s, %s, %s, %s, %s)",
             (self._new_id(), elder_id, kind, content, self._clock().timestamp()),
         )
 
     def list_for_elder(self, elder_id: str) -> list[ReminderLog]:
         rows = self._db.query(
-            "SELECT log_id, elder_id, kind, content, created_at FROM reminder_logs "
+            "SELECT reminder_log_id, elder_id, kind, content, created_at FROM reminder_logs "
             "WHERE elder_id = %s ORDER BY created_at DESC",
             (elder_id,),
         )

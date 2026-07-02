@@ -99,7 +99,28 @@
   | 13 | `DEBUG_SHOW_TRANSCRIPT` | `ASR_DEBUG_SHOW_TRANSCRIPT` |
 
   未同步改鍵會導致 `load_settings` 讀不到值而退回預設值（非例外），故不會立即報錯，務必逐一確認。
-- Supabase／Postgres 開發庫：#28、#29、#31、#32 開發庫直接重建（資料可丟，無遷移）。
+- Supabase／Postgres 開發庫：#28、#29、#31、#32 開發庫直接重建（資料可丟，無遷移）。批次五已完成程式碼（DDL＋SQL 字面值＋對齊的模型欄位）改動，**但不對任何實際資料庫執行 DROP**；下列為人工執行的開發庫重建指引。
+
+  **受影響資料表與欄位對照**
+
+  | 表 | 舊欄位 | 新欄位 |
+  |----|--------|--------|
+  | turns | `session_id` | `line_user_id` |
+  | turns | `text` | `content` |
+  | risk_events | `session_id` | `line_user_id` |
+  | risk_events | `event_id` | `risk_event_id` |
+  | conversation_summaries | `session_id` | `line_user_id` |
+  | medications | `med_id` | `medication_id` |
+  | appointments | `appt_id` | `appointment_id` |
+  | appointments | `appt_date` | `date` |
+  | reminder_logs | `log_id` | `reminder_log_id` |
+
+  **重建步驟**（開發資料可丟，無需遷移；DGX／Supabase dev 專案需由人工登入執行，不由程式自動觸發）：
+
+  1. 確認目標資料庫為開發用途（非正式環境），資料可丟。
+  2. 依需要 `DROP TABLE IF EXISTS turns, risk_events, conversation_summaries, medications, appointments, reminder_logs CASCADE;`（`elders`／`guardians`／`binding_sessions` 等其餘表未改名，不受影響、不需一併 drop）。
+  3. 重啟應用程式，讓啟動流程呼叫 `kinsun.db.ensure_schema()` 以新版 DDL 重建上述表；或直接對照本節「受影響資料表與欄位對照」手動執行等效 `CREATE TABLE IF NOT EXISTS`（見 `src/kinsun/db.py` 的 `MEMORY_DDL`／`RISK_EVENTS_DDL`／`CONVERSATION_SUMMARIES_DDL`／`MEDICATIONS_DDL`／`APPOINTMENTS_DDL`／`REMINDER_LOGS_DDL`）。
+  4. 重建後以 `list_for_elder`／`list_for_line_user` 等既有查詢或直接 `SELECT` 驗證新欄位可正常讀寫。
 
 ## 執行批次對照
 

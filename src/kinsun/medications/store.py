@@ -30,15 +30,15 @@ class PgMedicationStore:
 
     def save(self, med: Medication) -> None:
         self._db.execute(
-            "INSERT INTO medications (med_id, elder_id, name, slots) "
-            "VALUES (%s, %s, %s, %s) ON CONFLICT (med_id) DO UPDATE SET "
+            "INSERT INTO medications (medication_id, elder_id, name, slots) "
+            "VALUES (%s, %s, %s, %s) ON CONFLICT (medication_id) DO UPDATE SET "
             "elder_id = EXCLUDED.elder_id, name = EXCLUDED.name, slots = EXCLUDED.slots",
             (med.medication_id, med.elder_id, med.name, ",".join(s.value for s in med.slots)),
         )
 
     def list_for_elder(self, elder_id: str) -> list[Medication]:
         rows = self._db.query(
-            "SELECT med_id, elder_id, name, slots FROM medications "
+            "SELECT medication_id, elder_id, name, slots FROM medications "
             "WHERE elder_id = %s ORDER BY name",
             (elder_id,),
         )
@@ -46,10 +46,12 @@ class PgMedicationStore:
 
     def list_for_slot(self, slot: MedicationSlot) -> list[Medication]:
         rows = self._db.query(
-            "SELECT med_id, elder_id, name, slots FROM medications WHERE slots LIKE %s",
+            "SELECT medication_id, elder_id, name, slots FROM medications WHERE slots LIKE %s",
             (f"%{slot.value}%",),
         )
         return [self._to_med(r) for r in rows]
 
     def remove(self, medication_id: str) -> None:
-        self._db.execute("DELETE FROM medications WHERE med_id = %s", (medication_id,))
+        self._db.execute(
+            "DELETE FROM medications WHERE medication_id = %s", (medication_id,)
+        )

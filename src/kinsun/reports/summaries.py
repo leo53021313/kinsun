@@ -40,16 +40,16 @@ class PgConversationSummaryStore:
 
     def save(self, line_user_id: str, date: str, content: str) -> None:
         self._db.execute(
-            "INSERT INTO conversation_summaries (session_id, date, content, created_at) "
-            "VALUES (%s, %s, %s, %s) ON CONFLICT (session_id, date) DO UPDATE SET "
+            "INSERT INTO conversation_summaries (line_user_id, date, content, created_at) "
+            "VALUES (%s, %s, %s, %s) ON CONFLICT (line_user_id, date) DO UPDATE SET "
             "content = EXCLUDED.content, created_at = EXCLUDED.created_at",
             (line_user_id, date, content, self._clock().timestamp()),
         )
 
     def list_for_line_user(self, line_user_id: str) -> list[ConversationSummary]:
         rows = self._db.query(
-            "SELECT session_id, date, content, created_at FROM conversation_summaries "
-            "WHERE session_id = %s ORDER BY date DESC",
+            "SELECT line_user_id, date, content, created_at FROM conversation_summaries "
+            "WHERE line_user_id = %s ORDER BY date DESC",
             (line_user_id,),
         )
         return [ConversationSummary(*r) for r in rows]

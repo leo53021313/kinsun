@@ -11,9 +11,9 @@ from psycopg_pool import ConnectionPool
 
 MEMORY_DDL = (
     "CREATE TABLE IF NOT EXISTS turns ("
-    "id BIGSERIAL PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL, "
-    "text TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
-    "CREATE INDEX IF NOT EXISTS idx_turns_session_created ON turns (session_id, created_at);"
+    "id BIGSERIAL PRIMARY KEY, line_user_id TEXT NOT NULL, role TEXT NOT NULL, "
+    "content TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS idx_turns_line_user_created ON turns (line_user_id, created_at);"
 )
 
 ACCOUNTS_DDL = (
@@ -47,27 +47,28 @@ SCHEDULER_DDL = (
 
 MEDICATIONS_DDL = (
     "CREATE TABLE IF NOT EXISTS medications ("
-    "med_id TEXT PRIMARY KEY, elder_id TEXT NOT NULL, name TEXT NOT NULL, slots TEXT NOT NULL);"
+    "medication_id TEXT PRIMARY KEY, elder_id TEXT NOT NULL, "
+    "name TEXT NOT NULL, slots TEXT NOT NULL);"
 )
 
 APPOINTMENTS_DDL = (
     "CREATE TABLE IF NOT EXISTS appointments ("
-    "appt_id TEXT PRIMARY KEY, elder_id TEXT NOT NULL, "
-    "appt_date TEXT NOT NULL, label TEXT NOT NULL);"
-    "CREATE INDEX IF NOT EXISTS idx_appt_date ON appointments (appt_date);"
+    "appointment_id TEXT PRIMARY KEY, elder_id TEXT NOT NULL, "
+    "date TEXT NOT NULL, label TEXT NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS idx_appointments_date ON appointments (date);"
 )
 
 RISK_EVENTS_DDL = (
     "CREATE TABLE IF NOT EXISTS risk_events ("
-    "event_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, "
+    "risk_event_id TEXT PRIMARY KEY, line_user_id TEXT NOT NULL, "
     "tier INTEGER NOT NULL, reason TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
-    "CREATE INDEX IF NOT EXISTS idx_risk_events_session_created "
-    "ON risk_events (session_id, created_at);"
+    "CREATE INDEX IF NOT EXISTS idx_risk_events_line_user_created "
+    "ON risk_events (line_user_id, created_at);"
 )
 
 REMINDER_LOGS_DDL = (
     "CREATE TABLE IF NOT EXISTS reminder_logs ("
-    "log_id TEXT PRIMARY KEY, elder_id TEXT NOT NULL, "
+    "reminder_log_id TEXT PRIMARY KEY, elder_id TEXT NOT NULL, "
     "kind TEXT NOT NULL, content TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
     "CREATE INDEX IF NOT EXISTS idx_reminder_logs_elder_created "
     "ON reminder_logs (elder_id, created_at);"
@@ -75,9 +76,9 @@ REMINDER_LOGS_DDL = (
 
 CONVERSATION_SUMMARIES_DDL = (
     "CREATE TABLE IF NOT EXISTS conversation_summaries ("
-    "session_id TEXT NOT NULL, date TEXT NOT NULL, "
+    "line_user_id TEXT NOT NULL, date TEXT NOT NULL, "
     "content TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL, "
-    "PRIMARY KEY (session_id, date));"
+    "PRIMARY KEY (line_user_id, date));"
 )
 
 

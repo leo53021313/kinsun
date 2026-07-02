@@ -13,7 +13,7 @@ from kinsun.safety.tiers import RiskAssessment, RiskTier
 
 @dataclass(frozen=True)
 class RiskEvent:
-    event_id: str
+    risk_event_id: str
     line_user_id: str
     tier: RiskTier
     reason: str
@@ -39,7 +39,7 @@ class PgRiskEventStore:
 
     def record(self, line_user_id: str, assessment: RiskAssessment) -> None:
         self._db.execute(
-            "INSERT INTO risk_events (event_id, session_id, tier, reason, created_at) "
+            "INSERT INTO risk_events (risk_event_id, line_user_id, tier, reason, created_at) "
             "VALUES (%s, %s, %s, %s, %s)",
             (
                 self._new_id(),
@@ -52,8 +52,8 @@ class PgRiskEventStore:
 
     def list_for_line_user(self, line_user_id: str) -> list[RiskEvent]:
         rows = self._db.query(
-            "SELECT event_id, session_id, tier, reason, created_at FROM risk_events "
-            "WHERE session_id = %s ORDER BY created_at DESC",
+            "SELECT risk_event_id, line_user_id, tier, reason, created_at FROM risk_events "
+            "WHERE line_user_id = %s ORDER BY created_at DESC",
             (line_user_id,),
         )
         return [RiskEvent(r[0], r[1], RiskTier(r[2]), r[3], r[4]) for r in rows]

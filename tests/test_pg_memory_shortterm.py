@@ -25,7 +25,7 @@ def test_append_and_recent_roundtrip():
     store.append(sid, Message("user", "你好"))
     store.append(sid, Message("assistant", "您好"))
     msgs = store.recent(sid)
-    assert [m.text for m in msgs][-2:] == ["你好", "您好"]
+    assert [m.content for m in msgs][-2:] == ["你好", "您好"]
     assert store.last_active(sid) is not None
     assert sid in store.sessions()
 

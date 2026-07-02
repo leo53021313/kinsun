@@ -18,7 +18,7 @@ def test_consolidation_writes_previous_day_turns_as_self_claimed():
     line_user_id, messages, prov = long_term.added[0]
     assert line_user_id == "sess1"
     assert prov == provenance.SELF_CLAIMED
-    assert messages[0].text == "我有高血壓"
+    assert messages[0].content == "我有高血壓"
 
 
 def test_consolidation_archives_previous_day_not_partial_today():
@@ -32,7 +32,7 @@ def test_consolidation_archives_previous_day_not_partial_today():
     written = run_consolidation("sess1", short_term=short, long_term=long_term)
     assert written == 1
     _, messages, _ = long_term.added[0]
-    assert [m.text for m in messages] == ["昨天聊的"]
+    assert [m.content for m in messages] == ["昨天聊的"]
 
 
 def test_consolidation_skips_when_empty():

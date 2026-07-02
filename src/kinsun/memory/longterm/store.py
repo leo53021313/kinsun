@@ -49,7 +49,7 @@ class Mem0LongTermStore:
     def add(
         self, line_user_id: str, messages: list[Message], *, provenance: str = prov.SELF_CLAIMED
     ) -> None:
-        payload = [{"role": m.role, "content": m.text} for m in messages]
+        payload = [{"role": m.role, "content": m.content} for m in messages]
         self._memory.add(payload, user_id=line_user_id, metadata={"provenance": provenance})
 
     def _search_raw(self, query: str, line_user_id: str, top_k: int) -> list[dict]:

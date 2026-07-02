@@ -44,37 +44,37 @@ class PgMemoryStore:
     def append(self, line_user_id: str, message: Message) -> None:
         created_at = self._clock().timestamp()
         self._db.execute(
-            "INSERT INTO turns (session_id, role, text, created_at) VALUES (%s, %s, %s, %s)",
-            (line_user_id, message.role, message.text, created_at),
+            "INSERT INTO turns (line_user_id, role, content, created_at) VALUES (%s, %s, %s, %s)",
+            (line_user_id, message.role, message.content, created_at),
         )
 
     def recent(self, line_user_id: str) -> list[Message]:
         start = self._start_of_today()
         rows = self._db.query(
-            "SELECT role, text FROM turns WHERE session_id = %s AND created_at >= %s "
+            "SELECT role, content FROM turns WHERE line_user_id = %s AND created_at >= %s "
             "ORDER BY created_at DESC, id DESC LIMIT %s",
             (line_user_id, start, self._max_turns),
         )
-        return [Message(role=r, text=t) for r, t in reversed(rows)]
+        return [Message(role=r, content=t) for r, t in reversed(rows)]
 
     def previous_day(self, line_user_id: str) -> list[Message]:
         """整理批次用：回傳『剛結束的那一天』整天的對話（時序由舊到新）。"""
         start, end = previous_day_bounds(self._clock())
         rows = self._db.query(
-            "SELECT role, text FROM turns "
-            "WHERE session_id = %s AND created_at >= %s AND created_at < %s "
+            "SELECT role, content FROM turns "
+            "WHERE line_user_id = %s AND created_at >= %s AND created_at < %s "
             "ORDER BY created_at ASC, id ASC LIMIT %s",
             (line_user_id, start, end, self._max_turns),
         )
-        return [Message(role=r, text=t) for r, t in rows]
+        return [Message(role=r, content=t) for r, t in rows]
 
     def sessions(self) -> list[str]:
-        rows = self._db.query("SELECT DISTINCT session_id FROM turns ORDER BY session_id")
+        rows = self._db.query("SELECT DISTINCT line_user_id FROM turns ORDER BY line_user_id")
         return [r[0] for r in rows]
 
     def last_active(self, line_user_id: str) -> float | None:
         row = self._db.query_one(
-            "SELECT MAX(created_at) FROM turns WHERE session_id = %s AND role = 'user'",
+            "SELECT MAX(created_at) FROM turns WHERE line_user_id = %s AND role = 'user'",
             (line_user_id,),
         )
         return row[0] if row and row[0] is not None else None
