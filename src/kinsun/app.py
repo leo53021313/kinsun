@@ -133,7 +133,9 @@ def build_app() -> FastAPI:
         if settings.tts_backend == "dgx"
         else None
     )
-    voice = VoiceReplyDelivery(publisher, settings.tts_reply_text)
+    voice = VoiceReplyDelivery(
+        publisher, settings.tts_reply_text, show_transcript=settings.debug_show_transcript
+    )
     parser = WebhookParser(settings.line_channel_secret)
     app = create_app(
         parser=parser,

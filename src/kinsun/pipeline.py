@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 
 from kinsun.agent import CareAgent
 from kinsun.safety.detector import RiskDetector
@@ -48,7 +49,9 @@ class VoicePipeline:
             self._notifier.notify(session_id, assessment)
         reply_text = self._agent.handle(session_id, user_text)
         try:
-            return self._tts.synthesize(reply_text)
+            result = self._tts.synthesize(reply_text)
         except TTSError:
             logger.warning("TTS 合成失敗，退化為純文字回覆")
-            return TtsResult(text=reply_text, audio=None)
+            result = TtsResult(text=reply_text, audio=None)
+        # 附上本輪辨識到的長者原話（供 VoiceReplyDelivery 在 debug 模式回傳）。
+        return replace(result, transcript=user_text)

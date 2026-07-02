@@ -137,3 +137,8 @@ def test_pipeline_tts_failure_degrades_to_text():
     assert isinstance(result, TtsResult)
     assert result.text == "你說的是：阿公早安"
     assert result.audio is None
+
+
+def test_pipeline_sets_transcript_from_asr():
+    result = _pipeline(StubDetector(RiskTier.L0), SpyNotifier()).process(b"\x00", session_id="u1")
+    assert result.transcript == "阿公早安"

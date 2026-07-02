@@ -116,3 +116,12 @@ def test_load_dotenv_missing_file_is_noop(tmp_path):
     environ = {}
     load_dotenv(tmp_path / "nope.env", environ=environ)
     assert environ == {}
+
+
+def test_load_settings_debug_show_transcript_default_false():
+    assert load_settings(BASE_ENV).debug_show_transcript is False
+
+
+def test_load_settings_debug_show_transcript_true():
+    s = load_settings({**BASE_ENV, "DEBUG_SHOW_TRANSCRIPT": "true"})
+    assert s.debug_show_transcript is True

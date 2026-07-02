@@ -220,3 +220,21 @@ def test_audio_success_routes_to_voice_when_present():
         voice=voice,
     )
     assert voice.delivered == [("U-1", "語音回覆")]
+
+
+def test_deliver_shows_transcript_when_enabled():
+    cap = _VoiceCapture()
+    VoiceReplyDelivery(_Publisher(), include_text=True, show_transcript=True).deliver(
+        _voice_msg(cap),
+        TtsResult(text="好喔", audio=b"A", duration_ms=100, transcript="今天天氣真好"),
+    )
+    assert cap.voice_sent == [("http://x/a.m4a", 100, "🎤 辨識：今天天氣真好\n好喔")]
+
+
+def test_deliver_no_transcript_when_disabled():
+    cap = _VoiceCapture()
+    VoiceReplyDelivery(_Publisher(), include_text=True, show_transcript=False).deliver(
+        _voice_msg(cap),
+        TtsResult(text="好喔", audio=b"A", duration_ms=100, transcript="今天天氣真好"),
+    )
+    assert cap.voice_sent == [("http://x/a.m4a", 100, "好喔")]

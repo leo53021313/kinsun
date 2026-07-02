@@ -73,6 +73,7 @@ class Settings:
     audio_bucket: str
     audio_retention_days: int
     audio_upload_timeout_seconds: float
+    debug_show_transcript: bool
 
 
 def _parse_bool(raw: str) -> bool:
@@ -127,4 +128,5 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         audio_bucket=env.get("AUDIO_BUCKET", "tts-audio"),
         audio_retention_days=int(env.get("AUDIO_RETENTION_DAYS", "2")),
         audio_upload_timeout_seconds=float(env.get("AUDIO_UPLOAD_TIMEOUT_SECONDS", "10")),
+        debug_show_transcript=_parse_bool(env.get("DEBUG_SHOW_TRANSCRIPT", "false")),
     )

@@ -18,6 +18,7 @@ class TtsResult:
     text: str
     audio: bytes | None = None
     duration_ms: int = 0
+    transcript: str = ""  # 本輪 ASR 辨識到的長者原話（debug 用，不進語音合成）
 
 
 class TTSClient(Protocol):
