@@ -52,6 +52,4 @@ class PgAppointmentStore:
         return [self._to_appt(r) for r in rows]
 
     def remove(self, appointment_id: str) -> None:
-        self._db.execute(
-            "DELETE FROM appointments WHERE appointment_id = %s", (appointment_id,)
-        )
+        self._db.execute("DELETE FROM appointments WHERE appointment_id = %s", (appointment_id,))

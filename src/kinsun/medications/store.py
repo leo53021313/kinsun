@@ -52,6 +52,4 @@ class PgMedicationStore:
         return [self._to_med(r) for r in rows]
 
     def remove(self, medication_id: str) -> None:
-        self._db.execute(
-            "DELETE FROM medications WHERE medication_id = %s", (medication_id,)
-        )
+        self._db.execute("DELETE FROM medications WHERE medication_id = %s", (medication_id,))

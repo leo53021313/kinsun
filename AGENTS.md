@@ -69,7 +69,7 @@
   * 各領域排程工廠統一放該領域自己的 `jobs.py`，如 `medications/jobs.py`。
   * 測試檔名固定 `test_<套件>_<檔>.py`，如 `test_channels_inbound.py`；連 Postgres 的整合測試獨立成 `test_pg_<套件>_<檔>.py`，以 `KINSUN_IT=1` 啟用。
 * 動詞慣例：
-  * `save` 為 upsert 語意（`ON CONFLICT DO UPDATE`），`record` 為 append-only 事件日誌；資料寫入不用 `add`／`upsert` 命名。
+  * `save` 為 upsert 語意（`ON CONFLICT DO UPDATE`），`record` 為 append-only 事件日誌；資料寫入不用 `add`／`upsert` 命名；例外：鏡射外部函式庫 API 的薄包裝（如 Mem0 介面的 `add`）維持外部詞彙。
   * 查詢動詞分工：`get_*` 取單筆、`list_for_<維度>` 取清單、`query`／`query_one` 為原生 SQL 執行器、`search` 為檢索、`load` 為載入外部內容，如 `list_for_elder`。
   * API handler 建立資源用 `create_*`，如 `create_medication`；HTTP 層刪除對應 REST 動詞用 `delete_*`，Service／Store 層用 `remove`——此為刻意的跨層分工，不需統一。
   * 布林命名一律 `is_`／`has_`／`can_` 前綴且語意完整，如 `is_consented_elder`（不用 `is_consented`）。
