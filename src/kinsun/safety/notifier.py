@@ -67,9 +67,7 @@ class LineGuardianNotifier:
                 return
             text = _format_alert(assessment)
             sent = 0
-            # 注意：此處刻意保留 line_id（而非 line_user_id），
-            # 避免與外層 line_user_id（長輩本人）參數同名遮蔽，
-            # 導致迴圈結束後的 log 誤用「最後一位家屬」的 LINE ID。
+            # 迴圈變數帶 guardian_ 限定詞，避免與外層 line_user_id（長輩本人）同名遮蔽。
             for guardian_line_user_id in targets:
                 try:
                     self._pusher.push_text(guardian_line_user_id, text)
