@@ -1,0 +1,235 @@
+# 金孫 KinSun — 開發進度與注意事項
+
+> 聽懂國台語的長輩 AI 語音陪伴守護 Agent（AIPE03 第五組）。
+> 本檔為**進度快照**，最後更新：2026-07-02。規範請見 [AGENTS.md](AGENTS.md)（唯一真實來源）。
+
+---
+
+## 1. 系統概觀
+
+長輩用 **LINE 語音**跟「金孫」聊天 → ASR 轉文字 → 危急偵測 + Care Agent（Gemini）回應 → TTS 回覆；
+背景有長期記憶、每日整理、主動關懷、危急時通知家屬。模組以 **Protocol 介面**解耦，可抽換（mock ↔ 真模型、SQLite ↔ 雲端）。
+
+**端到端流程：**
+```
+LINE 語音 → webhook → VoicePipeline
+   ├─ ASR（mock ↔ DGX 真模型 Breeze-ASR-26 可切，見 §10）→ 文字
+   ├─ RiskDetector（Gemini 分級 L0–L3）→ tier≥L2 → LineGuardianNotifier 推播家屬
+   ├─ CareAgent（Gemini + 短期/長期記憶）→ 回覆
+   └─ TTS（文字泡泡 ↔ DGX 真模型 CosyVoice 3 可切，見 §10）→ 上傳 Supabase → LINE 語音回覆
+排程 worker：每日記憶整理、定時問候、失聯關心、音檔清理（TTS_BACKEND=dgx 時）
+```
+
+---
+
+## 2. 技術棧與環境
+
+| 項目 | 選型 |
+|------|------|
+| 語言/工具 | Python 3.12、**uv**、ruff（E,W,F,I,B,UP / line-length 100）、pre-commit、pytest |
+| 對外 | FastAPI webhook、line-bot-sdk v3 |
+| LLM/Embedding | Gemini：`gemini-3.1-flash-lite`（對話/分級/抽取）、`gemini-embedding-001` |
+| 長期記憶 | **Mem0** v1.1 新演算法（單次抽取＋entity linking＋語意/BM25/entity 多訊號檢索）＝ Supabase Postgres（pgvector） |
+| 短期記憶/帳號 | **Supabase Postgres**（`psycopg` v3） |
+| 佈署目標 | **NVIDIA DGX Spark**（Linux + ARM64/aarch64），同時是開發環境 |
+
+**跨平台紀律（Windows / macOS / DGX Spark 三邊都要能跑）：**
+- OS-agnostic：用 `pathlib`，不寫死路徑；設定/金鑰走環境變數。
+- ARM64 相容：新依賴須在 `linux/aarch64` 有 wheel；吃 GPU 的重模型（ASR/TTS）只跑 DGX。
+- 位置無關：重模型走可設定 endpoint（環境變數），同機/分離都不改程式。
+- `tzdata` 為依賴（修正 Windows 無 `Asia/Taipei` 時區的問題）。
+
+> ⚠️ **雲端遷移後，啟動 app 一定要雲端金鑰**（`DATABASE_URL`、`GEMINI_API_KEY`、LINE）。
+> 本機已無 SQLite，無法離線跑整支 app；但**單元測試全離線**（注入 fake，不需網路/金鑰）。
+
+---
+
+## 3. 已完成模組
+
+| # | 模組 | 內容 | PR |
+|---|------|------|-----|
+| 1 | 端到端語音薄切片 | ASR(mock)→Agent→TTS(泡泡)、LINE webhook、組裝根 app.py | — |
+| 2 | 短期記憶 | `MemoryStore` Protocol；今日對話、`max_turns`、`last_active` | — |
+| 3 | 危急偵測核心 | `RiskTier` L0–L3、關鍵字 + Gemini 分級、`RiskDetector`（fail-safe、絕對危險詞覆蓋） | — |
+| 4 | 記憶層雲端遷移 | Mem0＋Supabase pgvector 取代自建 SQLite（註：原規劃的 Neo4j graph 經實測 mem0 2.0.10 不支援，已於 MEM-UP 移除，關係感知改靠 v1.1 entity linking／多訊號檢索） | #14 |
+| 5 | 排程引擎 | `Scheduler`（每日一次、錯誤隔離）、worker 常駐 | — |
+| 6 | 主動關懷 | 定時問候 + 失聯關心 job（共用排程器、走 CareAgent + 記憶） | — |
+| 7 | 帳號綁定核心 | 5 實體 + `PgAccountStore` + `AccountService`（建檔/邀請/兌換/同意/家屬清單/權限） | #12 |
+| 8 | 危急真實家屬通知 | `LineGuardianNotifier`：tier≥L2 → 查 `guardian_line_ids` → 依升級順序 push 全部家屬 | #15 |
+
+**測試現況：** `uv run pytest` → 303 passed、12 skipped（雲端整合 opt-in，需 `KINSUN_IT=1`）。ruff/format/pre-commit 全綠。
+> ⚠️ 全部單元測試皆離線注入 fake，**綠燈 ≠ 真整合可行**（見 §9）。驗真功能務必用真金鑰真啟動。
+
+---
+
+## 4. 程式結構（src/kinsun/）
+
+```
+app.py              組裝根（settings → 各元件 → FastAPI app）
+config.py / db.py   設定（環境變數）／Postgres 連線 + 建表 DDL
+llm.py              GeminiClient、Message（role/content）
+agent.py            CareAgent（金孫 persona + 安全邊界）
+pipeline.py         VoicePipeline（ASR→偵測→Agent→通知→TTS）
+speech/             asr.py、tts.py（DGX 服務的呼叫端，mock 可切）
+audio/              publisher.py（TTS 音檔上傳 Supabase 託管）
+channels/           inbound.py、line/（channel、webhook、messenger、richmenu）
+safety/             tiers/keywords/classifier/detector/notifier/events
+memory/             shortterm.py（短期）、longterm/（Mem0、provenance、
+                    consolidation、mem0_factory）、recall.py（情境聚合）
+scheduler/          Scheduler、jobs、fanout、worker、state
+proactive/          問候 + 失聯 job
+accounts/           models、store（AccountStore）、service
+medications/        models、store、service、flow、facts、jobs
+appointments/       models、store、service、flow、facts、jobs
+binding/            LINE 帳號綁定 FSM（session、flow、gate）
+reports/            summaries（對話摘要）、reminders（提醒紀錄）
+rag/                檢索問答（retriever、chunker、vector_store…）
+tools/              registry、weather
+web/                api.py（家屬 REST API）、auth.py（LIFF 驗證）
+```
+
+> 🧹 小清理：`knowledge/`、`episodic/` 為雲端遷移後留下的空目錄，可刪。
+
+---
+
+## 5. 開發工作流（每模組）
+
+```
+brainstorm（談清楚、設計通過才動工）
+  → spec（docs/superpowers/specs/）→ commit
+  → 計畫（docs/superpowers/plans/，bite-sized TDD）→ commit
+  → TDD 實作（每步 紅→綠→commit）
+  → 品質閘門（pytest / ruff / format / pre-commit 全綠）
+  → push → PR → 合併 → 同步分支
+```
+
+**核心原則：** 正確性優先、最小修改、不臆測（資訊不足先問）、全程 fail-safe（記憶/LLM/DB 失敗都退化、不中斷對話）、依賴注入時鐘/亂數以利 TDD、無必要不加第三方套件。
+
+---
+
+## 6. Git 與協作（7 人，每人一分支 + 整合負責人）
+
+- 只在**個人分支**（本機為 `Leo`）工作；`main` 受保護，僅經 PR 合併。
+- commit 規範：`feat/fix/docs/refactor/test/chore`，結尾加
+  `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`。
+- **不自動 push**（等明確指示）、**不改寫 Git 歷史**（rebase/force push）。
+- 合併後同步 `main` 到各成員分支：`git push origin origin/main:<branch>`。
+
+> ⚠️ **分支同步注意：** `Jerry` 分支有自己未合併的提交（「衛教 RAG 資料治理與安全閘門」），FF 同步會被拒（non-fast-forward）。
+> **不可強推覆蓋**——由 Jerry 自行把 `main` 合併進去。其餘 Babic/Brian/Kevin/MA/Otto 可正常 FF 同步。
+
+---
+
+## 7. 待開發模組（候選）
+
+| 群組 | 模組 | 備註 |
+|------|------|------|
+| **A. 綁定入口** ⭐ | 長者/家屬端綁定流程（LINE 引導式對話）、綁定閘門 | **解鎖危急通知/用藥提醒**；目前 `AccountService` 無使用者入口 |
+| B. 照護功能 | 用藥提醒（accounts + scheduler 已備） | — |
+| | 衛教 RAG / 工具 | ⚠️ **Jerry 進行中**，避免撞車 |
+| C. 真模型接 DGX | 真 ASR 已硬化、TTS 已接**國語** CosyVoice 3，**兩者皆 DGX 實機驗證通過、端到端打通**（見 §10）；台語模型後續只需換 `services/tts` 的合成實作，契約不變 | 見 §10 |
+| D. 安全/治理 | 危急通知 v2（升級鏈/ack/多通道/節流）、對話安全 3 議題 | 見策略文件 |
+
+**策略/待議文件：**
+[危急偵測與誤報處理設計](docs/危急偵測與誤報處理設計.md)、
+[帳號綁定與知情同意設計](docs/帳號綁定與知情同意設計.md)、
+[對話安全與資料正確性-待議](docs/對話安全與資料正確性-待議.md)（情感依賴 / 身體vs心理歸因 / 健康宣稱 provenance）。
+
+---
+
+## 8. 長者/家屬端綁定流程（✅ 已實作，見 §9；以下為原始設計決策存檔）
+
+**已鎖定決策（brainstorming）：**
+- 範圍：**只做綁定指令入口**（綁定閘門另案）。
+- 互動：**引導式對話**（狀態機，存每人未完成流程）。
+- 啟動：單一關鍵字 **「設定」** + 數字選單（1 建立長輩 / 2 邀請家屬 / 3 綁定貼碼）；**貼碼自動辨識**。
+- 狀態存 Postgres 新表 `binding_sessions`（behind Protocol + fake）；逾時重置。
+- 知情同意於確認步驟顯示，`consent_by=SELF`；代理同意 PROXY 不在 v1。
+- 全 fail-safe；非綁定文字回 None → 維持既有語音提示。
+
+**待定（下次確認）：**
+- (a) 流程 2「邀請家屬」是否留在 v1（拿掉則只剩主家屬一人）。
+- (b) 家屬姓名是否真抓 LINE 暱稱（不抓則存空字串，可省 `messenger.display_name`）。
+
+> 確認後流程：spec → 計畫 → TDD 實作（同既有工作流）。
+
+---
+
+## 9. 2026-07-01 更新：首次真雲端啟動與整合修復
+
+> 本節校正 §3/§7/§8 的過時處：**綁定入口、用藥提醒、回診提醒、家屬 LIFF（前端＋REST API）、
+> 危急事件與提醒紀錄持久化、對話摘要、家屬圖文選單（Rich Menu）皆已實作並在測試中**。
+
+**首次對真 Supabase / mem0 / Gemini 啟動所發現並修復的整合問題**（離線 fake 測試看不到）：
+
+| 問題 | 修復 |
+|------|------|
+| 缺 `vecs` 依賴 → `build_app` ImportError、根本起不來 | 補 `vecs` 至依賴 |
+| mem0 2.0.10 `search()` 不接受頂層 `user_id`/`limit` → 長期記憶每輪退化成無記憶 | 改 `filters={"user_id":…}` + `top_k` |
+| gemini embedder（768 維）與 supabase 向量庫（預設 1536 維）不符 → 向量查詢全失敗 | 兩邊明確鎖 768 |
+| 危急通知排在回覆生成之後，agent 例外會漏通知家屬 | 通知移到回覆生成之前 |
+| `.env` 不會被自動載入（無 dotenv／uvicorn 無 `--env-file`） | 新增 `config.load_dotenv()`，於 app/scheduler 進入點呼叫 |
+| mem0 PostHog 遙測對外回傳（隱私） | 預設 `MEM0_TELEMETRY=False` |
+| mem0 抽取的記憶為英文 | 抽取 prompt 要求台灣繁體中文 |
+
+**待議（尚未處理）：** mem0 supabase store 不支援 BM25 關鍵字檢索；entity linking 因未裝 spaCy 而降級
+（`mem0ai[nlp]`）；`vecs` 連帶引入 `psycopg2-binary`（DGX ARM64 部署留意）。
+
+> ⚠️ **關鍵教訓：** 全部單元測試皆離線注入 fake，**綠燈 ≠ 真整合可行**。驗真功能務必用真金鑰真啟動。
+
+---
+
+## 10. 2026-07-02 更新：真模型接 DGX（ASR 硬化＋TTS 全鏈路）
+
+> 對應設計文件：[真模型接 DGX 設計（C 切片）](docs/superpowers/specs/2026-07-02-真模型接DGX-C-design.md)。
+> 本節校正 §1/§7 的過時處：ASR／TTS 已從純 mock／文字泡泡，補上可切換真模型的完整程式碼路徑。
+> **更新（2026-07-02 晚）：** TTS/ASR 模型服務**已於 DGX（GB10 / aarch64 / CUDA 13）實機驗證通過**，
+> 端到端 text→TTS→m4a→ASR→text 打通（見下方「DGX 實機驗證結果」）。剩真 LINE 帳號的語音收發需部署 app 才能驗。
+
+### 已完成（程式碼＋離線 fake 測試，`uv run pytest` 303 passed／12 skipped 全綠）
+
+* **ASR 服務硬化**（`services/asr/server.py`）：
+  * 修復阻塞 bug——推論改走 threadpool + semaphore，不再卡住 event loop。
+  * 新增 `GET /healthz`、`ASR_MAX_CONCURRENCY`（預設 1）／`ASR_MAX_QUEUE`（預設 8，超載回 503）／`ASR_PRELOAD`（預設 0）。
+  * **已於 DGX Spark（GB10）實機驗證**（commit `fe9e336`）：Breeze-ASR-26 模型 id 正確；
+    不指定 device 會落 CPU（一句數十秒），改 GPU + fp16 後真人聲約 1.1 秒；`torch` aarch64/CUDA PyPI 輪子可直接安裝。
+* **TTS 全鏈路**（新，此前僅骨架）：
+  * `services/tts/server.py`：改接 **CosyVoice 3**（`FunAudioLLM/Fun-CosyVoice3-0.5B-2512`）、
+    以 `TTS_PROMPT_WAV`／`TTS_PROMPT_TEXT` 做 zero-shot 聲音複製（金孫參考語音）；
+    輸出於 DGX 端以 ffmpeg 轉成 m4a（`Content-Type: audio/mp4`）＋算出時長（header `X-Duration-Ms`）；
+    同 ASR 款式的 healthz／併發（`TTS_MAX_CONCURRENCY`／`TTS_MAX_QUEUE`）／`TTS_PRELOAD`。
+  * `kinsun.speech.tts`：`TtsResult` 新增 `duration_ms`；新增 `TTSError`、`DgxTtsClient`（標準庫 `urllib`，零新依賴，與 `DgxAsrClient` 同款）、`build_tts_client(settings)`（`TTS_BACKEND=dgx` 切換）。
+  * `kinsun.audio.publisher`（新套件）：`AudioPublisher` Protocol、`SupabaseAudioPublisher`
+    （Supabase Storage REST API 上傳／依日期資料夾 `tts/{yyyymmdd}/` 清理）、`AudioPublishError`、`build_audio_publisher`。
+  * `kinsun.channels`：`LineMessenger.reply_voice`、`InboundMessage.reply_voice`、新物件
+    `VoiceReplyDelivery`（有音檔→發語音、無音檔或發送失敗→退回文字泡泡）、`dispatch` 接線改用 `voice.deliver(...)`。
+  * `VoicePipeline`：TTS 合成拋 `TTSError` 時 fail-safe 退化成純文字結果，回覆文字絕不因 TTS 掛掉而消失。
+  * `config.py`／`app.py`／`scheduler/worker.py`：新設定欄位（`tts_backend`、`tts_endpoint`、
+    `tts_timeout_seconds`、`tts_reply_text`、`supabase_url`、`supabase_service_key`、`audio_bucket`、
+    `audio_retention_days`、`audio_upload_timeout_seconds`）、組裝、`TTS_BACKEND=dgx` 時註冊每日音檔清理 job。
+  * 文件同步：`services/tts/README.md`、`services/asr/README.md`、專案 `README.md` 環境變數、本節。
+
+### DGX 實機驗證結果（2026-07-02，GB10 / aarch64 / CUDA 13、torch 2.12.1+cu130）
+
+實機跑通後，把 `services/tts/server.py`／`services/asr/server.py` 依真實 API 鎖定並修了三個實機才會現形的問題：
+
+1. ✅ **CosyVoice 3 在 aarch64 + CUDA 裝得起來並跑通**（最大風險已解）：改用 repo 的 `CosyVoice3`／`AutoModel`
+   （`CosyVoice3.__init__` 無 `load_jit` 參數）；CosyVoice repo 與 `third_party/Matcha-TTS` 以 `TTS_COSY_DIR`／
+   `TTS_MATCHA_DIR` 加入 `sys.path`；單句 RTF≈0.7（快於即時）。
+2. ✅ **aarch64 音檔 I/O**：torchaudio 走 torchcodec（`.so` 載不起來）→ 服務改用 `soundfile` 讀寫。
+3. ✅ **zero-shot instruct 前綴**：逐字稿須加 `You are a helpful assistant.<|endofprompt|>`，否則 LLM 立刻 EOS、無語音。
+4. ✅ **TTS m4a 轉檔**：mp4/m4a 的 `moov` atom 需可 seek 輸出，`-f ipod pipe:1` 會失敗 → 改走可 seek 暫存檔再讀回；
+   `ffprobe` 確認輸出為 AAC/24kHz/單聲道，`X-Duration-Ms` 與實際時長一致。
+5. ✅ **ASR m4a 解碼**：HF 的 `ffmpeg_read` 把 bytes 灌 stdin(pipe)、`moov` 在檔尾的 m4a 解成 partial file 而失敗
+   （LINE 語音多屬此類）→ 服務改自行以 ffmpeg 從可 seek 暫存檔解成 16k 單聲道 numpy 陣列再餵 pipeline。
+6. ✅ **端到端**：把 CosyVoice 3 合成的金孫語音 m4a 餵入 ASR，辨識回近乎一致的文字（僅「您/你」同音差異）。
+7. ✅ **healthz／併發／預載**：兩服務 `GET /healthz`、`_PRELOAD=1` 啟動即載入、`503` 超載保護實機皆正常。
+8. ✅ `requirements.txt` 鎖定 torch 2.12.1+cu130、transformers 5.x；TTS 補 `soundfile`。
+
+**仍待做：**
+* 錄製並定調正式**金孫參考語音**（驗證暫用 CosyVoice 內附範例聲）。
+* 以真 LINE 帳號驗語音收發（需部署 app + 公開 URL + Supabase 上傳；模型端 m4a 已確認可播、可辨識）。
+* 服務端逐請求 timeout（目前僅呼叫端 `DgxTtsClient`／`DgxAsrClient` 有 urlopen 逾時）。
+
+> 台語語音仍是**後續**工作：本次先接**國語** CosyVoice 3（使用者指定），
+> 待台語模型選定／訓練完成後，只需替換 `services/tts/server.py` 的合成實作，契約與應用層不動。

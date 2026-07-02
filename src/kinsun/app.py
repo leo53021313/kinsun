@@ -1,0 +1,164 @@
+"""組裝根：把設定與各元件接成可服務的 FastAPI app。
+
+啟動：uv run uvicorn "kinsun.app:build_app" --factory --reload
+"""
+
+from __future__ import annotations
+
+import os
+import uuid
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from linebot.v3 import WebhookParser
+
+from kinsun.accounts.service import AccountService
+from kinsun.accounts.store import PgAccountStore
+from kinsun.agent import CareAgent
+from kinsun.appointments.facts import AppointmentFacts
+from kinsun.appointments.flow import AppointmentMenu
+from kinsun.appointments.service import AppointmentService
+from kinsun.appointments.store import PgAppointmentStore
+from kinsun.audio.publisher import build_audio_publisher
+from kinsun.binding.flow import BindingFlow
+from kinsun.binding.gate import AllowAllGate, ConsentGate
+from kinsun.binding.session import PgBindingSessionStore
+from kinsun.channels.inbound import VoiceReplyDelivery
+from kinsun.channels.line.messenger import LineApiMessenger
+from kinsun.channels.line.webhook import create_app
+from kinsun.config import load_dotenv, load_settings
+from kinsun.db import Database, ensure_schema
+from kinsun.llm import GeminiClient
+from kinsun.medications.facts import MedicationFacts
+from kinsun.medications.flow import MedicationMenu
+from kinsun.medications.service import MedicationService
+from kinsun.medications.store import PgMedicationStore
+from kinsun.memory.longterm.mem0_factory import build_mem0_memory
+from kinsun.memory.longterm.store import Mem0LongTermStore
+from kinsun.memory.recall import MemoryContext
+from kinsun.memory.shortterm import PgMemoryStore
+from kinsun.pipeline import VoicePipeline
+from kinsun.reports.reminders import PgReminderLogStore
+from kinsun.safety.classifier import LlmRiskClassifier
+from kinsun.safety.detector import RiskDetector
+from kinsun.safety.events import PgRiskEventStore
+from kinsun.safety.notifier import LineGuardianNotifier
+from kinsun.speech.asr import build_asr_client
+from kinsun.speech.tts import build_tts_client
+from kinsun.tools.registry import ToolRegistry
+from kinsun.tools.weather import WEATHER_SPEC, build_weather_handler
+from kinsun.web.api import create_api_router
+from kinsun.web.auth import LineIdTokenVerifier
+
+
+def build_app() -> FastAPI:
+    load_dotenv()
+    settings = load_settings(os.environ)
+    tz = ZoneInfo(settings.timezone)
+    ensure_schema(settings.database_url)
+    db = Database.open(settings.database_url)
+    memory = PgMemoryStore(
+        db,
+        clock=lambda: datetime.now(tz),
+        max_turns=settings.memory_max_turns,
+    )
+    gemini = GeminiClient(
+        api_key=settings.gemini_api_key,
+        model=settings.gemini_model,
+        timeout=settings.gemini_timeout_seconds,
+    )
+    long_term = Mem0LongTermStore(build_mem0_memory(settings), top_k=settings.longterm_top_k)
+    accounts = AccountService(
+        PgAccountStore(db),
+        clock=lambda: datetime.now(tz),
+        ttl_hours=settings.invite_ttl_hours,
+        max_attempts=settings.invite_max_attempts,
+    )
+    medications = MedicationService(PgMedicationStore(db))
+    appointments = AppointmentService(PgAppointmentStore(db))
+    context = MemoryContext(
+        long_term,
+        facts=[
+            MedicationFacts(accounts, medications),
+            AppointmentFacts(accounts, appointments, clock=lambda: datetime.now(tz)),
+        ],
+    )
+    messenger = LineApiMessenger(settings.line_channel_access_token)
+    registry = ToolRegistry()
+    registry.register(WEATHER_SPEC, build_weather_handler())
+    risk_events = PgRiskEventStore(
+        db, clock=lambda: datetime.now(tz), new_id=lambda: uuid.uuid4().hex
+    )
+    reminder_logs = PgReminderLogStore(
+        db, clock=lambda: datetime.now(tz), new_id=lambda: uuid.uuid4().hex
+    )
+    pipeline = VoicePipeline(
+        asr=build_asr_client(settings),
+        agent=CareAgent(gemini, memory, context, tools=registry),
+        tts=build_tts_client(settings),
+        detector=RiskDetector(LlmRiskClassifier(gemini)),
+        notifier=LineGuardianNotifier(accounts, messenger),
+        risk_events=risk_events,
+    )
+    binding_sessions = PgBindingSessionStore(db)
+    medication_menu = MedicationMenu(
+        medications, accounts, binding_sessions, clock=lambda: datetime.now(tz)
+    )
+    appointment_menu = AppointmentMenu(
+        appointments, accounts, binding_sessions, clock=lambda: datetime.now(tz)
+    )
+
+    def _link_menu(line_user_id: str) -> None:
+        messenger.link_rich_menu(line_user_id, settings.rich_menu_id)
+
+    on_guardian_bound = _link_menu if settings.rich_menu_id else None
+    binding = BindingFlow(
+        accounts,
+        binding_sessions,
+        messenger,
+        medication_menu,
+        appointment_menu,
+        clock=lambda: datetime.now(tz),
+        session_ttl_seconds=settings.binding_session_ttl_minutes * 60,
+        on_guardian_bound=on_guardian_bound,
+    )
+    gate = ConsentGate(accounts) if settings.binding_gate_enabled else AllowAllGate()
+    publisher = (
+        build_audio_publisher(
+            settings, clock=lambda: datetime.now(tz), new_id=lambda: uuid.uuid4().hex
+        )
+        if settings.tts_backend == "dgx"
+        else None
+    )
+    voice = VoiceReplyDelivery(
+        publisher, settings.tts_reply_text, show_transcript=settings.asr_debug_show_transcript
+    )
+    parser = WebhookParser(settings.line_channel_secret)
+    app = create_app(
+        parser=parser,
+        pipeline=pipeline,
+        messenger=messenger,
+        binding=binding,
+        gate=gate,
+        voice=voice,
+        on_shutdown=db.close,
+    )
+    verifier = LineIdTokenVerifier(settings.liff_channel_id, settings.liff_timeout_seconds)
+    app.include_router(
+        create_api_router(
+            verifier=verifier,
+            accounts=accounts,
+            medications=medications,
+            appointments=appointments,
+            clock=lambda: datetime.now(tz),
+            risk_events=risk_events,
+            reminder_logs=reminder_logs,
+        )
+    )
+    dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+    if dist.is_dir():
+        app.mount("/liff", StaticFiles(directory=dist, html=True), name="liff")
+    return app
