@@ -1,7 +1,7 @@
 # 金孫 KinSun — 開發進度與注意事項
 
 > 聽懂國台語的長輩 AI 語音陪伴守護 Agent（AIPE03 第五組）。
-> 本檔為**進度快照**，最後更新：2026-07-01。規範請見 [AGENTS.md](AGENTS.md)（唯一真實來源）。
+> 本檔為**進度快照**，最後更新：2026-07-02。規範請見 [AGENTS.md](AGENTS.md)（唯一真實來源）。
 
 ---
 
@@ -13,11 +13,11 @@
 **端到端流程：**
 ```
 LINE 語音 → webhook → VoicePipeline
-   ├─ ASR（mock，待接 DGX）→ 文字
+   ├─ ASR（mock ↔ DGX 真模型 Breeze-ASR-26 可切，見 §10）→ 文字
    ├─ RiskDetector（Gemini 分級 L0–L3）→ tier≥L2 → LineGuardianNotifier 推播家屬
    ├─ CareAgent（Gemini + 短期/長期記憶）→ 回覆
-   └─ TTS（文字泡泡 placeholder，待接台語 TTS）
-排程 worker：每日記憶整理、定時問候、失聯關心
+   └─ TTS（文字泡泡 ↔ DGX 真模型 CosyVoice 3 可切，見 §10）→ 上傳 Supabase → LINE 語音回覆
+排程 worker：每日記憶整理、定時問候、失聯關心、音檔清理（TTS_BACKEND=dgx 時）
 ```
 
 ---
@@ -57,7 +57,7 @@ LINE 語音 → webhook → VoicePipeline
 | 7 | 帳號綁定核心 | 5 實體 + `PgAccountRepository` + `AccountService`（建檔/邀請/兌換/同意/家屬清單/權限） | #12 |
 | 8 | 危急真實家屬通知 | `LineGuardianNotifier`：tier≥L2 → 查 `guardian_line_ids` → 依升級順序 push 全部家屬 | #15 |
 
-**測試現況：** `uv run pytest` → 264 passed、12 skipped（雲端整合 opt-in，需 `KINSUN_IT=1`）。ruff/format/pre-commit 全綠。
+**測試現況：** `uv run pytest` → 303 passed、12 skipped（雲端整合 opt-in，需 `KINSUN_IT=1`）。ruff/format/pre-commit 全綠。
 > ⚠️ 全部單元測試皆離線注入 fake，**綠燈 ≠ 真整合可行**（見 §9）。驗真功能務必用真金鑰真啟動。
 
 ---
@@ -120,7 +120,7 @@ brainstorm（談清楚、設計通過才動工）
 | **A. 綁定入口** ⭐ | 長者/家屬端綁定流程（LINE 引導式對話）、綁定閘門 | **解鎖危急通知/用藥提醒**；目前 `AccountService` 無使用者入口 |
 | B. 照護功能 | 用藥提醒（accounts + scheduler 已備） | — |
 | | 衛教 RAG / 工具 | ⚠️ **Jerry 進行中**，避免撞車 |
-| C. 真模型接 DGX | 真 ASR 整合（現 mock）、真台語 TTS（現文字泡泡） | 重、跨 DGX |
+| C. 真模型接 DGX | 真 ASR 已硬化（healthz/併發/GPU 實機驗證，見 §10）；TTS 已接**國語** CosyVoice 3（程式碼完成，DGX 實機驗證待做；台語模型後續只需換 `services/tts` 的合成實作，契約不變） | 見 §10 |
 | D. 安全/治理 | 危急通知 v2（升級鏈/ack/多通道/節流）、對話安全 3 議題 | 見策略文件 |
 
 **策略/待議文件：**
@@ -169,3 +169,47 @@ brainstorm（談清楚、設計通過才動工）
 （`mem0ai[nlp]`）；`vecs` 連帶引入 `psycopg2-binary`（DGX ARM64 部署留意）。
 
 > ⚠️ **關鍵教訓：** 全部單元測試皆離線注入 fake，**綠燈 ≠ 真整合可行**。驗真功能務必用真金鑰真啟動。
+
+---
+
+## 10. 2026-07-02 更新：真模型接 DGX（ASR 硬化＋TTS 全鏈路）
+
+> 對應設計文件：[真模型接 DGX 設計（C 切片）](docs/superpowers/specs/2026-07-02-真模型接DGX-C-design.md)。
+> 本節校正 §1/§7 的過時處：ASR／TTS 已從純 mock／文字泡泡，補上可切換真模型的完整程式碼路徑。
+> **重要：** TTS 全鏈路是**程式碼實作完成**，**DGX 實機驗證尚未進行**（見下方「未完成」）——請勿誤讀為已上線。
+
+### 已完成（程式碼＋離線 fake 測試，`uv run pytest` 303 passed／12 skipped 全綠）
+
+* **ASR 服務硬化**（`services/asr/server.py`）：
+  * 修復阻塞 bug——推論改走 threadpool + semaphore，不再卡住 event loop。
+  * 新增 `GET /healthz`、`ASR_MAX_CONCURRENCY`（預設 1）／`ASR_MAX_QUEUE`（預設 8，超載回 503）／`ASR_PRELOAD`（預設 0）。
+  * **已於 DGX Spark（GB10）實機驗證**（commit `fe9e336`）：Breeze-ASR-26 模型 id 正確；
+    不指定 device 會落 CPU（一句數十秒），改 GPU + fp16 後真人聲約 1.1 秒；`torch` aarch64/CUDA PyPI 輪子可直接安裝。
+* **TTS 全鏈路**（新，此前僅骨架）：
+  * `services/tts/server.py`：改接 **CosyVoice 3**（`FunAudioLLM/Fun-CosyVoice3-0.5B-2512`）、
+    以 `TTS_PROMPT_WAV`／`TTS_PROMPT_TEXT` 做 zero-shot 聲音複製（金孫參考語音）；
+    輸出於 DGX 端以 ffmpeg 轉成 m4a（`Content-Type: audio/mp4`）＋算出時長（header `X-Duration-Ms`）；
+    同 ASR 款式的 healthz／併發（`TTS_MAX_CONCURRENCY`／`TTS_MAX_QUEUE`）／`TTS_PRELOAD`。
+  * `kinsun.speech.tts`：`TtsResult` 新增 `duration_ms`；新增 `TTSError`、`DgxTtsClient`（標準庫 `urllib`，零新依賴，與 `DgxAsrClient` 同款）、`build_tts_client(settings)`（`TTS_BACKEND=dgx` 切換）。
+  * `kinsun.audio.publisher`（新套件）：`AudioPublisher` Protocol、`SupabaseAudioPublisher`
+    （Supabase Storage REST API 上傳／依日期資料夾 `tts/{yyyymmdd}/` 清理）、`AudioPublishError`、`build_audio_publisher`。
+  * `kinsun.channels`：`LineMessenger.reply_voice`、`InboundMessage.reply_voice`、新物件
+    `VoiceReplyDelivery`（有音檔→發語音、無音檔或發送失敗→退回文字泡泡）、`dispatch` 接線改用 `voice.deliver(...)`。
+  * `VoicePipeline`：TTS 合成拋 `TTSError` 時 fail-safe 退化成純文字結果，回覆文字絕不因 TTS 掛掉而消失。
+  * `config.py`／`app.py`／`scheduler/worker.py`：新設定欄位（`tts_backend`、`tts_endpoint`、
+    `tts_timeout_seconds`、`tts_reply_text`、`supabase_url`、`supabase_service_key`、`audio_bucket`、
+    `audio_retention_days`、`audio_upload_timeout_seconds`）、組裝、`TTS_BACKEND=dgx` 時註冊每日音檔清理 job。
+  * 文件同步：`services/tts/README.md`、`services/asr/README.md`、專案 `README.md` 環境變數、本節。
+
+### 未完成——DGX 實機驗證清單（在 DGX 上逐項驗證前，TTS 不可視為可用）
+
+1. **CosyVoice 3 能否在 aarch64 + CUDA 裝起來**（最大風險）：`ttsfrd` 只有 x86 wheel，
+   需退用 `WeTextProcessing`（`pynini` 在 ARM 可能要編譯）；裝不起來需回頭議備案引擎（如 BreezyVoice），契約不變。
+2. 參考語音錄製與試聽（金孫聲音定調），單句合成延遲與音質是否可接受。
+3. wav→m4a 轉檔後 LINE 實機是否可正常播放（`AudioMessage`）。
+4. ASR／TTS 併發行為：同時多請求不卡死、超載回 503、應用層正確退化為文字。
+5. 端到端：LINE 語音進 → 真 ASR → 真 TTS → LINE 語音出，延遲需壓在 reply token 有效期內。
+6. `services/asr`、`services/tts` 的 `requirements.txt` 依實機驗證結果鎖定版本（torch/transformers/torchaudio/CosyVoice 依賴）。
+
+> 台語語音仍是**後續**工作：本次先接**國語** CosyVoice 3（使用者指定），
+> 待台語模型選定／訓練完成後，只需替換 `services/tts/server.py` 的合成實作，契約與應用層不動。
