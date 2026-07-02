@@ -1,5 +1,6 @@
 # 僅在 DGX Spark（Linux + ARM64/aarch64 + GPU）安裝。
 # 版本於 DGX 上以實機驗證後再鎖定；torch 請使用 NVIDIA 官方對應 aarch64/CUDA 的版本。
+# 系統需 ffmpeg（HF pipeline 解 m4a/非 wav 音檔的依賴）。
 fastapi
 uvicorn
 transformers
