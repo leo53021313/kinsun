@@ -67,18 +67,25 @@ LINE 語音 → webhook → VoicePipeline
 ```
 app.py              組裝根（settings → 各元件 → FastAPI app）
 config.py / db.py   設定（環境變數）／Postgres 連線 + 建表 DDL
-llm.py              GeminiClient、Message
+llm.py              GeminiClient、Message（role/content）
 agent.py            CareAgent（金孫 persona + 安全邊界）
 pipeline.py         VoicePipeline（ASR→偵測→Agent→通知→TTS）
-recall.py           MemoryContext（包 LongTermStore.search）
-speech/             asr.py（mock/DGX 可切）、tts.py（文字泡泡）
-channels/line/      webhook.py、messenger.py（get_audio/reply_text/push_text）
-safety/             tiers/keywords/classifier/detector/notifier
-memory/             PgMemoryStore（短期）
-longterm/           Mem0LongTermStore、provenance、consolidation
-scheduler/          Scheduler、jobs、worker
+speech/             asr.py、tts.py（DGX 服務的呼叫端，mock 可切）
+audio/              publisher.py（TTS 音檔上傳 Supabase 託管）
+channels/           inbound.py、line/（webhook、messenger、richmenu）
+safety/             tiers/keywords/classifier/detector/notifier/events
+memory/             shortterm.py（短期）、longterm/（Mem0、provenance、
+                    consolidation、mem0_factory）、recall.py（情境聚合）
+scheduler/          Scheduler、jobs、fanout、worker、state
 proactive/          問候 + 失聯 job
-accounts/           models、PgAccountStore、AccountService
+accounts/           models、store（AccountStore）、service
+medications/        models、store、service、flow、facts、jobs
+appointments/       models、store、service、flow、facts、jobs
+binding/            LINE 帳號綁定 FSM（session、flow、gate）
+reports/            summaries（對話摘要）、reminders（提醒紀錄）
+rag/                檢索問答（retriever、chunker、vector_store…）
+tools/              registry、weather
+web/                api.py（家屬 REST API）、auth.py（LIFF 驗證）
 ```
 
 > 🧹 小清理：`knowledge/`、`episodic/` 為雲端遷移後留下的空目錄，可刪。
