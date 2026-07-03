@@ -68,7 +68,7 @@ def test_pipeline_notifies_on_l2_or_above():
 
 
 class _BoomRiskEvents:
-    def record(self, line_user_id, assessment):
+    def record(self, line_user_id, assessment, *, trace_id=None):
         raise RuntimeError("db down")
 
     def list_for_line_user(self, line_user_id):

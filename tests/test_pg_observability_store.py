@@ -1,3 +1,12 @@
+"""觀測層 Postgres Store 整合測試。
+
+警語：本檔測試會實際寫入觀測五表（webhook_events／asr_calls／llm_calls／
+tts_calls／replies），且 ``test_feed_overview_and_purge`` 會在結尾以未來
+cutoff 呼叫 ``purge_older_than`` 清空這五張表——這將一併抹除同一資料庫中
+他人的觀測資料。因此本檔僅限對「可拋棄的開發庫」執行，切勿對正式庫或共用
+且不可清空的資料庫執行。需設定 ``KINSUN_IT=1`` 與 ``DATABASE_URL`` 才會啟用。
+"""
+
 import os
 import uuid
 from datetime import datetime
@@ -12,7 +21,9 @@ def _store():
     from kinsun.db import Database, ensure_schema
     from kinsun.observability.store import PgTraceStore
 
-    url = os.environ["DATABASE_URL"]
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        pytest.skip("需 DATABASE_URL 才能連開發庫")
     ensure_schema(url)
     tz = ZoneInfo("Asia/Taipei")
     return PgTraceStore(
