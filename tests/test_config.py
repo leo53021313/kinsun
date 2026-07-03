@@ -49,6 +49,7 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.audio_retention_days == 2
     assert settings.audio_upload_timeout_seconds == 10
     assert settings.asr_debug_show_transcript is False
+    assert settings.line_text_input_enabled is False
     assert settings.admin_api_key == ""
     assert settings.admin_retention_days == 14
 
@@ -129,3 +130,19 @@ def test_load_settings_asr_debug_show_transcript_default_false():
 def test_load_settings_asr_debug_show_transcript_true():
     s = load_settings({**BASE_ENV, "ASR_DEBUG_SHOW_TRANSCRIPT": "true"})
     assert s.asr_debug_show_transcript is True
+
+
+def test_load_settings_line_text_input_default_false():
+    assert load_settings(BASE_ENV).line_text_input_enabled is False
+
+
+def test_load_settings_line_text_input_enabled_values():
+    for raw in ("true", "1", "yes", "True"):
+        s = load_settings({**BASE_ENV, "LINE_TEXT_INPUT_ENABLED": raw})
+        assert s.line_text_input_enabled is True, raw
+
+
+def test_load_settings_line_text_input_disabled_values():
+    for raw in ("false", "0", "no", "False"):
+        s = load_settings({**BASE_ENV, "LINE_TEXT_INPUT_ENABLED": raw})
+        assert s.line_text_input_enabled is False, raw
