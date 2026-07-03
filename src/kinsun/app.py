@@ -42,6 +42,10 @@ from kinsun.memory.recall import MemoryContext
 from kinsun.memory.shortterm import PgMemoryStore
 from kinsun.observability.store import PgTraceStore
 from kinsun.pipeline import VoicePipeline
+from kinsun.rag.embeddings import GeminiEmbeddingModel
+from kinsun.rag.retriever import HealthEducationRetriever
+from kinsun.rag.service import HealthEducationRagService
+from kinsun.rag.vector_store import PgVectorStore
 from kinsun.reports.reminders import PgReminderLogStore
 from kinsun.safety.classifier import LlmRiskClassifier
 from kinsun.safety.detector import RiskDetector
@@ -49,6 +53,7 @@ from kinsun.safety.events import PgRiskEventStore
 from kinsun.safety.notifier import LineGuardianNotifier
 from kinsun.speech.asr import build_asr_client
 from kinsun.speech.tts import build_tts_client
+from kinsun.tools.health_rag import HEALTH_RAG_SPEC, build_health_rag_handler
 from kinsun.tools.registry import ToolRegistry
 from kinsun.tools.weather import WEATHER_SPEC, build_weather_handler
 from kinsun.web.admin_api import create_admin_api_router
@@ -91,6 +96,21 @@ def build_app() -> FastAPI:
     messenger = LineApiMessenger(settings.line_channel_access_token)
     registry = ToolRegistry()
     registry.register(WEATHER_SPEC, build_weather_handler())
+    rag_store = PgVectorStore(db)
+    rag_embedder = GeminiEmbeddingModel(
+        api_key=settings.gemini_api_key,
+        model=settings.longterm_embedding_model,
+    )
+    rag_retriever = HealthEducationRetriever(
+        vector_store=rag_store,
+        embedding_model=rag_embedder,
+    )
+    rag_service = HealthEducationRagService(
+        rag_retriever,
+        llm=gemini,
+        top_k=settings.rag_top_k,
+    )
+    registry.register(HEALTH_RAG_SPEC, build_health_rag_handler(rag_service))
     risk_events = PgRiskEventStore(
         db, clock=lambda: datetime.now(tz), new_id=lambda: uuid.uuid4().hex
     )
