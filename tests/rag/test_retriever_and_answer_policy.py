@@ -70,21 +70,26 @@ def _chunk(
     )
 
 
-def test_retriever_returns_only_approved_allowed_chunks():
+def test_retriever_keeps_license_metadata_but_requires_rag_approval():
     index = InMemoryKeywordIndex()
     allowed = _chunk("長者高血壓照護可注意規律量血壓、均衡飲食與活動。")
-    blocked = _chunk(
-        "高血壓文章但授權未確認。",
+    license_review = _chunk(
+        "高血壓文章但授權未確認，期末非商用展示仍可保留 citation 使用。",
         source_id="health99",
         chunk_id="doc-2#chunk-1",
         copyright_status=CopyrightStatus.NEEDS_REVIEW,
     )
+    blocked = _chunk("未核准來源。", chunk_id="doc-3#chunk-1", approved_for_rag=False)
     index.add(allowed)
+    index.add(license_review)
     index.add(blocked)
 
     results = HealthEducationRetriever(index).retrieve("阿公血壓高要注意什麼？")
 
-    assert [result.chunk.metadata.source_id for result in results] == ["hpa_elder_health"]
+    assert [result.chunk.metadata.chunk_id for result in results] == [
+        "doc-1#chunk-1",
+        "doc-2#chunk-1",
+    ]
 
 
 def test_retriever_normalizes_mixed_taiwanese_sleep_query():
