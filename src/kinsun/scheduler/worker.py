@@ -34,13 +34,15 @@ from kinsun.memory.longterm.mem0_factory import build_mem0_memory
 from kinsun.memory.longterm.store import Mem0LongTermStore
 from kinsun.memory.recall import MemoryContext
 from kinsun.memory.shortterm import PgMemoryStore
+from kinsun.observability.jobs import build_observability_cleanup_job
+from kinsun.observability.store import PgTraceStore
 from kinsun.proactive.jobs import (
     GREETING_INTENT,
     INACTIVITY_INTENT,
     build_greeting_job,
     build_inactivity_job,
 )
-from kinsun.reports.reminders import PgReminderLogStore
+from kinsun.reports.reminders import PgReminderLogStore, safe_record
 from kinsun.reports.summaries import PgConversationSummaryStore, summarize_day
 from kinsun.scheduler.jobs import build_audio_cleanup_job, build_consolidation_job
 from kinsun.scheduler.scheduler import Scheduler
@@ -81,6 +83,13 @@ def build_scheduler(
     )
     agent = CareAgent(gemini, memory, context)
     messenger = LineApiMessenger(settings.line_channel_access_token)
+    traces = PgTraceStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex)
+
+    def _record_push(line_user_id: str, kind: str, content: str) -> None:
+        # 主動推播補記 reminder_logs：查得到綁定長輩才記（觀測用，失敗不影響推播）。
+        elder = accounts.elder_by_line(line_user_id)
+        if elder is not None:
+            safe_record(reminder_logs.record, elder.elder_id, kind, content)
 
     def run_one(line_user_id: str) -> None:
         run_consolidation(line_user_id, short_term=memory, long_term=long_term)
@@ -96,10 +105,14 @@ def build_scheduler(
             logger.warning("對話摘要失敗 session=%s", line_user_id)
 
     def greet_one(line_user_id: str) -> None:
-        messenger.push_text(line_user_id, agent.proactive(line_user_id, GREETING_INTENT))
+        content = agent.proactive(line_user_id, GREETING_INTENT)
+        messenger.push_text(line_user_id, content)
+        _record_push(line_user_id, "proactive-greeting", content)
 
     def care_one(line_user_id: str) -> None:
-        messenger.push_text(line_user_id, agent.proactive(line_user_id, INACTIVITY_INTENT))
+        content = agent.proactive(line_user_id, INACTIVITY_INTENT)
+        messenger.push_text(line_user_id, content)
+        _record_push(line_user_id, "proactive-care", content)
 
     jobs = [
         build_consolidation_job(
@@ -157,6 +170,26 @@ def build_scheduler(
             build_audio_cleanup_job(
                 cleanup=lambda: publisher.cleanup(retention_days=settings.audio_retention_days),
                 hour=settings.longterm_consolidation_hour,
+            )
+        )
+    jobs.append(
+        build_observability_cleanup_job(
+            purge=lambda: traces.purge_older_than(
+                clock().timestamp() - settings.admin_retention_days * 86400
+            ),
+            hour=settings.longterm_consolidation_hour,
+        )
+    )
+    # 進站音檔與 TTS 音檔同樣走過期清理；有 Supabase 憑證即啟用。
+    if settings.supabase_url and settings.supabase_service_key:
+        inbound_audio = build_audio_publisher(
+            settings, clock=clock, new_id=lambda: uuid.uuid4().hex, prefix="inbound"
+        )
+        jobs.append(
+            build_audio_cleanup_job(
+                cleanup=lambda: inbound_audio.cleanup(retention_days=settings.audio_retention_days),
+                hour=settings.longterm_consolidation_hour,
+                name="inbound-audio-cleanup",
             )
         )
     state = PgScheduleStateStore(db, tz)
