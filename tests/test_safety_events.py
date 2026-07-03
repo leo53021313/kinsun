@@ -28,3 +28,14 @@ def test_pg_risk_events_round_trip():
     events = store.list_for_line_user(line_user_id)
     assert [e.tier for e in events] == [RiskTier.L3, RiskTier.L2]
     assert events[0].reason == "昏倒"
+
+
+def test_fake_record_accepts_trace_id():
+    from kinsun.safety.tiers import RiskAssessment, RiskTier
+    from tests.fakes import FakeRiskEventStore
+
+    store = FakeRiskEventStore()
+    store.record("U1", RiskAssessment(RiskTier.L2, 0.9, "頭暈", ["llm"]), trace_id="t1")
+    assert store.recorded_trace_ids == ["t1"]
+    store.record("U1", RiskAssessment(RiskTier.L2, 0.9, "頭暈", ["llm"]))
+    assert store.recorded_trace_ids == ["t1", None]

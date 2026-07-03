@@ -196,9 +196,11 @@ class FakeAppointmentStore:
 class FakeRiskEventStore:
     def __init__(self) -> None:
         self.recorded: list[tuple] = []
+        self.recorded_trace_ids: list[str | None] = []
 
-    def record(self, line_user_id, assessment):
+    def record(self, line_user_id, assessment, *, trace_id=None):
         self.recorded.append((line_user_id, assessment))
+        self.recorded_trace_ids.append(trace_id)
 
     def list_for_line_user(self, line_user_id):
         return [

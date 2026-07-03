@@ -25,7 +25,9 @@ class RiskEventError(Exception):
 
 
 class RiskEventStore(Protocol):
-    def record(self, line_user_id: str, assessment: RiskAssessment) -> None: ...
+    def record(
+        self, line_user_id: str, assessment: RiskAssessment, *, trace_id: str | None = None
+    ) -> None: ...
     def list_for_line_user(self, line_user_id: str) -> list[RiskEvent]: ...
 
 
@@ -37,16 +39,20 @@ class PgRiskEventStore:
         self._clock = clock
         self._new_id = new_id
 
-    def record(self, line_user_id: str, assessment: RiskAssessment) -> None:
+    def record(
+        self, line_user_id: str, assessment: RiskAssessment, *, trace_id: str | None = None
+    ) -> None:
         self._db.execute(
-            "INSERT INTO risk_events (risk_event_id, line_user_id, tier, reason, created_at) "
-            "VALUES (%s, %s, %s, %s, %s)",
+            "INSERT INTO risk_events "
+            "(risk_event_id, line_user_id, tier, reason, created_at, trace_id) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
             (
                 self._new_id(),
                 line_user_id,
                 int(assessment.tier),
                 assessment.reason,
                 self._clock().timestamp(),
+                trace_id,
             ),
         )
 
