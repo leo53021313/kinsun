@@ -11,7 +11,11 @@ from kinsun.llm import ToolSpec
 
 WEATHER_SPEC = ToolSpec(
     name="get_weather",
-    description="查詢指定地點今天的天氣（概況與氣溫）。",
+    description=(
+        "查詢指定地點今天的天氣（概況與氣溫）。"
+        "只有在你已確認長輩要查哪個城市時才呼叫；"
+        "若不知道地點，先開口問長輩人在哪個城市，不要自行假設台北。"
+    ),
     parameters={
         "type": "object",
         "properties": {"location": {"type": "string", "description": "地點名稱，例：台北、高雄"}},
