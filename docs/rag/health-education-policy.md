@@ -6,6 +6,8 @@ KinSun 衛教 RAG 的原則是：
 
 本系統不是醫療診斷、治療建議、急救判斷或用藥決策系統。
 
+期末專案為非商用展示，授權狀態不作 ingestion 阻擋條件；但回答仍必須保留 citation，並在 metadata 中保存 `copyright_status`，讓資料來源可追溯。
+
 ## 回答分級
 
 | safety_level | 使用時機 | 行為 |

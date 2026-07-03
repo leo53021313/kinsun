@@ -113,6 +113,51 @@ uv run pre-commit install   # 啟用 commit 前自動檢查（ruff lint/format�
 uv run pytest
 ```
 
+## 衛教 RAG ingestion
+
+衛教 RAG 使用同一組 `DATABASE_URL`，但以 `rag_sources`、`rag_documents`、`rag_chunks` 等獨立資料表和 Mem0 長期記憶分開。Supabase 需啟用 pgvector。
+
+匯入期末展示 seed：
+
+```bash
+PYTHONPATH=src uv run python -m kinsun.rag.ingest --input data/rag/demo_seed.jsonl --no-crawl
+```
+
+```powershell
+$env:PYTHONPATH="src"; uv run python -m kinsun.rag.ingest --input data/rag/demo_seed.jsonl --no-crawl
+```
+
+啟動大型 crawler：
+
+```bash
+PYTHONPATH=src uv run python -m kinsun.rag.ingest --max-pages 20 --delay 2 --embedding-delay 6 --embedding-retries 5
+```
+
+```powershell
+$env:PYTHONPATH="src"; uv run python -m kinsun.rag.ingest --max-pages 20 --delay 2 --embedding-delay 6 --embedding-retries 5
+```
+
+免費 Gemini 額度建議使用上述保守設定；預設值也已採同樣策略。若仍遇到 `429`，把 `--embedding-delay` 提高到 `10` 或 `15`。也可在 `.env` 固定設定：
+
+```dotenv
+RAG_CRAWLER_MAX_PAGES=20
+RAG_CRAWLER_DELAY_SECONDS=2
+RAG_EMBEDDING_DELAY_SECONDS=6
+RAG_EMBEDDING_RETRIES=5
+RAG_EMBEDDING_RETRY_INITIAL_DELAY_SECONDS=30
+RAG_EMBEDDING_RETRY_MAX_DELAY_SECONDS=300
+```
+
+指定單一來源重建：
+
+```bash
+PYTHONPATH=src uv run python -m kinsun.rag.ingest --reset --source hpa_elder_health --max-pages 30
+```
+
+```powershell
+$env:PYTHONPATH="src"; uv run python -m kinsun.rag.ingest --reset --source hpa_elder_health --max-pages 30
+```
+
 ## 家屬端 LIFF（開發 / 部署）
 
 家屬端網頁採 React + Vite + TypeScript，置於 [`frontend/`](frontend/)，由後端 FastAPI 同源供應於 `/liff`。

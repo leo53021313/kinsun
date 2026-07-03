@@ -60,6 +60,7 @@ class Settings:
     medication_evening_hour: int
     medication_bedtime_hour: int
     appointment_reminder_hour: int
+    rag_top_k: int
     liff_channel_id: str
     liff_timeout_seconds: float
     rich_menu_id: str
@@ -117,6 +118,7 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         medication_evening_hour=int(env.get("MEDICATION_EVENING_HOUR", "18")),
         medication_bedtime_hour=int(env.get("MEDICATION_BEDTIME_HOUR", "21")),
         appointment_reminder_hour=int(env.get("APPOINTMENT_REMINDER_HOUR", "8")),
+        rag_top_k=int(env.get("RAG_TOP_K", "5")),
         liff_channel_id=env.get("LIFF_CHANNEL_ID", ""),
         liff_timeout_seconds=float(env.get("LIFF_TIMEOUT_SECONDS", "10")),
         rich_menu_id=env.get("RICH_MENU_ID", ""),
