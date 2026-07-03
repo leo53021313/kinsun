@@ -323,5 +323,85 @@ class PgTraceStore:
             risk_events=risk_events,
         )
 
-    # list_feed／list_timeline_for_elder／list_elders_with_last_active／
+    def list_feed(self, *, after: float, limit: int) -> list[FeedItem]:
+        rows = self._db.query(
+            "SELECT 'turn' AS kind, t.line_user_id, COALESCE(e.name, ''), t.role, "
+            "t.content, NULL::integer AS tier, NULL::text AS trace_id, t.created_at "
+            "FROM turns t LEFT JOIN elders e ON e.line_user_id = t.line_user_id "
+            "WHERE t.created_at > %s "
+            "UNION ALL "
+            "SELECT 'reminder', COALESCE(e.line_user_id, ''), COALESCE(e.name, ''), '', "
+            "r.content, NULL, NULL, r.created_at "
+            "FROM reminder_logs r LEFT JOIN elders e ON e.elder_id = r.elder_id "
+            "WHERE r.created_at > %s "
+            "UNION ALL "
+            "SELECT 'risk', k.line_user_id, COALESCE(e.name, ''), '', k.reason, "
+            "k.tier, k.trace_id, k.created_at "
+            "FROM risk_events k LEFT JOIN elders e ON e.line_user_id = k.line_user_id "
+            "WHERE k.created_at > %s "
+            "ORDER BY created_at DESC LIMIT %s",
+            (after, after, after, limit),
+        )
+        return [FeedItem(*r) for r in rows]
+
+    def list_timeline_for_elder(
+        self,
+        *,
+        elder_id: str,
+        line_user_id: str,
+        start: float,
+        end: float,
+    ) -> list[TimelineItem]:
+        rows = self._db.query(
+            "SELECT 'turn' AS kind, t.role, t.content, NULL::integer AS tier, "
+            "NULL::text AS trace_id, '' AS audio_url, t.created_at "
+            "FROM turns t WHERE t.line_user_id = %s AND t.created_at >= %s "
+            "AND t.created_at < %s "
+            "UNION ALL "
+            "SELECT 'reminder', '', r.content, NULL, NULL, '', r.created_at "
+            "FROM reminder_logs r WHERE r.elder_id = %s AND r.created_at >= %s "
+            "AND r.created_at < %s "
+            "UNION ALL "
+            "SELECT 'risk', '', k.reason, k.tier, k.trace_id, '', k.created_at "
+            "FROM risk_events k WHERE k.line_user_id = %s AND k.created_at >= %s "
+            "AND k.created_at < %s "
+            "UNION ALL "
+            "SELECT 'voice', 'user', a.transcript, NULL, a.trace_id, "
+            "a.source_audio_url, a.created_at "
+            "FROM asr_calls a WHERE a.line_user_id = %s AND a.created_at >= %s "
+            "AND a.created_at < %s "
+            "UNION ALL "
+            "SELECT 'voice', 'assistant', '', NULL, p.trace_id, p.audio_url, p.created_at "
+            "FROM replies p WHERE p.line_user_id = %s AND p.audio_url <> '' "
+            "AND p.created_at >= %s AND p.created_at < %s "
+            "ORDER BY created_at",
+            (
+                line_user_id,
+                start,
+                end,
+                elder_id,
+                start,
+                end,
+                line_user_id,
+                start,
+                end,
+                line_user_id,
+                start,
+                end,
+                line_user_id,
+                start,
+                end,
+            ),
+        )
+        return [TimelineItem(*r) for r in rows]
+
+    def list_elders_with_last_active(self) -> list[ElderActivity]:
+        rows = self._db.query(
+            "SELECT e.elder_id, e.name, COALESCE(e.line_user_id, ''), "
+            "(SELECT MAX(t.created_at) FROM turns t "
+            " WHERE t.line_user_id = e.line_user_id) "
+            "FROM elders e ORDER BY e.name",
+        )
+        return [ElderActivity(*r) for r in rows]
+
     # get_overview_stats／purge_older_than 由後續任務實作。
