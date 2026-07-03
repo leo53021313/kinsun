@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:admin": "vite --config vite.config.admin.ts",
     "build": "tsc --noEmit && vite build",
+    "build:admin": "tsc --noEmit && vite build --config vite.config.admin.ts",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },

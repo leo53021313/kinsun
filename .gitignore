@@ -229,3 +229,4 @@ temp/
 # 前端（LIFF）
 frontend/node_modules/
 frontend/dist/
+frontend/dist-admin/

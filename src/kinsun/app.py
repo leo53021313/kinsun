@@ -186,4 +186,7 @@ def build_app() -> FastAPI:
     dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     if dist.is_dir():
         app.mount("/liff", StaticFiles(directory=dist, html=True), name="liff")
+    admin_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist-admin"
+    if admin_dist.is_dir():
+        app.mount("/admin", StaticFiles(directory=admin_dist, html=True), name="admin")
     return app
