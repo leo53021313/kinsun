@@ -81,6 +81,45 @@ CONVERSATION_SUMMARIES_DDL = (
     "PRIMARY KEY (line_user_id, date));"
 )
 
+OBSERVABILITY_DDL = (
+    "CREATE TABLE IF NOT EXISTS webhook_events ("
+    "webhook_event_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, "
+    "line_user_id TEXT NOT NULL, event_type TEXT NOT NULL, message_type TEXT NOT NULL, "
+    "payload JSONB NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS idx_webhook_events_trace ON webhook_events (trace_id);"
+    "CREATE INDEX IF NOT EXISTS idx_webhook_events_created ON webhook_events (created_at);"
+    "CREATE TABLE IF NOT EXISTS asr_calls ("
+    "asr_call_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, line_user_id TEXT NOT NULL, "
+    "status TEXT NOT NULL, latency_ms INTEGER NOT NULL, transcript TEXT NOT NULL, "
+    "source_audio_url TEXT NOT NULL, error_message TEXT NOT NULL, "
+    "created_at DOUBLE PRECISION NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS idx_asr_calls_trace ON asr_calls (trace_id);"
+    "CREATE INDEX IF NOT EXISTS idx_asr_calls_line_user_created "
+    "ON asr_calls (line_user_id, created_at);"
+    "CREATE TABLE IF NOT EXISTS llm_calls ("
+    "llm_call_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, line_user_id TEXT NOT NULL, "
+    "status TEXT NOT NULL, latency_ms INTEGER NOT NULL, model_name TEXT NOT NULL, "
+    "input_tokens INTEGER, output_tokens INTEGER, content TEXT NOT NULL, "
+    "error_message TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS idx_llm_calls_trace ON llm_calls (trace_id);"
+    "CREATE INDEX IF NOT EXISTS idx_llm_calls_created ON llm_calls (created_at);"
+    "CREATE TABLE IF NOT EXISTS tts_calls ("
+    "tts_call_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, line_user_id TEXT NOT NULL, "
+    "status TEXT NOT NULL, latency_ms INTEGER NOT NULL, content TEXT NOT NULL, "
+    "error_message TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS idx_tts_calls_trace ON tts_calls (trace_id);"
+    "CREATE INDEX IF NOT EXISTS idx_tts_calls_created ON tts_calls (created_at);"
+    "CREATE TABLE IF NOT EXISTS replies ("
+    "reply_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, line_user_id TEXT NOT NULL, "
+    "kind TEXT NOT NULL, status TEXT NOT NULL, latency_ms INTEGER NOT NULL, "
+    "audio_url TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS idx_replies_trace ON replies (trace_id);"
+    "CREATE INDEX IF NOT EXISTS idx_replies_created ON replies (created_at);"
+)
+
+# risk_events 既有表補 trace_id（可空）：讓風險事件掛回該輪鏈路。
+RISK_EVENTS_TRACE_MIGRATION_DDL = "ALTER TABLE risk_events ADD COLUMN IF NOT EXISTS trace_id TEXT;"
+
 
 def connect(database_url: str) -> psycopg.Connection:
     return psycopg.connect(database_url)
@@ -97,6 +136,8 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(RISK_EVENTS_DDL)
         conn.execute(REMINDER_LOGS_DDL)
         conn.execute(CONVERSATION_SUMMARIES_DDL)
+        conn.execute(OBSERVABILITY_DDL)
+        conn.execute(RISK_EVENTS_TRACE_MIGRATION_DDL)
         conn.commit()
 
 
