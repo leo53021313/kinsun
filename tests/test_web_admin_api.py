@@ -68,3 +68,74 @@ def test_list_elders():
             "last_active_at": TODAY_TS,
         }
     ]
+
+
+def test_messages_feed_desc_with_after():
+    traces = FakeTraceStore()
+    traces.seed_elder("e1", "阿公", "U1")
+    traces.seed_turn("U1", "user", "早安", TODAY_TS)
+    traces.seed_risk("U1", 2, "頭暈", TODAY_TS + 10, trace_id="t1")
+    res = _client(traces).get(
+        "/api/admin/messages", params={"after": TODAY_TS - 1}, headers=_auth()
+    )
+    assert res.status_code == 200
+    messages = res.json()["messages"]
+    assert [m["kind"] for m in messages] == ["risk", "turn"]
+    assert messages[0]["trace_id"] == "t1"
+    assert messages[0]["tier"] == 2
+
+
+def test_messages_limit_validation():
+    res = _client().get("/api/admin/messages", params={"limit": 9999}, headers=_auth())
+    assert res.status_code == 422
+
+
+def test_timeline_for_elder():
+    traces = FakeTraceStore()
+    traces.seed_elder("e1", "阿公", "U1")
+    traces.seed_turn("U1", "user", "早安", TODAY_TS)
+    res = _client(traces).get(
+        "/api/admin/elders/e1/timeline", params={"date": "2026-07-03"}, headers=_auth()
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["name"] == "阿公"
+    assert body["date"] == "2026-07-03"
+    assert [i["kind"] for i in body["items"]] == ["turn"]
+
+
+def test_timeline_unknown_elder_404():
+    res = _client().get("/api/admin/elders/nope/timeline", headers=_auth())
+    assert res.status_code == 404
+
+
+def test_timeline_bad_date_400():
+    traces = FakeTraceStore()
+    traces.seed_elder("e1", "阿公", "U1")
+    res = _client(traces).get(
+        "/api/admin/elders/e1/timeline", params={"date": "07/03"}, headers=_auth()
+    )
+    assert res.status_code == 400
+
+
+def test_trace_detail_and_404():
+    traces = FakeTraceStore()
+    traces.seed_elder("e1", "阿公", "U1")
+    traces.now = TODAY_TS
+    traces.record_asr_call(
+        trace_id="t1",
+        line_user_id="U1",
+        status="ok",
+        latency_ms=5,
+        transcript="嗨",
+        source_audio_url="",
+        error_message="",
+    )
+    ok = _client(traces).get("/api/admin/traces/t1", headers=_auth())
+    assert ok.status_code == 200
+    body = ok.json()
+    assert body["elder_name"] == "阿公"
+    assert body["asr_call"]["transcript"] == "嗨"
+    assert body["webhook_event"] is None
+    missing = _client(traces).get("/api/admin/traces/nope", headers=_auth())
+    assert missing.status_code == 404

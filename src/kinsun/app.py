@@ -51,6 +51,7 @@ from kinsun.speech.asr import build_asr_client
 from kinsun.speech.tts import build_tts_client
 from kinsun.tools.registry import ToolRegistry
 from kinsun.tools.weather import WEATHER_SPEC, build_weather_handler
+from kinsun.web.admin_api import create_admin_api_router
 from kinsun.web.api import create_api_router
 from kinsun.web.auth import LineIdTokenVerifier
 
@@ -173,6 +174,13 @@ def build_app() -> FastAPI:
             clock=lambda: datetime.now(tz),
             risk_events=risk_events,
             reminder_logs=reminder_logs,
+        )
+    )
+    app.include_router(
+        create_admin_api_router(
+            admin_api_key=settings.admin_api_key,
+            traces=traces,
+            clock=lambda: datetime.now(tz),
         )
     )
     dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
