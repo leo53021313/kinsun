@@ -75,6 +75,7 @@ class Settings:
     audio_retention_days: int
     audio_upload_timeout_seconds: float
     asr_debug_show_transcript: bool
+    line_text_input_enabled: bool
     admin_api_key: str
     admin_retention_days: int
 
@@ -133,6 +134,7 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         audio_retention_days=int(env.get("AUDIO_RETENTION_DAYS", "2")),
         audio_upload_timeout_seconds=float(env.get("AUDIO_UPLOAD_TIMEOUT_SECONDS", "10")),
         asr_debug_show_transcript=_parse_bool(env.get("ASR_DEBUG_SHOW_TRANSCRIPT", "false")),
+        line_text_input_enabled=_parse_bool(env.get("LINE_TEXT_INPUT_ENABLED", "false")),
         admin_api_key=env.get("ADMIN_API_KEY", ""),
         admin_retention_days=int(env.get("ADMIN_RETENTION_DAYS", "14")),
     )

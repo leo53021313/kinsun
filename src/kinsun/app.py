@@ -184,6 +184,7 @@ def build_app() -> FastAPI:
         voice=voice,
         traces=traces,
         inbound_audio=inbound_audio,
+        text_input_enabled=settings.line_text_input_enabled,
         on_shutdown=db.close,
     )
     verifier = LineIdTokenVerifier(settings.liff_channel_id, settings.liff_timeout_seconds)

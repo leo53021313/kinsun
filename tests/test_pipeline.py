@@ -222,3 +222,39 @@ def test_pipeline_without_traces_keeps_working():
     notifier = SpyNotifier()
     result = _pipeline(StubDetector(RiskTier.L0), notifier).process(b"\x00", line_user_id="u1")
     assert result.text == "你說的是：阿公早安"
+
+
+class _ExplodingAsr:
+    def transcribe(self, audio, *, content_type):
+        raise AssertionError("process_text 不應呼叫 ASR")
+
+
+def _text_pipeline(detector, notifier, risk_events=None):
+    return VoicePipeline(
+        asr=_ExplodingAsr(),
+        agent=CareAgent(EchoLLM(), NullMemory(), NullContext()),
+        tts=TextBubbleTts(),
+        detector=detector,
+        notifier=notifier,
+        risk_events=risk_events or FakeRiskEventStore(),
+    )
+
+
+def test_process_text_skips_asr_and_replies():
+    notifier = SpyNotifier()
+    result = _text_pipeline(StubDetector(RiskTier.L0), notifier).process_text(
+        "我想聊天", line_user_id="u1"
+    )
+    assert result.text == "你說的是：我想聊天"
+    assert result.transcript == "我想聊天"
+    assert notifier.calls == []
+
+
+def test_process_text_notifies_and_records_on_l3():
+    notifier = SpyNotifier()
+    events = FakeRiskEventStore()
+    _text_pipeline(StubDetector(RiskTier.L3), notifier, events).process_text(
+        "救命", line_user_id="u1", trace_id="t9"
+    )
+    assert notifier.calls == [("u1", RiskTier.L3)]
+    assert events.recorded_trace_ids == ["t9"]

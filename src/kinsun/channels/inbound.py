@@ -89,11 +89,30 @@ def dispatch(
     gate,
     voice=None,
     traces: TraceStore | None = None,
+    text_input_enabled: bool = False,
     timer: Callable[[], float] = time.monotonic,
 ) -> None:
     if msg.kind == "text":
         reply = binding.handle(msg.line_user_id, msg.text)
-        msg.reply(reply if reply is not None else NON_AUDIO_PROMPT)
+        if reply is not None:
+            msg.reply(reply)
+            return
+        # 非綁定自由文字：旗標關維持只收語音；旗標開才轉進對話管線（Debug）。
+        if not text_input_enabled:
+            msg.reply(NON_AUDIO_PROMPT)
+            return
+        if not gate.allows(msg.line_user_id):
+            msg.reply(BIND_FIRST_PROMPT)
+            return
+        _run_pipeline(
+            msg,
+            lambda: pipeline.process_text(
+                msg.text, line_user_id=msg.line_user_id, trace_id=msg.trace_id
+            ),
+            voice=voice,
+            traces=traces,
+            timer=timer,
+        )
         return
     if msg.kind != "audio":
         msg.reply(NON_AUDIO_PROMPT)
@@ -101,24 +120,43 @@ def dispatch(
     if not gate.allows(msg.line_user_id):
         msg.reply(BIND_FIRST_PROMPT)
         return
-    try:
-        result = pipeline.process(
+    _run_pipeline(
+        msg,
+        lambda: pipeline.process(
             msg.audio,
             line_user_id=msg.line_user_id,
             trace_id=msg.trace_id,
             audio_url=msg.audio_url,
-        )
-        started = timer()
-        if voice is not None:
-            # 「or」容忍測試替身回 None（既有 _SpyVoice 類 fake）。
-            outcome = voice.deliver(msg, result) or DeliveryOutcome(kind="text")
-        else:
-            msg.reply(result.text)
-            outcome = DeliveryOutcome(kind="text")
-        _record_reply(traces, msg, outcome, started, timer)
+        ),
+        voice=voice,
+        traces=traces,
+        timer=timer,
+    )
+
+
+def _run_pipeline(
+    msg: InboundMessage,
+    produce: Callable[[], TtsResult],
+    *,
+    voice,
+    traces: TraceStore | None,
+    timer: Callable[[], float],
+) -> None:
+    """執行對話管線並發送回覆：語音與文字共用。任一階段失敗回退提示。"""
+    try:
+        result = produce()
     except (ASRError, LLMError, MemoryError) as exc:
-        logger.warning("語音管線失敗（回退提示）：%s: %s", type(exc).__name__, exc)
+        logger.warning("對話管線失敗（回退提示）：%s: %s", type(exc).__name__, exc)
         msg.reply(FALLBACK_PROMPT)
+        return
+    started = timer()
+    if voice is not None:
+        # 「or」容忍測試替身回 None（既有 _SpyVoice 類 fake）。
+        outcome = voice.deliver(msg, result) or DeliveryOutcome(kind="text")
+    else:
+        msg.reply(result.text)
+        outcome = DeliveryOutcome(kind="text")
+    _record_reply(traces, msg, outcome, started, timer)
 
 
 def _record_reply(
