@@ -1,6 +1,16 @@
 # 衛教 RAG 資料來源與 Chunk Schema
 
-本文件定義資料來源、chunk、citation、answer 與 ingestion audit log 的最小欄位。正式儲存格式可以是資料庫、JSONL 或其他受控格式，但欄位語意不可改變。
+本文件定義資料來源、文件、chunk、citation、answer 與 ingestion audit log 的最小欄位。正式儲存落在 Supabase Postgres／pgvector；JSONL seed 只作 demo 或離線匯入格式。
+
+## Postgres Tables
+
+| table | 用途 |
+|---|---|
+| `rag_sources` | 來源清冊、publisher、trust、allowlist domain |
+| `rag_documents` | 單篇文章／PDF 文字、content hash、topic、日期 |
+| `rag_chunks` | chunk 文字、metadata、`embedding vector(768)` |
+| `rag_crawl_jobs` | crawler 工作紀錄 |
+| `rag_ingestion_audit_logs` | ingestion 成功／失敗、chunk 數、parser |
 
 ## Chunk Metadata Schema
 
@@ -40,9 +50,29 @@
 | `trust_level` | 是 | high／medium／low |
 | `copyright_status` | 是 | allowed／needs_review／disallowed |
 | `recommended_status` | 是 | approved／conditional／rejected／out_of_scope |
-| `approved_for_rag` | 是 | 是否允許 ingestion |
+| `approved_for_rag` | 是 | 是否允許 ingestion；期末非商用展示不以授權狀態阻擋 |
 | `allowed_domains` | 是 | crawler allowlist |
 | `notes` | 否 | 驗證理由 |
+
+## JSONL Seed Schema
+
+`uv run python -m kinsun.rag.ingest --input data/rag/demo_seed.jsonl --no-crawl`
+
+```json
+{
+  "source_id": "hpa_elder_health",
+  "url": "https://example",
+  "title": "高血壓衛教",
+  "publisher": "衛生福利部國民健康署",
+  "text": "文件純文字",
+  "topic": "高血壓",
+  "language": "zh-TW",
+  "audience": "general_public",
+  "medical_scope": "health_education",
+  "published_at": "2026-01-01",
+  "updated_at": "2026-01-01"
+}
+```
 
 ## Citation Schema
 
