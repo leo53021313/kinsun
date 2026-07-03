@@ -59,6 +59,15 @@ class VoicePipeline:
             trace_id=trace_id,
             audio_url=audio_url,
         )
+        return self._process_transcribed(user_text, line_user_id=line_user_id, trace_id=trace_id)
+
+    def process_text(self, text: str, *, line_user_id: str, trace_id: str = "") -> TtsResult:
+        """文字輸入路徑（Debug）：跳過 ASR，直接以輸入文字進入對話核心。"""
+        return self._process_transcribed(text, line_user_id=line_user_id, trace_id=trace_id)
+
+    def _process_transcribed(
+        self, user_text: str, *, line_user_id: str, trace_id: str
+    ) -> TtsResult:
         assessment = self._detector.assess(user_text)
         # 危急通知須獨立於回覆生成：先落庫＋通知家屬，才產生回覆。
         # 否則 agent 生成回覆時若丟例外，會讓已偵測到的危急漏通知。
@@ -70,7 +79,7 @@ class VoicePipeline:
             self._notifier.notify(line_user_id, assessment)
         reply_text = self._generate(line_user_id, user_text, trace_id=trace_id)
         result = self._synthesize(reply_text, line_user_id=line_user_id, trace_id=trace_id)
-        # 附上本輪辨識到的長者原話（供 VoiceReplyDelivery 在 debug 模式回傳）。
+        # 附上本輪的使用者原話（語音為 ASR 辨識、文字為輸入），供 debug 顯示。
         return replace(result, transcript=user_text)
 
     def _latency_ms(self, started: float) -> int:

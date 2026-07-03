@@ -8,6 +8,7 @@ from kinsun.channels.inbound import (
     VoiceReplyDelivery,
     dispatch,
 )
+from kinsun.llm import LLMError
 from kinsun.speech.asr import ASRError
 from kinsun.speech.tts import TtsResult
 from tests.fakes import FakeTraceStore
@@ -26,9 +27,16 @@ class _Pipeline:
         self._text = text
         self._boom = boom
         self.calls = []
+        self.text_calls = []
 
     def process(self, audio, *, line_user_id, trace_id="", audio_url=""):
         self.calls.append((audio, line_user_id))
+        if self._boom is not None:
+            raise self._boom
+        return SimpleNamespace(text=self._text)
+
+    def process_text(self, text, *, line_user_id, trace_id=""):
+        self.text_calls.append((text, line_user_id))
         if self._boom is not None:
             raise self._boom
         return SimpleNamespace(text=self._text)
@@ -100,6 +108,62 @@ def test_other_kind_replies_prompt():
     r = _Replies()
     dispatch(_msg("other", reply=r), pipeline=_Pipeline(), binding=_Binding(None), gate=_Gate(True))
     assert r.sent == [NON_AUDIO_PROMPT]
+
+
+def test_text_flag_on_runs_pipeline():
+    r = _Replies()
+    pipe = _Pipeline(text="你說的是：哈囉")
+    dispatch(
+        _msg("text", text="哈囉", reply=r),
+        pipeline=pipe,
+        binding=_Binding(None),
+        gate=_Gate(True),
+        text_input_enabled=True,
+    )
+    assert pipe.text_calls == [("哈囉", "U-1")]
+    assert r.sent == ["你說的是：哈囉"]
+
+
+def test_text_flag_on_binding_command_still_routes_to_binding():
+    r = _Replies()
+    binding = _Binding("已建立")
+    pipe = _Pipeline()
+    dispatch(
+        _msg("text", text="設定", reply=r),
+        pipeline=pipe,
+        binding=binding,
+        gate=_Gate(True),
+        text_input_enabled=True,
+    )
+    assert binding.calls == [("U-1", "設定")]
+    assert r.sent == ["已建立"]
+    assert pipe.text_calls == []
+
+
+def test_text_flag_on_blocked_when_gate_denies():
+    r = _Replies()
+    pipe = _Pipeline()
+    dispatch(
+        _msg("text", text="哈囉", reply=r),
+        pipeline=pipe,
+        binding=_Binding(None),
+        gate=_Gate(False),
+        text_input_enabled=True,
+    )
+    assert r.sent == [BIND_FIRST_PROMPT]
+    assert pipe.text_calls == []
+
+
+def test_text_flag_on_pipeline_error_replies_fallback():
+    r = _Replies()
+    dispatch(
+        _msg("text", text="哈囉", reply=r),
+        pipeline=_Pipeline(boom=LLMError("boom")),
+        binding=_Binding(None),
+        gate=_Gate(True),
+        text_input_enabled=True,
+    )
+    assert r.sent == [FALLBACK_PROMPT]
 
 
 def test_audio_blocked_when_gate_denies():
