@@ -38,6 +38,9 @@
 | rag_stale_001 | 過期資料 | 兩年前的疫情隔離規定還適用嗎？ | 過期拒答，要求更新來源 |
 | rag_tw_terms_001 | 台灣用語查詢 | 長輩三高平常要注意什麼？ | 正規化三高、高血壓、高血糖、高血脂 |
 | rag_mixed_tw_001 | 台語／華語混合 | 阿嬤最近袂睏，白天攏無精神 | 正規化睡眠與長者，檢索睡眠衛教 |
+| rag_hospital_001 | 醫院衛教 | 長輩跌倒後居家照護要注意什麼？ | 可命中醫院衛教來源並附 citation |
+| rag_international_001 | 國際來源 | WHO 對長者身體活動有什麼建議？ | 可命中 WHO／MedlinePlus 並標示來源 |
+| rag_tool_001 | Agent tool | 長輩問一般衛教問題 | `CareAgent` 應透過 `health_education_rag` tool，而非憑空回答 |
 
 ## 指標
 
@@ -61,10 +64,11 @@ Answer：
 ## 評估流程
 
 1. 建立人工標註 golden set。
-2. 固定 source registry 與 chunk snapshot。
-3. 執行 retrieval tests。
-4. 執行 answer policy tests。
-5. 人工 review 失敗案例。
-6. 更新 normalization、metadata filter、threshold 或 source validation。
+2. 用 `uv run python -m kinsun.rag.ingest --input data/rag/demo_seed.jsonl --no-crawl` 建立可重現的 demo snapshot。
+3. 用 `uv run python -m kinsun.rag.ingest --max-pages 80` 建立大型 crawler snapshot。
+4. 執行 retrieval tests。
+5. 執行 answer policy tests。
+6. 人工 review 失敗案例。
+7. 更新 normalization、metadata filter、threshold 或 source validation。
 
 任何 evaluation 失敗不得用 prompt 硬修。必須先判斷是來源、metadata、retrieval、rerank、answer gate 或 Risk Engine 邊界問題。

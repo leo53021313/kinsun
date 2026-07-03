@@ -34,6 +34,7 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.medication_evening_hour == 18
     assert settings.medication_bedtime_hour == 21
     assert settings.appointment_reminder_hour == 8
+    assert settings.rag_top_k == 5
     assert settings.liff_channel_id == ""
     assert settings.liff_timeout_seconds == 10
     assert settings.rich_menu_id == ""
@@ -47,6 +48,9 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.audio_bucket == "tts-audio"
     assert settings.audio_retention_days == 2
     assert settings.audio_upload_timeout_seconds == 10
+    assert settings.asr_debug_show_transcript is False
+    assert settings.admin_api_key == ""
+    assert settings.admin_retention_days == 14
 
 
 def test_load_settings_requires_database_url():
