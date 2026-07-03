@@ -159,6 +159,11 @@ OBSERVABILITY_DDL = (
 # risk_events 既有表補 trace_id（可空）：讓風險事件掛回該輪鏈路。
 RISK_EVENTS_TRACE_MIGRATION_DDL = "ALTER TABLE risk_events ADD COLUMN IF NOT EXISTS trace_id TEXT;"
 
+# 遷移用的交易級諮詢鎖鍵：webhook 與 scheduler 同時啟動時，讓 ensure_schema 的 DDL
+# 串行化，避免併發跑遷移互搶 AccessExclusiveLock 造成 Postgres 死結。任意固定常數即可，
+# 全專案共用同一把鎖。
+SCHEMA_MIGRATION_LOCK_KEY = 4_242_001
+
 
 def connect(database_url: str) -> psycopg.Connection:
     return psycopg.connect(database_url)
@@ -166,6 +171,10 @@ def connect(database_url: str) -> psycopg.Connection:
 
 def ensure_schema(database_url: str) -> None:
     with connect(database_url) as conn:
+        # 先搶交易級諮詢鎖再跑 DDL：webhook 與 scheduler 同時啟動時，讓兩者的遷移
+        # 串行化（後到者等前一個 commit 後才進場，DDL 皆冪等等於接著 no-op），
+        # 避免併發跑遷移互搶 AccessExclusiveLock 造成 Postgres 死結。鎖隨交易結束自動釋放。
+        conn.execute("SELECT pg_advisory_xact_lock(%s)", (SCHEMA_MIGRATION_LOCK_KEY,))
         conn.execute(MEMORY_DDL)
         conn.execute(ACCOUNTS_DDL)
         conn.execute(BINDING_DDL)
