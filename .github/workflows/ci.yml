@@ -55,3 +55,7 @@ jobs:
       - name: 建置
         run: npm run build
         working-directory: frontend
+
+      - name: Build admin console
+        run: npm run build:admin
+        working-directory: frontend

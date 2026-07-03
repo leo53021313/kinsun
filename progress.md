@@ -1,7 +1,7 @@
 # 金孫 KinSun — 開發進度與注意事項
 
 > 聽懂國台語的長輩 AI 語音陪伴守護 Agent（AIPE03 第五組）。
-> 本檔為**進度快照**，最後更新：2026-07-02。規範請見 [AGENTS.md](AGENTS.md)（唯一真實來源）。
+> 本檔為**進度快照**，最後更新：2026-07-03。規範請見 [AGENTS.md](AGENTS.md)（唯一真實來源）。
 
 ---
 
@@ -85,7 +85,10 @@ binding/            LINE 帳號綁定 FSM（session、flow、gate）
 reports/            summaries（對話摘要）、reminders（提醒紀錄）
 rag/                檢索問答（retriever、chunker、vector_store…）
 tools/              registry、weather
-web/                api.py（家屬 REST API）、auth.py（LIFF 驗證）
+observability/      models（觀測五表）、store（TraceStore／PgTraceStore／FakeTraceStore、
+                    record_* 埋點）、jobs（觀測資料保留清理）
+web/                api.py（家屬 REST API）、admin_api.py（觀測後台唯讀 API）、
+                    auth.py（LIFF 驗證）
 ```
 
 > 🧹 小清理：`knowledge/`、`episodic/` 為雲端遷移後留下的空目錄，可刪。
@@ -233,3 +236,36 @@ brainstorm（談清楚、設計通過才動工）
 
 > 台語語音仍是**後續**工作：本次先接**國語** CosyVoice 3（使用者指定），
 > 待台語模型選定／訓練完成後，只需替換 `services/tts/server.py` 的合成實作，契約與應用層不動。
+
+---
+
+## 11. 2026-07-03 更新：訊息觀測後台（Admin Observability Console）
+
+> 對應設計文件：[訊息觀測後台設計](docs/superpowers/specs/2026-07-03-訊息觀測後台-design.md)
+> （含 §11 實作修正）、命名決策 [#36 `ADMIN_` 前綴](docs/superpowers/specs/2026-07-03-naming-decisions.md)。
+> 供 7 人開發團隊除錯用的**唯讀**後台，觀測訊息流動與單輪處理鏈路。
+
+### 已完成（程式碼＋離線 fake 測試全綠）
+
+* **資料層**（`src/kinsun/observability/`）：新增觀測五表——`webhook_events`、`asr_calls`、
+  `llm_calls`、`tts_calls`、`replies`，皆帶 `trace_id`（一輪對話一個 uuid）貫穿鏈路；
+  `risk_events` 加可為空的 `trace_id` 掛回該輪。三件套 `TraceStore`／`PgTraceStore`／
+  `FakeTraceStore`，寫入用 `record_*`（append-only）、查詢用 `get_*`／`list_for_*`。
+  建表全數併入 `db.py` 的 `ensure_schema`。
+* **埋點**：`channels/line/channel.py` 收事件即產 `trace_id`、記 `webhook_events`，語音訊息
+  以既有 `SupabaseAudioPublisher` 上傳原始音檔（`inbound/{yyyymmdd}/` 前綴）；`pipeline.py`
+  各階段前後計時 `record_*`；所有 `record_*` 包 `try/except`＋warning，**記錄失敗絕不中斷對話**。
+* **後端 API**（`src/kinsun/web/admin_api.py`）：`/api/admin/*` 五個唯讀 GET 端點
+  （overview／messages／elders／elders/{elder_id}/timeline／traces/{trace_id}），以
+  `X-Admin-Key` 標頭＋`hmac.compare_digest` 常數時間比對驗證，金鑰錯回 401、資源不存在回 404。
+* **前端**（`frontend/src/admin/`，第二個 Vite 入口 `frontend/admin/index.html`）：四頁面——
+  總覽儀表板（統計卡＋純 SVG 逐時長條圖）、全域訊息流（5 秒輪詢增量、tab 隱藏暫停）、
+  長輩對話時間軸（對話／推播／風險交錯、語音內嵌 `<audio>`）、單輪鏈路（webhook→ASR→LLM→
+  TTS→回覆各段延遲）；金鑰存 `localStorage`，401 清金鑰回輸入畫面。`npm run build:admin`
+  產出 `dist-admin`，由 app.py 掛載於 `/admin`。
+* **排程 worker**：新增觀測資料保留清理 job（刪超過 `ADMIN_RETENTION_DAYS` 的觀測五表）、
+  進站音檔清理 job（`inbound/` 前綴，沿用 `AUDIO_RETENTION_DAYS`）；主動關懷推播補記
+  `reminder_logs`（kind `proactive-greeting`／`proactive-care`），讓訊息流與時間軸看得到主動推播。
+* **設定與文件**：新增 `ADMIN_API_KEY`、`ADMIN_RETENTION_DAYS`（預設 14）入 `config.py` 與
+  `.env.example`；`.github/workflows/ci.yml` 前端 job 補 `npm run build:admin` 步驟；
+  設計文件、命名決策文件、本檔同步更新。

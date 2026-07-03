@@ -1,7 +1,7 @@
 # 命名決策表（2026-07-03）
 
 > 狀態：**已全數核可**（2026-07-03，使用者決議）。
-> 決議規則：「核可」＝照建議欄執行；「不改」＝本次不動。#34、#35 為核可階段新增項。
+> 決議規則：「核可」＝照建議欄執行；「不改」＝本次不動。#34、#35 為核可階段新增項；#36 為訊息觀測後台實作新增項。
 
 ## 一、程式識別字
 
@@ -27,6 +27,7 @@
 | 13 | `DEBUG_SHOW_TRANSCRIPT` | 全專案唯一 `DEBUG_` 開頭鍵 | 改 **`ASR_DEBUG_SHOW_TRANSCRIPT`** | 語意屬 ASR／語音回覆管線，避免看似全域 debug 開關 | config.py、app.py、.env.example、實際 .env | **核可** |
 | 14 | `LIFF_ID` | richmenu.py CLI 裸讀 os.environ，不經 config.py | **不改名**；.env.example 加註「僅供 richmenu CLI 讀取，不經 config.py」 | 收進 Settings 需連帶必填項耦合，超出改名範疇 | .env.example 註解 | **核可（不改名，加註）** |
 | 15 | `KINSUN_IT`、`SUPABASE_*`／`AUDIO_*`、`NGROK_*`、services 端 env 歸屬 | 分組與前綴規則只存在於作者習慣 | **不改名**；規則文件化入 AGENTS.md 與 .env.example 註解（KINSUN_ 前綴保留給測試旗標；SUPABASE_ 為專案憑證層；DGX 服務端 env 見 services/*/README） | 把巧合變成規則 | Task 10 文件 | **核可（文件化）** |
+| 36 | `ADMIN_API_KEY`／`ADMIN_RETENTION_DAYS`（訊息觀測後台實作新增） | 觀測後台為新子系統，需後端唯讀驗證金鑰與觀測資料保留天數兩個鍵 | 新增子系統前綴 **`ADMIN_`**（`ADMIN_API_KEY`＝後台唯讀 API 的 `X-Admin-Key` 驗證金鑰；`ADMIN_RETENTION_DAYS`＝觀測五表保留天數，預設 14） | 觀測後台自成子系統，比照 `GEMINI_`／`LONGTERM_`／`PROACTIVE_`／`ASR_`／`TTS_`／`AUDIO_` 掛專屬前綴；`AUDIO_RETENTION_DAYS` 管音檔、`ADMIN_RETENTION_DAYS` 管觀測表，兩者不混用 | config.py、.env.example、web/admin_api.py、observability/jobs.py | **核可（觀測後台實作定案）** |
 
 ## 三、檔案與模組命名
 
@@ -136,3 +137,4 @@
 - 批次四（環境變數）：#8、#9、#10、#11、#12、#13、#14（註解）
 - 批次五（DB Schema）：#28、#29、#31、#32
 - Task 10（規範文件化）：#5、#15、#21、#27、#33、#35、附錄 A
+- 訊息觀測後台（實作新增）：#36（`ADMIN_` 前綴）
