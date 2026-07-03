@@ -159,6 +159,7 @@ OBSERVABILITY_DDL = (
 # risk_events 既有表補 trace_id（可空）：讓風險事件掛回該輪鏈路。
 RISK_EVENTS_TRACE_MIGRATION_DDL = "ALTER TABLE risk_events ADD COLUMN IF NOT EXISTS trace_id TEXT;"
 
+
 def connect(database_url: str) -> psycopg.Connection:
     return psycopg.connect(database_url)
 
