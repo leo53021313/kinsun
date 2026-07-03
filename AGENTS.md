@@ -27,6 +27,17 @@
 
 ---
 
+## 開發與部署環境（跨平台）
+
+本專案的開發橫跨 **Windows / macOS / DGX Spark（Linux + ARM64/aarch64）**；DGX Spark 同時是**開發環境**、伺服器與部署目標。程式碼必須在三者皆可運作，請守以下紀律：
+
+* **OS-agnostic**：一律使用 `pathlib`，不寫死路徑與路徑分隔符；設定與金鑰一律走環境變數，不假設特定作業系統。
+* **ARM64 相容**：新增依賴前確認其在 `linux/aarch64` 有可用 wheel；吃 GPU 的重模型（如 ASR、TTS）只跑在 DGX，不要求在 Windows/macOS 安裝。
+* **位置無關（Location-Independent）**：重模型以網路服務形式提供，應用層僅為呼叫端（client），透過**可設定的 endpoint（環境變數）**連線。模型與應用「同機」或「分離」都不需改程式碼。
+* **環境一致性**：以 **uv** 維持跨平台 Python 環境一致；必要時再以容器（Docker／NGC）在三邊求一致。
+
+---
+
 # 工程開發原則（Engineering Principles）
 
 ## 程式碼品質
@@ -37,6 +48,42 @@
 * 避免不必要的抽象化。
 * 優先遵循既有專案架構與風格。
 * 除非有充分理由，否則不要新增第三方套件。
+
+---
+
+## 命名規範（Naming Conventions）
+
+規則依命名決策表核定（見 `docs/superpowers/specs/2026-07-03-naming-decisions.md`），新增與修改程式碼、文件請遵循：
+
+* 領域名詞正名：
+  * `elder_id`／`guardian_id` 為系統業務主鍵（uuid），代表「長輩／家屬」實體，如 `Elder.elder_id`。
+  * `line_user_id` 為 LINE 平台外部識別碼，與業務主鍵是不同概念、永不混用；同作用域多人時加限定詞，如 `elder_line_user_id`。
+  * ID 欄位一律全稱，禁止縮寫，如 `medication_id`、`appointment_id`、`risk_event_id`（不用 `med_id`、`appt_id`）。
+  * 一段文字內容欄位統一用 `content`，如 LLM Message 的 `role`／`content`。
+* 模組與檔案：
+  * 模組目錄用複數（集合語意），如 `accounts/`、`medications/`；key-value 狀態表或單例概念可例外，如 `scheduler_state`。
+  * 持久層固定三件套：檔名 `store.py`＋`<領域>Store`（Protocol）＋`Pg<領域>Store`（Postgres 實作）＋`Fake<領域>Store`（測試替身），如 `PgMedicationStore`。
+  * 領域模型檔名固定為 `models.py`，如 `medications/models.py`。
+  * 記憶子系統分三層：`memory/shortterm`（今日對話）、`memory/longterm`（Mem0 長期記憶）、`memory/recall`（情境聚合）。
+  * `speech/` 為 ASR／TTS 模型服務呼叫端（client）、`audio/` 為音檔上傳託管、`services/` 為 DGX 端可獨立部署伺服器實作，三者跨層同名（如 `speech/asr.py` 對 `services/asr/`）為合理設計，不需合併。
+  * 各領域排程工廠統一放該領域自己的 `jobs.py`，如 `medications/jobs.py`。
+  * 測試檔名固定 `test_<套件>_<檔>.py`，如 `test_channels_inbound.py`；連 Postgres 的整合測試獨立成 `test_pg_<套件>_<檔>.py`，以 `KINSUN_IT=1` 啟用。
+* 動詞慣例：
+  * `save` 為 upsert 語意（`ON CONFLICT DO UPDATE`），`record` 為 append-only 事件日誌；資料寫入不用 `add`／`upsert` 命名；例外：鏡射外部函式庫 API 的薄包裝（如 Mem0 介面的 `add`）維持外部詞彙。
+  * 查詢動詞分工：`get_*` 取單筆、`list_for_<維度>` 取清單、`query`／`query_one` 為原生 SQL 執行器、`search` 為檢索、`load` 為載入外部內容，如 `list_for_elder`。
+  * API handler 建立資源用 `create_*`，如 `create_medication`；HTTP 層刪除對應 REST 動詞用 `delete_*`，Service／Store 層用 `remove`——此為刻意的跨層分工，不需統一。
+  * 布林命名一律 `is_`／`has_`／`can_` 前綴且語意完整，如 `is_consented_elder`（不用 `is_consented`）。
+* 環境變數：
+  * `Settings` 欄位名＝環境變數鍵的小寫，100% 一一對應、不設別名，如 `gemini_timeout_seconds` 對應 `GEMINI_TIMEOUT_SECONDS`。
+  * 鍵一律掛子系統前綴：`GEMINI_`、`LONGTERM_`、`PROACTIVE_`、`SCHEDULER_`、`ASR_`、`TTS_`、`AUDIO_`、`SUPABASE_`（專案層憑證）、`LIFF_`、`LINE_`。
+  * `KINSUN_` 前綴保留給測試／CI 旗標，如 `KINSUN_IT`，不用於應用設定。
+  * `NGROK_*` 等部署層鍵不經 `config.py`；DGX 服務端（`services/asr`、`services/tts`）環境變數獨立管理，見各自 README。
+  * 程式讀取的每個鍵都必須列在 `.env.example`，並附預設值與一行中文註解。
+* API 與 DB：
+  * API 路徑用複數名詞＋kebab-case，如 `/guardian-invites`；聚合計算結果端點可用單數，如 `/health-report`。
+  * JSON 欄位一律 snake_case，前後端（含 TS 型別）完全一致，request 與 response 同一實體用同一鍵名，如 `name`。
+  * 資料表用複數名詞，主鍵固定 `<表單數>_id` 全稱，如 `medications.medication_id`；天然唯一鍵可直接當主鍵，如 `invites.code`。
+  * 時間戳欄位固定 `<動詞過去分詞>_at`，型別 `DOUBLE PRECISION`（epoch 秒），如 `created_at`。
 
 ---
 
