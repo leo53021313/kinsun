@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 from kinsun.llm import LLMClient, Message, ToolResult
-from kinsun.memory.store import MemoryStore
-from kinsun.recall import MemoryContext
+from kinsun.memory.recall import MemoryContext
+from kinsun.memory.shortterm import MemoryStore
 
 SYSTEM_PROMPT = (
     "你是「金孫」，一位溫暖、有耐心的台灣長輩陪伴助理。"
-    "一律用台灣繁體中文、口語、簡短地回應，語氣像晚輩關心長輩。"
+    "你的回覆會被合成成語音念給長輩聽，所以務必遵守："
+    "（1）只用台灣繁體中文口語，像晚輩在跟阿公阿嬤講話；"
+    "（2）非常簡短，最多兩三句、盡量控制在四十個字以內；"
+    "（3）絕對不要用條列、標題、星號、括號補充或任何 Markdown 符號，只講白話短句；"
+    "（4）不要主動自我介紹或羅列你會做什麼，除非長輩親口問你是誰；"
+    "（5）結尾自然帶一句關心或反問，讓對話能接下去。"
     "你不是醫師，絕不提供醫療診斷或用藥劑量建議；遇到健康疑慮，溫柔建議對方告訴家人或就醫。"
     "回答一般健康衛教時，必須先使用 health_education_rag 工具查詢可信來源；"
     "若工具回傳 unsupported 或 should_escalate_to_risk_engine，"
@@ -40,16 +45,16 @@ class CareAgent:
         self._tools = tools
         self._max_tool_iters = max_tool_iters
 
-    def handle(self, session_id: str, user_text: str) -> str:
-        system_prompt = SYSTEM_PROMPT + self._context.recall(session_id, user_text)
+    def handle(self, line_user_id: str, user_text: str) -> str:
+        system_prompt = SYSTEM_PROMPT + self._context.recall(line_user_id, user_text)
         user_msg = Message("user", user_text)
-        base = [*self._memory.recent(session_id), user_msg]
+        base = [*self._memory.recent(line_user_id), user_msg]
         if self._tools is None:
             reply = self._llm.generate(system_prompt=system_prompt, messages=base)
         else:
             reply = self._run_tool_loop(system_prompt, base)
-        self._memory.append(session_id, user_msg)
-        self._memory.append(session_id, Message("assistant", reply))
+        self._memory.append(line_user_id, user_msg)
+        self._memory.append(line_user_id, Message("assistant", reply))
         return reply
 
     def _run_tool_loop(self, system_prompt: str, base: list[Message]) -> str:
@@ -67,10 +72,10 @@ class CareAgent:
                 results.append(ToolResult(call, self._tools.dispatch(call.name, call.arguments)))
         return FALLBACK_REPLY
 
-    def proactive(self, session_id: str, intent: str) -> str:
-        system_prompt = SYSTEM_PROMPT + self._context.recall(session_id, intent)
-        history = self._memory.recent(session_id)
+    def proactive(self, line_user_id: str, intent: str) -> str:
+        system_prompt = SYSTEM_PROMPT + self._context.recall(line_user_id, intent)
+        history = self._memory.recent(line_user_id)
         directive = Message("user", _PROACTIVE_DIRECTIVE.format(intent=intent))
         reply = self._llm.generate(system_prompt=system_prompt, messages=[*history, directive])
-        self._memory.append(session_id, Message("assistant", reply))
+        self._memory.append(line_user_id, Message("assistant", reply))
         return reply

@@ -1,0 +1,156 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Noto Sans TC", system-ui, sans-serif;
+  background: #f5f6f8;
+  color: #1f2933;
+}
+
+.admin-nav {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.75rem 1.25rem;
+  background: #1f2933;
+  color: #fff;
+}
+
+.admin-nav a {
+  color: #cbd2d9;
+  text-decoration: none;
+}
+
+.admin-nav a.active {
+  color: #fff;
+  font-weight: 700;
+}
+
+.admin-main {
+  padding: 1.25rem;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.key-form {
+  max-width: 360px;
+  margin: 4rem auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.key-form input,
+.key-form button {
+  padding: 0.6rem;
+  font-size: 1rem;
+}
+
+.card {
+  background: #fff;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.75rem;
+}
+
+.stat-value {
+  font-size: 1.6rem;
+  font-weight: 700;
+}
+
+.badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.1rem 0.6rem;
+  font-size: 0.8rem;
+  color: #fff;
+}
+
+.badge-turn {
+  background: #3b82f6;
+}
+
+.badge-reminder {
+  background: #10b981;
+}
+
+.badge-risk {
+  background: #ef4444;
+}
+
+.badge-voice {
+  background: #8b5cf6;
+}
+
+.badge-ok {
+  background: #10b981;
+}
+
+.badge-error {
+  background: #ef4444;
+}
+
+.feed-item,
+.timeline-item {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+
+.feed-time,
+.timeline-time {
+  color: #6b7280;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.bubble-user,
+.bubble-assistant {
+  max-width: 70%;
+  padding: 0.5rem 0.8rem;
+  border-radius: 12px;
+  margin: 0.25rem 0;
+}
+
+.bubble-user {
+  background: #e5e7eb;
+  margin-right: auto;
+}
+
+.bubble-assistant {
+  background: #d1fae5;
+  margin-left: auto;
+}
+
+.trace-step {
+  border-left: 3px solid #3b82f6;
+  padding: 0.5rem 0.9rem;
+  margin-bottom: 0.5rem;
+}
+
+.trace-step.error {
+  border-left-color: #ef4444;
+}
+
+.error-banner {
+  background: #fef2f2;
+  color: #b91c1c;
+  padding: 0.5rem 0.9rem;
+  border-radius: 6px;
+  margin-bottom: 0.75rem;
+}
+
+details pre {
+  overflow-x: auto;
+  background: #f3f4f6;
+  padding: 0.5rem;
+}

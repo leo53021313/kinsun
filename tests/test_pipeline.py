@@ -1,26 +1,29 @@
+import pytest
+
 from kinsun.agent import CareAgent
-from kinsun.llm import Message
+from kinsun.llm import LLMError, Message
 from kinsun.pipeline import VoicePipeline
 from kinsun.safety.tiers import RiskAssessment, RiskTier
 from kinsun.speech.asr import MockAsrClient
-from kinsun.speech.tts import TextBubbleTts
+from kinsun.speech.tts import TextBubbleTts, TTSError, TtsResult
+from tests.fakes import FakeRiskEventStore, FakeTraceStore
 
 
 class EchoLLM:
     def generate(self, *, system_prompt: str, messages: list[Message]) -> str:
-        return f"你說的是：{messages[-1].text}"
+        return f"你說的是：{messages[-1].content}"
 
 
 class NullMemory:
-    def recent(self, session_id: str) -> list[Message]:
+    def recent(self, line_user_id: str) -> list[Message]:
         return []
 
-    def append(self, session_id: str, message: Message) -> None:
+    def append(self, line_user_id: str, message: Message) -> None:
         pass
 
 
 class NullContext:
-    def recall(self, session_id: str, user_text: str) -> str:
+    def recall(self, line_user_id: str, user_text: str) -> str:
         return ""
 
 
@@ -36,28 +39,186 @@ class SpyNotifier:
     def __init__(self) -> None:
         self.calls: list[tuple[str, RiskTier]] = []
 
-    def notify(self, session_id: str, assessment: RiskAssessment) -> None:
-        self.calls.append((session_id, assessment.tier))
+    def notify(self, line_user_id: str, assessment: RiskAssessment) -> None:
+        self.calls.append((line_user_id, assessment.tier))
 
 
-def _pipeline(detector, notifier):
+def _pipeline(detector, notifier, risk_events=None):
     return VoicePipeline(
         asr=MockAsrClient("阿公早安"),
         agent=CareAgent(EchoLLM(), NullMemory(), NullContext()),
         tts=TextBubbleTts(),
         detector=detector,
         notifier=notifier,
+        risk_events=risk_events or FakeRiskEventStore(),
     )
 
 
 def test_pipeline_replies_and_runs_detection():
     notifier = SpyNotifier()
-    result = _pipeline(StubDetector(RiskTier.L0), notifier).process(b"\x00", session_id="u1")
+    result = _pipeline(StubDetector(RiskTier.L0), notifier).process(b"\x00", line_user_id="u1")
     assert result.text == "你說的是：阿公早安"
     assert notifier.calls == []
 
 
 def test_pipeline_notifies_on_l2_or_above():
     notifier = SpyNotifier()
-    _pipeline(StubDetector(RiskTier.L3), notifier).process(b"\x00", session_id="u1")
+    _pipeline(StubDetector(RiskTier.L3), notifier).process(b"\x00", line_user_id="u1")
     assert notifier.calls == [("u1", RiskTier.L3)]
+
+
+class _BoomRiskEvents:
+    def record(self, line_user_id, assessment, *, trace_id=None):
+        raise RuntimeError("db down")
+
+    def list_for_line_user(self, line_user_id):
+        return []
+
+
+def test_pipeline_records_risk_event_on_l2():
+    notifier = SpyNotifier()
+    events = FakeRiskEventStore()
+    _pipeline(StubDetector(RiskTier.L2), notifier, events).process(b"\x00", line_user_id="u1")
+    assert [s for s, _ in events.recorded] == ["u1"]
+    assert notifier.calls == [("u1", RiskTier.L2)]
+
+
+def test_pipeline_does_not_record_below_l2():
+    events = FakeRiskEventStore()
+    _pipeline(StubDetector(RiskTier.L1), SpyNotifier(), events).process(b"\x00", line_user_id="u1")
+    assert events.recorded == []
+
+
+class _BoomAgent:
+    def handle(self, line_user_id, user_text):
+        raise RuntimeError("llm down")
+
+
+def test_pipeline_notifies_before_reply_generation():
+    """危急通知不可依賴回覆生成：agent 生成回覆丟例外時，家屬通知仍須先送出。"""
+    notifier = SpyNotifier()
+    pipeline = VoicePipeline(
+        asr=MockAsrClient("阿公早安"),
+        agent=_BoomAgent(),
+        tts=TextBubbleTts(),
+        detector=StubDetector(RiskTier.L3),
+        notifier=notifier,
+        risk_events=FakeRiskEventStore(),
+    )
+    with pytest.raises(RuntimeError):
+        pipeline.process(b"\x00", line_user_id="u1")
+    assert notifier.calls == [("u1", RiskTier.L3)]
+
+
+def test_pipeline_record_failure_does_not_break():
+    notifier = SpyNotifier()
+    result = _pipeline(StubDetector(RiskTier.L3), notifier, _BoomRiskEvents()).process(
+        b"\x00", line_user_id="u1"
+    )
+    assert result.text == "你說的是：阿公早安"
+    assert notifier.calls == [("u1", RiskTier.L3)]
+
+
+class _BoomTts:
+    def synthesize(self, text):
+        raise TTSError("tts down")
+
+
+def test_pipeline_tts_failure_degrades_to_text():
+    pipeline = VoicePipeline(
+        asr=MockAsrClient("阿公早安"),
+        agent=CareAgent(EchoLLM(), NullMemory(), NullContext()),
+        tts=_BoomTts(),
+        detector=StubDetector(RiskTier.L0),
+        notifier=SpyNotifier(),
+        risk_events=FakeRiskEventStore(),
+    )
+    result = pipeline.process(b"\x00", line_user_id="u1")
+    assert isinstance(result, TtsResult)
+    assert result.text == "你說的是：阿公早安"
+    assert result.audio is None
+
+
+def test_pipeline_sets_transcript_from_asr():
+    result = _pipeline(StubDetector(RiskTier.L0), SpyNotifier()).process(b"\x00", line_user_id="u1")
+    assert result.transcript == "阿公早安"
+
+
+class BoomLLM:
+    def generate(self, *, system_prompt: str, messages: list[Message]) -> str:
+        raise LLMError("模型掛了")
+
+
+class BoomTts:
+    def synthesize(self, text: str) -> TtsResult:
+        raise TTSError("合成失敗")
+
+
+def _traced_pipeline(traces, *, tts=None, llm=None):
+    return VoicePipeline(
+        asr=MockAsrClient("阿公早安"),
+        agent=CareAgent(llm or EchoLLM(), NullMemory(), NullContext()),
+        tts=tts or TextBubbleTts(),
+        detector=StubDetector(RiskTier.L0),
+        notifier=SpyNotifier(),
+        risk_events=FakeRiskEventStore(),
+        traces=traces,
+        model_name="test-model",
+        timer=iter([0.0, 0.1, 0.2, 0.5, 0.6, 0.9]).__next__,
+    )
+
+
+def test_pipeline_records_all_stages_on_success():
+    traces = FakeTraceStore()
+    _traced_pipeline(traces).process(
+        b"\x00", line_user_id="u1", trace_id="t1", audio_url="https://x/in.m4a"
+    )
+    assert len(traces.asr_calls) == 1
+    assert traces.asr_calls[0].status == "ok"
+    assert traces.asr_calls[0].transcript == "阿公早安"
+    assert traces.asr_calls[0].source_audio_url == "https://x/in.m4a"
+    assert traces.asr_calls[0].latency_ms == 100  # timer 0.0 → 0.1
+    assert traces.llm_calls[0].status == "ok"
+    assert traces.llm_calls[0].model_name == "test-model"
+    assert traces.llm_calls[0].content == "你說的是：阿公早安"
+    assert traces.tts_calls[0].status == "ok"
+
+
+def test_pipeline_records_llm_error_and_reraises():
+    traces = FakeTraceStore()
+    with pytest.raises(LLMError):
+        _traced_pipeline(traces, llm=BoomLLM()).process(b"\x00", line_user_id="u1", trace_id="t1")
+    assert traces.llm_calls[0].status == "error"
+    assert "模型掛了" in traces.llm_calls[0].error_message
+    assert traces.tts_calls == []  # LLM 失敗即中止，不會記 TTS
+
+
+def test_pipeline_records_tts_degradation_and_still_replies_text():
+    traces = FakeTraceStore()
+    result = _traced_pipeline(traces, tts=BoomTts()).process(
+        b"\x00", line_user_id="u1", trace_id="t1"
+    )
+    assert result.audio is None
+    assert traces.tts_calls[0].status == "error"
+
+
+def test_pipeline_passes_trace_id_to_risk_events():
+    traces = FakeTraceStore()
+    risk_events = FakeRiskEventStore()
+    pipeline = VoicePipeline(
+        asr=MockAsrClient("救命"),
+        agent=CareAgent(EchoLLM(), NullMemory(), NullContext()),
+        tts=TextBubbleTts(),
+        detector=StubDetector(RiskTier.L3),
+        notifier=SpyNotifier(),
+        risk_events=risk_events,
+        traces=traces,
+    )
+    pipeline.process(b"\x00", line_user_id="u1", trace_id="t7")
+    assert risk_events.recorded_trace_ids == ["t7"]
+
+
+def test_pipeline_without_traces_keeps_working():
+    notifier = SpyNotifier()
+    result = _pipeline(StubDetector(RiskTier.L0), notifier).process(b"\x00", line_user_id="u1")
+    assert result.text == "你說的是：阿公早安"

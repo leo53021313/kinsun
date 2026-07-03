@@ -22,3 +22,13 @@ def build_consolidation_job(
     return fanout_job(
         name=name, hour=hour, minute=minute, population=sessions, action=run_one, logger=logger
     )
+
+
+def build_audio_cleanup_job(
+    *,
+    cleanup: Callable[[], None],
+    hour: int,
+    minute: int = 30,
+    name: str = "audio-cleanup",
+) -> Job:
+    return Job(name=name, cron=f"{minute} {hour} * * *", run=cleanup)

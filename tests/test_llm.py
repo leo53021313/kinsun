@@ -19,7 +19,7 @@ def test_to_contents_maps_roles():
 def test_fake_satisfies_protocol():
     class FakeLLM:
         def generate(self, *, system_prompt: str, messages: list[Message]) -> str:
-            return f"回應：{messages[-1].text}"
+            return f"回應：{messages[-1].content}"
 
     client: LLMClient = FakeLLM()
     assert client.generate(system_prompt="s", messages=[Message("user", "嗨")]) == "回應：嗨"

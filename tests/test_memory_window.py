@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from kinsun.memory.store import previous_day_bounds
+from kinsun.memory.shortterm import previous_day_bounds
 
 TPE = timezone(timedelta(hours=8))
 

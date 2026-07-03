@@ -5,7 +5,7 @@ import pytest
 
 from kinsun.accounts.models import ConsentBy, InviteRole, Role
 from kinsun.accounts.service import AccountService, InviteError
-from tests.fakes import FakeAccountRepository
+from tests.fakes import FakeAccountStore
 
 TPE = timezone(timedelta(hours=8))
 NOW = datetime(2026, 6, 29, 10, 0, tzinfo=TPE)
@@ -20,7 +20,7 @@ def _service(repo, *, now=NOW):
 
 
 def test_create_elder_makes_primary_guardian():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     assert elder.name == "阿公"
@@ -31,7 +31,7 @@ def test_create_elder_makes_primary_guardian():
 
 
 def test_generate_invite_sets_ttl_and_limit():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
@@ -42,7 +42,7 @@ def test_generate_invite_sets_ttl_and_limit():
 
 
 def test_redeem_elder_binds_line():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
@@ -53,7 +53,7 @@ def test_redeem_elder_binds_line():
 
 
 def test_redeem_guardian_adds_relation():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
@@ -66,14 +66,14 @@ def test_redeem_guardian_adds_relation():
 
 
 def test_redeem_unknown_code():
-    svc = _service(FakeAccountRepository())
+    svc = _service(FakeAccountStore())
     with pytest.raises(InviteError) as exc:
         svc.redeem_invite("nope", "U-x", consent_by=ConsentBy.SELF)
     assert exc.value.reason == "not_found"
 
 
 def test_redeem_twice_is_used():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
@@ -84,7 +84,7 @@ def test_redeem_twice_is_used():
 
 
 def test_redeem_expired():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
@@ -96,7 +96,7 @@ def test_redeem_expired():
 
 
 def test_guardian_redeem_does_not_create_elder_consent():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
@@ -106,7 +106,7 @@ def test_guardian_redeem_does_not_create_elder_consent():
 
 
 def test_guardian_redeem_does_not_resurrect_revoked_consent():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv_e = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
@@ -120,7 +120,7 @@ def test_guardian_redeem_does_not_resurrect_revoked_consent():
 
 
 def test_revoke_consent_sets_revoked():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
@@ -130,7 +130,7 @@ def test_revoke_consent_sets_revoked():
 
 
 def test_guardians_of_sorted_and_permissions():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
@@ -144,7 +144,7 @@ def test_guardians_of_sorted_and_permissions():
 
 
 def test_get_elder():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     assert svc.get_elder(elder.elder_id).name == "阿公"
@@ -152,7 +152,7 @@ def test_get_elder():
 
 
 def test_is_consented_elder_lifecycle():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     svc = _service(repo)
     assert svc.is_consented_elder("U-elder") is False
     elder = svc.create_elder("U-son", "兒子", "阿公")
@@ -166,14 +166,14 @@ def test_is_consented_elder_lifecycle():
 def test_is_consented_elder_bound_without_consent():
     from kinsun.accounts.models import Elder
 
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     svc = _service(repo)
     repo.save_elder(Elder("e1", "阿公", "U-elder"))
     assert svc.is_consented_elder("U-elder") is False
 
 
 def test_preview_invite_valid_and_not_found():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
@@ -185,7 +185,7 @@ def test_preview_invite_valid_and_not_found():
 
 
 def test_preview_invite_expired():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
@@ -194,7 +194,7 @@ def test_preview_invite_expired():
 
 
 def test_preview_invite_used():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
@@ -203,7 +203,7 @@ def test_preview_invite_used():
 
 
 def test_elders_managed_by():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     svc = _service(repo)
     assert svc.elders_managed_by("U-son") == []
     elder = svc.create_elder("U-son", "兒子", "阿公")
@@ -212,7 +212,7 @@ def test_elders_managed_by():
 
 
 def test_guardian_line_ids_in_escalation_order():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv_elder = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
@@ -223,13 +223,13 @@ def test_guardian_line_ids_in_escalation_order():
 
 
 def test_guardian_line_ids_unbound_elder_returns_empty():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     svc = _service(repo)
     assert svc.guardian_line_ids("U-nobody") == []
 
 
 def test_guardian_line_ids_only_primary():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv_elder = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
@@ -238,7 +238,7 @@ def test_guardian_line_ids_only_primary():
 
 
 def test_create_elder_uses_repo_transaction():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     # create_elder 同時寫 elder 與 elder_guardian，且兩者皆落地
@@ -249,7 +249,7 @@ def test_create_elder_uses_repo_transaction():
 def test_elder_by_line():
     from kinsun.accounts.models import Elder
 
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     repo.save_elder(Elder("e1", "阿公", "U-elder"))
     svc = _service(repo)
     assert svc.elder_by_line("U-elder").elder_id == "e1"
@@ -257,7 +257,7 @@ def test_elder_by_line():
 
 
 def test_guardian_line_ids_of_elder_by_id():
-    repo = FakeAccountRepository()
+    repo = FakeAccountStore()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)

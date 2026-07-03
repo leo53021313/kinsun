@@ -1,4 +1,4 @@
-from kinsun.binding.gate import ConsentGate
+from kinsun.binding.gate import AllowAllGate, ConsentGate
 
 
 class _Checker:
@@ -19,3 +19,9 @@ def test_gate_delegates_to_checker():
 
 def test_gate_fail_open_on_error():
     assert ConsentGate(_Checker(boom=True)).allows("U-1") is True
+
+
+def test_allow_all_gate_always_allows():
+    gate = AllowAllGate()
+    assert gate.allows("U-1") is True
+    assert gate.allows("") is True

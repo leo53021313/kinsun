@@ -8,8 +8,12 @@ from typing import Protocol
 class LineMessenger(Protocol):
     def get_audio(self, message_id: str) -> bytes: ...
     def reply_text(self, reply_token: str, text: str) -> None: ...
-    def push_text(self, user_id: str, text: str) -> None: ...
-    def display_name(self, user_id: str) -> str: ...
+    def push_text(self, line_user_id: str, text: str) -> None: ...
+    def display_name(self, line_user_id: str) -> str: ...
+    def link_rich_menu(self, line_user_id: str, rich_menu_id: str) -> None: ...
+    def reply_voice(
+        self, reply_token: str, audio_url: str, duration_ms: int, text: str | None
+    ) -> None: ...
 
 
 class LineApiMessenger:
@@ -18,6 +22,7 @@ class LineApiMessenger:
     def __init__(self, access_token: str) -> None:
         from linebot.v3.messaging import (
             ApiClient,
+            AudioMessage,
             Configuration,
             MessagingApi,
             MessagingApiBlob,
@@ -28,6 +33,7 @@ class LineApiMessenger:
 
         self._configuration = Configuration(access_token=access_token)
         self._ApiClient = ApiClient
+        self._AudioMessage = AudioMessage
         self._MessagingApi = MessagingApi
         self._MessagingApiBlob = MessagingApiBlob
         self._PushMessageRequest = PushMessageRequest
@@ -49,20 +55,35 @@ class LineApiMessenger:
                 )
             )
 
-    def push_text(self, user_id: str, text: str) -> None:
+    def push_text(self, line_user_id: str, text: str) -> None:
         with self._ApiClient(self._configuration) as api_client:
             api = self._MessagingApi(api_client)
             api.push_message(
                 self._PushMessageRequest(
-                    to=user_id,
+                    to=line_user_id,
                     messages=[self._TextMessage(text=text)],
                 )
             )
 
-    def display_name(self, user_id: str) -> str:
+    def display_name(self, line_user_id: str) -> str:
         try:
             with self._ApiClient(self._configuration) as api_client:
                 api = self._MessagingApi(api_client)
-                return api.get_profile(user_id).display_name
+                return api.get_profile(line_user_id).display_name
         except Exception:  # noqa: BLE001
             return ""
+
+    def link_rich_menu(self, line_user_id: str, rich_menu_id: str) -> None:
+        with self._ApiClient(self._configuration) as api_client:
+            api = self._MessagingApi(api_client)
+            api.link_rich_menu_id_to_user(line_user_id, rich_menu_id)
+
+    def reply_voice(
+        self, reply_token: str, audio_url: str, duration_ms: int, text: str | None
+    ) -> None:
+        messages = [self._AudioMessage(original_content_url=audio_url, duration=duration_ms)]
+        if text is not None:
+            messages.append(self._TextMessage(text=text))
+        with self._ApiClient(self._configuration) as api_client:
+            api = self._MessagingApi(api_client)
+            api.reply_message(self._ReplyMessageRequest(reply_token=reply_token, messages=messages))

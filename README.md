@@ -95,7 +95,17 @@ uv run pre-commit install   # 啟用 commit 前自動檢查（ruff lint/format�
 4. 用 ngrok 之類工具把 `https://<你的網域>/line/webhook` 設為 LINE 的 Webhook URL，對 LINE 官方帳號傳語音即可收到金孫回覆（dev 期 ASR 為 mock 文字）。
 
 > 真實 ASR：在 DGX 啟動 [`services/asr`](services/asr/)，並把 `.env` 改為 `ASR_BACKEND=dgx`、`ASR_ENDPOINT=http://<dgx>:8001/transcribe`。
-> 台語 TTS 服務骨架見 [`services/tts`](services/tts/)（待接 DGX）。
+>
+> 真實 TTS：在 DGX 啟動 [`services/tts`](services/tts/)（CosyVoice 3，程式碼已實作，**尚待 DGX 實機驗證**），
+> 應用層 `.env` 改為 `TTS_BACKEND=dgx`、`TTS_ENDPOINT=http://<dgx>:8002/synthesize`；另可選填
+> `TTS_TIMEOUT_SECONDS`（合成逾時秒數，預設 `30`）、`TTS_REPLY_TEXT`（`true`＝語音＋文字、`false`＝只回語音，預設 `true`）。
+> 語音回覆會把音檔上傳 Supabase Storage 取得公開 URL 供 LINE 播放，需另設
+> `SUPABASE_URL`、`SUPABASE_SERVICE_KEY`（Supabase 專案 URL 與 service key）、
+> `AUDIO_BUCKET`（bucket 名稱，預設 `tts-audio`）、`AUDIO_RETENTION_DAYS`（音檔保留天數，預設 `2`，逾期由每日排程清理）、
+> `AUDIO_UPLOAD_TIMEOUT_SECONDS`（上傳逾時秒數，預設 `10`）。
+>
+> ⚠️ **一次性設定**：需先在 [Supabase 後台](https://supabase.com/dashboard) 手動建立一個名為 `tts-audio`
+> （或對應 `AUDIO_BUCKET` 設定值）的**公開（Public）Storage bucket**，音檔才能以公開 URL 供 LINE 播放。
 
 執行測試（全離線、不需 GPU/金鑰；雲端整合測試需 `KINSUN_IT=1` + 真金鑰才會跑）：
 
@@ -147,3 +157,31 @@ PYTHONPATH=src uv run python -m kinsun.rag.ingest --reset --source hpa_elder_hea
 ```powershell
 $env:PYTHONPATH="src"; uv run python -m kinsun.rag.ingest --reset --source hpa_elder_health --max-pages 30
 ```
+
+## 家屬端 LIFF（開發 / 部署）
+
+家屬端網頁採 React + Vite + TypeScript，置於 [`frontend/`](frontend/)，由後端 FastAPI 同源供應於 `/liff`。
+
+### 開發
+1. 後端：`uv run uvicorn --app-dir src "kinsun.app:build_app" --factory --reload --port 8000`
+2. 前端：`npm --prefix frontend install` 後 `npm --prefix frontend run dev`（dev 會把 `/api` proxy 到本機後端）。
+3. 在 `frontend/.env` 填 `VITE_LIFF_ID`（複製自 `frontend/.env.example`）。
+
+### 部署
+1. `npm --prefix frontend install && npm --prefix frontend run build` 產出 `frontend/dist`，後端才會供應 `/liff`。
+2. 在 LINE Developers 建一個與 Messaging API **同 provider** 的 LINE Login channel + LIFF app，endpoint 指向 `https://<host>/liff`。
+3. 後端 `.env` 設 `LIFF_CHANNEL_ID`（該 Login channel ID）；前端 `VITE_LIFF_ID` 設 LIFF ID。
+
+### 家屬圖文選單（Rich Menu，可選）
+
+讓已綁定家屬在 LINE 底部有「開啟家屬儀表板」按鈕。
+
+1. 準備一張選單圖（2500×843、≤1MB、png/jpeg）。
+2. 佈建（對真 LINE 執行一次）：
+   ```bash
+   LINE_CHANNEL_ACCESS_TOKEN=... LIFF_ID=<你的 LIFF ID> \
+   PYTHONPATH=src uv run python -m kinsun.channels.line.richmenu <image_path>
+   ```
+   會印出 `rich_menu_id`。
+3. 把它設為後端環境變數 `RICH_MENU_ID`。之後家屬一綁定（建立長輩或兌換家屬邀請碼）即自動獲得選單。
+   `RICH_MENU_ID` 未設則此功能停用、綁定照常。

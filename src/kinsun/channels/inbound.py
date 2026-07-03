@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from kinsun.llm import LLMError
-from kinsun.memory.store import MemoryError
+from kinsun.memory.shortterm import MemoryError
+from kinsun.observability.store import TraceStore, safe_record
 from kinsun.speech.asr import ASRError
+from kinsun.speech.tts import TtsResult
 
 logger = logging.getLogger("kinsun.inbound")
 
@@ -21,28 +24,120 @@ BIND_FIRST_PROMPT = (
 
 @dataclass(frozen=True)
 class InboundMessage:
-    """通道中立的入站訊息。kind ∈ text/audio/other；reply 為綁定好的回覆 handle。"""
+    """通道中立的入站訊息。kind ∈ text/audio/other；reply 為綁定好的回覆 handle，
+    reply_voice 為語音回覆 handle（url、duration_ms、text）。
+    trace_id／audio_url 供觀測鏈路與音檔回放（無觀測時為空字串）。"""
 
-    session_id: str
+    line_user_id: str
     kind: str
     text: str
     audio: bytes
     reply: Callable[[str], None]
+    reply_voice: Callable[[str, int, str | None], None] | None = None
+    trace_id: str = ""
+    audio_url: str = ""
 
 
-def dispatch(msg: InboundMessage, *, pipeline, binding, gate) -> None:
+@dataclass(frozen=True)
+class DeliveryOutcome:
+    """回覆實際送出的形式：voice（含公開音檔 URL）或 text。"""
+
+    kind: str
+    audio_url: str = ""
+
+
+class VoiceReplyDelivery:
+    """把 TtsResult 發成 LINE 回覆：有音檔→上傳→語音（可附文字）；否則→文字泡泡。
+    上傳或語音回覆失敗一律退回文字，絕不讓回覆消失。
+    show_transcript：debug 用，在文字泡泡最前面附上本輪 ASR 辨識到的長者原話
+    （只進文字泡泡、不進語音合成）。"""
+
+    def __init__(self, publisher, include_text: bool, show_transcript: bool = False) -> None:
+        self._publisher = publisher
+        self._include_text = include_text
+        self._show_transcript = show_transcript
+
+    def _compose_text(self, result: TtsResult, *, include_reply: bool) -> str | None:
+        # debug 模式：「辨識：…」空一行「回復：…」；非 debug 就只回覆文字。
+        if self._show_transcript and result.transcript:
+            parts = [f"辨識：{result.transcript}"]
+            if include_reply:
+                parts.append(f"回復：{result.text}")
+            return "\n\n".join(parts)
+        return result.text if include_reply else None
+
+    def deliver(self, msg: InboundMessage, result: TtsResult) -> DeliveryOutcome:
+        if result.audio is None or self._publisher is None or msg.reply_voice is None:
+            msg.reply(self._compose_text(result, include_reply=True) or result.text)
+            return DeliveryOutcome(kind="text")
+        try:
+            url = self._publisher.publish(result.audio, content_type="audio/mp4")
+            text = self._compose_text(result, include_reply=self._include_text)
+            msg.reply_voice(url, result.duration_ms, text)
+            return DeliveryOutcome(kind="voice", audio_url=url)
+        except Exception:  # noqa: BLE001 - 任何失敗都退回文字
+            logger.warning("語音回覆失敗，退回文字泡泡")
+            msg.reply(self._compose_text(result, include_reply=True) or result.text)
+            return DeliveryOutcome(kind="text")
+
+
+def dispatch(
+    msg: InboundMessage,
+    *,
+    pipeline,
+    binding,
+    gate,
+    voice=None,
+    traces: TraceStore | None = None,
+    timer: Callable[[], float] = time.monotonic,
+) -> None:
     if msg.kind == "text":
-        reply = binding.handle(msg.session_id, msg.text)
+        reply = binding.handle(msg.line_user_id, msg.text)
         msg.reply(reply if reply is not None else NON_AUDIO_PROMPT)
         return
     if msg.kind != "audio":
         msg.reply(NON_AUDIO_PROMPT)
         return
-    if not gate.allows(msg.session_id):
+    if not gate.allows(msg.line_user_id):
         msg.reply(BIND_FIRST_PROMPT)
         return
     try:
-        result = pipeline.process(msg.audio, session_id=msg.session_id)
-        msg.reply(result.text)
-    except (ASRError, LLMError, MemoryError):
+        result = pipeline.process(
+            msg.audio,
+            line_user_id=msg.line_user_id,
+            trace_id=msg.trace_id,
+            audio_url=msg.audio_url,
+        )
+        started = timer()
+        if voice is not None:
+            # 「or」容忍測試替身回 None（既有 _SpyVoice 類 fake）。
+            outcome = voice.deliver(msg, result) or DeliveryOutcome(kind="text")
+        else:
+            msg.reply(result.text)
+            outcome = DeliveryOutcome(kind="text")
+        _record_reply(traces, msg, outcome, started, timer)
+    except (ASRError, LLMError, MemoryError) as exc:
+        logger.warning("語音管線失敗（回退提示）：%s: %s", type(exc).__name__, exc)
         msg.reply(FALLBACK_PROMPT)
+
+
+def _record_reply(
+    traces: TraceStore | None,
+    msg: InboundMessage,
+    outcome: DeliveryOutcome,
+    started: float,
+    timer: Callable[[], float],
+) -> None:
+    if traces is None or not msg.trace_id:
+        return
+    latency_ms = int((timer() - started) * 1000)
+    safe_record(
+        lambda: traces.record_reply(
+            trace_id=msg.trace_id,
+            line_user_id=msg.line_user_id,
+            kind=outcome.kind,
+            status="ok",
+            latency_ms=latency_ms,
+            audio_url=outcome.audio_url,
+        )
+    )

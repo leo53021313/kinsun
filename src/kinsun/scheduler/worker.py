@@ -5,41 +5,50 @@ CLI：PYTHONPATH=src uv run python -m kinsun.scheduler
 
 from __future__ import annotations
 
+import logging
 import os
 import time
+import uuid
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from kinsun.accounts.repository import PgAccountRepository
 from kinsun.accounts.service import AccountService
+from kinsun.accounts.store import PgAccountStore
 from kinsun.agent import CareAgent
-from kinsun.appointment.facts import AppointmentFacts
-from kinsun.appointment.jobs import build_appointment_reminder_job
-from kinsun.appointment.service import AppointmentService
-from kinsun.appointment.store import PgAppointmentStore
+from kinsun.appointments.facts import AppointmentFacts
+from kinsun.appointments.jobs import build_appointment_reminder_job
+from kinsun.appointments.service import AppointmentService
+from kinsun.appointments.store import PgAppointmentStore
+from kinsun.audio.publisher import build_audio_publisher
 from kinsun.channels.line.messenger import LineApiMessenger
-from kinsun.config import Settings, load_settings
+from kinsun.config import Settings, load_dotenv, load_settings
 from kinsun.db import Database, ensure_schema
 from kinsun.llm import GeminiClient
-from kinsun.longterm.consolidation import run_consolidation
-from kinsun.longterm.store import Mem0LongTermStore
-from kinsun.medication.facts import MedicationFacts
-from kinsun.medication.jobs import build_medication_slot_job
-from kinsun.medication.models import MedicationSlot
-from kinsun.medication.store import PgMedicationStore
-from kinsun.mem0_factory import build_mem0_memory
-from kinsun.memory.store import PgMemoryStore
+from kinsun.medications.facts import MedicationFacts
+from kinsun.medications.jobs import build_medication_slot_job
+from kinsun.medications.models import MedicationSlot
+from kinsun.medications.store import PgMedicationStore
+from kinsun.memory.longterm.consolidation import run_consolidation
+from kinsun.memory.longterm.mem0_factory import build_mem0_memory
+from kinsun.memory.longterm.store import Mem0LongTermStore
+from kinsun.memory.recall import MemoryContext
+from kinsun.memory.shortterm import PgMemoryStore
+from kinsun.observability.jobs import build_observability_cleanup_job
+from kinsun.observability.store import PgTraceStore
 from kinsun.proactive.jobs import (
     GREETING_INTENT,
     INACTIVITY_INTENT,
     build_greeting_job,
     build_inactivity_job,
 )
-from kinsun.recall import MemoryContext
-from kinsun.scheduler.jobs import build_consolidation_job
+from kinsun.reports.reminders import PgReminderLogStore, safe_record
+from kinsun.reports.summaries import PgConversationSummaryStore, summarize_day
+from kinsun.scheduler.jobs import build_audio_cleanup_job, build_consolidation_job
 from kinsun.scheduler.scheduler import Scheduler
 from kinsun.scheduler.state import PgScheduleStateStore
+
+logger = logging.getLogger("kinsun.scheduler.worker")
 
 
 def build_scheduler(
@@ -56,13 +65,15 @@ def build_scheduler(
     gemini = GeminiClient(
         api_key=settings.gemini_api_key,
         model=settings.gemini_model,
-        timeout=settings.llm_timeout_seconds,
+        timeout=settings.gemini_timeout_seconds,
     )
     long_term = Mem0LongTermStore(build_mem0_memory(settings), top_k=settings.longterm_top_k)
-    accounts = AccountService(PgAccountRepository(db), clock=clock)
+    accounts = AccountService(PgAccountStore(db), clock=clock)
     med_store = PgMedicationStore(db)
     appt_store = PgAppointmentStore(db)
     appointments = AppointmentService(appt_store)
+    reminder_logs = PgReminderLogStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex)
+    summaries = PgConversationSummaryStore(db, clock=clock)
     context = MemoryContext(
         long_term,
         facts=[
@@ -72,30 +83,53 @@ def build_scheduler(
     )
     agent = CareAgent(gemini, memory, context)
     messenger = LineApiMessenger(settings.line_channel_access_token)
+    traces = PgTraceStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex)
 
-    def run_one(session_id: str) -> None:
-        run_consolidation(session_id, short_term=memory, long_term=long_term)
+    def _record_push(line_user_id: str, kind: str, content: str) -> None:
+        # 主動推播補記 reminder_logs：查得到綁定長輩才記（觀測用，失敗不影響推播）。
+        elder = accounts.elder_by_line(line_user_id)
+        if elder is not None:
+            safe_record(reminder_logs.record, elder.elder_id, kind, content)
 
-    def greet_one(session_id: str) -> None:
-        messenger.push_text(session_id, agent.proactive(session_id, GREETING_INTENT))
+    def run_one(line_user_id: str) -> None:
+        run_consolidation(line_user_id, short_term=memory, long_term=long_term)
+        try:
+            summarize_day(
+                line_user_id,
+                short_term=memory,
+                summarizer=gemini,
+                summaries=summaries,
+                clock=clock,
+            )
+        except Exception:  # noqa: BLE001 - 摘要失敗不影響整理與其他長輩
+            logger.warning("對話摘要失敗 session=%s", line_user_id)
 
-    def care_one(session_id: str) -> None:
-        messenger.push_text(session_id, agent.proactive(session_id, INACTIVITY_INTENT))
+    def greet_one(line_user_id: str) -> None:
+        content = agent.proactive(line_user_id, GREETING_INTENT)
+        messenger.push_text(line_user_id, content)
+        _record_push(line_user_id, "proactive-greeting", content)
+
+    def care_one(line_user_id: str) -> None:
+        content = agent.proactive(line_user_id, INACTIVITY_INTENT)
+        messenger.push_text(line_user_id, content)
+        _record_push(line_user_id, "proactive-care", content)
 
     jobs = [
         build_consolidation_job(
-            sessions=memory.sessions, run_one=run_one, hour=settings.consolidation_hour
+            sessions=memory.sessions,
+            run_one=run_one,
+            hour=settings.longterm_consolidation_hour,
         ),
         build_greeting_job(
-            sessions=memory.sessions, greet_one=greet_one, hour=settings.greeting_hour
+            sessions=memory.sessions, greet_one=greet_one, hour=settings.proactive_greeting_hour
         ),
         build_inactivity_job(
             sessions=memory.sessions,
             last_active=memory.last_active,
             clock=clock,
-            threshold_seconds=settings.inactivity_days * 86400,
+            threshold_seconds=settings.proactive_inactivity_days * 86400,
             care_one=care_one,
-            hour=settings.inactivity_hour,
+            hour=settings.proactive_inactivity_hour,
         ),
     ]
     med_slots = [
@@ -110,10 +144,11 @@ def build_scheduler(
                 slot=slot,
                 meds_at_slot=lambda s=slot: med_store.list_for_slot(s),
                 lookup_elder=accounts.get_elder,
-                is_consented=accounts.is_consented_elder,
+                is_consented_elder=accounts.is_consented_elder,
                 push=messenger.push_text,
                 hour=hour,
                 name=name,
+                record=reminder_logs.record,
             )
         )
     jobs.append(
@@ -122,12 +157,41 @@ def build_scheduler(
             today=lambda: clock().date().isoformat(),
             tomorrow=lambda: (clock().date() + timedelta(days=1)).isoformat(),
             lookup_elder=accounts.get_elder,
-            is_consented=accounts.is_consented_elder,
+            is_consented_elder=accounts.is_consented_elder,
             guardian_line_ids=accounts.guardian_line_ids_of_elder,
             push=messenger.push_text,
             hour=settings.appointment_reminder_hour,
+            record=reminder_logs.record,
         )
     )
+    if settings.tts_backend == "dgx":
+        publisher = build_audio_publisher(settings, clock=clock, new_id=lambda: uuid.uuid4().hex)
+        jobs.append(
+            build_audio_cleanup_job(
+                cleanup=lambda: publisher.cleanup(retention_days=settings.audio_retention_days),
+                hour=settings.longterm_consolidation_hour,
+            )
+        )
+    jobs.append(
+        build_observability_cleanup_job(
+            purge=lambda: traces.purge_older_than(
+                clock().timestamp() - settings.admin_retention_days * 86400
+            ),
+            hour=settings.longterm_consolidation_hour,
+        )
+    )
+    # 進站音檔與 TTS 音檔同樣走過期清理；有 Supabase 憑證即啟用。
+    if settings.supabase_url and settings.supabase_service_key:
+        inbound_audio = build_audio_publisher(
+            settings, clock=clock, new_id=lambda: uuid.uuid4().hex, prefix="inbound"
+        )
+        jobs.append(
+            build_audio_cleanup_job(
+                cleanup=lambda: inbound_audio.cleanup(retention_days=settings.audio_retention_days),
+                hour=settings.longterm_consolidation_hour,
+                name="inbound-audio-cleanup",
+            )
+        )
     state = PgScheduleStateStore(db, tz)
     return Scheduler(jobs, clock, state), db
 
@@ -139,13 +203,16 @@ def serve(scheduler: Scheduler, *, tick_seconds: int) -> None:
 
 
 def main() -> int:
+    load_dotenv()
     settings = load_settings(os.environ)
     tz = ZoneInfo(settings.timezone)
     scheduler, db = build_scheduler(settings, clock=lambda: datetime.now(tz))
     print(
         f"排程器啟動：每 {settings.scheduler_tick_seconds}s 檢查；"
-        f"整理 {settings.consolidation_hour}:00、問候 {settings.greeting_hour}:00、"
-        f"失聯關心 {settings.inactivity_hour}:00（{settings.inactivity_days} 天門檻）。"
+        f"整理 {settings.longterm_consolidation_hour}:00、"
+        f"問候 {settings.proactive_greeting_hour}:00、"
+        f"失聯關心 {settings.proactive_inactivity_hour}:00"
+        f"（{settings.proactive_inactivity_days} 天門檻）。"
     )
     try:
         serve(scheduler, tick_seconds=settings.scheduler_tick_seconds)
