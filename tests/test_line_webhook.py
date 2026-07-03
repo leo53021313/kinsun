@@ -122,7 +122,14 @@ class _DenyGate:
 
 
 def _make_client(
-    parser, messenger, asr=None, memory=None, binding=None, gate=None, raise_server_exceptions=True
+    parser,
+    messenger,
+    asr=None,
+    memory=None,
+    binding=None,
+    gate=None,
+    raise_server_exceptions=True,
+    text_input_enabled=False,
 ):
     pipeline = VoicePipeline(
         asr=asr or MockAsrClient("阿公早安"),
@@ -138,6 +145,7 @@ def _make_client(
         messenger=messenger,
         binding=binding or _NullBinding(),
         gate=gate or _AllowGate(),
+        text_input_enabled=text_input_enabled,
     )
     return TestClient(app, raise_server_exceptions=raise_server_exceptions)
 
@@ -186,6 +194,30 @@ def test_text_message_routes_to_binding():
 def test_text_non_binding_falls_back_to_prompt():
     messenger = FakeMessenger()
     client = _make_client(FakeParser([_text_event("閒聊")]), messenger, binding=_StubBinding(None))
+    client.post("/line/webhook", content=b"{}", headers={"X-Line-Signature": "x"})
+    assert messenger.replies == [("rt-2", NON_AUDIO_PROMPT)]
+
+
+def test_text_input_flag_on_runs_pipeline():
+    messenger = FakeMessenger()
+    client = _make_client(
+        FakeParser([_text_event("哈囉", "U-7")]),
+        messenger,
+        binding=_NullBinding(),
+        text_input_enabled=True,
+    )
+    resp = client.post("/line/webhook", content=b"{}", headers={"X-Line-Signature": "x"})
+    assert resp.status_code == 200
+    assert messenger.replies == [("rt-2", "你說的是：哈囉")]
+
+
+def test_text_input_flag_off_falls_back_to_prompt():
+    messenger = FakeMessenger()
+    client = _make_client(
+        FakeParser([_text_event("哈囉", "U-7")]),
+        messenger,
+        binding=_NullBinding(),
+    )
     client.post("/line/webhook", content=b"{}", headers={"X-Line-Signature": "x"})
     assert messenger.replies == [("rt-2", NON_AUDIO_PROMPT)]
 
