@@ -2,8 +2,11 @@ import { useState } from "react";
 import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
 
 import { getAdminKey, setAdminKey } from "./api";
+import { EldersPage } from "./pages/EldersPage";
+import { ElderTimelinePage } from "./pages/ElderTimelinePage";
 import { MessagesPage } from "./pages/MessagesPage";
 import { OverviewPage } from "./pages/OverviewPage";
+import { TraceDetailPage } from "./pages/TraceDetailPage";
 
 function KeyForm({ onSubmit }: { onSubmit: () => void }) {
   const [value, setValue] = useState("");
@@ -29,10 +32,6 @@ function KeyForm({ onSubmit }: { onSubmit: () => void }) {
   );
 }
 
-function Placeholder({ title }: { title: string }) {
-  return <p>{title}（建置中）</p>;
-}
-
 export function App() {
   const [hasKey, setHasKey] = useState(() => getAdminKey() !== null);
   if (!hasKey) return <KeyForm onSubmit={() => setHasKey(true)} />;
@@ -50,9 +49,9 @@ export function App() {
         <Routes>
           <Route path="/" element={<OverviewPage />} />
           <Route path="/messages" element={<MessagesPage />} />
-          <Route path="/elders" element={<Placeholder title="長輩清單" />} />
-          <Route path="/elders/:elderId" element={<Placeholder title="長輩時間軸" />} />
-          <Route path="/traces/:traceId" element={<Placeholder title="單輪鏈路" />} />
+          <Route path="/elders" element={<EldersPage />} />
+          <Route path="/elders/:elderId" element={<ElderTimelinePage />} />
+          <Route path="/traces/:traceId" element={<TraceDetailPage />} />
         </Routes>
       </main>
     </BrowserRouter>
