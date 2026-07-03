@@ -40,6 +40,7 @@ from kinsun.memory.longterm.mem0_factory import build_mem0_memory
 from kinsun.memory.longterm.store import Mem0LongTermStore
 from kinsun.memory.recall import MemoryContext
 from kinsun.memory.shortterm import PgMemoryStore
+from kinsun.observability.store import PgTraceStore
 from kinsun.pipeline import VoicePipeline
 from kinsun.reports.reminders import PgReminderLogStore
 from kinsun.safety.classifier import LlmRiskClassifier
@@ -92,6 +93,18 @@ def build_app() -> FastAPI:
     risk_events = PgRiskEventStore(
         db, clock=lambda: datetime.now(tz), new_id=lambda: uuid.uuid4().hex
     )
+    traces = PgTraceStore(db, clock=lambda: datetime.now(tz), new_id=lambda: uuid.uuid4().hex)
+    # 進站音檔託管：有 Supabase 憑證就啟用（獨立於 TTS 後端選擇）。
+    inbound_audio = (
+        build_audio_publisher(
+            settings,
+            clock=lambda: datetime.now(tz),
+            new_id=lambda: uuid.uuid4().hex,
+            prefix="inbound",
+        )
+        if settings.supabase_url and settings.supabase_service_key
+        else None
+    )
     reminder_logs = PgReminderLogStore(
         db, clock=lambda: datetime.now(tz), new_id=lambda: uuid.uuid4().hex
     )
@@ -102,6 +115,8 @@ def build_app() -> FastAPI:
         detector=RiskDetector(LlmRiskClassifier(gemini)),
         notifier=LineGuardianNotifier(accounts, messenger),
         risk_events=risk_events,
+        traces=traces,
+        model_name=settings.gemini_model,
     )
     binding_sessions = PgBindingSessionStore(db)
     medication_menu = MedicationMenu(
@@ -144,6 +159,8 @@ def build_app() -> FastAPI:
         binding=binding,
         gate=gate,
         voice=voice,
+        traces=traces,
+        inbound_audio=inbound_audio,
         on_shutdown=db.close,
     )
     verifier = LineIdTokenVerifier(settings.liff_channel_id, settings.liff_timeout_seconds)
