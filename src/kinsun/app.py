@@ -53,6 +53,7 @@ from kinsun.safety.events import PgRiskEventStore
 from kinsun.safety.notifier import LineGuardianNotifier
 from kinsun.speech.asr import build_asr_client
 from kinsun.speech.tts import build_tts_client
+from kinsun.tools.clock import CURRENT_TIME_SPEC, build_current_time_handler
 from kinsun.tools.health_rag import HEALTH_RAG_SPEC, build_health_rag_handler
 from kinsun.tools.registry import ToolRegistry
 from kinsun.tools.weather import WEATHER_SPEC, build_weather_handler
@@ -96,6 +97,7 @@ def build_app() -> FastAPI:
     messenger = LineApiMessenger(settings.line_channel_access_token)
     registry = ToolRegistry()
     registry.register(WEATHER_SPEC, build_weather_handler())
+    registry.register(CURRENT_TIME_SPEC, build_current_time_handler(lambda: datetime.now(tz)))
     rag_store = PgVectorStore(db)
     rag_embedder = GeminiEmbeddingModel(
         api_key=settings.gemini_api_key,
