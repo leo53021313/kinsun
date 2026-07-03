@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import StrEnum
 
+RAG_EMBEDDING_DIMENSIONS = 768
+
 
 class SourceType(StrEnum):
     GOVERNMENT = "government"
@@ -67,6 +69,12 @@ class SafetyLevel(StrEnum):
     UNSUPPORTED = "unsupported"
 
 
+class CrawlStatus(StrEnum):
+    SUCCESS = "success"
+    SKIPPED = "skipped"
+    FAILED = "failed"
+
+
 @dataclass(frozen=True)
 class Source:
     source_id: str
@@ -80,6 +88,27 @@ class Source:
     approved_for_rag: bool
     allowed_domains: tuple[str, ...] = field(default_factory=tuple)
     notes: str = ""
+
+
+@dataclass(frozen=True)
+class RagDocument:
+    document_id: str
+    source_id: str
+    url: str
+    title: str
+    publisher: str
+    text: str
+    content_hash: str
+    source_type: SourceType
+    language: Language
+    topic: str
+    audience: Audience
+    medical_scope: MedicalScope
+    trust_level: TrustLevel
+    copyright_status: CopyrightStatus
+    published_at: date | None
+    updated_at: date | None
+    retrieved_at: date
 
 
 @dataclass(frozen=True)
@@ -116,6 +145,7 @@ class SearchResult:
     chunk: DocumentChunk
     score: float
     matched_terms: tuple[str, ...] = field(default_factory=tuple)
+    retrieval_method: str = "keyword"
 
 
 @dataclass(frozen=True)
@@ -146,3 +176,12 @@ class IngestionAuditLog:
     status: str
     error_message: str | None
     operator_or_job_id: str
+
+
+@dataclass(frozen=True)
+class IngestionSummary:
+    source_id: str
+    document_count: int
+    chunk_count: int
+    skipped_count: int
+    failed_count: int
