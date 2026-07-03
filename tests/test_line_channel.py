@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from kinsun.channels.line.channel import LineChannel
+from tests.fakes import FakeTraceStore
 
 
 class _Messenger:
@@ -89,3 +90,56 @@ def test_inbound_binds_reply_voice_to_reply_token():
     msg = LineChannel(messenger).inbound(_audio_event())
     msg.reply_voice("http://x/a.m4a", 500, "文字")
     assert messenger.voice == [("rt-1", "http://x/a.m4a", 500, "文字")]
+
+
+class _StubAudioPublisher:
+    def __init__(self, url="https://x/in.m4a", fail=False):
+        self.url = url
+        self.fail = fail
+
+    def publish(self, audio, *, content_type):
+        if self.fail:
+            raise RuntimeError("上傳失敗")
+        return self.url
+
+
+def test_audio_inbound_records_webhook_event_and_uploads():
+    traces = FakeTraceStore()
+    channel = LineChannel(
+        _Messenger(),
+        traces=traces,
+        inbound_audio=_StubAudioPublisher(),
+        new_id=lambda: "trace-1",
+    )
+    msg = channel.inbound(_audio_event())
+    assert msg.trace_id == "trace-1"
+    assert msg.audio_url == "https://x/in.m4a"
+    assert len(traces.webhook_events) == 1
+    assert traces.webhook_events[0].trace_id == "trace-1"
+    assert traces.webhook_events[0].line_user_id == "U-1"
+    assert traces.webhook_events[0].message_type == "audio"
+
+
+def test_audio_upload_failure_leaves_url_empty():
+    channel = LineChannel(
+        _Messenger(),
+        traces=FakeTraceStore(),
+        inbound_audio=_StubAudioPublisher(fail=True),
+        new_id=lambda: "trace-1",
+    )
+    # 上傳失敗不中斷對話，URL 留空
+    assert channel.inbound(_audio_event()).audio_url == ""
+
+
+def test_text_inbound_records_webhook_event():
+    traces = FakeTraceStore()
+    channel = LineChannel(_Messenger(), traces=traces, new_id=lambda: "trace-2")
+    msg = channel.inbound(_text_event())
+    assert msg.trace_id == "trace-2"
+    assert traces.webhook_events[0].message_type == "text"
+
+
+def test_channel_without_traces_keeps_working():
+    msg = LineChannel(_Messenger()).inbound(_text_event())
+    assert msg is not None
+    assert msg.trace_id != ""  # 仍會產生 trace_id 供管線使用

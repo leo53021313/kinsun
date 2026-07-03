@@ -1,7 +1,8 @@
 """音檔發佈：把 TTS 音檔上傳 Supabase Storage 公開 bucket，回公開 URL。
 
 標準庫 urllib（不加 supabase SDK）；service key 走環境變數。
-路徑帶日期資料夾 tts/{yyyymmdd}/，清理只刪過期資料夾。
+路徑帶日期資料夾 {prefix}/{yyyymmdd}/（prefix 預設 tts，進站音檔用 inbound），
+清理只刪過期資料夾。
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ class SupabaseAudioPublisher:
         timeout: float,
         clock: Callable[[], datetime],
         new_id: Callable[[], str],
+        prefix: str = "tts",
     ) -> None:
         self._base = base_url.rstrip("/")
         self._key = service_key
@@ -42,9 +44,10 @@ class SupabaseAudioPublisher:
         self._timeout = timeout
         self._clock = clock
         self._new_id = new_id
+        self._prefix = prefix.strip("/")
 
     def _object_path(self, name: str) -> str:
-        return f"tts/{self._clock().strftime('%Y%m%d')}/{name}"
+        return f"{self._prefix}/{self._clock().strftime('%Y%m%d')}/{name}"
 
     def publish(self, audio: bytes, *, content_type: str) -> str:
         path = self._object_path(f"{self._new_id()}.m4a")
@@ -73,7 +76,7 @@ class SupabaseAudioPublisher:
 
     def _list_date_folders(self) -> list[str]:
         list_url = f"{self._base}/storage/v1/object/list/{self._bucket}"
-        body = json.dumps({"prefix": "tts/", "limit": 1000}).encode("utf-8")
+        body = json.dumps({"prefix": f"{self._prefix}/", "limit": 1000}).encode("utf-8")
         request = urllib.request.Request(
             list_url,
             data=body,
@@ -88,9 +91,9 @@ class SupabaseAudioPublisher:
         return [r["name"] for r in rows if isinstance(r, dict) and "name" in r]
 
     def _list_files(self, folder: str) -> list[str]:
-        """列出 tts/{folder}/ 前綴下的所有物件，回傳完整路徑（bucket 內 key）。"""
+        """列出 {prefix}/{folder}/ 下的所有物件，回傳完整路徑（bucket 內 key）。"""
         list_url = f"{self._base}/storage/v1/object/list/{self._bucket}"
-        prefix = f"tts/{folder}/"
+        prefix = f"{self._prefix}/{folder}/"
         body = json.dumps({"prefix": prefix, "limit": 1000}).encode("utf-8")
         request = urllib.request.Request(
             list_url,
@@ -131,7 +134,11 @@ class SupabaseAudioPublisher:
 
 
 def build_audio_publisher(
-    settings, *, clock: Callable[[], datetime], new_id: Callable[[], str]
+    settings,
+    *,
+    clock: Callable[[], datetime],
+    new_id: Callable[[], str],
+    prefix: str = "tts",
 ) -> SupabaseAudioPublisher:
     if not settings.supabase_url or not settings.supabase_service_key:
         raise AudioPublishError("TTS_BACKEND=dgx 需設定 SUPABASE_URL 與 SUPABASE_SERVICE_KEY")
@@ -142,4 +149,5 @@ def build_audio_publisher(
         timeout=settings.audio_upload_timeout_seconds,
         clock=clock,
         new_id=new_id,
+        prefix=prefix,
     )

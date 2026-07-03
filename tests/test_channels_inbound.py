@@ -10,6 +10,7 @@ from kinsun.channels.inbound import (
 )
 from kinsun.speech.asr import ASRError
 from kinsun.speech.tts import TtsResult
+from tests.fakes import FakeTraceStore
 
 
 class _Replies:
@@ -26,7 +27,7 @@ class _Pipeline:
         self._boom = boom
         self.calls = []
 
-    def process(self, audio, *, line_user_id):
+    def process(self, audio, *, line_user_id, trace_id="", audio_url=""):
         self.calls.append((audio, line_user_id))
         if self._boom is not None:
             raise self._boom
@@ -55,7 +56,7 @@ class _VoicePipeline:
     def __init__(self, result):
         self._result = result
 
-    def process(self, audio, *, line_user_id):
+    def process(self, audio, *, line_user_id, trace_id="", audio_url=""):
         return self._result
 
 
@@ -238,3 +239,63 @@ def test_deliver_no_transcript_when_disabled():
         TtsResult(text="好喔", audio=b"A", duration_ms=100, transcript="今天天氣真好"),
     )
     assert cap.voice_sent == [("http://x/a.m4a", 100, "好喔")]
+
+
+def test_dispatch_records_voice_reply():
+    traces = FakeTraceStore()
+    cap = _VoiceCapture()
+    msg = InboundMessage(
+        "U-1",
+        "audio",
+        "",
+        b"xy",
+        cap.reply,
+        cap.reply_voice,
+        trace_id="t1",
+        audio_url="https://x/in.m4a",
+    )
+    result = TtsResult(text="回覆", audio=b"\x00", duration_ms=800)
+    voice = VoiceReplyDelivery(_Publisher(url="https://x/out.m4a"), include_text=True)
+    dispatch(
+        msg,
+        pipeline=_VoicePipeline(result),
+        binding=_Binding(None),
+        gate=_Gate(True),
+        voice=voice,
+        traces=traces,
+        timer=iter([0.0, 0.2]).__next__,
+    )
+    assert len(traces.replies) == 1
+    assert traces.replies[0].trace_id == "t1"
+    assert traces.replies[0].kind == "voice"
+    assert traces.replies[0].audio_url == "https://x/out.m4a"
+    assert traces.replies[0].latency_ms == 200
+
+
+def test_dispatch_records_text_reply_when_no_voice():
+    traces = FakeTraceStore()
+    r = _Replies()
+    msg = InboundMessage("U-1", "audio", "", b"xy", r, trace_id="t2")
+    dispatch(
+        msg,
+        pipeline=_VoicePipeline(TtsResult(text="純文字")),
+        binding=_Binding(None),
+        gate=_Gate(True),
+        traces=traces,
+        timer=iter([0.0, 0.1]).__next__,
+    )
+    assert traces.replies[0].kind == "text"
+    assert traces.replies[0].audio_url == ""
+
+
+def test_dispatch_without_trace_id_records_nothing():
+    traces = FakeTraceStore()
+    r = _Replies()
+    dispatch(
+        _msg("audio", audio=b"x", reply=r),
+        pipeline=_VoicePipeline(TtsResult(text="hi")),
+        binding=_Binding(None),
+        gate=_Gate(True),
+        traces=traces,
+    )
+    assert traces.replies == []  # 無 trace_id（非觀測路徑）不記

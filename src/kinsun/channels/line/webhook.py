@@ -26,12 +26,21 @@ logger = logging.getLogger("kinsun.webhook")
 __all__ = ["BIND_FIRST_PROMPT", "FALLBACK_PROMPT", "NON_AUDIO_PROMPT", "create_app"]
 
 
-def _handle_events(events, *, channel: LineChannel, pipeline, binding, gate, voice) -> None:
+def _handle_events(
+    events, *, channel: LineChannel, pipeline, binding, gate, voice, traces=None
+) -> None:
     for event in events:
         try:
             msg = channel.inbound(event)
             if msg is not None:
-                dispatch(msg, pipeline=pipeline, binding=binding, gate=gate, voice=voice)
+                dispatch(
+                    msg,
+                    pipeline=pipeline,
+                    binding=binding,
+                    gate=gate,
+                    voice=voice,
+                    traces=traces,
+                )
         except Exception:  # noqa: BLE001
             # 單一事件失敗不可讓 webhook 回 500：LINE 會重送整包事件，
             # 導致重複跑管線、重複發家屬危急通知。記錄後繼續下一個事件。
@@ -46,9 +55,11 @@ def create_app(
     binding,
     gate,
     voice=None,
+    traces=None,
+    inbound_audio=None,
     on_shutdown: Callable[[], None] | None = None,
 ) -> FastAPI:
-    channel = LineChannel(messenger)
+    channel = LineChannel(messenger, traces=traces, inbound_audio=inbound_audio)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -75,6 +86,7 @@ def create_app(
             binding=binding,
             gate=gate,
             voice=voice,
+            traces=traces,
         )
         return {"ok": True}
 

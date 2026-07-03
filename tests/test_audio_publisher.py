@@ -140,3 +140,20 @@ def test_build_requires_supabase_config():
 
     with pytest.raises(AudioPublishError):
         build_audio_publisher(_S(), clock=lambda: _NOW, new_id=lambda: "x")
+
+
+def test_object_path_uses_prefix(monkeypatch):
+    from datetime import datetime
+
+    from kinsun.audio.publisher import SupabaseAudioPublisher
+
+    publisher = SupabaseAudioPublisher(
+        "https://sb.example",
+        "key",
+        "bucket",
+        timeout=1.0,
+        clock=lambda: datetime(2026, 7, 3, 12, 0),
+        new_id=lambda: "abc",
+        prefix="inbound",
+    )
+    assert publisher._object_path("abc.m4a") == "inbound/20260703/abc.m4a"
