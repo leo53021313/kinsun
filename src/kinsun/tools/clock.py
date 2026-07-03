@@ -10,8 +10,7 @@ from kinsun.llm import ToolSpec
 CURRENT_TIME_SPEC = ToolSpec(
     name="get_current_time",
     description=(
-        "取得現在的日期、星期與時間（台灣時間）。"
-        "當長輩問現在幾點、今天幾號、今天星期幾時使用。"
+        "取得現在的日期、星期與時間（台灣時間）。當長輩問現在幾點、今天幾號、今天星期幾時使用。"
     ),
     parameters={"type": "object", "properties": {}},
 )
