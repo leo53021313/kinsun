@@ -1,0 +1,141 @@
+from datetime import datetime, timedelta, timezone
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from kinsun.web.admin_api import create_admin_api_router
+from tests.fakes import FakeTraceStore
+
+TPE = timezone(timedelta(hours=8))
+NOW = datetime(2026, 7, 3, 12, 0, tzinfo=TPE)
+TODAY_TS = datetime(2026, 7, 3, 8, 0, tzinfo=TPE).timestamp()
+
+
+def _client(traces=None, *, admin_api_key="secret"):
+    app = FastAPI()
+    app.include_router(
+        create_admin_api_router(
+            admin_api_key=admin_api_key,
+            traces=traces or FakeTraceStore(),
+            clock=lambda: NOW,
+        )
+    )
+    return TestClient(app)
+
+
+def _auth():
+    return {"X-Admin-Key": "secret"}
+
+
+def test_missing_key_returns_401():
+    assert _client().get("/api/admin/overview").status_code == 401
+
+
+def test_wrong_key_returns_401():
+    res = _client().get("/api/admin/overview", headers={"X-Admin-Key": "wrong"})
+    assert res.status_code == 401
+
+
+def test_unconfigured_key_returns_503():
+    res = _client(admin_api_key="").get("/api/admin/overview", headers=_auth())
+    assert res.status_code == 503
+
+
+def test_overview_shape():
+    traces = FakeTraceStore()
+    traces.seed_turn("U1", "user", "hi", TODAY_TS)
+    res = _client(traces).get("/api/admin/overview", headers=_auth())
+    assert res.status_code == 200
+    body = res.json()
+    assert body["turn_count"] == 1
+    assert body["active_elder_count"] == 1
+    assert {s["stage"] for s in body["stages"]} == {"asr", "llm", "tts"}
+    assert isinstance(body["hourly_turns"], list)
+    assert isinstance(body["generated_at"], float)
+
+
+def test_list_elders():
+    traces = FakeTraceStore()
+    traces.seed_elder("e1", "阿公", "U1")
+    traces.seed_turn("U1", "user", "hi", TODAY_TS)
+    res = _client(traces).get("/api/admin/elders", headers=_auth())
+    assert res.status_code == 200
+    assert res.json()["elders"] == [
+        {
+            "elder_id": "e1",
+            "name": "阿公",
+            "line_user_id": "U1",
+            "last_active_at": TODAY_TS,
+        }
+    ]
+
+
+def test_messages_feed_desc_with_after():
+    traces = FakeTraceStore()
+    traces.seed_elder("e1", "阿公", "U1")
+    traces.seed_turn("U1", "user", "早安", TODAY_TS)
+    traces.seed_risk("U1", 2, "頭暈", TODAY_TS + 10, trace_id="t1")
+    res = _client(traces).get(
+        "/api/admin/messages", params={"after": TODAY_TS - 1}, headers=_auth()
+    )
+    assert res.status_code == 200
+    messages = res.json()["messages"]
+    assert [m["kind"] for m in messages] == ["risk", "turn"]
+    assert messages[0]["trace_id"] == "t1"
+    assert messages[0]["tier"] == 2
+
+
+def test_messages_limit_validation():
+    res = _client().get("/api/admin/messages", params={"limit": 9999}, headers=_auth())
+    assert res.status_code == 422
+
+
+def test_timeline_for_elder():
+    traces = FakeTraceStore()
+    traces.seed_elder("e1", "阿公", "U1")
+    traces.seed_turn("U1", "user", "早安", TODAY_TS)
+    res = _client(traces).get(
+        "/api/admin/elders/e1/timeline", params={"date": "2026-07-03"}, headers=_auth()
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["name"] == "阿公"
+    assert body["date"] == "2026-07-03"
+    assert [i["kind"] for i in body["items"]] == ["turn"]
+
+
+def test_timeline_unknown_elder_404():
+    res = _client().get("/api/admin/elders/nope/timeline", headers=_auth())
+    assert res.status_code == 404
+
+
+def test_timeline_bad_date_400():
+    traces = FakeTraceStore()
+    traces.seed_elder("e1", "阿公", "U1")
+    res = _client(traces).get(
+        "/api/admin/elders/e1/timeline", params={"date": "07/03"}, headers=_auth()
+    )
+    assert res.status_code == 400
+
+
+def test_trace_detail_and_404():
+    traces = FakeTraceStore()
+    traces.seed_elder("e1", "阿公", "U1")
+    traces.now = TODAY_TS
+    traces.record_asr_call(
+        trace_id="t1",
+        line_user_id="U1",
+        status="ok",
+        latency_ms=5,
+        transcript="嗨",
+        source_audio_url="",
+        error_message="",
+    )
+    ok = _client(traces).get("/api/admin/traces/t1", headers=_auth())
+    assert ok.status_code == 200
+    body = ok.json()
+    assert body["elder_name"] == "阿公"
+    assert body["asr_call"]["transcript"] == "嗨"
+    assert body["webhook_event"] is None
+    missing = _client(traces).get("/api/admin/traces/nope", headers=_auth())
+    assert missing.status_code == 404
