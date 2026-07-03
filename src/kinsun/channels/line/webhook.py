@@ -27,7 +27,15 @@ __all__ = ["BIND_FIRST_PROMPT", "FALLBACK_PROMPT", "NON_AUDIO_PROMPT", "create_a
 
 
 def _handle_events(
-    events, *, channel: LineChannel, pipeline, binding, gate, voice, traces=None
+    events,
+    *,
+    channel: LineChannel,
+    pipeline,
+    binding,
+    gate,
+    voice,
+    traces=None,
+    text_input_enabled: bool = False,
 ) -> None:
     for event in events:
         try:
@@ -40,6 +48,7 @@ def _handle_events(
                     gate=gate,
                     voice=voice,
                     traces=traces,
+                    text_input_enabled=text_input_enabled,
                 )
         except Exception:  # noqa: BLE001
             # 單一事件失敗不可讓 webhook 回 500：LINE 會重送整包事件，
@@ -57,6 +66,7 @@ def create_app(
     voice=None,
     traces=None,
     inbound_audio=None,
+    text_input_enabled: bool = False,
     on_shutdown: Callable[[], None] | None = None,
 ) -> FastAPI:
     channel = LineChannel(messenger, traces=traces, inbound_audio=inbound_audio)
@@ -87,6 +97,7 @@ def create_app(
             gate=gate,
             voice=voice,
             traces=traces,
+            text_input_enabled=text_input_enabled,
         )
         return {"ok": True}
 
