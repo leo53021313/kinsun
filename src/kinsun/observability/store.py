@@ -18,9 +18,11 @@ from kinsun.observability.models import (
     AsrCall,
     ElderActivity,
     FeedItem,
+    HourlyCount,
     LlmCall,
     OverviewStats,
     Reply,
+    StageStats,
     TimelineItem,
     Trace,
     TraceRiskEvent,
@@ -404,4 +406,51 @@ class PgTraceStore:
         )
         return [ElderActivity(*r) for r in rows]
 
-    # get_overview_stats／purge_older_than 由後續任務實作。
+    def get_overview_stats(
+        self,
+        *,
+        today_start: float,
+        hourly_start: float,
+    ) -> OverviewStats:
+        turn_row = self._db.query_one(
+            "SELECT COUNT(*), COUNT(DISTINCT line_user_id) FROM turns WHERE created_at >= %s",
+            (today_start,),
+        )
+        risk_row = self._db.query_one(
+            "SELECT COUNT(*) FROM risk_events WHERE created_at >= %s", (today_start,)
+        )
+        token_row = self._db.query_one(
+            "SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0) "
+            "FROM llm_calls WHERE created_at >= %s",
+            (today_start,),
+        )
+        stages = []
+        for stage, table in (("asr", "asr_calls"), ("llm", "llm_calls"), ("tts", "tts_calls")):
+            # 表名為固定白名單、非外部輸入，f-string 無注入風險。
+            row = self._db.query_one(
+                f"SELECT COUNT(*), COUNT(*) FILTER (WHERE status <> 'ok'), "
+                f"COALESCE(AVG(latency_ms), 0), "
+                f"COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms), 0) "
+                f"FROM {table} WHERE created_at >= %s",
+                (today_start,),
+            )
+            stages.append(StageStats(stage, row[0], row[1], float(row[2]), float(row[3])))
+        hourly_rows = self._db.query(
+            "SELECT floor(created_at / 3600) * 3600 AS hour_start, COUNT(*) "
+            "FROM turns WHERE created_at >= %s GROUP BY 1 ORDER BY 1",
+            (hourly_start,),
+        )
+        return OverviewStats(
+            turn_count=turn_row[0],
+            risk_event_count=risk_row[0],
+            active_elder_count=turn_row[1],
+            llm_input_tokens=int(token_row[0]),
+            llm_output_tokens=int(token_row[1]),
+            stages=stages,
+            hourly_turns=[HourlyCount(float(h), n) for h, n in hourly_rows],
+        )
+
+    def purge_older_than(self, cutoff: float) -> None:
+        # 表名為固定白名單、非外部輸入，f-string 無注入風險。
+        for table in ("webhook_events", "asr_calls", "llm_calls", "tts_calls", "replies"):
+            self._db.execute(f"DELETE FROM {table} WHERE created_at < %s", (cutoff,))

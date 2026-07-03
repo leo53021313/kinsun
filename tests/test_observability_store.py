@@ -151,3 +151,55 @@ def test_list_elders_with_last_active():
     by_id = {e.elder_id: e for e in elders}
     assert by_id["e1"].last_active_at == 9.0
     assert by_id["e2"].last_active_at is None
+
+
+def test_overview_stats_counts_and_stage_errors():
+    store = FakeTraceStore()
+    store.seed_turn("U1", "user", "a", 100.0)
+    store.seed_turn("U1", "assistant", "b", 101.0)
+    store.seed_turn("U2", "user", "c", 102.0)
+    store.seed_turn("U1", "user", "舊資料", 1.0)  # today_start 之前，不計
+    store.seed_risk("U1", 2, "頭暈", 105.0)
+    store.now = 110.0
+    store.record_asr_call(
+        trace_id="t1",
+        line_user_id="U1",
+        status="ok",
+        latency_ms=100,
+        transcript="a",
+        source_audio_url="",
+        error_message="",
+    )
+    store.record_asr_call(
+        trace_id="t2",
+        line_user_id="U2",
+        status="error",
+        latency_ms=300,
+        transcript="",
+        source_audio_url="",
+        error_message="逾時",
+    )
+    stats = store.get_overview_stats(today_start=50.0, hourly_start=50.0)
+    assert stats.turn_count == 3
+    assert stats.active_elder_count == 2
+    assert stats.risk_event_count == 1
+    asr = next(s for s in stats.stages if s.stage == "asr")
+    assert (asr.call_count, asr.error_count) == (2, 1)
+    assert asr.avg_latency_ms == 200.0
+    assert sum(h.turn_count for h in stats.hourly_turns) == 3
+
+
+def test_purge_only_removes_old_observability_rows():
+    store = FakeTraceStore()
+    store.now = 10.0
+    store.record_reply(
+        trace_id="t1", line_user_id="U1", kind="text", status="ok", latency_ms=1, audio_url=""
+    )
+    store.now = 90.0
+    store.record_reply(
+        trace_id="t2", line_user_id="U1", kind="text", status="ok", latency_ms=1, audio_url=""
+    )
+    store.seed_turn("U1", "user", "對話不清", 10.0)
+    store.purge_older_than(50.0)
+    assert [r.trace_id for r in store.replies] == ["t2"]
+    assert len(store.turns) == 1  # 既有表不在清理範圍
