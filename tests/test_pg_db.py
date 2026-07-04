@@ -90,4 +90,5 @@ def test_ensure_schema_concurrent_no_deadlock():
     for t in threads:
         t.join(timeout=30.0)
 
-    assert not errors, f"併發 ensure_schema 出現錯誤（含死結）：{[type(e).__name__ for e in errors]}"
+    names = [type(e).__name__ for e in errors]
+    assert not errors, f"併發 ensure_schema 出現錯誤（含死結）：{names}"
