@@ -13,36 +13,22 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from kinsun.accounts.service import AccountService
-from kinsun.accounts.store import PgAccountStore
-from kinsun.agent import CareAgent
-from kinsun.appointments.facts import AppointmentFacts
 from kinsun.appointments.jobs import build_appointment_reminder_job
-from kinsun.appointments.service import AppointmentService
-from kinsun.appointments.store import PgAppointmentStore
 from kinsun.audio.publisher import build_audio_publisher
-from kinsun.channels.line.messenger import LineApiMessenger
+from kinsun.composition import assemble_core, build_externals
 from kinsun.config import Settings, load_dotenv, load_settings
-from kinsun.db import Database, ensure_schema
-from kinsun.llm import GeminiClient
-from kinsun.medications.facts import MedicationFacts
+from kinsun.db import Database
 from kinsun.medications.jobs import build_medication_slot_job
 from kinsun.medications.models import MedicationSlot
-from kinsun.medications.store import PgMedicationStore
 from kinsun.memory.longterm.consolidation import run_consolidation
-from kinsun.memory.longterm.mem0_factory import build_mem0_memory
-from kinsun.memory.longterm.store import Mem0LongTermStore
-from kinsun.memory.recall import MemoryContext
-from kinsun.memory.shortterm import PgMemoryStore
 from kinsun.observability.jobs import build_observability_cleanup_job
-from kinsun.observability.store import PgTraceStore
 from kinsun.proactive.jobs import (
     GREETING_INTENT,
     INACTIVITY_INTENT,
     build_greeting_job,
     build_inactivity_job,
 )
-from kinsun.reports.reminders import PgReminderLogStore, safe_record
+from kinsun.reports.reminders import safe_record
 from kinsun.reports.summaries import PgConversationSummaryStore, summarize_day
 from kinsun.scheduler.jobs import build_audio_cleanup_job, build_consolidation_job
 from kinsun.scheduler.scheduler import Scheduler
@@ -55,35 +41,20 @@ def build_scheduler(
     settings: Settings, *, clock: Callable[[], datetime]
 ) -> tuple[Scheduler, Database]:
     tz = ZoneInfo(settings.timezone)
-    ensure_schema(settings.database_url)
-    db = Database.open(settings.database_url)
-    memory = PgMemoryStore(
-        db,
-        clock=lambda: datetime.now(tz),
-        max_turns=settings.memory_max_turns,
-    )
-    gemini = GeminiClient(
-        api_key=settings.gemini_api_key,
-        model=settings.gemini_model,
-        timeout=settings.gemini_timeout_seconds,
-    )
-    long_term = Mem0LongTermStore(build_mem0_memory(settings), top_k=settings.longterm_top_k)
-    accounts = AccountService(PgAccountStore(db), clock=clock)
-    med_store = PgMedicationStore(db)
-    appt_store = PgAppointmentStore(db)
-    appointments = AppointmentService(appt_store)
-    reminder_logs = PgReminderLogStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex)
+    externals = build_externals(settings)
+    core = assemble_core(settings, externals, clock=clock)
+    db = core.db
+    memory = core.memory
+    long_term = core.long_term
+    gemini = core.gemini
+    accounts = core.accounts
+    med_store = core.med_store
+    appt_store = core.appt_store
+    reminder_logs = core.reminder_logs
+    agent = core.agent
+    messenger = core.messenger
+    traces = core.traces
     summaries = PgConversationSummaryStore(db, clock=clock)
-    context = MemoryContext(
-        long_term,
-        facts=[
-            MedicationFacts(accounts, med_store),
-            AppointmentFacts(accounts, appointments, clock=clock),
-        ],
-    )
-    agent = CareAgent(gemini, memory, context)
-    messenger = LineApiMessenger(settings.line_channel_access_token)
-    traces = PgTraceStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex)
 
     def _record_push(line_user_id: str, kind: str, content: str) -> None:
         # 主動推播補記 reminder_logs：查得到綁定長輩才記（觀測用，失敗不影響推播）。

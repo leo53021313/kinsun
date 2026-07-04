@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import pathlib
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -53,3 +54,13 @@ def test_assemble_core_injects_two_fact_providers_in_order():
 def test_build_tool_registry_registers_three_tools():
     registry = build_tool_registry(clock=_clock, rag_service=object())
     assert len(registry.specs()) == 3
+
+
+def test_care_agent_constructed_only_in_composition():
+    src = pathlib.Path(__file__).resolve().parents[1] / "src" / "kinsun"
+    offenders = [
+        path.relative_to(src).as_posix()
+        for path in src.rglob("*.py")
+        if "CareAgent(" in path.read_text(encoding="utf-8") and path.name != "composition.py"
+    ]
+    assert offenders == [], f"CareAgent 只能在 composition.py 建構，違規：{offenders}"
