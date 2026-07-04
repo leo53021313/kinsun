@@ -66,3 +66,17 @@ _Avoid_: 警報等級、嚴重度
 **主動關懷（Proactive care）**：
 由排程觸發、agent 主動開啟的對話（早安問候、失聯關心、用藥提醒）。
 _Avoid_: 推播、通知
+
+### 組裝（Composition）
+
+**組裝根（Composition Root）**：
+把設定與各元件接成可服務程式的入口；本專案有兩個——`build_app`（FastAPI 網站）與 `build_scheduler`（排程 worker）。兩者共用的物件圖只在一處組裝，各自只補自己專屬（edge-specific）的接線。
+_Avoid_: 進入點、main
+
+**外部相依（Externals）**：
+會連線或需真實金鑰的重量級 adapter：資料庫連線、Gemini、Mem0 長期記憶、LINE 傳訊。由 `build_externals(settings)` 建一次；因為建構當下即連網，不進單元測試。
+_Avoid_: client、資源
+
+**組裝核心（Core）**：
+兩個組裝根共用的物件圖：帳號、短期記憶、注入情境、裝滿工具的 CareAgent、traces、reminder_logs 等。由 `assemble_core(settings, externals, *, clock)` 純接線組出——不連網、可離線用假 Externals 測——回傳 frozen dataclass。root-specific 的 pipeline／jobs 不屬於 Core。
+_Avoid_: 容器、context、god object
