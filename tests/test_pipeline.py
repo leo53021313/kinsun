@@ -202,6 +202,21 @@ def test_pipeline_records_tts_degradation_and_still_replies_text():
     assert traces.tts_calls[0].status == "error"
 
 
+class _NonTtsErrorTts:
+    def synthesize(self, text):
+        raise RuntimeError("unexpected")
+
+
+def test_pipeline_records_tts_non_ttserror_then_propagates():
+    # 統一 _span 後，tts 的非 TTSError 失敗也會留痕（再往外拋，對話行為不變）。
+    traces = FakeTraceStore()
+    with pytest.raises(RuntimeError):
+        _traced_pipeline(traces, tts=_NonTtsErrorTts()).process(
+            b"\x00", line_user_id="u1", trace_id="t1"
+        )
+    assert traces.tts_calls[0].status == "error"
+
+
 def test_pipeline_passes_trace_id_to_risk_events():
     traces = FakeTraceStore()
     risk_events = FakeRiskEventStore()
