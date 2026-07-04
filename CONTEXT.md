@@ -50,8 +50,16 @@ _Avoid_: 歷史、快取
 _Avoid_: 知識庫、向量庫
 
 **注入情境（Injected Context）**：
-每輪附加到 system prompt 的長者事實集合（長期記憶 ＋ 用藥事實 ＋ 未來其他事實），由 `MemoryContext` 組裝。
+每輪附加到 system prompt 的長者事實集合（長期記憶 ＋ 用藥事實 ＋ 未來其他事實）。為結構化型別 `InjectedContext`（`MemoryItem` 清單 ＋ 各 `FactSection`），由 `SessionMemory` 組裝、`format_injected_context` 統一排版成 prompt 字串。
 _Avoid_: prompt、記憶字串
+
+**會話記憶（SessionMemory）**：
+`CareAgent` 對「本次會話短期記憶 ＋ 情境」的單一門面（`memory/recall.py`）：`assemble(line_user_id, query) -> TurnContext` 一手包三層（今日對話 ＋ 長期記憶 ＋ 事實），`record_turn(line_user_id, *messages)` 記錄本輪。agent 不再直接碰 `MemoryStore`。
+_Avoid_: MemoryContext、context
+
+**單輪情境（TurnContext）**：
+`SessionMemory.assemble` 的回傳：`injected`（結構化注入情境，供測試斷言）＋ `history`（今日對話訊息串）＋ `system_suffix`（`injected` 排版後的 prompt 後綴，供 agent 貼上）。
+_Avoid_: prompt、bundle
 
 **用藥事實（MedicationFacts）**：
 長輩當前用藥清單，作為注入情境的一部分每輪固定帶；由 LINE 帳號解析到 elder 後查得。
