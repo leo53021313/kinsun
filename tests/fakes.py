@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 from kinsun.llm import Message
 from kinsun.medications.store import FakeMedicationStore as FakeMedicationStore
-from kinsun.memory.shortterm import previous_day_bounds
+from kinsun.memory.shortterm import FakeMemoryStore as FakeMemoryStore
 from kinsun.observability.models import (
     AsrCall,
     ElderActivity,
@@ -26,36 +26,6 @@ from kinsun.observability.models import (
 from kinsun.reports.reminders import ReminderLog
 from kinsun.reports.summaries import ConversationSummary
 from kinsun.safety.events import RiskEvent
-
-_TPE = timezone(timedelta(hours=8))
-_DEFAULT_NOW = datetime(2026, 6, 29, 3, 0, tzinfo=_TPE)
-
-
-class FakeMemoryStore:
-    """以時間戳記錄每輪對話，可模擬「今天」與「前一天」的日界查詢。"""
-
-    def __init__(self, now: datetime | None = None) -> None:
-        self._now = now or _DEFAULT_NOW
-        self._turns: dict[str, list[tuple[float, Message]]] = {}
-
-    def append(self, line_user_id: str, message: Message, *, at: datetime | None = None) -> None:
-        ts = (at or self._now).timestamp()
-        self._turns.setdefault(line_user_id, []).append((ts, message))
-
-    def recent(self, line_user_id: str) -> list[Message]:
-        midnight = self._now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
-        return [m for ts, m in self._turns.get(line_user_id, []) if ts >= midnight]
-
-    def previous_day(self, line_user_id: str) -> list[Message]:
-        start, end = previous_day_bounds(self._now)
-        return [m for ts, m in self._turns.get(line_user_id, []) if start <= ts < end]
-
-    def sessions(self) -> list[str]:
-        return sorted(self._turns)
-
-    def last_active(self, line_user_id: str) -> float | None:
-        users = [ts for ts, m in self._turns.get(line_user_id, []) if m.role == "user"]
-        return max(users) if users else None
 
 
 class FakeLongTermStore:
