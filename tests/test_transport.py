@@ -37,6 +37,15 @@ def test_get_json_propagates_transport_error_from_transport():
         get_json(transport, "http://x", timeout=5)
 
 
+def test_fake_transport_handler_dispatches_on_request():
+    def handler(method, url, data):
+        return Response(200, {}, method.encode())
+
+    transport = FakeTransport(handler=handler)
+    assert transport.request("DELETE", "http://x", timeout=5).body == b"DELETE"
+    assert transport.request("GET", "http://x", timeout=5).body == b"GET"
+
+
 class _FakeHttpResponse:
     def __init__(self, status: int, headers: dict, body: bytes) -> None:
         self.status = status

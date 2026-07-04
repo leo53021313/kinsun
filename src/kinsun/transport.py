@@ -11,9 +11,9 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 
 class TransportError(Exception):
@@ -63,8 +63,8 @@ class UrllibTransport:
             raise TransportError(f"HTTP 請求失敗：{url}：{exc}") from exc
 
 
-def read_json(response: Response) -> dict:
-    """把回應 body 解為 JSON dict；解析失敗一律 TransportError。"""
+def read_json(response: Response) -> Any:
+    """把回應 body 解為 JSON（物件或陣列）；解析失敗一律 TransportError。"""
     try:
         return json.loads(response.body)
     except (json.JSONDecodeError, ValueError, UnicodeDecodeError) as exc:
@@ -77,8 +77,8 @@ def get_json(
     *,
     timeout: float,
     headers: Mapping[str, str] | None = None,
-) -> dict:
-    """GET 並將回應解為 JSON dict。"""
+) -> Any:
+    """GET 並將回應解為 JSON。"""
     return read_json(transport.request("GET", url, headers=headers, timeout=timeout))
 
 
@@ -88,10 +88,16 @@ class FakeTransport:
     設定 `error` 可讓下一次 request 改為丟出該例外（模擬連線失敗）。
     """
 
-    def __init__(self, responses: list[Response] | None = None) -> None:
+    def __init__(
+        self,
+        responses: list[Response] | None = None,
+        *,
+        handler: Callable[[str, str, bytes | None], Response] | None = None,
+    ) -> None:
         self.calls: list[tuple[str, str, bytes | None, dict[str, str], float]] = []
         self.error: Exception | None = None
         self._responses = list(responses or [])
+        self._handler = handler
 
     def request(
         self,
@@ -105,6 +111,8 @@ class FakeTransport:
         self.calls.append((method, url, data, dict(headers or {}), timeout))
         if self.error is not None:
             raise self.error
+        if self._handler is not None:
+            return self._handler(method, url, data)
         if self._responses:
             return self._responses.pop(0)
         return Response(200, {}, b"")

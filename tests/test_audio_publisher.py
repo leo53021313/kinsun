@@ -8,32 +8,13 @@ from kinsun.audio.publisher import (
     SupabaseAudioPublisher,
     build_audio_publisher,
 )
+from kinsun.transport import FakeTransport, Response, TransportError
 
 _TPE = timezone(timedelta(hours=8))
 _NOW = datetime(2026, 7, 2, 9, 0, tzinfo=_TPE)
 
 
-def _publisher(monkeypatch, capture):
-    def fake_urlopen(req, timeout=None):
-        capture["url"] = req.full_url
-        capture["method"] = req.get_method()
-        capture["auth"] = req.headers.get("Authorization")
-        capture["ctype"] = req.headers.get("Content-type")
-        capture["body"] = req.data
-
-        class _R:
-            def read(self):
-                return b"{}"
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *a):
-                return False
-
-        return _R()
-
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+def _publisher(transport, **kwargs):
     return SupabaseAudioPublisher(
         "https://proj.supabase.co",
         "service-key",
@@ -41,86 +22,54 @@ def _publisher(monkeypatch, capture):
         timeout=10.0,
         clock=lambda: _NOW,
         new_id=lambda: "abc123",
+        transport=transport,
+        **kwargs,
     )
 
 
-def test_publish_uploads_and_returns_public_url(monkeypatch):
-    capture = {}
-    url = _publisher(monkeypatch, capture).publish(b"AUDIO", content_type="audio/mp4")
+def test_publish_uploads_and_returns_public_url():
+    transport = FakeTransport([Response(200, {}, b"{}")])
+    url = _publisher(transport).publish(b"AUDIO", content_type="audio/mp4")
     assert url == (
         "https://proj.supabase.co/storage/v1/object/public/tts-audio/tts/20260702/abc123.m4a"
     )
-    assert capture["url"] == (
+    method, call_url, data, headers, _timeout = transport.calls[0]
+    assert method == "POST"
+    assert call_url == (
         "https://proj.supabase.co/storage/v1/object/tts-audio/tts/20260702/abc123.m4a"
     )
-    assert capture["method"] == "POST"
-    assert capture["auth"] == "Bearer service-key"
-    assert capture["ctype"] == "audio/mp4"
-    assert capture["body"] == b"AUDIO"
+    assert headers["Authorization"] == "Bearer service-key"
+    assert headers["Content-Type"] == "audio/mp4"
+    assert data == b"AUDIO"
 
 
-def test_publish_http_error_raises(monkeypatch):
-    import urllib.error
-
-    def boom(req, timeout=None):
-        raise urllib.error.URLError("boom")
-
-    monkeypatch.setattr("urllib.request.urlopen", boom)
-    pub = SupabaseAudioPublisher(
-        "https://proj.supabase.co", "k", "b", timeout=10.0, clock=lambda: _NOW, new_id=lambda: "x"
-    )
+def test_publish_transport_error_raises():
+    transport = FakeTransport()
+    transport.error = TransportError("boom")
     with pytest.raises(AudioPublishError):
-        pub.publish(b"A", content_type="audio/mp4")
+        _publisher(transport).publish(b"A", content_type="audio/mp4")
 
 
-def test_cleanup_deletes_expired_date_folders(monkeypatch):
-    calls = []
-
-    def fake_urlopen(req, timeout=None):
-        method = req.get_method()
-        url = req.full_url
-        body = json.loads(req.data.decode("utf-8")) if req.data else None
-        calls.append((method, url, body))
-
-        class _R:
-            def __init__(self, payload: bytes) -> None:
-                self._payload = payload
-
-            def read(self):
-                return self._payload
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *a):
-                return False
-
+def test_cleanup_deletes_expired_date_folders():
+    def handler(method, url, data):
         if method == "POST":
-            # list 端點：依 prefix 回不同層級的內容
-            prefix = body["prefix"]
-            if prefix == "tts/":
-                # 頂層：三個日期資料夾
-                return _R(b'[{"name":"20260628"},{"name":"20260630"},{"name":"20260702"}]')
-            if prefix == "tts/20260628/":
-                return _R(b'[{"name":"a.m4a"},{"name":"b.m4a"}]')
-            if prefix == "tts/20260630/":
-                return _R(b'[{"name":"c.m4a"}]')
-            return _R(b"[]")
-        # DELETE：bulk 刪除
-        return _R(b"{}")
+            prefix = json.loads(data)["prefix"]
+            bodies = {
+                "tts/": b'[{"name":"20260628"},{"name":"20260630"},{"name":"20260702"}]',
+                "tts/20260628/": b'[{"name":"a.m4a"},{"name":"b.m4a"}]',
+                "tts/20260630/": b'[{"name":"c.m4a"}]',
+            }
+            return Response(200, {}, bodies.get(prefix, b"[]"))
+        return Response(200, {}, b"{}")  # DELETE
 
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    pub = SupabaseAudioPublisher(
-        "https://proj.supabase.co",
-        "k",
-        "tts-audio",
-        timeout=10.0,
-        clock=lambda: _NOW,
-        new_id=lambda: "x",
-    )
-    pub.cleanup(retention_days=2)  # 保留 20260701~ ；刪 0628、0630
+    transport = FakeTransport(handler=handler)
+    _publisher(transport).cleanup(retention_days=2)  # 保留 20260701~ ；刪 0628、0630
 
-    deletes = [(url, body) for method, url, body in calls if method == "DELETE"]
+    deletes = [
+        (url, json.loads(data))
+        for method, url, data, _headers, _timeout in transport.calls
+        if method == "DELETE"
+    ]
     assert deletes, "應觸發至少一次 bulk DELETE"
     for url, _ in deletes:
         assert url == "https://proj.supabase.co/storage/v1/object/tts-audio"
@@ -142,11 +91,7 @@ def test_build_requires_supabase_config():
         build_audio_publisher(_S(), clock=lambda: _NOW, new_id=lambda: "x")
 
 
-def test_object_path_uses_prefix(monkeypatch):
-    from datetime import datetime
-
-    from kinsun.audio.publisher import SupabaseAudioPublisher
-
+def test_object_path_uses_prefix():
     publisher = SupabaseAudioPublisher(
         "https://sb.example",
         "key",
