@@ -55,6 +55,31 @@ class PgConversationSummaryStore:
         return [ConversationSummary(*r) for r in rows]
 
 
+class FakeConversationSummaryStore:
+    """ConversationSummaryStore 的記憶體替身（測試用，不碰 DB）。
+
+    save 以 (line_user_id, date) 為鍵做 upsert；list_for_line_user 依 date
+    由新到舊排序，與 PgConversationSummaryStore 的 ON CONFLICT (line_user_id, date)
+    與 ORDER BY date DESC 對齊。date 為 ISO 字串故字典序即日期序。
+    created_at 一律填 0.0（Pg 由 clock 決定）；合約僅斷言 content／date／排序，
+    此欄位不影響兩者對等性。
+    """
+
+    def __init__(self) -> None:
+        self._rows: dict[tuple[str, str], str] = {}
+
+    def save(self, line_user_id: str, date: str, content: str) -> None:
+        self._rows[(line_user_id, date)] = content
+
+    def list_for_line_user(self, line_user_id: str) -> list[ConversationSummary]:
+        items = sorted(
+            ((d, c) for (s, d), c in self._rows.items() if s == line_user_id),
+            key=lambda x: x[0],
+            reverse=True,
+        )
+        return [ConversationSummary(line_user_id, d, c, 0.0) for d, c in items]
+
+
 def summarize_day(
     line_user_id: str,
     *,

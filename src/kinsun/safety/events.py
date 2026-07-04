@@ -63,3 +63,28 @@ class PgRiskEventStore:
             (line_user_id,),
         )
         return [RiskEvent(r[0], r[1], RiskTier(r[2]), r[3], r[4]) for r in rows]
+
+
+class FakeRiskEventStore:
+    """RiskEventStore 的記憶體替身（測試用，不碰 DB）。
+
+    與 PgRiskEventStore 合約對齊：list_for_line_user 以「最近先」順序回傳
+    （對應 Pg 的 ORDER BY created_at DESC）。risk_event_id 與 created_at 為
+    依記錄序號合成的值，不保證與 Pg 相同，合約不應對其斷言。trace_id 會保存於
+    recorded_trace_ids 供內省；與 Pg 相同，不經由 RiskEvent／list_for_line_user
+    對外揭露。
+    """
+
+    def __init__(self) -> None:
+        self.recorded: list[tuple[str, RiskAssessment]] = []
+        self.recorded_trace_ids: list[str | None] = []
+
+    def record(
+        self, line_user_id: str, assessment: RiskAssessment, *, trace_id: str | None = None
+    ) -> None:
+        self.recorded.append((line_user_id, assessment))
+        self.recorded_trace_ids.append(trace_id)
+
+    def list_for_line_user(self, line_user_id: str) -> list[RiskEvent]:
+        rows = [(i, s, a) for i, (s, a) in enumerate(self.recorded) if s == line_user_id]
+        return [RiskEvent(str(i), s, a.tier, a.reason, float(i)) for i, s, a in reversed(rows)]

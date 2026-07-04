@@ -31,59 +31,9 @@ def _store():
     )
 
 
-def test_record_and_get_trace_roundtrip():
-    store = _store()
-    trace_id = f"it-{uuid.uuid4().hex}"
-    line_user_id = f"it-user-{os.getpid()}"
-    store.record_webhook_event(
-        trace_id=trace_id,
-        line_user_id=line_user_id,
-        event_type="message",
-        message_type="audio",
-        payload={"source": "it"},
-    )
-    store.record_asr_call(
-        trace_id=trace_id,
-        line_user_id=line_user_id,
-        status="ok",
-        latency_ms=120,
-        transcript="整合測試",
-        source_audio_url="",
-        error_message="",
-    )
-    store.record_llm_call(
-        trace_id=trace_id,
-        line_user_id=line_user_id,
-        status="ok",
-        latency_ms=800,
-        model_name="gemini-3.1-flash-lite",
-        input_tokens=None,
-        output_tokens=None,
-        content="回覆",
-        error_message="",
-    )
-    store.record_tts_call(
-        trace_id=trace_id,
-        line_user_id=line_user_id,
-        status="ok",
-        latency_ms=300,
-        content="回覆",
-        error_message="",
-    )
-    store.record_reply(
-        trace_id=trace_id,
-        line_user_id=line_user_id,
-        kind="voice",
-        status="ok",
-        latency_ms=100,
-        audio_url="https://example.com/x.m4a",
-    )
-    trace = store.get_trace(trace_id)
-    assert trace is not None
-    assert trace.webhook_event.payload == {"source": "it"}
-    assert trace.asr_call.transcript == "整合測試"
-    assert len(trace.llm_calls) == 1
-    assert trace.reply.kind == "voice"
+# 記錄面 record_* → get_trace 往返已移到跨 adapter 合約
+# tests/test_observability_store_contract.py（pg 參數）；此處只保留查詢面
+# （feed／overview）與 purge 整合測試，留待架構候選 #7 觀測層重構再處理。
 
 
 def test_feed_overview_and_purge():

@@ -1,8 +1,4 @@
-import os
-import uuid
 from datetime import datetime, timedelta, timezone
-
-import pytest
 
 from kinsun.llm import Message
 from kinsun.reports.summaries import summarize_day
@@ -56,20 +52,3 @@ def test_summarize_day_skips_when_no_turns():
         clock=lambda: NOW,
     )
     assert summaries.list_for_line_user("u1") == []
-
-
-@pytest.mark.skipif(os.environ.get("KINSUN_IT") != "1", reason="需雲端 key")
-def test_pg_summary_upsert_and_list():
-    from kinsun.db import Database, ensure_schema
-    from kinsun.reports.summaries import PgConversationSummaryStore
-
-    url = os.environ["DATABASE_URL"]
-    ensure_schema(url)
-    sid = f"it-{uuid.uuid4().hex}"
-    store = PgConversationSummaryStore(Database.open(url), clock=lambda: NOW)
-    store.save(sid, "2026-07-10", "v1")
-    store.save(sid, "2026-07-10", "v2")  # 同日覆蓋
-    store.save(sid, "2026-07-11", "今天")
-    rows = store.list_for_line_user(sid)
-    assert [r.date for r in rows] == ["2026-07-11", "2026-07-10"]
-    assert rows[1].content == "v2"
