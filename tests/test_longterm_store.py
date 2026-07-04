@@ -1,9 +1,5 @@
 from kinsun.llm import Message
-from kinsun.memory.longterm.store import (
-    HEALTH_QUERY,
-    Mem0LongTermStore,
-    _format_memories_for_prompt,
-)
+from kinsun.memory.longterm.store import HEALTH_QUERY, Mem0LongTermStore
 
 # 比照 mem0 2.0.10：entity 參數（user_id/agent_id/run_id）不可走頂層 kwargs，必須用 filters。
 _ENTITY_PARAMS = frozenset({"user_id", "agent_id", "run_id"})
@@ -16,6 +12,10 @@ def _reject_entity_kwargs(kwargs):
             f"Top-level entity parameters {bad} are not supported in search(). "
             "Use filters={'user_id': '...'} instead."
         )
+
+
+def _texts(items):
+    return [i.text for i in items]
 
 
 class _FakeMem0:
@@ -53,17 +53,6 @@ class _ByQueryMem0:
         return entry or {"results": []}
 
 
-def test_format_empty_returns_blank():
-    assert _format_memories_for_prompt({"results": []}) == ""
-
-
-def test_format_lists_memories_with_provenance():
-    result = {"results": [{"memory": "有高血壓", "metadata": {"provenance": "self_claimed"}}]}
-    out = _format_memories_for_prompt(result)
-    assert "有高血壓" in out
-    assert "長者自述" in out
-
-
 def test_add_maps_messages_and_metadata():
     mem = _FakeMem0()
     store = Mem0LongTermStore(mem)
@@ -74,26 +63,44 @@ def test_add_maps_messages_and_metadata():
     assert metadata == {"provenance": "self_claimed"}
 
 
-def test_search_returns_formatted_string():
+def test_search_returns_memory_items():
     mem = _FakeMem0(search_return={"results": [{"memory": "喜歡下棋", "metadata": {}}]})
-    store = Mem0LongTermStore(mem)
-    assert "喜歡下棋" in store.search("興趣", "sess1")
+    items = Mem0LongTermStore(mem).search("興趣", "sess1")
+    assert _texts(items) == ["喜歡下棋"]
+
+
+def test_search_maps_provenance_label_and_date():
+    mem = _FakeMem0(
+        search_return={
+            "results": [
+                {
+                    "memory": "有高血壓",
+                    "created_at": "2026-07-04T02:30:41+00:00",
+                    "metadata": {"provenance": "self_claimed"},
+                }
+            ]
+        }
+    )
+    item = Mem0LongTermStore(mem).search("x", "sess1")[0]
+    assert item.text == "有高血壓"
+    assert item.provenance == "長者自述"
+    assert item.date == "2026-07-04"
 
 
 def test_search_scopes_by_user_id_via_filters():
     """search 必須用 filters={'user_id': ...} 與 top_k（mem0 2.0.10 契約），
     否則會被 mem0 拒絕、退化成無記憶。"""
     mem = _ByQueryMem0({"興趣": {"results": [{"id": "1", "memory": "喜歡下棋"}]}})
-    out = Mem0LongTermStore(mem, top_k=5).search("sess1", "興趣")
-    assert "喜歡下棋" in out  # 真的檢索到，沒因 API 用錯而退化成空字串
+    items = Mem0LongTermStore(mem, top_k=5).search("sess1", "興趣")
+    assert "喜歡下棋" in _texts(items)  # 真的檢索到，沒因 API 用錯而退化成空
     call = next(c for c in mem.calls if c["query"] == "興趣")
     assert call["filters"] == {"user_id": "sess1"}
     assert call["top_k"] == 5
 
 
-def test_search_failsafe_returns_blank():
+def test_search_failsafe_returns_empty_list():
     store = Mem0LongTermStore(_FakeMem0(raise_on_search=True))
-    assert store.search("x", "sess1") == ""
+    assert store.search("x", "sess1") == []
 
 
 def test_search_always_includes_health_facts():
@@ -103,9 +110,9 @@ def test_search_always_includes_health_facts():
             HEALTH_QUERY: {"results": [{"id": "2", "memory": "有高血壓，每天吃藥"}]},
         }
     )
-    out = Mem0LongTermStore(mem).search("sess1", "今天天氣")
-    assert "喜歡晴天" in out
-    assert "有高血壓" in out
+    items = Mem0LongTermStore(mem).search("sess1", "今天天氣")
+    assert "喜歡晴天" in _texts(items)
+    assert "有高血壓，每天吃藥" in _texts(items)
 
 
 def test_search_dedups_overlapping_id():
@@ -115,8 +122,8 @@ def test_search_dedups_overlapping_id():
             HEALTH_QUERY: {"results": [{"id": "1", "memory": "有高血壓"}]},
         }
     )
-    out = Mem0LongTermStore(mem).search("sess1", "頭痛")
-    assert out.count("有高血壓") == 1
+    items = Mem0LongTermStore(mem).search("sess1", "頭痛")
+    assert _texts(items).count("有高血壓") == 1
 
 
 def test_search_uses_top_k_and_health_top_k():
@@ -129,61 +136,31 @@ def test_search_uses_top_k_and_health_top_k():
 
 def test_health_search_failure_keeps_user_results():
     mem = _ByQueryMem0(
-        {
-            "頭痛": {"results": [{"id": "1", "memory": "今天頭痛"}]},
-            HEALTH_QUERY: "RAISE",
+        {"頭痛": {"results": [{"id": "1", "memory": "今天頭痛"}]}, HEALTH_QUERY: "RAISE"}
+    )
+    items = Mem0LongTermStore(mem).search("sess1", "頭痛")
+    assert "今天頭痛" in _texts(items)
+
+
+def test_search_orders_newest_first():
+    mem = _FakeMem0(
+        search_return={
+            "results": [
+                {"id": "a", "memory": "喜歡壽司", "created_at": "2026-07-03T19:01:08+00:00"},
+                {"id": "b", "memory": "喜歡麥當勞", "created_at": "2026-07-04T02:30:41+00:00"},
+            ]
         }
     )
-    out = Mem0LongTermStore(mem).search("sess1", "頭痛")
-    assert "今天頭痛" in out
+    assert _texts(Mem0LongTermStore(mem).search("sess1", "食物")) == ["喜歡麥當勞", "喜歡壽司"]
 
 
-def test_format_orders_newest_first():
-    result = {
-        "results": [
-            {"memory": "喜歡壽司", "created_at": "2026-07-03T19:01:08+00:00", "metadata": {}},
-            {"memory": "喜歡麥當勞", "created_at": "2026-07-04T02:30:41+00:00", "metadata": {}},
-        ]
-    }
-    out = _format_memories_for_prompt(result)
-    assert out.index("喜歡麥當勞") < out.index("喜歡壽司")  # 新的排在前
-
-
-def test_format_annotates_date_and_provenance():
-    result = {
-        "results": [
-            {
-                "memory": "喜歡麥當勞",
-                "created_at": "2026-07-04T02:30:41+00:00",
-                "metadata": {"provenance": "self_claimed"},
-            }
-        ]
-    }
-    out = _format_memories_for_prompt(result)
-    assert "2026-07-04" in out
-    assert "長者自述" in out
-    assert "（）" not in out
-
-
-def test_format_prefix_has_recency_rule():
-    result = {
-        "results": [
-            {"memory": "喜歡麥當勞", "created_at": "2026-07-04T02:30:41+00:00", "metadata": {}}
-        ]
-    }
-    out = _format_memories_for_prompt(result)
-    assert "以較新的記錄為準" in out
-
-
-def test_format_missing_created_at_sorts_last_no_crash():
-    result = {
-        "results": [
-            {"memory": "沒日期的事實", "metadata": {"provenance": "self_claimed"}},
-            {"memory": "喜歡麥當勞", "created_at": "2026-07-04T02:30:41+00:00", "metadata": {}},
-        ]
-    }
-    out = _format_memories_for_prompt(result)
-    assert "沒日期的事實" in out
-    assert "喜歡麥當勞" in out
-    assert out.index("喜歡麥當勞") < out.index("沒日期的事實")  # 有日期者在前
-    assert "（）" not in out  # 無日期無 provenance 不留空括號
+def test_search_missing_created_at_sorts_last():
+    mem = _FakeMem0(
+        search_return={
+            "results": [
+                {"id": "a", "memory": "沒日期的事實", "metadata": {"provenance": "self_claimed"}},
+                {"id": "b", "memory": "喜歡麥當勞", "created_at": "2026-07-04T02:30:41+00:00"},
+            ]
+        }
+    )
+    assert _texts(Mem0LongTermStore(mem).search("sess1", "x")) == ["喜歡麥當勞", "沒日期的事實"]

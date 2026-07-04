@@ -7,14 +7,9 @@ from typing import Protocol
 
 from kinsun.llm import Message
 from kinsun.memory.longterm import provenance as prov
+from kinsun.memory.models import MemoryItem
 
 logger = logging.getLogger(__name__)
-
-_PREFIX = (
-    "\n以下為這位長者的長期記憶（部分為長者自述、未必經確認，請勿當成醫療診斷）；"
-    "已由新到舊排列並附記錄日期。若前後有矛盾，請以較新的記錄為準，"
-    "並顧及長者感受、不主動糾正；日期僅供你判斷新舊，回覆時不必提及：\n"
-)
 
 # 每輪固定增補檢索：讓用藥/慢性病等穩定健康事實即使與當下話題無關也浮現。
 HEALTH_QUERY = "用藥 慢性病 過敏 回診 健康狀況"
@@ -24,7 +19,7 @@ class LongTermStore(Protocol):
     def add(
         self, line_user_id: str, messages: list[Message], *, provenance: str = "self_claimed"
     ) -> None: ...
-    def search(self, line_user_id: str, query: str, *, top_k: int = 5) -> str: ...
+    def search(self, line_user_id: str, query: str, *, top_k: int = 5) -> list[MemoryItem]: ...
 
 
 def _created_at(item: dict) -> str:
@@ -33,33 +28,16 @@ def _created_at(item: dict) -> str:
     return value if isinstance(value, str) else ""
 
 
-def _annotation(item: dict) -> str:
-    """組 provenance 標籤與日期的括號註記；兩段動態組成，皆無則回空字串。"""
-    parts = []
+def _to_memory_item(item: dict) -> MemoryItem:
+    """把 mem0 raw dict 轉為結構化 MemoryItem（來源解析為標籤、日期取 YYYY-MM-DD）。"""
+    text = item.get("memory") or item.get("text") or ""
     src = (item.get("metadata") or {}).get("provenance")
-    if src:
-        parts.append(prov.label(src))
     created_at = _created_at(item)
-    if created_at:
-        parts.append(created_at[:10])  # ISO-8601 前 10 碼即 YYYY-MM-DD
-    return f"（{'·'.join(parts)}）" if parts else ""
-
-
-def _format_memories_for_prompt(result: dict) -> str:
-    items = result.get("results") or []
-    if not items:
-        return ""
-    # 由新到舊：created_at 遞減；缺 created_at（回空字串）者排最後。
-    ordered = sorted(items, key=_created_at, reverse=True)
-    lines = []
-    for item in ordered:
-        text = item.get("memory") or item.get("text") or ""
-        if not text:
-            continue
-        lines.append(f"- {text}{_annotation(item)}")
-    if not lines:
-        return ""
-    return _PREFIX + "\n".join(lines) + "\n"
+    return MemoryItem(
+        text=text,
+        provenance=prov.label(src) if src else "",
+        date=created_at[:10] if created_at else "",  # ISO-8601 前 10 碼即 YYYY-MM-DD
+    )
 
 
 class Mem0LongTermStore:
@@ -96,8 +74,12 @@ class Mem0LongTermStore:
             out.append(item)
         return out
 
-    def search(self, line_user_id: str, query: str, *, top_k: int | None = None) -> str:
+    def search(
+        self, line_user_id: str, query: str, *, top_k: int | None = None
+    ) -> list[MemoryItem]:
         user_items = self._search_raw(query, line_user_id, top_k or self._top_k)
         health_items = self._search_raw(HEALTH_QUERY, line_user_id, self._health_top_k)
         merged = self._dedup(user_items + health_items)
-        return _format_memories_for_prompt({"results": merged})
+        # 由新到舊：created_at 遞減；缺 created_at 者排最後（與原排版排序一致）。
+        ordered = sorted(merged, key=_created_at, reverse=True)
+        return [item for item in map(_to_memory_item, ordered) if item.text]

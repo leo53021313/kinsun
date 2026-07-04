@@ -12,6 +12,7 @@ from kinsun.appointments.store import FakeAppointmentStore as FakeAppointmentSto
 from kinsun.binding.session import FakeBindingSessionStore as FakeBindingSessionStore
 from kinsun.llm import Message
 from kinsun.medications.store import FakeMedicationStore as FakeMedicationStore
+from kinsun.memory.models import MemoryItem
 from kinsun.memory.shortterm import FakeMemoryStore as FakeMemoryStore
 from kinsun.observability.store import FakeTraceStore as FakeTraceStore
 from kinsun.reports.reminders import FakeReminderLogStore as FakeReminderLogStore
@@ -21,14 +22,14 @@ from kinsun.scheduler.state import FakeScheduleStateStore as FakeScheduleStateSt
 
 
 class FakeLongTermStore:
-    def __init__(self, search_result: str = "") -> None:
+    def __init__(self, memories: list[MemoryItem] | None = None) -> None:
         self.added: list[tuple[str, list[Message], str]] = []
-        self._search_result = search_result
+        self._memories = list(memories or [])
 
     def add(
         self, line_user_id: str, messages: list[Message], *, provenance: str = "self_claimed"
     ) -> None:
         self.added.append((line_user_id, list(messages), provenance))
 
-    def search(self, line_user_id: str, query: str, *, top_k: int = 5) -> str:
-        return self._search_result
+    def search(self, line_user_id: str, query: str, *, top_k: int = 5) -> list[MemoryItem]:
+        return list(self._memories)

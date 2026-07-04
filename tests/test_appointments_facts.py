@@ -24,17 +24,16 @@ def _facts(appts):
 
 def test_injects_upcoming_sorted():
     facts = _facts([("2026-07-20", "心臟科回診"), ("2026-07-12", "眼科回診")])
-    out = facts.facts("U-elder")
-    assert "即將到來的回診" in out
-    assert out.index("2026-07-12") < out.index("2026-07-20")
-    assert "眼科回診" in out and "心臟科回診" in out
+    section = facts.facts("U-elder")
+    assert "即將到來的回診" in section.title
+    assert section.items == ["2026-07-12 眼科回診", "2026-07-20 心臟科回診"]
 
 
-def test_empty_when_no_upcoming():
+def test_none_when_no_upcoming():
     facts = _facts([("2026-07-01", "過去")])  # 早於 NOW(07-10)
-    assert facts.facts("U-elder") == ""
+    assert facts.facts("U-elder") is None
 
 
-def test_empty_when_elder_unknown():
+def test_none_when_elder_unknown():
     facts = _facts([("2026-07-20", "x")])
-    assert facts.facts("U-stranger") == ""
+    assert facts.facts("U-stranger") is None
