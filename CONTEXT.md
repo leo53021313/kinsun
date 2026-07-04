@@ -29,12 +29,16 @@ _Avoid_: 授權、許可
 ### 通道與訊息
 
 **通道（Channel）**：
-與長輩往來訊息的傳輸面。目前只有 LINE，藍圖含 web／app／電話語音。
+與長輩往來訊息的傳輸面。目前只有 LINE，藍圖含 web／app／電話語音。兩個方向皆通道中立：入站是 `InboundMessage` 型別，出站是 `OutboundChannel` 門面。
 _Avoid_: 平台、介面、端點
 
 **入站訊息（InboundMessage）**：
 通道轉接器把原始事件正規化後、與通道無關的領域型別：`line_user_id`、種類（文字／語音）、文字內容、語音 bytes，以及一個可呼叫的回覆 handle。分派邏輯只認這個型別，不碰 LINE SDK。
 _Avoid_: event、payload
+
+**出站通道（OutboundChannel）**：
+主動送訊息給長輩／家屬的通道中立門面（`channels/outbound.py`）：`send_text(line_user_id, text)`。主動關懷、提醒 jobs、危急通知皆依賴它，LINE 版 `LineOutboundChannel` 為 adapter（內部呼叫 `push_message`）。與入站的 `InboundMessage` 對稱；未來語音再於此加 `send_voice`。
+_Avoid_: Pusher、push_text、messenger
 
 **會話（Session）**：
 一位長輩的對話脈絡，以 LINE user_id 識別（即 `line_user_id`）。
