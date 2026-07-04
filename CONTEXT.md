@@ -80,3 +80,9 @@ _Avoid_: client、資源
 **組裝核心（Core）**：
 兩個組裝根共用的物件圖：帳號、短期記憶、注入情境、裝滿工具的 CareAgent、traces、reminder_logs 等。由 `assemble_core(settings, externals, *, clock)` 純接線組出——不連網、可離線用假 Externals 測——回傳 frozen dataclass。root-specific 的 pipeline／jobs 不屬於 Core。
 _Avoid_: 容器、context、god object
+
+### 測試（Testing）
+
+**合約測試（Store contract）**：
+一份行為斷言，同時參數化跑一個 seam 的兩個 adapter——`Fake<領域>Store`（離線、每次都跑）與 `Pg<領域>Store`（連真庫、`KINSUN_IT=1` 才跑）——用以證明兩個 adapter 對同一情境給出相同結果。檔名 `test_<領域>_store_contract.py`。
+_Avoid_: 整合測試（僅指 Pg 那半）、單元測試
