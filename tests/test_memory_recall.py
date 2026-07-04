@@ -1,12 +1,25 @@
-"""MemoryContext.recall：組裝長期記憶 ＋ 各事實段 → 排版字串。
+"""SessionMemory：assemble（短期記憶 ＋ 長期記憶 ＋ 事實 → TurnContext）與 record_turn。
 
-recall 的字串輸出以 format_injected_context 對照（排版逐字由 test_memory_models 釘住），
-本檔專注於「組裝」行為：哪些記憶／哪些段、順序、None／失敗段的略過。
+排版逐字由 test_memory_models 釘住；本檔專注於「組裝／記錄」行為：哪些記憶／哪些段、
+順序、None／失敗段略過、history 帶入、record_turn 逐筆寫入。
 """
 
-from kinsun.memory.models import FactSection, InjectedContext, MemoryItem, format_injected_context
-from kinsun.memory.recall import MemoryContext
+from kinsun.llm import Message
+from kinsun.memory.models import FactSection, InjectedContext, MemoryItem
+from kinsun.memory.recall import SessionMemory
 from tests.fakes import FakeLongTermStore
+
+
+class _ShortTerm:
+    def __init__(self, history=None):
+        self._history = history or []
+        self.appended = []
+
+    def recent(self, line_user_id):
+        return list(self._history)
+
+    def append(self, line_user_id, message):
+        self.appended.append((line_user_id, message))
 
 
 class _FakeFacts:
@@ -22,35 +35,37 @@ class _BoomFacts:
         raise RuntimeError("db down")
 
 
-def test_recall_includes_longterm_memories():
-    mem = MemoryItem("記憶內容")
-    ctx = MemoryContext(FakeLongTermStore(memories=[mem]))
-    assert ctx.recall("sess1", "今天好嗎") == format_injected_context(
-        InjectedContext(memories=[mem])
+def _session(short_term=None, memories=None, facts=None):
+    return SessionMemory(
+        short_term or _ShortTerm(), FakeLongTermStore(memories=memories), facts=facts
     )
 
 
-def test_recall_empty_when_no_memory_no_facts():
-    assert MemoryContext(FakeLongTermStore()).recall("sess1", "x") == ""
+def test_assemble_includes_memories_and_history():
+    mem = MemoryItem("記憶內容")
+    st = _ShortTerm([Message("user", "早安")])
+    ctx = _session(short_term=st, memories=[mem]).assemble("sess1", "今天好嗎")
+    assert ctx.injected == InjectedContext(memories=[mem])
+    assert ctx.history == [Message("user", "早安")]
 
 
-def test_recall_assembles_memories_then_sections_in_order():
-    mem = MemoryItem("長期A")
+def test_assemble_sections_in_order_omitting_none():
     s1 = FactSection("\n用藥：\n", ["A"])
     s2 = FactSection("\n回診：\n", ["B"])
-    ctx = MemoryContext(FakeLongTermStore(memories=[mem]), facts=[_FakeFacts(s1), _FakeFacts(s2)])
-    assert ctx.recall("sess1", "x") == format_injected_context(
-        InjectedContext(memories=[mem], sections=[s1, s2])
-    )
+    ctx = _session(facts=[_FakeFacts(s1), _FakeFacts(None), _FakeFacts(s2)]).assemble("s", "x")
+    assert ctx.injected.sections == [s1, s2]
 
 
-def test_recall_omits_none_sections():
+def test_assemble_skips_failing_fact_provider():
     s1 = FactSection("\n用藥：\n", ["A"])
-    ctx = MemoryContext(FakeLongTermStore(), facts=[_FakeFacts(None), _FakeFacts(s1)])
-    assert ctx.recall("s", "x") == format_injected_context(InjectedContext(sections=[s1]))
+    ctx = _session(facts=[_BoomFacts(), _FakeFacts(s1)]).assemble("s", "x")
+    assert ctx.injected.sections == [s1]
 
 
-def test_recall_skips_failing_fact_provider():
-    s1 = FactSection("\n用藥：\n", ["A"])
-    ctx = MemoryContext(FakeLongTermStore(), facts=[_BoomFacts(), _FakeFacts(s1)])
-    assert ctx.recall("s", "x") == format_injected_context(InjectedContext(sections=[s1]))
+def test_record_turn_appends_each_message():
+    st = _ShortTerm()
+    _session(short_term=st).record_turn("u1", Message("user", "嗨"), Message("assistant", "您好"))
+    assert st.appended == [
+        ("u1", Message("user", "嗨")),
+        ("u1", Message("assistant", "您好")),
+    ]

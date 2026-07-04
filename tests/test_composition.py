@@ -1,6 +1,6 @@
 """composition 的離線守門測試：不連 DB、不連網。
 
-刻意檢視 CareAgent／MemoryContext 內部欄位（`_tools`／`_context`／`_facts`）——
+刻意檢視 CareAgent／SessionMemory 內部欄位（`_tools`／`_session`／`_facts`）——
 這是「組裝形狀」的結構性守門，用來擋掉兩個組裝根再度分岐。
 """
 
@@ -47,7 +47,7 @@ def test_assemble_core_agent_has_all_three_tools():
 
 def test_assemble_core_injects_two_fact_providers_in_order():
     core = _core()
-    facts = core.agent._context._facts
+    facts = core.agent._session._facts
     assert [type(f) for f in facts] == [MedicationFacts, AppointmentFacts]
 
 

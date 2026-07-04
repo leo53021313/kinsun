@@ -30,7 +30,7 @@ from kinsun.medications.service import MedicationService
 from kinsun.medications.store import PgMedicationStore
 from kinsun.memory.longterm.mem0_factory import build_mem0_memory
 from kinsun.memory.longterm.store import Mem0LongTermStore
-from kinsun.memory.recall import MemoryContext
+from kinsun.memory.recall import SessionMemory
 from kinsun.memory.shortterm import PgMemoryStore
 from kinsun.observability.store import PgTraceStore
 from kinsun.rag.embeddings import GeminiEmbeddingModel
@@ -119,7 +119,8 @@ def assemble_core(
     appt_store = PgAppointmentStore(db)
     medications = MedicationService(med_store)
     appointments = AppointmentService(appt_store)
-    context = MemoryContext(
+    session = SessionMemory(
+        memory,
         externals.long_term,
         facts=[
             MedicationFacts(accounts, medications),
@@ -139,8 +140,7 @@ def assemble_core(
     )
     agent = CareAgent(
         externals.gemini,
-        memory,
-        context,
+        session,
         tools=build_tool_registry(clock=clock, rag_service=rag_service),
     )
     return Core(

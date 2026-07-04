@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from kinsun.llm import LLMClient, Message, ToolResult
-from kinsun.memory.recall import MemoryContext
-from kinsun.memory.shortterm import MemoryStore
+from kinsun.memory.recall import SessionMemory
 
 SYSTEM_PROMPT = (
     "你是「金孫」，一位溫暖、有耐心的台灣長輩陪伴助理。"
@@ -34,28 +33,29 @@ class CareAgent:
     def __init__(
         self,
         llm: LLMClient,
-        memory: MemoryStore,
-        context: MemoryContext,
+        session: SessionMemory,
         *,
         tools=None,
         max_tool_iters: int = 3,
     ) -> None:
         self._llm = llm
-        self._memory = memory
-        self._context = context
+        self._session = session
         self._tools = tools
         self._max_tool_iters = max_tool_iters
 
+    def _envelope(self, line_user_id: str, query: str) -> tuple[str, list[Message]]:
+        ctx = self._session.assemble(line_user_id, query)
+        return SYSTEM_PROMPT + ctx.system_suffix, ctx.history
+
     def handle(self, line_user_id: str, user_text: str) -> str:
-        system_prompt = SYSTEM_PROMPT + self._context.recall(line_user_id, user_text)
+        system_prompt, history = self._envelope(line_user_id, user_text)
         user_msg = Message("user", user_text)
-        base = [*self._memory.recent(line_user_id), user_msg]
+        base = [*history, user_msg]
         if self._tools is None:
             reply = self._llm.generate(system_prompt=system_prompt, messages=base)
         else:
             reply = self._run_tool_loop(system_prompt, base)
-        self._memory.append(line_user_id, user_msg)
-        self._memory.append(line_user_id, Message("assistant", reply))
+        self._session.record_turn(line_user_id, user_msg, Message("assistant", reply))
         return reply
 
     def _run_tool_loop(self, system_prompt: str, base: list[Message]) -> str:
@@ -74,9 +74,8 @@ class CareAgent:
         return FALLBACK_REPLY
 
     def proactive(self, line_user_id: str, intent: str) -> str:
-        system_prompt = SYSTEM_PROMPT + self._context.recall(line_user_id, intent)
-        history = self._memory.recent(line_user_id)
+        system_prompt, history = self._envelope(line_user_id, intent)
         directive = Message("user", _PROACTIVE_DIRECTIVE.format(intent=intent))
         reply = self._llm.generate(system_prompt=system_prompt, messages=[*history, directive])
-        self._memory.append(line_user_id, Message("assistant", reply))
+        self._session.record_turn(line_user_id, Message("assistant", reply))
         return reply

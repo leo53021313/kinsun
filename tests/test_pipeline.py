@@ -14,17 +14,17 @@ class EchoLLM:
         return f"你說的是：{messages[-1].content}"
 
 
-class NullMemory:
-    def recent(self, line_user_id: str) -> list[Message]:
-        return []
+class _NullCtx:
+    system_suffix = ""
+    history: list[Message] = []
 
-    def append(self, line_user_id: str, message: Message) -> None:
+
+class NullSession:
+    def assemble(self, line_user_id: str, query: str) -> _NullCtx:
+        return _NullCtx()
+
+    def record_turn(self, line_user_id: str, *messages: Message) -> None:
         pass
-
-
-class NullContext:
-    def recall(self, line_user_id: str, user_text: str) -> str:
-        return ""
 
 
 class StubDetector:
@@ -46,7 +46,7 @@ class SpyNotifier:
 def _pipeline(detector, notifier, risk_events=None):
     return VoicePipeline(
         asr=MockAsrClient("阿公早安"),
-        agent=CareAgent(EchoLLM(), NullMemory(), NullContext()),
+        agent=CareAgent(EchoLLM(), NullSession()),
         tts=TextBubbleTts(),
         detector=detector,
         notifier=notifier,
@@ -127,7 +127,7 @@ class _BoomTts:
 def test_pipeline_tts_failure_degrades_to_text():
     pipeline = VoicePipeline(
         asr=MockAsrClient("阿公早安"),
-        agent=CareAgent(EchoLLM(), NullMemory(), NullContext()),
+        agent=CareAgent(EchoLLM(), NullSession()),
         tts=_BoomTts(),
         detector=StubDetector(RiskTier.L0),
         notifier=SpyNotifier(),
@@ -157,7 +157,7 @@ class BoomTts:
 def _traced_pipeline(traces, *, tts=None, llm=None):
     return VoicePipeline(
         asr=MockAsrClient("阿公早安"),
-        agent=CareAgent(llm or EchoLLM(), NullMemory(), NullContext()),
+        agent=CareAgent(llm or EchoLLM(), NullSession()),
         tts=tts or TextBubbleTts(),
         detector=StubDetector(RiskTier.L0),
         notifier=SpyNotifier(),
@@ -207,7 +207,7 @@ def test_pipeline_passes_trace_id_to_risk_events():
     risk_events = FakeRiskEventStore()
     pipeline = VoicePipeline(
         asr=MockAsrClient("救命"),
-        agent=CareAgent(EchoLLM(), NullMemory(), NullContext()),
+        agent=CareAgent(EchoLLM(), NullSession()),
         tts=TextBubbleTts(),
         detector=StubDetector(RiskTier.L3),
         notifier=SpyNotifier(),
@@ -232,7 +232,7 @@ class _ExplodingAsr:
 def _text_pipeline(detector, notifier, risk_events=None):
     return VoicePipeline(
         asr=_ExplodingAsr(),
-        agent=CareAgent(EchoLLM(), NullMemory(), NullContext()),
+        agent=CareAgent(EchoLLM(), NullSession()),
         tts=TextBubbleTts(),
         detector=detector,
         notifier=notifier,
