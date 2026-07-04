@@ -21,7 +21,8 @@ from kinsun.agent import CareAgent
 from kinsun.appointments.facts import AppointmentFacts
 from kinsun.appointments.service import AppointmentService
 from kinsun.appointments.store import PgAppointmentStore
-from kinsun.channels.line.messenger import LineApiMessenger
+from kinsun.channels.line.messenger import LineApiMessenger, LineOutboundChannel
+from kinsun.channels.outbound import OutboundChannel
 from kinsun.config import Settings
 from kinsun.db import Database, ensure_schema
 from kinsun.llm import GeminiClient, LLMClient
@@ -63,6 +64,7 @@ class Core:
     gemini: LLMClient
     long_term: Mem0LongTermStore
     messenger: LineApiMessenger
+    channel: OutboundChannel
     accounts: AccountService
     med_store: PgMedicationStore
     appt_store: PgAppointmentStore
@@ -149,6 +151,7 @@ def assemble_core(
         gemini=externals.gemini,
         long_term=externals.long_term,
         messenger=externals.messenger,
+        channel=LineOutboundChannel(externals.messenger),
         accounts=accounts,
         med_store=med_store,
         appt_store=appt_store,

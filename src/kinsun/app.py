@@ -67,7 +67,7 @@ def build_app() -> FastAPI:
         agent=core.agent,
         tts=build_tts_client(settings),
         detector=RiskDetector(LlmRiskClassifier(core.gemini)),
-        notifier=LineGuardianNotifier(core.accounts, core.messenger),
+        notifier=LineGuardianNotifier(core.accounts, core.channel),
         risk_events=risk_events,
         traces=core.traces,
         model_name=settings.gemini_model,

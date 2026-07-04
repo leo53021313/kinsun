@@ -52,7 +52,7 @@ def build_scheduler(
     appt_store = core.appt_store
     reminder_logs = core.reminder_logs
     agent = core.agent
-    messenger = core.messenger
+    channel = core.channel
     traces = core.traces
     summaries = PgConversationSummaryStore(db, clock=clock)
 
@@ -77,12 +77,12 @@ def build_scheduler(
 
     def greet_one(line_user_id: str) -> None:
         content = agent.proactive(line_user_id, GREETING_INTENT)
-        messenger.push_text(line_user_id, content)
+        channel.send_text(line_user_id, content)
         _record_push(line_user_id, "proactive-greeting", content)
 
     def care_one(line_user_id: str) -> None:
         content = agent.proactive(line_user_id, INACTIVITY_INTENT)
-        messenger.push_text(line_user_id, content)
+        channel.send_text(line_user_id, content)
         _record_push(line_user_id, "proactive-care", content)
 
     jobs = [
@@ -116,7 +116,7 @@ def build_scheduler(
                 meds_at_slot=lambda s=slot: med_store.list_for_slot(s),
                 lookup_elder=accounts.get_elder,
                 is_consented_elder=accounts.is_consented_elder,
-                push=messenger.push_text,
+                channel=channel,
                 hour=hour,
                 name=name,
                 record=reminder_logs.record,
@@ -130,7 +130,7 @@ def build_scheduler(
             lookup_elder=accounts.get_elder,
             is_consented_elder=accounts.is_consented_elder,
             guardian_line_ids=accounts.guardian_line_ids_of_elder,
-            push=messenger.push_text,
+            channel=channel,
             hour=settings.appointment_reminder_hour,
             record=reminder_logs.record,
         )

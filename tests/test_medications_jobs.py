@@ -1,4 +1,5 @@
 from kinsun.accounts.models import Elder
+from kinsun.channels.outbound import FakeOutboundChannel
 from kinsun.medications.jobs import build_medication_slot_job
 from kinsun.medications.models import Medication, MedicationSlot
 
@@ -8,18 +9,18 @@ def _med(elder_id, name, slots):
 
 
 def _job(meds, *, elders, consented, hour=8, record=None):
-    pushed = []
+    channel = FakeOutboundChannel()
     job = build_medication_slot_job(
         slot=MedicationSlot.MORNING,
         meds_at_slot=lambda: meds,
         lookup_elder=lambda eid: elders.get(eid),
         is_consented_elder=lambda line_user_id: consented.get(line_user_id, False),
-        push=lambda line_user_id, text: pushed.append((line_user_id, text)),
+        channel=channel,
         hour=hour,
         name="medication-morning",
         record=record,
     )
-    return job, pushed
+    return job, channel.sent
 
 
 def test_merges_meds_per_elder():
@@ -73,15 +74,19 @@ def test_does_not_record_when_unconsented():
     assert recorded == []
 
 
-def test_single_elder_failure_isolated():
-    elders = {"e1": Elder("e1", "阿公", "U-1"), "e2": Elder("e2", "阿嬤", "U-2")}
-    pushed = []
+class _RaisingChannel:
+    def __init__(self):
+        self.sent = []
 
-    def push(line_user_id, text):
+    def send_text(self, line_user_id, text):
         if line_user_id == "U-1":
             raise RuntimeError("boom")
-        pushed.append((line_user_id, text))
+        self.sent.append((line_user_id, text))
 
+
+def test_single_elder_failure_isolated():
+    elders = {"e1": Elder("e1", "阿公", "U-1"), "e2": Elder("e2", "阿嬤", "U-2")}
+    channel = _RaisingChannel()
     job = build_medication_slot_job(
         slot=MedicationSlot.MORNING,
         meds_at_slot=lambda: [
@@ -90,9 +95,9 @@ def test_single_elder_failure_isolated():
         ],
         lookup_elder=lambda eid: elders.get(eid),
         is_consented_elder=lambda line_user_id: True,
-        push=push,
+        channel=channel,
         hour=8,
         name="medication-morning",
     )
     job.run()
-    assert pushed == [("U-2", "阿嬤，早上該吃藥囉：藥B")]
+    assert channel.sent == [("U-2", "阿嬤，早上該吃藥囉：藥B")]

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Protocol
 
+from kinsun.channels.outbound import OutboundChannel
 from kinsun.safety.tiers import RiskAssessment, RiskTier
 
 logger = logging.getLogger("kinsun.safety")
@@ -30,10 +31,6 @@ class GuardianDirectory(Protocol):
     def guardian_line_ids(self, line_user_id: str) -> list[str]: ...
 
 
-class Pusher(Protocol):
-    def push_text(self, line_user_id: str, text: str) -> None: ...
-
-
 _ALERT_PREFIX = "⚠️【金孫關懷提醒】"
 
 
@@ -50,9 +47,9 @@ def _format_alert(assessment: RiskAssessment) -> str:
 class LineGuardianNotifier:
     """危急時依升級順序推播給所有家屬。任何失敗只記錄、不中斷對話。"""
 
-    def __init__(self, directory: GuardianDirectory, pusher: Pusher) -> None:
+    def __init__(self, directory: GuardianDirectory, channel: OutboundChannel) -> None:
         self._directory = directory
-        self._pusher = pusher
+        self._channel = channel
 
     def notify(self, line_user_id: str, assessment: RiskAssessment) -> None:
         try:
@@ -70,7 +67,7 @@ class LineGuardianNotifier:
             # 迴圈變數帶 guardian_ 限定詞，避免與外層 line_user_id（長輩本人）同名遮蔽。
             for guardian_line_user_id in targets:
                 try:
-                    self._pusher.push_text(guardian_line_user_id, text)
+                    self._channel.send_text(guardian_line_user_id, text)
                     sent += 1
                 except Exception:  # noqa: BLE001
                     logger.exception("推播家屬失敗 guardian_line_user_id=%s", guardian_line_user_id)
