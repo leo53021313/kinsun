@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
@@ -13,6 +13,7 @@ from kinsun.accounts.service import AccountService
 from kinsun.appointments.service import AppointmentService
 from kinsun.medications.models import SLOT_ORDER, MedicationSlot
 from kinsun.medications.service import MedicationService
+from kinsun.reports.health import build_health_report
 from kinsun.reports.reminders import ReminderLogStore
 from kinsun.safety.events import RiskEventStore
 from kinsun.web.auth import AuthError, LiffVerifier
@@ -201,29 +202,21 @@ def create_api_router(
     @router.get("/elders/{elder_id}/health-report")
     def health_report(elder_id: str, line_user_id: str = Depends(current_guardian)) -> dict:
         assert_manages(line_user_id, elder_id)
-        cutoff = (clock() - timedelta(days=30)).timestamp()
-        elder = accounts.get_elder(elder_id)
-        # 注意：這裡刻意用 elder_line_user_id（而非 line_user_id），
-        # 因為本函式的 line_user_id 參數已代表發出請求的家屬，
-        # 與此處要查的「長輩」LINE ID 是不同的人，同名會互相覆蓋。
-        elder_line_user_id = elder.line_user_id if elder else None
-        risks = (
-            [
-                e
-                for e in risk_events.list_for_line_user(elder_line_user_id)
-                if e.created_at >= cutoff
-            ]
-            if elder_line_user_id
-            else []
+        report = build_health_report(
+            elder_id=elder_id,
+            risk_events=risk_events,
+            reminder_logs=reminder_logs,
+            accounts=accounts,
+            now=clock(),
         )
-        reminders = [r for r in reminder_logs.list_for_elder(elder_id) if r.created_at >= cutoff]
         return {
             "risk_events": [
-                {"tier": int(e.tier), "reason": e.reason, "created_at": e.created_at} for e in risks
+                {"tier": int(e.tier), "reason": e.reason, "created_at": e.created_at}
+                for e in report.risks
             ],
             "reminders": [
                 {"kind": r.kind, "content": r.content, "created_at": r.created_at}
-                for r in reminders
+                for r in report.reminders
             ],
         }
 

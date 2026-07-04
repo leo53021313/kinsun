@@ -79,7 +79,9 @@ _Avoid_: 警報等級、嚴重度
 由排程觸發、agent 主動開啟的對話（早安問候、失聯關心、用藥提醒）。
 _Avoid_: 推播、通知
 
-### 組裝（Composition）
+**健康報告（HealthReport）**：
+家屬端看的長輩近況彙整：近 N 天（預設 30）的危急事件 ＋ 提醒紀錄。由 `reports/health.py` 的 `build_health_report` 組裝（解析長輩 `line_user_id`、抓資料、依時間窗過濾），route handler 只驗身分並出 JSON。與 observability 的管理端活動時間軸（feed／timeline）是不同報告、不同受眾。
+_Avoid_: 儀表板、timeline、feed
 
 **組裝根（Composition Root）**：
 把設定與各元件接成可服務程式的入口；本專案有兩個——`build_app`（FastAPI 網站）與 `build_scheduler`（排程 worker）。兩者共用的物件圖只在一處組裝，各自只補自己專屬（edge-specific）的接線。
