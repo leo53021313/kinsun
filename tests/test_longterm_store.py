@@ -136,3 +136,54 @@ def test_health_search_failure_keeps_user_results():
     )
     out = Mem0LongTermStore(mem).search("sess1", "頭痛")
     assert "今天頭痛" in out
+
+
+def test_format_orders_newest_first():
+    result = {
+        "results": [
+            {"memory": "喜歡壽司", "created_at": "2026-07-03T19:01:08+00:00", "metadata": {}},
+            {"memory": "喜歡麥當勞", "created_at": "2026-07-04T02:30:41+00:00", "metadata": {}},
+        ]
+    }
+    out = _format_memories_for_prompt(result)
+    assert out.index("喜歡麥當勞") < out.index("喜歡壽司")  # 新的排在前
+
+
+def test_format_annotates_date_and_provenance():
+    result = {
+        "results": [
+            {
+                "memory": "喜歡麥當勞",
+                "created_at": "2026-07-04T02:30:41+00:00",
+                "metadata": {"provenance": "self_claimed"},
+            }
+        ]
+    }
+    out = _format_memories_for_prompt(result)
+    assert "2026-07-04" in out
+    assert "長者自述" in out
+    assert "（）" not in out
+
+
+def test_format_prefix_has_recency_rule():
+    result = {
+        "results": [
+            {"memory": "喜歡麥當勞", "created_at": "2026-07-04T02:30:41+00:00", "metadata": {}}
+        ]
+    }
+    out = _format_memories_for_prompt(result)
+    assert "以較新的記錄為準" in out
+
+
+def test_format_missing_created_at_sorts_last_no_crash():
+    result = {
+        "results": [
+            {"memory": "沒日期的事實", "metadata": {"provenance": "self_claimed"}},
+            {"memory": "喜歡麥當勞", "created_at": "2026-07-04T02:30:41+00:00", "metadata": {}},
+        ]
+    }
+    out = _format_memories_for_prompt(result)
+    assert "沒日期的事實" in out
+    assert "喜歡麥當勞" in out
+    assert out.index("喜歡麥當勞") < out.index("沒日期的事實")  # 有日期者在前
+    assert "（）" not in out  # 無日期無 provenance 不留空括號
