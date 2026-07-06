@@ -1,0 +1,698 @@
+# 05 API Spec — 金孫 KinSun
+# 文件性質：2026-07-06 依程式碼現況反向工程產出（手工補齊 response schema——
+#   程式端全部 endpoint 皆手組 dict、無 response_model，FastAPI 自動 /openapi.json 不含精確 schema）。
+# 待議標記：⚠ T-xx／E-xx 對應 docs/全庫人工決策盤點-待議.md。
+# 已知缺口（列於此、勿默默修）：
+#   - FastAPI() 未設 title/version（channels/line/webhook.py），自動文件顯示預設值
+#   - 所有文字欄位無長度上限 ⚠ E-11
+#   - LIFF 401 前端只清狀態、無「重新登入」提示 ⚠ E-09
+#   - 邀請碼產碼/貼碼無速率限制 ⚠ T-29
+openapi: 3.1.0
+info:
+  title: 金孫 KinSun API
+  version: 0.9-mvp
+  description: |
+    三組介面、三種驗證並存：
+    1. `POST /line/webhook` — LINE 平台事件入口（X-Line-Signature HMAC 驗簽）
+    2. `/api/*` — 家屬端 LIFF REST API（LINE LIFF idToken Bearer）
+    3. `/api/admin/*` — 觀測後台唯讀 API（X-Admin-Key 共用金鑰）
+    另有兩個 DGX sidecar 微服務（ASR :8001、TTS :8002），**目前無任何驗證** ⚠ T-49。
+servers:
+  - url: http://localhost:8000
+    description: 本機開發（正式經 ngrok 對外）
+
+tags:
+  - name: webhook
+    description: LINE 平台事件入口
+  - name: guardian
+    description: 家屬端 LIFF API（prefix /api）
+  - name: admin
+    description: 觀測後台唯讀 API（prefix /api/admin）
+  - name: sidecar
+    description: DGX 端 ASR/TTS 微服務（獨立行程，非本 app 路由）
+
+paths:
+  /line/webhook:
+    post:
+      tags: [webhook]
+      summary: 接收 LINE webhook 事件
+      description: |
+        驗簽後正規化為 InboundMessage 並分派（綁定流程／語音管線）。
+        單一事件處理失敗只記 log、仍回 200（避免 LINE 重送整包）⚠ T-11。
+        重活丟 threadpool 同步跑完整管線，最壞情況超過 reply token 效期 ⚠ T-42。
+      security:
+        - lineSignature: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: "LINE 原始 webhook JSON（destination＋events 陣列），由 line-bot-sdk 解析"
+      responses:
+        "200":
+          description: 已受理
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+        "400":
+          description: 簽章無效
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/me/elders:
+    get:
+      tags: [guardian]
+      summary: 列出此家屬管理的長輩
+      security: [{ liffBearer: [] }]
+      responses:
+        "200":
+          description: 長輩清單
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  elders:
+                    type: array
+                    items: { $ref: "#/components/schemas/Elder" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/elders:
+    post:
+      tags: [guardian]
+      summary: 建立長輩並產生長輩綁定邀請碼
+      description: 邀請碼只在此回應顯示一次，過期後 LIFF 無重產入口 ⚠ T-45
+      security: [{ liffBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateElderIn" }
+      responses:
+        "201":
+          description: 已建立
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  elder_id: { type: string, format: uuid }
+                  name: { type: string }
+                  invite_code: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/elders/{elder_id}/guardian-invites:
+    post:
+      tags: [guardian]
+      summary: 為既有長輩產生「家屬」邀請碼
+      security: [{ liffBearer: [] }]
+      parameters: [{ $ref: "#/components/parameters/ElderId" }]
+      responses:
+        "201":
+          description: 已產碼（TTL 24h、嘗試上限 5 次 ⚠ T-29 上限為死設定）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  invite_code: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/elders/{elder_id}/medications:
+    get:
+      tags: [guardian]
+      summary: 列出長輩用藥
+      security: [{ liffBearer: [] }]
+      parameters: [{ $ref: "#/components/parameters/ElderId" }]
+      responses:
+        "200":
+          description: 用藥清單
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  medications:
+                    type: array
+                    items: { $ref: "#/components/schemas/Medication" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [guardian]
+      summary: 新增用藥
+      description: 藥名為無驗證自由文字、無劑量/備註欄位 ⚠ T-34
+      security: [{ liffBearer: [] }]
+      parameters: [{ $ref: "#/components/parameters/ElderId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MedicationIn" }
+      responses:
+        "201":
+          description: 已建立
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Medication" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/elders/{elder_id}/medications/{medication_id}:
+    put:
+      tags: [guardian]
+      summary: 更新用藥
+      security: [{ liffBearer: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/ElderId" }
+        - { $ref: "#/components/parameters/MedicationId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MedicationIn" }
+      responses:
+        "200":
+          description: 已更新
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Medication" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [guardian]
+      summary: 刪除用藥
+      description: 前端零確認、零復原 ⚠ T-44
+      security: [{ liffBearer: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/ElderId" }
+        - { $ref: "#/components/parameters/MedicationId" }
+      responses:
+        "204": { description: 已刪除（無內容） }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/elders/{elder_id}/appointments:
+    get:
+      tags: [guardian]
+      summary: 列出回診
+      security: [{ liffBearer: [] }]
+      parameters: [{ $ref: "#/components/parameters/ElderId" }]
+      responses:
+        "200":
+          description: 回診清單
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  appointments:
+                    type: array
+                    items: { $ref: "#/components/schemas/Appointment" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [guardian]
+      summary: 新增回診
+      description: |
+        日期早於「今天」回 400 date in past——「今天」的時區判定與編輯規則未拍板 ⚠ T-46。
+      security: [{ liffBearer: [] }]
+      parameters: [{ $ref: "#/components/parameters/ElderId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AppointmentIn" }
+      responses:
+        "201":
+          description: 已建立
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Appointment" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/elders/{elder_id}/appointments/{appointment_id}:
+    put:
+      tags: [guardian]
+      summary: 更新回診
+      security: [{ liffBearer: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/ElderId" }
+        - { $ref: "#/components/parameters/AppointmentId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AppointmentIn" }
+      responses:
+        "200":
+          description: 已更新
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Appointment" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [guardian]
+      summary: 刪除回診
+      description: 前端零確認、零復原 ⚠ T-44
+      security: [{ liffBearer: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/ElderId" }
+        - { $ref: "#/components/parameters/AppointmentId" }
+      responses:
+        "204": { description: 已刪除（無內容） }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/elders/{elder_id}/health-report:
+    get:
+      tags: [guardian]
+      summary: 長輩健康報告（近 30 天危急事件＋提醒紀錄）
+      description: |
+        時間窗固定 30 天（reports/health.py）。
+        長輩未綁定時回空清單，前端呈現為「無危急事件」⚠ T-47；
+        risk_event 的 reason 繞過 can_view_transcript 給所有家屬 ⚠ T-17。
+      security: [{ liffBearer: [] }]
+      parameters: [{ $ref: "#/components/parameters/ElderId" }]
+      responses:
+        "200":
+          description: 健康報告
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  risk_events:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        tier: { type: integer, description: "危急分級 0–3" }
+                        reason: { type: string }
+                        created_at: { type: number, format: double, description: epoch 秒 }
+                  reminders:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kind: { type: string }
+                        content: { type: string }
+                        created_at: { type: number, format: double }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/admin/overview:
+    get:
+      tags: [admin]
+      summary: 今日總覽統計
+      security: [{ adminKey: [] }]
+      responses:
+        "200":
+          description: 統計（輪次、危急、活躍長輩、token、各階段延遲、近 24h 每小時輪次）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  generated_at: { type: number, format: double }
+                  turn_count: { type: integer }
+                  risk_event_count: { type: integer }
+                  active_elder_count: { type: integer }
+                  llm_input_tokens: { type: integer }
+                  llm_output_tokens: { type: integer }
+                  stages:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        stage: { type: string }
+                        call_count: { type: integer }
+                        error_count: { type: integer }
+                        avg_latency_ms: { type: number }
+                        p95_latency_ms: { type: number }
+                  hourly_turns:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        hour_start: { type: number, format: double }
+                        turn_count: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/AdminDisabled" }
+
+  /api/admin/elders:
+    get:
+      tags: [admin]
+      summary: 列出所有長輩與最後活躍時間
+      security: [{ adminKey: [] }]
+      responses:
+        "200":
+          description: 長輩清單（未綁定時 line_user_id 為空字串）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  elders:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        elder_id: { type: string, format: uuid }
+                        name: { type: string }
+                        line_user_id: { type: string }
+                        last_active_at: { type: [number, "null"], format: double }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/AdminDisabled" }
+
+  /api/admin/messages:
+    get:
+      tags: [admin]
+      summary: 全域訊息流（增量輪詢）
+      security: [{ adminKey: [] }]
+      parameters:
+        - name: after
+          in: query
+          schema: { type: number, format: double, minimum: 0, default: 0 }
+          description: 游標（epoch 秒），只回此時間之後的訊息
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+      responses:
+        "200":
+          description: 訊息清單
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kind: { type: string }
+                        line_user_id: { type: string }
+                        elder_name: { type: string }
+                        role: { type: string }
+                        content: { type: string }
+                        tier: { type: [integer, "null"] }
+                        trace_id: { type: [string, "null"] }
+                        created_at: { type: number, format: double }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { description: "limit 超界（FastAPI 驗證）" }
+        "503": { $ref: "#/components/responses/AdminDisabled" }
+
+  /api/admin/elders/{elder_id}/timeline:
+    get:
+      tags: [admin]
+      summary: 單一長輩指定日期時間軸
+      security: [{ adminKey: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/ElderId" }
+        - name: date
+          in: query
+          schema: { type: string, default: "" }
+          description: YYYY-MM-DD，空字串＝今日
+      responses:
+        "200":
+          description: 對話／推播／風險交錯時間軸
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  elder_id: { type: string }
+                  name: { type: string }
+                  date: { type: string }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kind: { type: string }
+                        role: { type: string }
+                        content: { type: string }
+                        tier: { type: [integer, "null"] }
+                        trace_id: { type: [string, "null"] }
+                        audio_url: { type: string }
+                        created_at: { type: number, format: double }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/AdminDisabled" }
+
+  /api/admin/traces/{trace_id}:
+    get:
+      tags: [admin]
+      summary: 單輪完整處理鏈路（webhook→ASR→LLM→TTS→回覆）
+      security: [{ adminKey: [] }]
+      parameters:
+        - name: trace_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: 鏈路各段紀錄（各段可為 null）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  trace_id: { type: string }
+                  line_user_id: { type: string }
+                  elder_name: { type: string }
+                  webhook_event:
+                    type: [object, "null"]
+                    properties:
+                      event_type: { type: string }
+                      message_type: { type: string }
+                      payload: { type: object }
+                      created_at: { type: number, format: double }
+                  asr_call:
+                    type: [object, "null"]
+                    properties:
+                      status: { type: string }
+                      latency_ms: { type: number }
+                      transcript: { type: string }
+                      source_audio_url: { type: string }
+                      error_message: { type: string }
+                      created_at: { type: number, format: double }
+                  llm_calls:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        status: { type: string }
+                        latency_ms: { type: number }
+                        model_name: { type: string }
+                        input_tokens: { type: [integer, "null"] }
+                        output_tokens: { type: [integer, "null"] }
+                        content: { type: string }
+                        error_message: { type: string }
+                        created_at: { type: number, format: double }
+                  tts_call:
+                    type: [object, "null"]
+                    properties:
+                      status: { type: string }
+                      latency_ms: { type: number }
+                      content: { type: string }
+                      error_message: { type: string }
+                      created_at: { type: number, format: double }
+                  reply:
+                    type: [object, "null"]
+                    properties:
+                      kind: { type: string }
+                      status: { type: string }
+                      latency_ms: { type: number }
+                      audio_url: { type: string }
+                      created_at: { type: number, format: double }
+                  risk_events:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        tier: { type: integer }
+                        reason: { type: string }
+                        created_at: { type: number, format: double }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/AdminDisabled" }
+
+  # ── DGX sidecar 服務（獨立行程；無驗證 ⚠ T-49） ──────────────────
+  /healthz:
+    get:
+      tags: [sidecar]
+      summary: "[ASR :8001／TTS :8002] 健康檢查"
+      servers:
+        - url: http://127.0.0.1:8001
+          description: ASR（Breeze-ASR-26）
+        - url: http://127.0.0.1:8002
+          description: TTS（CosyVoice 3）
+      responses:
+        "200":
+          description: 服務狀態
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  model_loaded: { type: boolean }
+  /transcribe:
+    post:
+      tags: [sidecar]
+      summary: "[ASR :8001] 語音轉文字"
+      servers: [{ url: "http://127.0.0.1:8001" }]
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary, description: 原始音檔 bytes（m4a 等） }
+      responses:
+        "200":
+          description: 辨識結果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  text: { type: string }
+        "503": { description: ASR 過載（佇列滿） }
+  /synthesize:
+    post:
+      tags: [sidecar]
+      summary: "[TTS :8002] 文字轉語音（m4a）"
+      servers: [{ url: "http://127.0.0.1:8002" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text: { type: string }
+      responses:
+        "200":
+          description: m4a 音檔（header X-Duration-Ms 為時長毫秒）
+          content:
+            audio/mp4:
+              schema: { type: string, format: binary }
+        "503": { description: TTS 過載（佇列滿） }
+
+components:
+  parameters:
+    ElderId:
+      name: elder_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    MedicationId:
+      name: medication_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    AppointmentId:
+      name: appointment_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    Unauthorized:
+      description: 未帶或無效憑證（missing bearer token／invalid token／invalid admin key）
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BadRequest:
+      description: 輸入驗證失敗（name required／invalid slot／slots required／label required／invalid date／date in past）
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: 資源不存在或不屬於此家屬（elder/medication/appointment not found）
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    AdminDisabled:
+      description: ADMIN_API_KEY 未設定，admin API 停用
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        detail: { type: string }
+    Elder:
+      type: object
+      properties:
+        elder_id: { type: string, format: uuid }
+        name: { type: string }
+    CreateElderIn:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, description: "必填；strip 後不可為空。無長度上限 ⚠ E-11" }
+        guardian_name: { type: string, default: "" }
+    MedicationIn:
+      type: object
+      required: [name, slots]
+      properties:
+        name: { type: string, description: "藥名，自由文字無驗證 ⚠ T-34" }
+        slots:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum: [morning, noon, evening, bedtime]
+    Medication:
+      type: object
+      properties:
+        medication_id: { type: string, format: uuid }
+        name: { type: string }
+        slots:
+          type: array
+          items: { type: string, enum: [morning, noon, evening, bedtime] }
+    AppointmentIn:
+      type: object
+      required: [date, label]
+      properties:
+        date: { type: string, description: "YYYY-MM-DD；早於今天回 400 ⚠ T-46" }
+        label: { type: string }
+    Appointment:
+      type: object
+      properties:
+        appointment_id: { type: string, format: uuid }
+        date: { type: string }
+        label: { type: string }
+
+  securitySchemes:
+    lineSignature:
+      type: apiKey
+      in: header
+      name: X-Line-Signature
+      description: LINE channel secret 的 HMAC-SHA256 簽章（由 LINE 平台計算）
+    liffBearer:
+      type: http
+      scheme: bearer
+      description: LINE LIFF idToken；後端以 LINE oauth2/v2.1/verify 驗證（client_id=LIFF_CHANNEL_ID）
+    adminKey:
+      type: apiKey
+      in: header
+      name: X-Admin-Key
+      description: 觀測後台共用金鑰（hmac.compare_digest 常數時間比對；未設定則整組 API 回 503）
