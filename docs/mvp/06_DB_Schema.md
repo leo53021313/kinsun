@@ -15,7 +15,7 @@ DDL 無 DEFAULT（皆由應用層填值）。⚠ E-11：所有 TEXT 欄位**無�
 | 領域 | 表 | 用途 | 自動清理 |
 |------|----|------|---------|
 | 短期記憶 | `turns` | 每輪對話逐筆（今日上下文＋夜間整理來源） | ❌ 永久保存 ⚠ T-14 |
-| 帳號 | `elders`、`guardians`、`elder_guardians`、`consents`、`invites`、`channel_bindings` | 長輩／家屬／關聯／同意／邀請碼／通道綁定 | ❌ |
+| 帳號 | `elders`、`guardians`、`elder_guardians`、`consents`、`invites`、`channel_bindings`、`guardian_accounts`、`api_tokens` | 長輩／家屬／關聯／同意／邀請碼／通道綁定／App 登入帳號／API token | ❌ |
 | 綁定 | `binding_sessions` | 綁定引導狀態機（每人一列） | ❌（TTL 只影響邏輯不刪列） |
 | 排程 | `scheduler_state` | 各 job 最後執行時間 | ❌ |
 | 照護 | `medications`、`appointments` | 用藥／回診 | ❌ |
@@ -67,6 +67,13 @@ LINE 帳號只對應一位本人。）
 擴張—收縮遷移已完成收縮（1D）：`elders`／`guardians` 的 `line_user_id` 欄位已退役
 （`ACCOUNTS_LINE_COLUMNS_RETIRE_DDL`），綁定寫入由 `AccountService`（`redeem_invite`／
 `_guardian_for`）直接寫本表；歷史回填 DDL 已隨之移除。
+
+**`guardian_accounts`**（App 登入帳號，db.py APP_ACCOUNTS_DDL）：`guardian_id` TEXT PK、
+`email` TEXT UNIQUE（服務層正規化 strip+lower）、`password_hash` TEXT
+（`scrypt$n$r$p$salt$hash`，見 `accounts/passwords.py`）、`created_at`。
+
+**`api_tokens`**（App API token 發放紀錄）：`token_hash` TEXT PK（SHA-256 hex，明文不落庫）、
+`principal_type` TEXT（elder／guardian）、`principal_id` TEXT、`created_at`。撤銷＝刪列。
 
 ### 2.3 綁定會話／排程狀態
 
