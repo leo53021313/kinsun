@@ -14,7 +14,8 @@ info:
   description: |
     三組介面、三種驗證並存：
     1. `POST /line/webhook` — LINE 平台事件入口（X-Line-Signature HMAC 驗簽）
-    2. `/api/*` — 家屬端 LIFF REST API（LINE LIFF idToken Bearer）
+    2. `/api/*` — 家屬端 REST API（雙認證：App token 或 LINE LIFF idToken，同走 Bearer；
+       後端先查 App token、miss 再走 LIFF 驗證）
     3. `/api/admin/*` — 觀測後台唯讀 API（X-Admin-Key 共用金鑰）
     另有兩個 DGX sidecar 微服務（ASR :8001、TTS :8002），**目前無任何驗證** ⚠ T-49。
 servers:
@@ -594,6 +595,34 @@ paths:
             audio/mp4:
               schema: { type: string, format: binary }
         "503": { description: TTS 過載（佇列滿） }
+
+  /api/app/turns:
+    post:
+      tags: [app]
+      summary: 對講機回合（長輩裝置 token）
+      description: |
+        raw body＝錄音 bytes（Content-Type: audio/m4a，上限 10MB）。
+        走既有 ASR→LLM→TTS 管線（閘門同意複核、危急偵測、記憶、觀測全重用），
+        同一回應回傳回覆文字＋回覆音檔公開 URL（TTS 退化時 audio_url 為空字串）。
+      requestBody:
+        required: true
+        content:
+          audio/m4a:
+            schema: { type: string, format: binary }
+      responses:
+        "201":
+          description: 回合完成
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  text: { type: string, description: 回覆文字（永遠有值） }
+                  audio_url: { type: string, description: 回覆音檔公開 URL；空字串＝純文字 }
+                  duration_ms: { type: integer, nullable: true }
+        "401": { description: invalid_token（非長輩裝置 token） }
+        "403": { description: consent_revoked（綁定消失或同意撤回） }
+        "413": { description: audio_too_large（>10MB） }
 
   /api/app/guardians:
     post:
