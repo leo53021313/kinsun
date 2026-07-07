@@ -34,6 +34,7 @@ from kinsun.speech.asr import build_asr_client
 from kinsun.speech.tts import build_tts_client
 from kinsun.web.admin_api import create_admin_api_router
 from kinsun.web.api import create_api_router
+from kinsun.web.app_api import create_app_api_router
 from kinsun.web.auth import LineIdTokenVerifier
 
 
@@ -133,6 +134,7 @@ def build_app() -> FastAPI:
             clock=clock,
         )
     )
+    app.include_router(create_app_api_router(accounts=core.accounts))
     dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     if dist.is_dir():
         app.mount("/liff", StaticFiles(directory=dist, html=True), name="liff")
