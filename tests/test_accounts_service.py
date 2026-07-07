@@ -3,7 +3,14 @@ from itertools import count
 
 import pytest
 
-from kinsun.accounts.models import Channel, ConsentBy, InviteRole, Role
+from kinsun.accounts.models import (
+    Channel,
+    ChannelBinding,
+    ConsentBy,
+    InviteRole,
+    PrincipalType,
+    Role,
+)
 from kinsun.accounts.service import AccountService, InviteError
 from tests.fakes import FakeAccountStore
 
@@ -47,7 +54,10 @@ def test_redeem_elder_binds_line():
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
     svc.redeem_invite(inv.code, "U-elder", consent_by=ConsentBy.SELF)
-    assert repo.get_elder(elder.elder_id).line_user_id == "U-elder"
+    binding = repo.get_channel_binding(Channel.LINE, "U-elder")
+    assert binding is not None
+    assert binding.principal_type.value == "elder"
+    assert binding.principal_id == elder.elder_id
     assert repo.get_consent(elder.elder_id).consent_by == ConsentBy.SELF
     assert repo.get_invite(inv.code).used_at is not None
 
@@ -168,7 +178,10 @@ def test_consented_elder_bound_without_consent():
 
     repo = FakeAccountStore()
     svc = _service(repo)
-    repo.save_elder(Elder("e1", "阿公", "U-elder"))
+    repo.save_elder(Elder("e1", "阿公"))
+    repo.save_channel_binding(
+        ChannelBinding(Channel.LINE, "U-elder", PrincipalType.ELDER, "e1", 1000.0)
+    )
     assert svc.consented_elder_id(Channel.LINE, "U-elder") is None
 
 

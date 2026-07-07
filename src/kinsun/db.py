@@ -19,9 +19,9 @@ MEMORY_DDL = (
 
 ACCOUNTS_DDL = (
     "CREATE TABLE IF NOT EXISTS elders ("
-    "elder_id TEXT PRIMARY KEY, name TEXT NOT NULL, line_user_id TEXT);"
+    "elder_id TEXT PRIMARY KEY, name TEXT NOT NULL);"
     "CREATE TABLE IF NOT EXISTS guardians ("
-    "guardian_id TEXT PRIMARY KEY, line_user_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL);"
+    "guardian_id TEXT PRIMARY KEY, name TEXT NOT NULL);"
     "CREATE TABLE IF NOT EXISTS elder_guardians ("
     "elder_id TEXT NOT NULL, guardian_id TEXT NOT NULL, role TEXT NOT NULL, "
     "escalation_order INTEGER NOT NULL, can_view_transcript BOOLEAN NOT NULL, "
@@ -167,46 +167,29 @@ OBSERVABILITY_DDL = (
 # risk_events 既有表補 trace_id（可空）：讓風險事件掛回該輪鏈路。
 RISK_EVENTS_TRACE_MIGRATION_DDL = "ALTER TABLE risk_events ADD COLUMN IF NOT EXISTS trace_id TEXT;"
 
-# elders／guardians 既有 LINE 綁定回填 channel_bindings（冪等）：擴張—收縮遷移的回填步。
-# 同一 line_user_id 髒資料的優先序：長輩先於家屬（先執行）、elder_id 排序小者先（確定性）。
-CHANNEL_BINDINGS_BACKFILL_DDL = (
-    "INSERT INTO channel_bindings "
-    "(channel, external_id, principal_type, principal_id, created_at) "
-    "SELECT 'line', line_user_id, 'elder', elder_id, EXTRACT(EPOCH FROM now()) "
-    "FROM elders WHERE line_user_id IS NOT NULL AND line_user_id <> '' "
-    "ORDER BY elder_id "
-    "ON CONFLICT (channel, external_id) DO NOTHING;"
-    "INSERT INTO channel_bindings "
-    "(channel, external_id, principal_type, principal_id, created_at) "
-    "SELECT 'line', line_user_id, 'guardian', guardian_id, EXTRACT(EPOCH FROM now()) "
-    "FROM guardians WHERE line_user_id IS NOT NULL AND line_user_id <> '' "
-    "ORDER BY guardian_id "
-    "ON CONFLICT (channel, external_id) DO NOTHING;"
-)
-
 # 會話主鍵遷移（冪等）：turns／risk_events／conversation_summaries 加 elder_id、
 # 舊 line_user_id 欄改可空（新寫入不再填）；摘要卸下 (line_user_id, date) 主鍵、
-# 改掛 (elder_id, date) 部分唯一索引。既有孤兒列（對不到 elders）保留原樣、不回填。
+# 改掛 (elder_id, date) 部分唯一索引。既有孤兒列（對不到 elders）保留原樣。
+# 歷史回填（UPDATE … FROM elders）已於共用庫執行完畢，並隨帳號欄位退役一併移除。
 SESSION_KEY_MIGRATION_DDL = (
     "ALTER TABLE turns ADD COLUMN IF NOT EXISTS elder_id TEXT;"
     "ALTER TABLE turns ALTER COLUMN line_user_id DROP NOT NULL;"
     "CREATE INDEX IF NOT EXISTS idx_turns_elder_created ON turns (elder_id, created_at);"
-    "UPDATE turns SET elder_id = e.elder_id FROM elders e "
-    "WHERE turns.elder_id IS NULL AND turns.line_user_id = e.line_user_id;"
     "ALTER TABLE risk_events ADD COLUMN IF NOT EXISTS elder_id TEXT;"
     "ALTER TABLE risk_events ALTER COLUMN line_user_id DROP NOT NULL;"
     "CREATE INDEX IF NOT EXISTS idx_risk_events_elder_created "
     "ON risk_events (elder_id, created_at);"
-    "UPDATE risk_events SET elder_id = e.elder_id FROM elders e "
-    "WHERE risk_events.elder_id IS NULL AND risk_events.line_user_id = e.line_user_id;"
     "ALTER TABLE conversation_summaries ADD COLUMN IF NOT EXISTS elder_id TEXT;"
     "ALTER TABLE conversation_summaries DROP CONSTRAINT IF EXISTS conversation_summaries_pkey;"
     "ALTER TABLE conversation_summaries ALTER COLUMN line_user_id DROP NOT NULL;"
-    "UPDATE conversation_summaries SET elder_id = e.elder_id FROM elders e "
-    "WHERE conversation_summaries.elder_id IS NULL "
-    "AND conversation_summaries.line_user_id = e.line_user_id;"
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_conversation_summaries_elder_date "
     "ON conversation_summaries (elder_id, date) WHERE elder_id IS NOT NULL;"
+)
+
+# 帳號欄位退役（收縮步，冪等）：LINE 識別已全面遷入 channel_bindings。
+ACCOUNTS_LINE_COLUMNS_RETIRE_DDL = (
+    "ALTER TABLE elders DROP COLUMN IF EXISTS line_user_id;"
+    "ALTER TABLE guardians DROP COLUMN IF EXISTS line_user_id;"
 )
 
 # 遷移用的交易級諮詢鎖鍵：webhook 與 scheduler 同時啟動時，讓 ensure_schema 的 DDL
@@ -238,8 +221,8 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(CONVERSATION_SUMMARIES_DDL)
         conn.execute(OBSERVABILITY_DDL)
         conn.execute(RISK_EVENTS_TRACE_MIGRATION_DDL)
-        conn.execute(CHANNEL_BINDINGS_BACKFILL_DDL)
         conn.execute(SESSION_KEY_MIGRATION_DDL)
+        conn.execute(ACCOUNTS_LINE_COLUMNS_RETIRE_DDL)
         conn.commit()
 
 
