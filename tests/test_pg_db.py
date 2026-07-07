@@ -94,7 +94,6 @@ def test_ensure_schema_concurrent_no_deadlock():
     assert not errors, f"併發 ensure_schema 出現錯誤（含死結）：{names}"
 
 
-
 def test_session_key_schema_supports_elder_keys(pg_database, ns):
     from kinsun.db import ensure_schema
 
