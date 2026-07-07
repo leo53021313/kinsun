@@ -105,7 +105,6 @@ class TraceStore(Protocol):
         self,
         *,
         elder_id: str,
-        line_user_id: str,
         start: float,
         end: float,
     ) -> list[TimelineItem]: ...
@@ -314,6 +313,11 @@ class PgTraceStore:
             (x.line_user_id for x in [webhook_event, asr_call, tts_call, reply] if x),
             llm_calls[0].line_user_id if llm_calls else "",
         )
+        name_row = self._db.query_one(
+            "SELECT e.name FROM channel_bindings b JOIN elders e ON e.elder_id = b.principal_id "
+            "WHERE b.external_id = %s AND b.principal_type = 'elder' LIMIT 1",
+            (line_user_id,),
+        )
         return Trace(
             trace_id=trace_id,
             line_user_id=line_user_id,
@@ -323,23 +327,24 @@ class PgTraceStore:
             tts_call=tts_call,
             reply=reply,
             risk_events=risk_events,
+            elder_name=name_row[0] if name_row else "",
         )
 
     def list_feed(self, *, after: float, limit: int) -> list[FeedItem]:
         rows = self._db.query(
-            "SELECT 'turn' AS kind, t.line_user_id, COALESCE(e.name, ''), t.role, "
+            "SELECT 'turn' AS kind, COALESCE(t.elder_id, ''), COALESCE(e.name, ''), t.role, "
             "t.content, NULL::integer AS tier, NULL::text AS trace_id, t.created_at "
-            "FROM turns t LEFT JOIN elders e ON e.line_user_id = t.line_user_id "
+            "FROM turns t LEFT JOIN elders e ON e.elder_id = t.elder_id "
             "WHERE t.created_at > %s "
             "UNION ALL "
-            "SELECT 'reminder', COALESCE(e.line_user_id, ''), COALESCE(e.name, ''), '', "
+            "SELECT 'reminder', r.elder_id, COALESCE(e.name, ''), '', "
             "r.content, NULL, NULL, r.created_at "
             "FROM reminder_logs r LEFT JOIN elders e ON e.elder_id = r.elder_id "
             "WHERE r.created_at > %s "
             "UNION ALL "
-            "SELECT 'risk', k.line_user_id, COALESCE(e.name, ''), '', k.reason, "
+            "SELECT 'risk', COALESCE(k.elder_id, ''), COALESCE(e.name, ''), '', k.reason, "
             "k.tier, k.trace_id, k.created_at "
-            "FROM risk_events k LEFT JOIN elders e ON e.line_user_id = k.line_user_id "
+            "FROM risk_events k LEFT JOIN elders e ON e.elder_id = k.elder_id "
             "WHERE k.created_at > %s "
             "ORDER BY created_at DESC LIMIT %s",
             (after, after, after, limit),
@@ -350,14 +355,15 @@ class PgTraceStore:
         self,
         *,
         elder_id: str,
-        line_user_id: str,
         start: float,
         end: float,
     ) -> list[TimelineItem]:
+        # turns／risk_events 已以 elder_id 為鍵；觀測五表（asr_calls／replies）維持通道識別，
+        # 經 channel_bindings 把 external_id 映回本人。
         rows = self._db.query(
             "SELECT 'turn' AS kind, t.role, t.content, NULL::integer AS tier, "
             "NULL::text AS trace_id, '' AS audio_url, t.created_at "
-            "FROM turns t WHERE t.line_user_id = %s AND t.created_at >= %s "
+            "FROM turns t WHERE t.elder_id = %s AND t.created_at >= %s "
             "AND t.created_at < %s "
             "UNION ALL "
             "SELECT 'reminder', '', r.content, NULL, NULL, '', r.created_at "
@@ -365,32 +371,34 @@ class PgTraceStore:
             "AND r.created_at < %s "
             "UNION ALL "
             "SELECT 'risk', '', k.reason, k.tier, k.trace_id, '', k.created_at "
-            "FROM risk_events k WHERE k.line_user_id = %s AND k.created_at >= %s "
+            "FROM risk_events k WHERE k.elder_id = %s AND k.created_at >= %s "
             "AND k.created_at < %s "
             "UNION ALL "
             "SELECT 'voice', 'user', a.transcript, NULL, a.trace_id, "
             "a.source_audio_url, a.created_at "
-            "FROM asr_calls a WHERE a.line_user_id = %s AND a.created_at >= %s "
-            "AND a.created_at < %s "
+            "FROM asr_calls a JOIN channel_bindings b ON b.external_id = a.line_user_id "
+            "AND b.principal_type = 'elder' AND b.principal_id = %s "
+            "WHERE a.created_at >= %s AND a.created_at < %s "
             "UNION ALL "
             "SELECT 'voice', 'assistant', '', NULL, p.trace_id, p.audio_url, p.created_at "
-            "FROM replies p WHERE p.line_user_id = %s AND p.audio_url <> '' "
-            "AND p.created_at >= %s AND p.created_at < %s "
+            "FROM replies p JOIN channel_bindings b ON b.external_id = p.line_user_id "
+            "AND b.principal_type = 'elder' AND b.principal_id = %s "
+            "WHERE p.audio_url <> '' AND p.created_at >= %s AND p.created_at < %s "
             "ORDER BY created_at",
             (
-                line_user_id,
+                elder_id,
                 start,
                 end,
                 elder_id,
                 start,
                 end,
-                line_user_id,
+                elder_id,
                 start,
                 end,
-                line_user_id,
+                elder_id,
                 start,
                 end,
-                line_user_id,
+                elder_id,
                 start,
                 end,
             ),
@@ -399,9 +407,10 @@ class PgTraceStore:
 
     def list_elders_with_last_active(self) -> list[ElderActivity]:
         rows = self._db.query(
-            "SELECT e.elder_id, e.name, COALESCE(e.line_user_id, ''), "
-            "(SELECT MAX(t.created_at) FROM turns t "
-            " WHERE t.line_user_id = e.line_user_id) "
+            "SELECT e.elder_id, e.name, "
+            "(SELECT COALESCE(string_agg(DISTINCT b.channel, ','), '') FROM channel_bindings b "
+            " WHERE b.principal_type = 'elder' AND b.principal_id = e.elder_id), "
+            "(SELECT MAX(t.created_at) FROM turns t WHERE t.elder_id = e.elder_id) "
             "FROM elders e ORDER BY e.name",
         )
         return [ElderActivity(*r) for r in rows]
@@ -472,14 +481,16 @@ class FakeTraceStore:
         self.llm_calls: list[LlmCall] = []
         self.tts_calls: list[TtsCall] = []
         self.replies: list[Reply] = []
-        # (line_user_id, role, content, created_at)
+        # (elder_id, role, content, created_at)
         self.turns: list[tuple[str, str, str, float]] = []
         # (elder_id, kind, content, created_at)
         self.reminders: list[tuple[str, str, str, float]] = []
-        # (line_user_id, tier, reason, created_at, trace_id)
+        # (elder_id, tier, reason, created_at, trace_id)
         self.risks: list[tuple[str, int, str, float, str | None]] = []
-        # (elder_id, name, line_user_id)
-        self.elders: list[tuple[str, str, str]] = []
+        # (elder_id, name)
+        self.elders: list[tuple[str, str]] = []
+        # (external_id, elder_id)：channel_bindings 的長輩綁定（voice 時間軸／trace 姓名映射用）
+        self.channel_bindings: list[tuple[str, str]] = []
 
     def _next_id(self) -> str:
         self._seq += 1
@@ -487,27 +498,33 @@ class FakeTraceStore:
 
     # --- 播種（模擬既有表） ---
 
-    def seed_turn(self, line_user_id: str, role: str, content: str, created_at: float) -> None:
-        self.turns.append((line_user_id, role, content, created_at))
+    def seed_turn(self, elder_id: str, role: str, content: str, created_at: float) -> None:
+        self.turns.append((elder_id, role, content, created_at))
 
     def seed_reminder(self, elder_id: str, kind: str, content: str, created_at: float) -> None:
         self.reminders.append((elder_id, kind, content, created_at))
 
     def seed_risk(
         self,
-        line_user_id: str,
+        elder_id: str,
         tier: int,
         reason: str,
         created_at: float,
         trace_id: str | None = None,
     ) -> None:
-        self.risks.append((line_user_id, tier, reason, created_at, trace_id))
+        self.risks.append((elder_id, tier, reason, created_at, trace_id))
 
-    def seed_elder(self, elder_id: str, name: str, line_user_id: str) -> None:
-        self.elders.append((elder_id, name, line_user_id))
+    def seed_elder(self, elder_id: str, name: str) -> None:
+        self.elders.append((elder_id, name))
 
-    def _elder_name_by_line(self, line_user_id: str) -> str:
-        return next((n for _, n, lu in self.elders if lu == line_user_id), "")
+    def seed_binding(self, external_id: str, elder_id: str) -> None:
+        self.channel_bindings.append((external_id, elder_id))
+
+    def _elder_name_by_id(self, elder_id: str) -> str:
+        return next((n for eid, n in self.elders if eid == elder_id), "")
+
+    def _elder_id_by_external(self, external_id: str) -> str:
+        return next((eid for ext, eid in self.channel_bindings if ext == external_id), "")
 
     # --- record 面 ---
 
@@ -643,19 +660,28 @@ class FakeTraceStore:
             (x.line_user_id for x in [webhook_event, asr_call, tts_call, reply] if x),
             llm_calls[0].line_user_id if llm_calls else "",
         )
+        elder_name = self._elder_name_by_id(self._elder_id_by_external(line_user_id))
         return Trace(
-            trace_id, line_user_id, webhook_event, asr_call, llm_calls, tts_call, reply, risk_events
+            trace_id,
+            line_user_id,
+            webhook_event,
+            asr_call,
+            llm_calls,
+            tts_call,
+            reply,
+            risk_events,
+            elder_name,
         )
 
     def list_feed(self, *, after: float, limit: int) -> list[FeedItem]:
         items: list[FeedItem] = []
-        for line_user_id, role, content, ts in self.turns:
+        for elder_id, role, content, ts in self.turns:
             if ts > after:
                 items.append(
                     FeedItem(
                         "turn",
-                        line_user_id,
-                        self._elder_name_by_line(line_user_id),
+                        elder_id,
+                        self._elder_name_by_id(elder_id),
                         role,
                         content,
                         None,
@@ -665,12 +691,11 @@ class FakeTraceStore:
                 )
         for elder_id, _kind, content, ts in self.reminders:
             if ts > after:
-                row = next((e for e in self.elders if e[0] == elder_id), None)
                 items.append(
                     FeedItem(
                         "reminder",
-                        row[2] if row else "",
-                        row[1] if row else "",
+                        elder_id,
+                        self._elder_name_by_id(elder_id),
                         "",
                         content,
                         None,
@@ -678,13 +703,13 @@ class FakeTraceStore:
                         ts,
                     )
                 )
-        for line_user_id, tier, reason, ts, tid in self.risks:
+        for elder_id, tier, reason, ts, tid in self.risks:
             if ts > after:
                 items.append(
                     FeedItem(
                         "risk",
-                        line_user_id,
-                        self._elder_name_by_line(line_user_id),
+                        elder_id,
+                        self._elder_name_by_id(elder_id),
                         "",
                         reason,
                         tier,
@@ -696,20 +721,23 @@ class FakeTraceStore:
         return items[:limit]
 
     def list_timeline_for_elder(
-        self, *, elder_id: str, line_user_id: str, start: float, end: float
+        self, *, elder_id: str, start: float, end: float
     ) -> list[TimelineItem]:
         items: list[TimelineItem] = []
-        for lu, role, content, ts in self.turns:
-            if lu == line_user_id and start <= ts < end:
+        for eid, role, content, ts in self.turns:
+            if eid == elder_id and start <= ts < end:
                 items.append(TimelineItem("turn", role, content, None, None, "", ts))
         for eid, _kind, content, ts in self.reminders:
             if eid == elder_id and start <= ts < end:
                 items.append(TimelineItem("reminder", "", content, None, None, "", ts))
-        for lu, tier, reason, ts, tid in self.risks:
-            if lu == line_user_id and start <= ts < end:
+        for eid, tier, reason, ts, tid in self.risks:
+            if eid == elder_id and start <= ts < end:
                 items.append(TimelineItem("risk", "", reason, tier, tid, "", ts))
         for c in self.asr_calls:
-            if c.line_user_id == line_user_id and start <= c.created_at < end:
+            if (
+                self._elder_id_by_external(c.line_user_id) == elder_id
+                and start <= c.created_at < end
+            ):
                 items.append(
                     TimelineItem(
                         "voice",
@@ -722,7 +750,11 @@ class FakeTraceStore:
                     )
                 )
         for r in self.replies:
-            if r.line_user_id == line_user_id and r.audio_url and start <= r.created_at < end:
+            if (
+                self._elder_id_by_external(r.line_user_id) == elder_id
+                and r.audio_url
+                and start <= r.created_at < end
+            ):
                 items.append(
                     TimelineItem(
                         "voice", "assistant", "", None, r.trace_id, r.audio_url, r.created_at
@@ -733,10 +765,11 @@ class FakeTraceStore:
 
     def list_elders_with_last_active(self) -> list[ElderActivity]:
         result = []
-        for elder_id, name, line_user_id in sorted(self.elders, key=lambda e: e[1]):
-            actives = [ts for lu, _, _, ts in self.turns if lu == line_user_id]
+        for elder_id, name in sorted(self.elders, key=lambda e: e[1]):
+            actives = [ts for eid, _, _, ts in self.turns if eid == elder_id]
+            bound = sorted({"line" for ext, eid in self.channel_bindings if eid == elder_id})
             result.append(
-                ElderActivity(elder_id, name, line_user_id, max(actives) if actives else None)
+                ElderActivity(elder_id, name, ",".join(bound), max(actives) if actives else None)
             )
         return result
 

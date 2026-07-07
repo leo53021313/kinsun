@@ -78,7 +78,7 @@
    );
    ```
 
-   一個人可同時擁有 LINE 綁定與 App 綁定；換手機＝更新一筆綁定，記憶不動。`elders.line_user_id`、`guardians.line_user_id` 欄位資料遷入本表後退役。
+   一個人可同時擁有 LINE 綁定與 App 綁定；換手機＝更新一筆綁定，記憶不動。`elders.line_user_id`、`guardians.line_user_id` 欄位資料遷入本表後退役。（已完成：1A 擴張＋回填、1D 收縮退役。）
 
 2. **會話主鍵改為 `elder_id`**：`turns`、`conversation_summaries`、`risk_events`、Mem0 長期記憶的鍵由 `line_user_id` 遷移為 `elder_id`；Agent、Pipeline、記憶模組（shortterm／longterm／recall）方法簽名同步更改。既有資料以 `elders.line_user_id` 映射回填，不遺失。
 
