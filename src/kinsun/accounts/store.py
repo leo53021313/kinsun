@@ -110,11 +110,11 @@ class PgAccountStore:
             )
 
     def get_guardian_by_line(self, line_user_id: str) -> Guardian | None:
-        rows = self._db.query(
-            "SELECT guardian_id, line_user_id, name FROM guardians WHERE line_user_id = %s",
-            (line_user_id,),
-        )
-        return Guardian(*rows[0]) if rows else None
+        # 讀取端已切經 channel_bindings（1C）；欄位 guardians.line_user_id 僅剩雙寫，1D 退役。
+        binding = self.get_channel_binding(Channel.LINE, line_user_id)
+        if binding is None or binding.principal_type is not PrincipalType.GUARDIAN:
+            return None
+        return self.get_guardian(binding.principal_id)
 
     def get_guardian(self, guardian_id: str) -> Guardian | None:
         rows = self._db.query(
@@ -124,11 +124,11 @@ class PgAccountStore:
         return Guardian(*rows[0]) if rows else None
 
     def get_elder_by_line(self, line_user_id: str) -> Elder | None:
-        rows = self._db.query(
-            "SELECT elder_id, name, line_user_id FROM elders WHERE line_user_id = %s",
-            (line_user_id,),
-        )
-        return Elder(*rows[0]) if rows else None
+        # 讀取端已切經 channel_bindings（1C）；欄位 elders.line_user_id 僅剩雙寫，1D 退役。
+        binding = self.get_channel_binding(Channel.LINE, line_user_id)
+        if binding is None or binding.principal_type is not PrincipalType.ELDER:
+            return None
+        return self.get_elder(binding.principal_id)
 
     def save_elder_guardian(self, eg: ElderGuardian, *, tx: Executor | None = None) -> None:
         (tx or self._db).execute(
@@ -320,17 +320,17 @@ class FakeAccountStore:
             )
 
     def get_guardian_by_line(self, line_user_id: str) -> Guardian | None:
-        # 逐筆比對「當前」line_user_id，與 Pg 一致；不維護獨立索引以免更新後殘留舊值。
-        for guardian in self.guardians.values():
-            if guardian.line_user_id == line_user_id:
-                return guardian
-        return None
+        # 讀取端已切經 channel_bindings（1C），與 Pg 同形。
+        binding = self.get_channel_binding(Channel.LINE, line_user_id)
+        if binding is None or binding.principal_type is not PrincipalType.GUARDIAN:
+            return None
+        return self.get_guardian(binding.principal_id)
 
     def get_elder_by_line(self, line_user_id: str) -> Elder | None:
-        for elder in self.elders.values():
-            if elder.line_user_id == line_user_id:
-                return elder
-        return None
+        binding = self.get_channel_binding(Channel.LINE, line_user_id)
+        if binding is None or binding.principal_type is not PrincipalType.ELDER:
+            return None
+        return self.get_elder(binding.principal_id)
 
     def get_guardian(self, guardian_id: str) -> Guardian | None:
         return self.guardians.get(guardian_id)
