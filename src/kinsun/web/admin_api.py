@@ -67,7 +67,7 @@ def create_admin_api_router(
 
     @router.get("/elders/{elder_id}/timeline", dependencies=[Depends(require_admin)])
     def elder_timeline(elder_id: str, date: str = Query(default="")) -> dict:
-        elder = _find_elder(elder_id)
+        elder = _find_elder(elder_id)  # 404 守門
         if date:
             try:
                 day = datetime.strptime(date, "%Y-%m-%d").date()
@@ -79,7 +79,6 @@ def create_admin_api_router(
         start = datetime(day.year, day.month, day.day, tzinfo=clock().tzinfo).timestamp()
         items = traces.list_timeline_for_elder(
             elder_id=elder_id,
-            line_user_id=elder.line_user_id,
             start=start,
             end=start + 86400.0,
         )
@@ -95,15 +94,7 @@ def create_admin_api_router(
         trace = traces.get_trace(trace_id)
         if trace is None:
             raise HTTPException(status_code=404, detail="trace not found")
-        elder_name = next(
-            (
-                e.name
-                for e in traces.list_elders_with_last_active()
-                if e.line_user_id == trace.line_user_id
-            ),
-            "",
-        )
-        return _trace_json(trace, elder_name=elder_name)
+        return _trace_json(trace)
 
     return router
 
@@ -136,7 +127,7 @@ def _elder_json(e: ElderActivity) -> dict:
     return {
         "elder_id": e.elder_id,
         "name": e.name,
-        "line_user_id": e.line_user_id,
+        "bound_channels": e.bound_channels,
         "last_active_at": e.last_active_at,
     }
 
@@ -144,7 +135,7 @@ def _elder_json(e: ElderActivity) -> dict:
 def _feed_json(m: FeedItem) -> dict:
     return {
         "kind": m.kind,
-        "line_user_id": m.line_user_id,
+        "elder_id": m.elder_id,
         "elder_name": m.elder_name,
         "role": m.role,
         "content": m.content,
@@ -166,11 +157,11 @@ def _timeline_json(i: TimelineItem) -> dict:
     }
 
 
-def _trace_json(t: Trace, *, elder_name: str) -> dict:
+def _trace_json(t: Trace) -> dict:
     return {
         "trace_id": t.trace_id,
         "line_user_id": t.line_user_id,
-        "elder_name": elder_name,
+        "elder_name": t.elder_name,
         "webhook_event": None
         if t.webhook_event is None
         else {
