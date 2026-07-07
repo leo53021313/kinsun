@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import json
-import urllib.error
-import urllib.request
 from typing import Protocol
 
 from kinsun.config import Settings
+from kinsun.transport import Transport, TransportError, UrllibTransport, read_json
 
 
 class ASRError(Exception):
@@ -31,21 +29,24 @@ class MockAsrClient:
 class DgxAsrClient:
     """正式：POST 原始音檔 bytes 到 DGX 上的 ASR 服務，取回辨識文字。"""
 
-    def __init__(self, endpoint: str, timeout: float) -> None:
+    def __init__(
+        self, endpoint: str, timeout: float, *, transport: Transport | None = None
+    ) -> None:
         self._endpoint = endpoint
         self._timeout = timeout
+        self._transport = transport or UrllibTransport()
 
     def transcribe(self, audio: bytes, *, content_type: str) -> str:
-        request = urllib.request.Request(
-            self._endpoint,
-            data=audio,
-            headers={"Content-Type": content_type},
-            method="POST",
-        )
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-        except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
+            response = self._transport.request(
+                "POST",
+                self._endpoint,
+                data=audio,
+                headers={"Content-Type": content_type},
+                timeout=self._timeout,
+            )
+            payload = read_json(response)
+        except TransportError as exc:
             raise ASRError(f"DGX ASR 呼叫失敗：{exc}") from exc
         text = payload.get("text")
         if not isinstance(text, str):

@@ -6,6 +6,7 @@ import logging
 import uuid
 from collections.abc import Callable
 
+from kinsun.accounts.models import Channel
 from kinsun.channels.inbound import InboundMessage
 from kinsun.channels.line.messenger import LineMessenger
 from kinsun.observability.store import TraceStore, safe_record
@@ -57,6 +58,7 @@ class LineChannel:
 
         if mtype == "text":
             return InboundMessage(
+                Channel.LINE,
                 line_user_id,
                 "text",
                 getattr(message, "text", "") or "",
@@ -68,6 +70,7 @@ class LineChannel:
         if mtype == "audio":
             audio = self._messenger.get_audio(message.id)
             return InboundMessage(
+                Channel.LINE,
                 line_user_id,
                 "audio",
                 "",
@@ -77,7 +80,9 @@ class LineChannel:
                 trace_id=trace_id,
                 audio_url=self._publish_inbound(audio),
             )
-        return InboundMessage(line_user_id, "other", "", b"", reply, reply_voice, trace_id=trace_id)
+        return InboundMessage(
+            Channel.LINE, line_user_id, "other", "", b"", reply, reply_voice, trace_id=trace_id
+        )
 
     def _record_event(self, event, trace_id: str, line_user_id: str, mtype) -> None:
         if self._traces is None:
