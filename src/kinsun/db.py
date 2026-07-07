@@ -9,11 +9,12 @@ from typing import Protocol
 import psycopg
 from psycopg_pool import ConnectionPool
 
+# elder_id 相關索引不放這裡：既有舊表要等 SESSION_KEY_MIGRATION_DDL 補完欄位才能建，
+# 該遷移（於 ensure_schema 最後執行）已含同名冪等索引，新庫舊庫皆適用。
 MEMORY_DDL = (
     "CREATE TABLE IF NOT EXISTS turns ("
-    "id BIGSERIAL PRIMARY KEY, line_user_id TEXT NOT NULL, role TEXT NOT NULL, "
+    "id BIGSERIAL PRIMARY KEY, elder_id TEXT, line_user_id TEXT, role TEXT NOT NULL, "
     "content TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
-    "CREATE INDEX IF NOT EXISTS idx_turns_line_user_created ON turns (line_user_id, created_at);"
 )
 
 ACCOUNTS_DDL = (
@@ -109,10 +110,8 @@ RAG_DDL = (
 
 RISK_EVENTS_DDL = (
     "CREATE TABLE IF NOT EXISTS risk_events ("
-    "risk_event_id TEXT PRIMARY KEY, line_user_id TEXT NOT NULL, "
+    "risk_event_id TEXT PRIMARY KEY, elder_id TEXT, line_user_id TEXT, "
     "tier INTEGER NOT NULL, reason TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
-    "CREATE INDEX IF NOT EXISTS idx_risk_events_line_user_created "
-    "ON risk_events (line_user_id, created_at);"
 )
 
 REMINDER_LOGS_DDL = (
@@ -125,9 +124,8 @@ REMINDER_LOGS_DDL = (
 
 CONVERSATION_SUMMARIES_DDL = (
     "CREATE TABLE IF NOT EXISTS conversation_summaries ("
-    "line_user_id TEXT NOT NULL, date TEXT NOT NULL, "
-    "content TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL, "
-    "PRIMARY KEY (line_user_id, date));"
+    "elder_id TEXT, line_user_id TEXT, date TEXT NOT NULL, "
+    "content TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
 )
 
 OBSERVABILITY_DDL = (
@@ -186,6 +184,31 @@ CHANNEL_BINDINGS_BACKFILL_DDL = (
     "ON CONFLICT (channel, external_id) DO NOTHING;"
 )
 
+# 會話主鍵遷移（冪等）：turns／risk_events／conversation_summaries 加 elder_id、
+# 舊 line_user_id 欄改可空（新寫入不再填）；摘要卸下 (line_user_id, date) 主鍵、
+# 改掛 (elder_id, date) 部分唯一索引。既有孤兒列（對不到 elders）保留原樣、不回填。
+SESSION_KEY_MIGRATION_DDL = (
+    "ALTER TABLE turns ADD COLUMN IF NOT EXISTS elder_id TEXT;"
+    "ALTER TABLE turns ALTER COLUMN line_user_id DROP NOT NULL;"
+    "CREATE INDEX IF NOT EXISTS idx_turns_elder_created ON turns (elder_id, created_at);"
+    "UPDATE turns SET elder_id = e.elder_id FROM elders e "
+    "WHERE turns.elder_id IS NULL AND turns.line_user_id = e.line_user_id;"
+    "ALTER TABLE risk_events ADD COLUMN IF NOT EXISTS elder_id TEXT;"
+    "ALTER TABLE risk_events ALTER COLUMN line_user_id DROP NOT NULL;"
+    "CREATE INDEX IF NOT EXISTS idx_risk_events_elder_created "
+    "ON risk_events (elder_id, created_at);"
+    "UPDATE risk_events SET elder_id = e.elder_id FROM elders e "
+    "WHERE risk_events.elder_id IS NULL AND risk_events.line_user_id = e.line_user_id;"
+    "ALTER TABLE conversation_summaries ADD COLUMN IF NOT EXISTS elder_id TEXT;"
+    "ALTER TABLE conversation_summaries DROP CONSTRAINT IF EXISTS conversation_summaries_pkey;"
+    "ALTER TABLE conversation_summaries ALTER COLUMN line_user_id DROP NOT NULL;"
+    "UPDATE conversation_summaries SET elder_id = e.elder_id FROM elders e "
+    "WHERE conversation_summaries.elder_id IS NULL "
+    "AND conversation_summaries.line_user_id = e.line_user_id;"
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_conversation_summaries_elder_date "
+    "ON conversation_summaries (elder_id, date) WHERE elder_id IS NOT NULL;"
+)
+
 # 遷移用的交易級諮詢鎖鍵：webhook 與 scheduler 同時啟動時，讓 ensure_schema 的 DDL
 # 串行化，避免併發跑遷移互搶 AccessExclusiveLock 造成 Postgres 死結。任意固定常數即可，
 # 全專案共用同一把鎖。
@@ -216,6 +239,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(OBSERVABILITY_DDL)
         conn.execute(RISK_EVENTS_TRACE_MIGRATION_DDL)
         conn.execute(CHANNEL_BINDINGS_BACKFILL_DDL)
+        conn.execute(SESSION_KEY_MIGRATION_DDL)
         conn.commit()
 
 
