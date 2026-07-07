@@ -87,14 +87,25 @@ class AccountService:
         )
         return guardian
 
+    def _save_new_elder(self, elder: Elder, guardian_id: str, tx) -> None:
+        self._repo.save_elder(elder, tx=tx)
+        self._repo.save_elder_guardian(
+            ElderGuardian(elder.elder_id, guardian_id, Role.PRIMARY, 1, True), tx=tx
+        )
+
+    def create_elder_for_guardian(self, guardian_id: str, elder_name: str) -> Elder:
+        """為既有家屬（App 認證）建長輩檔並掛 PRIMARY 關聯。"""
+        elder = Elder(self._new_id(), elder_name)
+        with self._repo.transaction() as tx:
+            self._save_new_elder(elder, guardian_id, tx)
+        return elder
+
     def create_elder(self, guardian_line_id: str, guardian_name: str, elder_name: str) -> Elder:
+        """LINE（LIFF）路徑：家屬可能尚無紀錄，同交易建家屬＋長輩。"""
         elder = Elder(self._new_id(), elder_name)
         with self._repo.transaction() as tx:
             guardian = self._guardian_for(guardian_line_id, guardian_name, tx=tx)
-            self._repo.save_elder(elder, tx=tx)
-            self._repo.save_elder_guardian(
-                ElderGuardian(elder.elder_id, guardian.guardian_id, Role.PRIMARY, 1, True), tx=tx
-            )
+            self._save_new_elder(elder, guardian.guardian_id, tx)
         return elder
 
     def generate_invite(self, elder_id: str, role: InviteRole) -> Invite:
@@ -270,16 +281,17 @@ class AccountService:
             reason = "expired"
         return InvitePreview(invite.role, elder_name, reason)
 
-    def elders_managed_by(self, line_user_id: str) -> list[Elder]:
-        guardian = self._repo.get_guardian_by_line(line_user_id)
-        if guardian is None:
-            return []
+    def elders_of_guardian(self, guardian_id: str) -> list[Elder]:
         elders: list[Elder] = []
-        for elder_id in self._repo.elder_ids_of_guardian(guardian.guardian_id):
+        for elder_id in self._repo.elder_ids_of_guardian(guardian_id):
             elder = self._repo.get_elder(elder_id)
             if elder is not None:
                 elders.append(elder)
         return elders
+
+    def elders_managed_by(self, line_user_id: str) -> list[Elder]:
+        guardian = self._repo.get_guardian_by_line(line_user_id)
+        return [] if guardian is None else self.elders_of_guardian(guardian.guardian_id)
 
     def can_view_transcript(self, elder_id: str, guardian_id: str) -> bool:
         eg = self._repo.get_elder_guardian(elder_id, guardian_id)
