@@ -1,13 +1,12 @@
-"""Open-Meteo 天氣查詢工具（免金鑰）。HTTP 走 stdlib urllib，fetch 可注入以利測試。"""
+"""Open-Meteo 天氣查詢工具（免金鑰）。HTTP 走共用傳輸層，transport 可注入以利測試。"""
 
 from __future__ import annotations
 
-import json
 import urllib.parse
-import urllib.request
 from collections.abc import Callable
 
 from kinsun.llm import ToolSpec
+from kinsun.transport import Transport, UrllibTransport, get_json
 
 WEATHER_SPEC = ToolSpec(
     name="get_weather",
@@ -59,24 +58,23 @@ _WMO = {
 }
 
 
-def _urllib_fetch_json(url: str) -> dict:
-    with urllib.request.urlopen(url, timeout=10) as response:  # noqa: S310 - 固定 https Open-Meteo
-        return json.loads(response.read().decode("utf-8"))
+def build_weather_handler(transport: Transport | None = None) -> Callable[[dict], str]:
+    http = transport or UrllibTransport()
 
-
-def build_weather_handler(
-    fetch_json: Callable[[str], dict] = _urllib_fetch_json,
-) -> Callable[[dict], str]:
     def handler(args: dict) -> str:
         location = (args.get("location") or "").strip()
         if not location:
             return "請告訴我您想查哪個地方的天氣。"
-        geo = fetch_json(_GEOCODE_URL.format(name=urllib.parse.quote(location)))
+        geo = get_json(http, _GEOCODE_URL.format(name=urllib.parse.quote(location)), timeout=10)
         results = geo.get("results") or []
         if not results:
             return f"查不到「{location}」這個地點的天氣。"
         place = results[0]
-        fc = fetch_json(_FORECAST_URL.format(lat=place["latitude"], lon=place["longitude"]))
+        fc = get_json(
+            http,
+            _FORECAST_URL.format(lat=place["latitude"], lon=place["longitude"]),
+            timeout=10,
+        )
         current = fc.get("current") or {}
         daily = fc.get("daily") or {}
         desc = _WMO.get(current.get("weather_code"), "天氣")

@@ -87,3 +87,13 @@ class LineApiMessenger:
         with self._ApiClient(self._configuration) as api_client:
             api = self._MessagingApi(api_client)
             api.reply_message(self._ReplyMessageRequest(reply_token=reply_token, messages=messages))
+
+
+class LineOutboundChannel:
+    """OutboundChannel 的 LINE adapter：send_text 走 messenger 的 push_message。"""
+
+    def __init__(self, messenger: LineMessenger) -> None:
+        self._messenger = messenger
+
+    def send_text(self, line_user_id: str, text: str) -> None:
+        self._messenger.push_text(line_user_id, text)

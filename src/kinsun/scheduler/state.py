@@ -39,3 +39,22 @@ class PgScheduleStateStore:
             "ON CONFLICT (job_name) DO UPDATE SET last_run_at = EXCLUDED.last_run_at",
             (job_name, when.timestamp()),
         )
+
+
+class FakeScheduleStateStore:
+    """ScheduleStateStore 的記憶體替身（測試用，不碰 DB）。
+
+    與 PgScheduleStateStore 的差異：Pg 以 epoch 秒（DOUBLE PRECISION）存讀，
+    get_last_run 會用建構時的 tz 重建 datetime；本替身則原樣保存傳入的 datetime。
+    對「時間點」（`.timestamp()`／aware datetime 的 `==`）兩者一致，故合約測試以
+    `.timestamp()` 比較。無 tz 參數的替身無法在此處複製 Pg 的 tz 正規化，也不需要。
+    """
+
+    def __init__(self) -> None:
+        self._last: dict[str, datetime] = {}
+
+    def get_last_run(self, job_name: str) -> datetime | None:
+        return self._last.get(job_name)
+
+    def set_last_run(self, job_name: str, when: datetime) -> None:
+        self._last[job_name] = when

@@ -76,3 +76,19 @@ class PgBindingSessionStore:
 
     def delete(self, line_user_id: str) -> None:
         self._db.execute("DELETE FROM binding_sessions WHERE line_user_id = %s", (line_user_id,))
+
+
+class FakeBindingSessionStore:
+    """BindingSessionStore 的記憶體替身（測試用，不碰 DB）。"""
+
+    def __init__(self) -> None:
+        self._sessions: dict[str, BindingSession] = {}
+
+    def get(self, line_user_id: str) -> BindingSession | None:
+        return self._sessions.get(line_user_id)
+
+    def save(self, session: BindingSession) -> None:
+        self._sessions[session.line_user_id] = session
+
+    def delete(self, line_user_id: str) -> None:
+        self._sessions.pop(line_user_id, None)

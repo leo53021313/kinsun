@@ -55,6 +55,29 @@ class PgReminderLogStore:
         return [ReminderLog(*r) for r in rows]
 
 
+class FakeReminderLogStore:
+    """ReminderLogStore 的記憶體替身（測試用，不碰 DB）。
+
+    reminder_log_id 與 created_at 由索引虛構、僅供排序，因此合約僅斷言雙方都會
+    產生的欄位（elder_id／kind／content）。回傳依 created_at 由新到舊排序，對齊
+    PgReminderLogStore 的 ORDER BY created_at DESC。
+    """
+
+    def __init__(self) -> None:
+        self.recorded: list[tuple[str, str, str]] = []
+
+    def record(self, elder_id: str, kind: str, content: str) -> None:
+        self.recorded.append((elder_id, kind, content))
+
+    def list_for_elder(self, elder_id: str) -> list[ReminderLog]:
+        logs = [
+            ReminderLog(str(i), e, k, c, float(i))
+            for i, (e, k, c) in enumerate(self.recorded)
+            if e == elder_id
+        ]
+        return sorted(logs, key=lambda r: r.created_at, reverse=True)
+
+
 def safe_record(
     record: Callable[[str, str, str], None] | None, elder_id: str, kind: str, content: str
 ) -> None:

@@ -32,25 +32,26 @@ class EchoLLM:
         return f"你說的是：{messages[-1].content}"
 
 
-class NullMemory:
-    def recent(self, line_user_id: str) -> list[Message]:
-        return []
+class _NullCtx:
+    system_suffix = ""
+    history: list[Message] = []
 
-    def append(self, line_user_id: str, message: Message) -> None:
+
+class NullSession:
+    def assemble(self, line_user_id: str, query: str) -> _NullCtx:
+        return _NullCtx()
+
+    def record_turn(self, line_user_id: str, *messages: Message) -> None:
         pass
 
 
-class NullContext:
-    def recall(self, line_user_id: str, user_text: str) -> str:
-        return ""
-
-
-class RecordingMemory(NullMemory):
+class RecordingSession(NullSession):
     def __init__(self) -> None:
         self.sessions: list[str] = []
 
-    def append(self, line_user_id: str, message: Message) -> None:
-        self.sessions.append(line_user_id)
+    def record_turn(self, line_user_id: str, *messages: Message) -> None:
+        for _ in messages:
+            self.sessions.append(line_user_id)
 
 
 class FakeMessenger:
@@ -112,13 +113,15 @@ class _StubBinding:
 
 
 class _AllowGate:
-    def allows(self, line_user_id):
-        return True
+    """passthrough：以 external_id 充當 elder id（同 AllowAllGate 的 dev 語意）。"""
+
+    def resolve_elder(self, channel, external_id):
+        return external_id
 
 
 class _DenyGate:
-    def allows(self, line_user_id):
-        return False
+    def resolve_elder(self, channel, external_id):
+        return None
 
 
 def _make_client(
@@ -133,7 +136,7 @@ def _make_client(
 ):
     pipeline = VoicePipeline(
         asr=asr or MockAsrClient("阿公早安"),
-        agent=CareAgent(EchoLLM(), memory or NullMemory(), NullContext()),
+        agent=CareAgent(EchoLLM(), memory or NullSession()),
         tts=TextBubbleTts(),
         detector=_NullDetector(),
         notifier=_NullNotifier(),
@@ -160,7 +163,7 @@ def test_audio_message_replies_agent_output():
 
 def test_line_user_id_threaded_to_memory():
     messenger = FakeMessenger()
-    memory = RecordingMemory()
+    memory = RecordingSession()
     client = _make_client(FakeParser([_audio_event("U-42")]), messenger, memory=memory)
     client.post("/line/webhook", content=b"{}", headers={"X-Line-Signature": "x"})
     assert memory.sessions == ["U-42", "U-42"]
@@ -168,7 +171,7 @@ def test_line_user_id_threaded_to_memory():
 
 def test_missing_user_id_degrades_to_unknown():
     messenger = FakeMessenger()
-    memory = RecordingMemory()
+    memory = RecordingSession()
     client = _make_client(FakeParser([_audio_event(line_user_id=None)]), messenger, memory=memory)
     resp = client.post("/line/webhook", content=b"{}", headers={"X-Line-Signature": "x"})
     assert resp.status_code == 200
@@ -317,7 +320,7 @@ def test_voice_reply_end_to_end():
     messenger = _VoiceMessenger()
     pipeline = VoicePipeline(
         asr=MockAsrClient("阿公早安"),
-        agent=CareAgent(EchoLLM(), NullMemory(), NullContext()),
+        agent=CareAgent(EchoLLM(), NullSession()),
         tts=_StubTts(),
         detector=_NullDetector(),
         notifier=_NullNotifier(),

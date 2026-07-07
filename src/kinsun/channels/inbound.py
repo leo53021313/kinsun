@@ -7,6 +7,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from kinsun.accounts.models import Channel
 from kinsun.llm import LLMError
 from kinsun.memory.shortterm import MemoryError
 from kinsun.observability.store import TraceStore, safe_record
@@ -26,9 +27,11 @@ BIND_FIRST_PROMPT = (
 class InboundMessage:
     """通道中立的入站訊息。kind ∈ text/audio/other；reply 為綁定好的回覆 handle，
     reply_voice 為語音回覆 handle（url、duration_ms、text）。
+    channel＋external_id 為來源通道與其帳號識別（如 LINE userId），分派時解析成本人。
     trace_id／audio_url 供觀測鏈路與音檔回放（無觀測時為空字串）。"""
 
-    line_user_id: str
+    channel: Channel
+    external_id: str
     kind: str
     text: str
     audio: bytes
@@ -93,7 +96,7 @@ def dispatch(
     timer: Callable[[], float] = time.monotonic,
 ) -> None:
     if msg.kind == "text":
-        reply = binding.handle(msg.line_user_id, msg.text)
+        reply = binding.handle(msg.external_id, msg.text)
         if reply is not None:
             msg.reply(reply)
             return
@@ -101,13 +104,17 @@ def dispatch(
         if not text_input_enabled:
             msg.reply(NON_AUDIO_PROMPT)
             return
-        if not gate.allows(msg.line_user_id):
+        elder_id = gate.resolve_elder(msg.channel, msg.external_id)
+        if elder_id is None:
             msg.reply(BIND_FIRST_PROMPT)
             return
         _run_pipeline(
             msg,
             lambda: pipeline.process_text(
-                msg.text, line_user_id=msg.line_user_id, trace_id=msg.trace_id
+                msg.text,
+                elder_id=elder_id,
+                line_user_id=msg.external_id,
+                trace_id=msg.trace_id,
             ),
             voice=voice,
             traces=traces,
@@ -117,14 +124,16 @@ def dispatch(
     if msg.kind != "audio":
         msg.reply(NON_AUDIO_PROMPT)
         return
-    if not gate.allows(msg.line_user_id):
+    elder_id = gate.resolve_elder(msg.channel, msg.external_id)
+    if elder_id is None:
         msg.reply(BIND_FIRST_PROMPT)
         return
     _run_pipeline(
         msg,
         lambda: pipeline.process(
             msg.audio,
-            line_user_id=msg.line_user_id,
+            elder_id=elder_id,
+            line_user_id=msg.external_id,
             trace_id=msg.trace_id,
             audio_url=msg.audio_url,
         ),
@@ -172,7 +181,7 @@ def _record_reply(
     safe_record(
         lambda: traces.record_reply(
             trace_id=msg.trace_id,
-            line_user_id=msg.line_user_id,
+            line_user_id=msg.external_id,
             kind=outcome.kind,
             status="ok",
             latency_ms=latency_ms,

@@ -454,3 +454,331 @@ class PgTraceStore:
         # 表名為固定白名單、非外部輸入，f-string 無注入風險。
         for table in ("webhook_events", "asr_calls", "llm_calls", "tts_calls", "replies"):
             self._db.execute(f"DELETE FROM {table} WHERE created_at < %s", (cutoff,))
+
+
+class FakeTraceStore:
+    """TraceStore 的記憶體替身（測試用，不碰 DB）。
+
+    記錄存於公開 list；``now`` 屬性控制 record_* 寫入的 created_at。
+    seed_* 方法模擬既有表（turns／reminder_logs／risk_events／elders）資料，
+    供查詢面（feed／timeline／overview）測試播種。
+    """
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self._seq = 0
+        self.webhook_events: list[WebhookEvent] = []
+        self.asr_calls: list[AsrCall] = []
+        self.llm_calls: list[LlmCall] = []
+        self.tts_calls: list[TtsCall] = []
+        self.replies: list[Reply] = []
+        # (line_user_id, role, content, created_at)
+        self.turns: list[tuple[str, str, str, float]] = []
+        # (elder_id, kind, content, created_at)
+        self.reminders: list[tuple[str, str, str, float]] = []
+        # (line_user_id, tier, reason, created_at, trace_id)
+        self.risks: list[tuple[str, int, str, float, str | None]] = []
+        # (elder_id, name, line_user_id)
+        self.elders: list[tuple[str, str, str]] = []
+
+    def _next_id(self) -> str:
+        self._seq += 1
+        return f"obs{self._seq}"
+
+    # --- 播種（模擬既有表） ---
+
+    def seed_turn(self, line_user_id: str, role: str, content: str, created_at: float) -> None:
+        self.turns.append((line_user_id, role, content, created_at))
+
+    def seed_reminder(self, elder_id: str, kind: str, content: str, created_at: float) -> None:
+        self.reminders.append((elder_id, kind, content, created_at))
+
+    def seed_risk(
+        self,
+        line_user_id: str,
+        tier: int,
+        reason: str,
+        created_at: float,
+        trace_id: str | None = None,
+    ) -> None:
+        self.risks.append((line_user_id, tier, reason, created_at, trace_id))
+
+    def seed_elder(self, elder_id: str, name: str, line_user_id: str) -> None:
+        self.elders.append((elder_id, name, line_user_id))
+
+    def _elder_name_by_line(self, line_user_id: str) -> str:
+        return next((n for _, n, lu in self.elders if lu == line_user_id), "")
+
+    # --- record 面 ---
+
+    def record_webhook_event(
+        self,
+        *,
+        trace_id: str,
+        line_user_id: str,
+        event_type: str,
+        message_type: str,
+        payload: dict,
+    ) -> None:
+        self.webhook_events.append(
+            WebhookEvent(
+                self._next_id(), trace_id, line_user_id, event_type, message_type, payload, self.now
+            )
+        )
+
+    def record_asr_call(
+        self,
+        *,
+        trace_id: str,
+        line_user_id: str,
+        status: str,
+        latency_ms: int,
+        transcript: str,
+        source_audio_url: str,
+        error_message: str,
+    ) -> None:
+        self.asr_calls.append(
+            AsrCall(
+                self._next_id(),
+                trace_id,
+                line_user_id,
+                status,
+                latency_ms,
+                transcript,
+                source_audio_url,
+                error_message,
+                self.now,
+            )
+        )
+
+    def record_llm_call(
+        self,
+        *,
+        trace_id: str,
+        line_user_id: str,
+        status: str,
+        latency_ms: int,
+        model_name: str,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        content: str,
+        error_message: str,
+    ) -> None:
+        self.llm_calls.append(
+            LlmCall(
+                self._next_id(),
+                trace_id,
+                line_user_id,
+                status,
+                latency_ms,
+                model_name,
+                input_tokens,
+                output_tokens,
+                content,
+                error_message,
+                self.now,
+            )
+        )
+
+    def record_tts_call(
+        self,
+        *,
+        trace_id: str,
+        line_user_id: str,
+        status: str,
+        latency_ms: int,
+        content: str,
+        error_message: str,
+    ) -> None:
+        self.tts_calls.append(
+            TtsCall(
+                self._next_id(),
+                trace_id,
+                line_user_id,
+                status,
+                latency_ms,
+                content,
+                error_message,
+                self.now,
+            )
+        )
+
+    def record_reply(
+        self,
+        *,
+        trace_id: str,
+        line_user_id: str,
+        kind: str,
+        status: str,
+        latency_ms: int,
+        audio_url: str,
+    ) -> None:
+        self.replies.append(
+            Reply(
+                self._next_id(),
+                trace_id,
+                line_user_id,
+                kind,
+                status,
+                latency_ms,
+                audio_url,
+                self.now,
+            )
+        )
+
+    # --- 查詢面 ---
+
+    def get_trace(self, trace_id: str) -> Trace | None:
+        webhook_event = next((e for e in self.webhook_events if e.trace_id == trace_id), None)
+        asr_call = next((c for c in self.asr_calls if c.trace_id == trace_id), None)
+        llm_calls = [c for c in self.llm_calls if c.trace_id == trace_id]
+        tts_call = next((c for c in self.tts_calls if c.trace_id == trace_id), None)
+        reply = next((r for r in self.replies if r.trace_id == trace_id), None)
+        risk_events = [
+            TraceRiskEvent(t, reason, ts) for _, t, reason, ts, tid in self.risks if tid == trace_id
+        ]
+        if not any([webhook_event, asr_call, llm_calls, tts_call, reply, risk_events]):
+            return None
+        line_user_id = next(
+            (x.line_user_id for x in [webhook_event, asr_call, tts_call, reply] if x),
+            llm_calls[0].line_user_id if llm_calls else "",
+        )
+        return Trace(
+            trace_id, line_user_id, webhook_event, asr_call, llm_calls, tts_call, reply, risk_events
+        )
+
+    def list_feed(self, *, after: float, limit: int) -> list[FeedItem]:
+        items: list[FeedItem] = []
+        for line_user_id, role, content, ts in self.turns:
+            if ts > after:
+                items.append(
+                    FeedItem(
+                        "turn",
+                        line_user_id,
+                        self._elder_name_by_line(line_user_id),
+                        role,
+                        content,
+                        None,
+                        None,
+                        ts,
+                    )
+                )
+        for elder_id, _kind, content, ts in self.reminders:
+            if ts > after:
+                row = next((e for e in self.elders if e[0] == elder_id), None)
+                items.append(
+                    FeedItem(
+                        "reminder",
+                        row[2] if row else "",
+                        row[1] if row else "",
+                        "",
+                        content,
+                        None,
+                        None,
+                        ts,
+                    )
+                )
+        for line_user_id, tier, reason, ts, tid in self.risks:
+            if ts > after:
+                items.append(
+                    FeedItem(
+                        "risk",
+                        line_user_id,
+                        self._elder_name_by_line(line_user_id),
+                        "",
+                        reason,
+                        tier,
+                        tid,
+                        ts,
+                    )
+                )
+        items.sort(key=lambda i: i.created_at, reverse=True)
+        return items[:limit]
+
+    def list_timeline_for_elder(
+        self, *, elder_id: str, line_user_id: str, start: float, end: float
+    ) -> list[TimelineItem]:
+        items: list[TimelineItem] = []
+        for lu, role, content, ts in self.turns:
+            if lu == line_user_id and start <= ts < end:
+                items.append(TimelineItem("turn", role, content, None, None, "", ts))
+        for eid, _kind, content, ts in self.reminders:
+            if eid == elder_id and start <= ts < end:
+                items.append(TimelineItem("reminder", "", content, None, None, "", ts))
+        for lu, tier, reason, ts, tid in self.risks:
+            if lu == line_user_id and start <= ts < end:
+                items.append(TimelineItem("risk", "", reason, tier, tid, "", ts))
+        for c in self.asr_calls:
+            if c.line_user_id == line_user_id and start <= c.created_at < end:
+                items.append(
+                    TimelineItem(
+                        "voice",
+                        "user",
+                        c.transcript,
+                        None,
+                        c.trace_id,
+                        c.source_audio_url,
+                        c.created_at,
+                    )
+                )
+        for r in self.replies:
+            if r.line_user_id == line_user_id and r.audio_url and start <= r.created_at < end:
+                items.append(
+                    TimelineItem(
+                        "voice", "assistant", "", None, r.trace_id, r.audio_url, r.created_at
+                    )
+                )
+        items.sort(key=lambda i: i.created_at)
+        return items
+
+    def list_elders_with_last_active(self) -> list[ElderActivity]:
+        result = []
+        for elder_id, name, line_user_id in sorted(self.elders, key=lambda e: e[1]):
+            actives = [ts for lu, _, _, ts in self.turns if lu == line_user_id]
+            result.append(
+                ElderActivity(elder_id, name, line_user_id, max(actives) if actives else None)
+            )
+        return result
+
+    def get_overview_stats(self, *, today_start: float, hourly_start: float) -> OverviewStats:
+        today_turns = [t for t in self.turns if t[3] >= today_start]
+        stages = []
+        for stage, calls in (
+            ("asr", self.asr_calls),
+            ("llm", self.llm_calls),
+            ("tts", self.tts_calls),
+        ):
+            recent = [c for c in calls if c.created_at >= today_start]
+            lats = sorted(c.latency_ms for c in recent)
+            p95 = lats[max(0, -(-95 * len(lats) // 100) - 1)] if lats else 0.0
+            stages.append(
+                StageStats(
+                    stage,
+                    len(recent),
+                    sum(1 for c in recent if c.status != "ok"),
+                    sum(lats) / len(lats) if lats else 0.0,
+                    float(p95),
+                )
+            )
+        llm_recent = [c for c in self.llm_calls if c.created_at >= today_start]
+        buckets: dict[float, int] = {}
+        for t in self.turns:
+            if t[3] >= hourly_start:
+                bucket = (t[3] // 3600) * 3600
+                buckets[bucket] = buckets.get(bucket, 0) + 1
+        return OverviewStats(
+            turn_count=len(today_turns),
+            risk_event_count=sum(1 for r in self.risks if r[3] >= today_start),
+            active_elder_count=len({t[0] for t in today_turns}),
+            llm_input_tokens=sum(c.input_tokens or 0 for c in llm_recent),
+            llm_output_tokens=sum(c.output_tokens or 0 for c in llm_recent),
+            stages=stages,
+            hourly_turns=[HourlyCount(h, n) for h, n in sorted(buckets.items())],
+        )
+
+    def purge_older_than(self, cutoff: float) -> None:
+        self.webhook_events = [e for e in self.webhook_events if e.created_at >= cutoff]
+        self.asr_calls = [c for c in self.asr_calls if c.created_at >= cutoff]
+        self.llm_calls = [c for c in self.llm_calls if c.created_at >= cutoff]
+        self.tts_calls = [c for c in self.tts_calls if c.created_at >= cutoff]
+        self.replies = [r for r in self.replies if r.created_at >= cutoff]
