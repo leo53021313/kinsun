@@ -26,11 +26,11 @@ def previous_day_bounds(now: datetime) -> tuple[float, float]:
 
 
 class MemoryStore(Protocol):
-    def append(self, line_user_id: str, message: Message) -> None: ...
-    def recent(self, line_user_id: str) -> list[Message]: ...
-    def previous_day(self, line_user_id: str) -> list[Message]: ...
+    def append(self, elder_id: str, message: Message) -> None: ...
+    def recent(self, elder_id: str) -> list[Message]: ...
+    def previous_day(self, elder_id: str) -> list[Message]: ...
     def sessions(self) -> list[str]: ...
-    def last_active(self, line_user_id: str) -> float | None: ...
+    def last_active(self, elder_id: str) -> float | None: ...
 
 
 class PgMemoryStore:
@@ -41,41 +41,43 @@ class PgMemoryStore:
         self._clock = clock
         self._max_turns = max_turns
 
-    def append(self, line_user_id: str, message: Message) -> None:
+    def append(self, elder_id: str, message: Message) -> None:
         created_at = self._clock().timestamp()
         self._db.execute(
-            "INSERT INTO turns (line_user_id, role, content, created_at) VALUES (%s, %s, %s, %s)",
-            (line_user_id, message.role, message.content, created_at),
+            "INSERT INTO turns (elder_id, role, content, created_at) VALUES (%s, %s, %s, %s)",
+            (elder_id, message.role, message.content, created_at),
         )
 
-    def recent(self, line_user_id: str) -> list[Message]:
+    def recent(self, elder_id: str) -> list[Message]:
         start = self._start_of_today()
         rows = self._db.query(
-            "SELECT role, content FROM turns WHERE line_user_id = %s AND created_at >= %s "
+            "SELECT role, content FROM turns WHERE elder_id = %s AND created_at >= %s "
             "ORDER BY created_at DESC, id DESC LIMIT %s",
-            (line_user_id, start, self._max_turns),
+            (elder_id, start, self._max_turns),
         )
         return [Message(role=r, content=t) for r, t in reversed(rows)]
 
-    def previous_day(self, line_user_id: str) -> list[Message]:
+    def previous_day(self, elder_id: str) -> list[Message]:
         """整理批次用：回傳『剛結束的那一天』整天的對話（時序由舊到新）。"""
         start, end = previous_day_bounds(self._clock())
         rows = self._db.query(
             "SELECT role, content FROM turns "
-            "WHERE line_user_id = %s AND created_at >= %s AND created_at < %s "
+            "WHERE elder_id = %s AND created_at >= %s AND created_at < %s "
             "ORDER BY created_at ASC, id ASC LIMIT %s",
-            (line_user_id, start, end, self._max_turns),
+            (elder_id, start, end, self._max_turns),
         )
         return [Message(role=r, content=t) for r, t in rows]
 
     def sessions(self) -> list[str]:
-        rows = self._db.query("SELECT DISTINCT line_user_id FROM turns ORDER BY line_user_id")
+        rows = self._db.query(
+            "SELECT DISTINCT elder_id FROM turns WHERE elder_id IS NOT NULL ORDER BY elder_id"
+        )
         return [r[0] for r in rows]
 
-    def last_active(self, line_user_id: str) -> float | None:
+    def last_active(self, elder_id: str) -> float | None:
         row = self._db.query_one(
-            "SELECT MAX(created_at) FROM turns WHERE line_user_id = %s AND role = 'user'",
-            (line_user_id,),
+            "SELECT MAX(created_at) FROM turns WHERE elder_id = %s AND role = 'user'",
+            (elder_id,),
         )
         return row[0] if row and row[0] is not None else None
 
@@ -100,28 +102,28 @@ class FakeMemoryStore:
         self._max_turns = max_turns
         self._turns: dict[str, list[tuple[float, Message]]] = {}
 
-    def append(self, line_user_id: str, message: Message, *, at: datetime | None = None) -> None:
+    def append(self, elder_id: str, message: Message, *, at: datetime | None = None) -> None:
         ts = (at or self._now).timestamp()
-        self._turns.setdefault(line_user_id, []).append((ts, message))
+        self._turns.setdefault(elder_id, []).append((ts, message))
 
-    def recent(self, line_user_id: str) -> list[Message]:
+    def recent(self, elder_id: str) -> list[Message]:
         midnight = self._now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
         rows = sorted(
             (
                 (ts, i, m)
-                for i, (ts, m) in enumerate(self._turns.get(line_user_id, []))
+                for i, (ts, m) in enumerate(self._turns.get(elder_id, []))
                 if ts >= midnight
             ),
             key=lambda r: (r[0], r[1]),
         )
         return [m for _, _, m in rows[-self._max_turns :]]
 
-    def previous_day(self, line_user_id: str) -> list[Message]:
+    def previous_day(self, elder_id: str) -> list[Message]:
         start, end = previous_day_bounds(self._now)
         rows = sorted(
             (
                 (ts, i, m)
-                for i, (ts, m) in enumerate(self._turns.get(line_user_id, []))
+                for i, (ts, m) in enumerate(self._turns.get(elder_id, []))
                 if start <= ts < end
             ),
             key=lambda r: (r[0], r[1]),
@@ -131,6 +133,6 @@ class FakeMemoryStore:
     def sessions(self) -> list[str]:
         return sorted(self._turns)
 
-    def last_active(self, line_user_id: str) -> float | None:
-        users = [ts for ts, m in self._turns.get(line_user_id, []) if m.role == "user"]
+    def last_active(self, elder_id: str) -> float | None:
+        users = [ts for ts, m in self._turns.get(elder_id, []) if m.role == "user"]
         return max(users) if users else None
