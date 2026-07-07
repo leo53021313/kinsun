@@ -13,6 +13,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from kinsun.accounts.models import PrincipalType
 from kinsun.appointments.jobs import build_appointment_reminder_job
 from kinsun.audio.publisher import build_audio_publisher
 from kinsun.composition import assemble_core, build_externals
@@ -52,7 +53,7 @@ def build_scheduler(
     appt_store = core.appt_store
     reminder_logs = core.reminder_logs
     agent = core.agent
-    channel = core.channel
+    router = core.router
     traces = core.traces
     summaries = PgConversationSummaryStore(db, clock=clock)
 
@@ -70,13 +71,12 @@ def build_scheduler(
             logger.warning("對話摘要失敗 elder=%s", elder_id)
 
     def _push_to_elder(elder_id: str, intent: str, kind: str) -> None:
-        # 會話以 elder_id 識別；出站仍走 LINE，須反查綁定，未綁 LINE 即略過。
-        elder = accounts.get_elder(elder_id)
-        if elder is None or not elder.line_user_id:
-            logger.warning("主動推播略過（長輩未綁 LINE）elder=%s kind=%s", elder_id, kind)
+        # 先確認可達再生成內容（避免白花一次 LLM 呼叫）；出站由 router 依綁定通道投遞。
+        if not router.has_route(PrincipalType.ELDER, elder_id):
+            logger.warning("主動推播略過（長輩無任何綁定通道）elder=%s kind=%s", elder_id, kind)
             return
         content = agent.proactive(elder_id, intent)
-        channel.send_text(elder.line_user_id, content)
+        router.send_text(PrincipalType.ELDER, elder_id, content)
         # 主動推播補記 reminder_logs（觀測用，失敗不影響推播）。
         safe_record(reminder_logs.record, elder_id, kind, content)
 
@@ -116,8 +116,8 @@ def build_scheduler(
                 slot=slot,
                 meds_at_slot=lambda s=slot: med_store.list_for_slot(s),
                 lookup_elder=accounts.get_elder,
-                is_consented_elder=accounts.is_consented_elder,
-                channel=channel,
+                has_valid_consent=accounts.has_valid_consent,
+                router=router,
                 hour=hour,
                 name=name,
                 record=reminder_logs.record,
@@ -129,9 +129,9 @@ def build_scheduler(
             today=lambda: clock().date().isoformat(),
             tomorrow=lambda: (clock().date() + timedelta(days=1)).isoformat(),
             lookup_elder=accounts.get_elder,
-            is_consented_elder=accounts.is_consented_elder,
-            guardian_line_ids=accounts.guardian_line_ids_of_elder,
-            channel=channel,
+            has_valid_consent=accounts.has_valid_consent,
+            guardians_of=accounts.guardians_of,
+            router=router,
             hour=settings.appointment_reminder_hour,
             record=reminder_logs.record,
         )

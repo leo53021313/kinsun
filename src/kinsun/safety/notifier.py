@@ -1,11 +1,12 @@
-"""危急通知。`LogNotifier` 為 placeholder；`LineGuardianNotifier` 推播給已綁定家屬。"""
+"""危急通知。`LogNotifier` 為 placeholder；`GuardianNotifier` 依綁定通道推播給所有家屬。"""
 
 from __future__ import annotations
 
 import logging
 from typing import Protocol
 
-from kinsun.channels.outbound import OutboundChannel
+from kinsun.accounts.models import ElderGuardian, PrincipalType
+from kinsun.channels.router import ChannelRouter
 from kinsun.safety.tiers import RiskAssessment, RiskTier
 
 logger = logging.getLogger("kinsun.safety")
@@ -28,7 +29,7 @@ class LogNotifier:
 
 
 class GuardianDirectory(Protocol):
-    def guardian_line_ids_of_elder(self, elder_id: str) -> list[str]: ...
+    def guardians_of(self, elder_id: str) -> list[ElderGuardian]: ...
 
 
 _ALERT_PREFIX = "⚠️【金孫關懷提醒】"
@@ -44,16 +45,16 @@ def _format_alert(assessment: RiskAssessment) -> str:
     return text
 
 
-class LineGuardianNotifier:
-    """危急時依升級順序推播給所有家屬。任何失敗只記錄、不中斷對話。"""
+class GuardianNotifier:
+    """危急時依升級順序、經綁定通道推播給所有家屬。任何失敗只記錄、不中斷對話。"""
 
-    def __init__(self, directory: GuardianDirectory, channel: OutboundChannel) -> None:
+    def __init__(self, directory: GuardianDirectory, router: ChannelRouter) -> None:
         self._directory = directory
-        self._channel = channel
+        self._router = router
 
     def notify(self, elder_id: str, assessment: RiskAssessment) -> None:
         try:
-            targets = self._directory.guardian_line_ids_of_elder(elder_id)
+            targets = [eg.guardian_id for eg in self._directory.guardians_of(elder_id)]
             if not targets:
                 logger.warning(
                     "危急但查無可通知家屬 elder=%s tier=%s reason=%s",
@@ -64,13 +65,9 @@ class LineGuardianNotifier:
                 return
             text = _format_alert(assessment)
             sent = 0
-            # 迴圈變數帶 guardian_ 限定詞，明示這是家屬的 LINE 識別、非長輩會話鍵。
-            for guardian_line_user_id in targets:
-                try:
-                    self._channel.send_text(guardian_line_user_id, text)
+            for guardian_id in targets:
+                if self._router.send_text(PrincipalType.GUARDIAN, guardian_id, text) > 0:
                     sent += 1
-                except Exception:  # noqa: BLE001
-                    logger.exception("推播家屬失敗 guardian_line_user_id=%s", guardian_line_user_id)
             logger.warning(
                 "已通知家屬 elder=%s tier=%s 成功=%d/%d",
                 elder_id,

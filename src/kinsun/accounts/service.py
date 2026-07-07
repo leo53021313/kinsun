@@ -153,14 +153,8 @@ class AccountService:
             return None
         return binding.principal_id if self.has_valid_consent(binding.principal_id) else None
 
-    def is_consented_elder(self, line_user_id: str) -> bool:
-        return self.consented_elder_id(Channel.LINE, line_user_id) is not None
-
     def get_elder(self, elder_id: str):
         return self._repo.get_elder(elder_id)
-
-    def elder_by_line(self, line_user_id: str):
-        return self._repo.get_elder_by_line(line_user_id)
 
     def preview_invite(self, code: str) -> InvitePreview | None:
         invite = self._repo.get_invite(code)
@@ -187,14 +181,6 @@ class AccountService:
             if elder is not None:
                 elders.append(elder)
         return elders
-
-    def guardian_line_ids_of_elder(self, elder_id: str) -> list[str]:
-        line_ids: list[str] = []
-        for eg in self._repo.list_elder_guardians(elder_id):
-            guardian = self._repo.get_guardian(eg.guardian_id)
-            if guardian is not None and guardian.line_user_id:
-                line_ids.append(guardian.line_user_id)
-        return line_ids
 
     def can_view_transcript(self, elder_id: str, guardian_id: str) -> bool:
         eg = self._repo.get_elder_guardian(elder_id, guardian_id)
