@@ -31,7 +31,7 @@ class _RiskEvents:
     def __init__(self, events):
         self._events = events
 
-    def list_for_line_user(self, line_user_id):
+    def list_for_elder(self, elder_id):
         return self._events
 
 
@@ -101,7 +101,8 @@ def test_health_report_requires_token():
     assert client.get(f"/api/elders/{elder_id}/health-report").status_code == 401
 
 
-def test_health_report_unbound_elder_has_no_risks():
+def test_health_report_unbound_elder_still_reports():
+    # 會話主鍵通道中立後，報告以 elder_id 直查，長輩未綁 LINE 不影響內容。
     reminders = [ReminderLog("m1", "e", "medication", "早上用藥：A", RECENT)]
     client, elder_id = _client("U-son", risks=[], reminders=reminders, bind_elder=False)
     res = client.get(f"/api/elders/{elder_id}/health-report", headers=_auth())

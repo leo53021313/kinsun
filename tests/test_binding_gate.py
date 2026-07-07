@@ -1,27 +1,29 @@
+from kinsun.accounts.models import Channel
 from kinsun.binding.gate import AllowAllGate, ConsentGate
 
 
-class _Checker:
-    def __init__(self, result=True, boom=False):
-        self._result = result
+class _Resolver:
+    def __init__(self, elder_id=None, boom=False):
+        self._elder_id = elder_id
         self._boom = boom
 
-    def is_consented_elder(self, line_user_id):
+    def consented_elder_id(self, channel, external_id):
         if self._boom:
             raise RuntimeError("db down")
-        return self._result
+        return self._elder_id
 
 
-def test_gate_delegates_to_checker():
-    assert ConsentGate(_Checker(True)).allows("U-1") is True
-    assert ConsentGate(_Checker(False)).allows("U-1") is False
+def test_gate_resolves_consented_elder():
+    assert ConsentGate(_Resolver("e-1")).resolve_elder(Channel.LINE, "U-1") == "e-1"
+    assert ConsentGate(_Resolver(None)).resolve_elder(Channel.LINE, "U-1") is None
 
 
-def test_gate_fail_open_on_error():
-    assert ConsentGate(_Checker(boom=True)).allows("U-1") is True
+def test_gate_returns_none_on_error():
+    # 會話主鍵需要 elder_id 才能落記憶，解析故障無從放行 → 視同未綁定。
+    assert ConsentGate(_Resolver("e-1", boom=True)).resolve_elder(Channel.LINE, "U-1") is None
 
 
-def test_allow_all_gate_always_allows():
+def test_allow_all_gate_passes_line_id_through():
     gate = AllowAllGate()
-    assert gate.allows("U-1") is True
-    assert gate.allows("") is True
+    assert gate.resolve_elder(Channel.LINE, "U-1") == "U-1"
+    assert gate.resolve_elder(Channel.APP, "") == ""

@@ -13,36 +13,23 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from kinsun.accounts.service import AccountService
-from kinsun.accounts.store import PgAccountStore
-from kinsun.agent import CareAgent
-from kinsun.appointments.facts import AppointmentFacts
+from kinsun.accounts.models import PrincipalType
 from kinsun.appointments.jobs import build_appointment_reminder_job
-from kinsun.appointments.service import AppointmentService
-from kinsun.appointments.store import PgAppointmentStore
 from kinsun.audio.publisher import build_audio_publisher
-from kinsun.channels.line.messenger import LineApiMessenger
+from kinsun.composition import assemble_core, build_externals
 from kinsun.config import Settings, load_dotenv, load_settings
-from kinsun.db import Database, ensure_schema
-from kinsun.llm import GeminiClient
-from kinsun.medications.facts import MedicationFacts
+from kinsun.db import Database
 from kinsun.medications.jobs import build_medication_slot_job
 from kinsun.medications.models import MedicationSlot
-from kinsun.medications.store import PgMedicationStore
 from kinsun.memory.longterm.consolidation import run_consolidation
-from kinsun.memory.longterm.mem0_factory import build_mem0_memory
-from kinsun.memory.longterm.store import Mem0LongTermStore
-from kinsun.memory.recall import MemoryContext
-from kinsun.memory.shortterm import PgMemoryStore
 from kinsun.observability.jobs import build_observability_cleanup_job
-from kinsun.observability.store import PgTraceStore
 from kinsun.proactive.jobs import (
     GREETING_INTENT,
     INACTIVITY_INTENT,
     build_greeting_job,
     build_inactivity_job,
 )
-from kinsun.reports.reminders import PgReminderLogStore, safe_record
+from kinsun.reports.reminders import safe_record
 from kinsun.reports.summaries import PgConversationSummaryStore, summarize_day
 from kinsun.scheduler.jobs import build_audio_cleanup_job, build_consolidation_job
 from kinsun.scheduler.scheduler import Scheduler
@@ -55,64 +42,49 @@ def build_scheduler(
     settings: Settings, *, clock: Callable[[], datetime]
 ) -> tuple[Scheduler, Database]:
     tz = ZoneInfo(settings.timezone)
-    ensure_schema(settings.database_url)
-    db = Database.open(settings.database_url)
-    memory = PgMemoryStore(
-        db,
-        clock=lambda: datetime.now(tz),
-        max_turns=settings.memory_max_turns,
-    )
-    gemini = GeminiClient(
-        api_key=settings.gemini_api_key,
-        model=settings.gemini_model,
-        timeout=settings.gemini_timeout_seconds,
-    )
-    long_term = Mem0LongTermStore(build_mem0_memory(settings), top_k=settings.longterm_top_k)
-    accounts = AccountService(PgAccountStore(db), clock=clock)
-    med_store = PgMedicationStore(db)
-    appt_store = PgAppointmentStore(db)
-    appointments = AppointmentService(appt_store)
-    reminder_logs = PgReminderLogStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex)
+    externals = build_externals(settings)
+    core = assemble_core(settings, externals, clock=clock)
+    db = core.db
+    memory = core.memory
+    long_term = core.long_term
+    gemini = core.gemini
+    accounts = core.accounts
+    med_store = core.med_store
+    appt_store = core.appt_store
+    reminder_logs = core.reminder_logs
+    agent = core.agent
+    router = core.router
+    traces = core.traces
     summaries = PgConversationSummaryStore(db, clock=clock)
-    context = MemoryContext(
-        long_term,
-        facts=[
-            MedicationFacts(accounts, med_store),
-            AppointmentFacts(accounts, appointments, clock=clock),
-        ],
-    )
-    agent = CareAgent(gemini, memory, context)
-    messenger = LineApiMessenger(settings.line_channel_access_token)
-    traces = PgTraceStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex)
 
-    def _record_push(line_user_id: str, kind: str, content: str) -> None:
-        # 主動推播補記 reminder_logs：查得到綁定長輩才記（觀測用，失敗不影響推播）。
-        elder = accounts.elder_by_line(line_user_id)
-        if elder is not None:
-            safe_record(reminder_logs.record, elder.elder_id, kind, content)
-
-    def run_one(line_user_id: str) -> None:
-        run_consolidation(line_user_id, short_term=memory, long_term=long_term)
+    def run_one(elder_id: str) -> None:
+        run_consolidation(elder_id, short_term=memory, long_term=long_term)
         try:
             summarize_day(
-                line_user_id,
+                elder_id,
                 short_term=memory,
                 summarizer=gemini,
                 summaries=summaries,
                 clock=clock,
             )
         except Exception:  # noqa: BLE001 - 摘要失敗不影響整理與其他長輩
-            logger.warning("對話摘要失敗 session=%s", line_user_id)
+            logger.warning("對話摘要失敗 elder=%s", elder_id)
 
-    def greet_one(line_user_id: str) -> None:
-        content = agent.proactive(line_user_id, GREETING_INTENT)
-        messenger.push_text(line_user_id, content)
-        _record_push(line_user_id, "proactive-greeting", content)
+    def _push_to_elder(elder_id: str, intent: str, kind: str) -> None:
+        # 先確認可達再生成內容（避免白花一次 LLM 呼叫）；出站由 router 依綁定通道投遞。
+        if not router.has_route(PrincipalType.ELDER, elder_id):
+            logger.warning("主動推播略過（長輩無任何綁定通道）elder=%s kind=%s", elder_id, kind)
+            return
+        content = agent.proactive(elder_id, intent)
+        router.send_text(PrincipalType.ELDER, elder_id, content)
+        # 主動推播補記 reminder_logs（觀測用，失敗不影響推播）。
+        safe_record(reminder_logs.record, elder_id, kind, content)
 
-    def care_one(line_user_id: str) -> None:
-        content = agent.proactive(line_user_id, INACTIVITY_INTENT)
-        messenger.push_text(line_user_id, content)
-        _record_push(line_user_id, "proactive-care", content)
+    def greet_one(elder_id: str) -> None:
+        _push_to_elder(elder_id, GREETING_INTENT, "proactive-greeting")
+
+    def care_one(elder_id: str) -> None:
+        _push_to_elder(elder_id, INACTIVITY_INTENT, "proactive-care")
 
     jobs = [
         build_consolidation_job(
@@ -144,8 +116,8 @@ def build_scheduler(
                 slot=slot,
                 meds_at_slot=lambda s=slot: med_store.list_for_slot(s),
                 lookup_elder=accounts.get_elder,
-                is_consented_elder=accounts.is_consented_elder,
-                push=messenger.push_text,
+                has_valid_consent=accounts.has_valid_consent,
+                router=router,
                 hour=hour,
                 name=name,
                 record=reminder_logs.record,
@@ -157,9 +129,9 @@ def build_scheduler(
             today=lambda: clock().date().isoformat(),
             tomorrow=lambda: (clock().date() + timedelta(days=1)).isoformat(),
             lookup_elder=accounts.get_elder,
-            is_consented_elder=accounts.is_consented_elder,
-            guardian_line_ids=accounts.guardian_line_ids_of_elder,
-            push=messenger.push_text,
+            has_valid_consent=accounts.has_valid_consent,
+            guardians_of=accounts.guardians_of,
+            router=router,
             hour=settings.appointment_reminder_hour,
             record=reminder_logs.record,
         )

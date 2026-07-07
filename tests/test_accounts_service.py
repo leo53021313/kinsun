@@ -3,7 +3,7 @@ from itertools import count
 
 import pytest
 
-from kinsun.accounts.models import ConsentBy, InviteRole, Role
+from kinsun.accounts.models import Channel, ConsentBy, InviteRole, Role
 from kinsun.accounts.service import AccountService, InviteError
 from tests.fakes import FakeAccountStore
 
@@ -112,11 +112,11 @@ def test_guardian_redeem_does_not_resurrect_revoked_consent():
     inv_e = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
     svc.redeem_invite(inv_e.code, "U-elder", consent_by=ConsentBy.SELF)
     svc.revoke_consent(elder.elder_id)
-    assert svc.is_consented_elder("U-elder") is False
+    assert svc.consented_elder_id(Channel.LINE, "U-elder") is None
     # 之後有家屬加入，不可「復活」長輩已撤回的同意。
     inv_g = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
     svc.redeem_invite(inv_g.code, "U-daughter", consent_by=ConsentBy.SELF)
-    assert svc.is_consented_elder("U-elder") is False
+    assert svc.consented_elder_id(Channel.LINE, "U-elder") is None
 
 
 def test_revoke_consent_sets_revoked():
@@ -151,25 +151,25 @@ def test_get_elder():
     assert svc.get_elder("nope") is None
 
 
-def test_is_consented_elder_lifecycle():
+def test_consented_elder_lifecycle():
     repo = FakeAccountStore()
     svc = _service(repo)
-    assert svc.is_consented_elder("U-elder") is False
+    assert svc.consented_elder_id(Channel.LINE, "U-elder") is None
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
     svc.redeem_invite(inv.code, "U-elder", consent_by=ConsentBy.SELF)
-    assert svc.is_consented_elder("U-elder") is True
+    assert svc.consented_elder_id(Channel.LINE, "U-elder") is not None
     svc.revoke_consent(elder.elder_id)
-    assert svc.is_consented_elder("U-elder") is False
+    assert svc.consented_elder_id(Channel.LINE, "U-elder") is None
 
 
-def test_is_consented_elder_bound_without_consent():
+def test_consented_elder_bound_without_consent():
     from kinsun.accounts.models import Elder
 
     repo = FakeAccountStore()
     svc = _service(repo)
     repo.save_elder(Elder("e1", "阿公", "U-elder"))
-    assert svc.is_consented_elder("U-elder") is False
+    assert svc.consented_elder_id(Channel.LINE, "U-elder") is None
 
 
 def test_preview_invite_valid_and_not_found():
@@ -211,30 +211,16 @@ def test_elders_managed_by():
     assert [e.elder_id for e in managed] == [elder.elder_id]
 
 
-def test_guardian_line_ids_in_escalation_order():
+def test_consented_elder_id_resolves_and_rejects():
     repo = FakeAccountStore()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv_elder = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
     svc.redeem_invite(inv_elder.code, "U-elder", consent_by=ConsentBy.SELF)
-    inv_guard = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
-    svc.redeem_invite(inv_guard.code, "U-daughter", consent_by=ConsentBy.SELF)
-    assert svc.guardian_line_ids("U-elder") == ["U-son", "U-daughter"]
-
-
-def test_guardian_line_ids_unbound_elder_returns_empty():
-    repo = FakeAccountStore()
-    svc = _service(repo)
-    assert svc.guardian_line_ids("U-nobody") == []
-
-
-def test_guardian_line_ids_only_primary():
-    repo = FakeAccountStore()
-    svc = _service(repo)
-    elder = svc.create_elder("U-son", "兒子", "阿公")
-    inv_elder = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
-    svc.redeem_invite(inv_elder.code, "U-elder", consent_by=ConsentBy.SELF)
-    assert svc.guardian_line_ids("U-elder") == ["U-son"]
+    assert svc.consented_elder_id(Channel.LINE, "U-elder") == elder.elder_id
+    assert svc.consented_elder_id(Channel.LINE, "U-nobody") is None
+    svc.revoke_consent(elder.elder_id)
+    assert svc.consented_elder_id(Channel.LINE, "U-elder") is None
 
 
 def test_create_elder_uses_repo_transaction():
@@ -244,24 +230,3 @@ def test_create_elder_uses_repo_transaction():
     # create_elder 同時寫 elder 與 elder_guardian，且兩者皆落地
     assert repo.get_elder(elder.elder_id).name == "阿公"
     assert repo.list_elder_guardians(elder.elder_id)[0].role.value == "primary"
-
-
-def test_elder_by_line():
-    from kinsun.accounts.models import Elder
-
-    repo = FakeAccountStore()
-    repo.save_elder(Elder("e1", "阿公", "U-elder"))
-    svc = _service(repo)
-    assert svc.elder_by_line("U-elder").elder_id == "e1"
-    assert svc.elder_by_line("nope") is None
-
-
-def test_guardian_line_ids_of_elder_by_id():
-    repo = FakeAccountStore()
-    svc = _service(repo)
-    elder = svc.create_elder("U-son", "兒子", "阿公")
-    inv = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
-    svc.redeem_invite(inv.code, "U-daughter", consent_by=ConsentBy.SELF)
-    # 用 elder_id 直接查，不需長輩本人綁定 LINE
-    assert svc.guardian_line_ids_of_elder(elder.elder_id) == ["U-son", "U-daughter"]
-    assert svc.guardian_line_ids_of_elder("nope") == []
