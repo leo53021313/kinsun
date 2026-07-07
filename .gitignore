@@ -150,9 +150,14 @@ activemq-data/
 # 短期記憶資料庫（含長者對話內容，不得進版控）
 *.db
 
+# scripts/kinsun.sh 執行期產物（log 與 PID，不進版控）
+logs/
+.run/
+
 # Environments
 .env
 .envrc
+services/tts/.env.tts
 .venv
 env/
 venv/

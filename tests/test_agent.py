@@ -14,30 +14,31 @@ class SpyLLM:
         return "金孫回您：好的"
 
 
-class SpyMemory:
-    def __init__(self, history: list[Message] | None = None) -> None:
+class _Ctx:
+    """SessionMemory.assemble 的替身回傳：只需 system_suffix ＋ history 兩個屬性。"""
+
+    def __init__(self, system_suffix: str, history: list[Message]) -> None:
+        self.system_suffix = system_suffix
+        self.history = history
+
+
+class SpySession:
+    def __init__(self, system_suffix: str = "", history: list[Message] | None = None) -> None:
+        self._suffix = system_suffix
         self._history = history or []
-        self.appended: list[tuple[str, Message]] = []
+        self.recorded: list[tuple[str, tuple[Message, ...]]] = []
 
-    def recent(self, line_user_id: str) -> list[Message]:
-        return list(self._history)
+    def assemble(self, line_user_id: str, query: str) -> _Ctx:
+        return _Ctx(self._suffix, list(self._history))
 
-    def append(self, line_user_id: str, message: Message) -> None:
-        self.appended.append((line_user_id, message))
-
-
-class SpyContext:
-    def __init__(self, text: str = "") -> None:
-        self._text = text
-
-    def recall(self, line_user_id: str, user_text: str) -> str:
-        return self._text
+    def record_turn(self, line_user_id: str, *messages: Message) -> None:
+        self.recorded.append((line_user_id, messages))
 
 
 def test_handle_includes_history_and_writes_back():
     llm = SpyLLM()
-    memory = SpyMemory([Message("user", "早安"), Message("assistant", "阿公早")])
-    agent = CareAgent(llm, memory, SpyContext(""))
+    session = SpySession(history=[Message("user", "早安"), Message("assistant", "阿公早")])
+    agent = CareAgent(llm, session)
 
     reply = agent.handle("u1", "我今天有點累")
 
@@ -48,30 +49,29 @@ def test_handle_includes_history_and_writes_back():
         Message("assistant", "阿公早"),
         Message("user", "我今天有點累"),
     ]
-    assert memory.appended == [
-        ("u1", Message("user", "我今天有點累")),
-        ("u1", Message("assistant", "金孫回您：好的")),
+    assert session.recorded == [
+        ("u1", (Message("user", "我今天有點累"), Message("assistant", "金孫回您：好的"))),
     ]
 
 
 def test_handle_injects_known_facts_into_system_prompt():
     llm = SpyLLM()
-    agent = CareAgent(llm, SpyMemory(), SpyContext("\n已知：高血壓（長者自述）"))
+    agent = CareAgent(llm, SpySession(system_suffix="\n已知：高血壓（長者自述）"))
     agent.handle("u1", "嗨")
     assert llm.system_prompt == SYSTEM_PROMPT + "\n已知：高血壓（長者自述）"
 
 
 def test_proactive_composes_with_memory_and_writes_back():
     llm = SpyLLM()
-    memory = SpyMemory()
-    agent = CareAgent(llm, memory, SpyContext("【記憶】"))
+    session = SpySession(system_suffix="【記憶】")
+    agent = CareAgent(llm, session)
 
     reply = agent.proactive("u1", "早安問候")
 
     assert reply == "金孫回您：好的"
     assert llm.system_prompt == SYSTEM_PROMPT + "【記憶】"
     assert "早安問候" in llm.messages[-1].content
-    assert memory.appended == [("u1", Message("assistant", "金孫回您：好的"))]
+    assert session.recorded == [("u1", (Message("assistant", "金孫回您：好的"),))]
 
 
 class ScriptedToolLLM:
@@ -107,13 +107,12 @@ def test_handle_runs_tool_loop_then_returns_text():
             ToolTurn(text="台北今天晴，記得多喝水", tool_calls=[]),
         ]
     )
-    memory = SpyMemory()
-    agent = CareAgent(llm, memory, SpyContext(""), tools=_registry_with_weather())
+    session = SpySession()
+    agent = CareAgent(llm, session, tools=_registry_with_weather())
     reply = agent.handle("u1", "今天台北天氣？")
     assert reply == "台北今天晴，記得多喝水"
-    assert memory.appended == [
-        ("u1", Message("user", "今天台北天氣？")),
-        ("u1", Message("assistant", "台北今天晴，記得多喝水")),
+    assert session.recorded == [
+        ("u1", (Message("user", "今天台北天氣？"), Message("assistant", "台北今天晴，記得多喝水"))),
     ]
     assert llm.calls == [0, 1]  # 第二輪帶入 1 筆 tool_result
 
@@ -121,9 +120,7 @@ def test_handle_runs_tool_loop_then_returns_text():
 def test_tool_loop_caps_iterations():
     always_tool = ToolTurn(text=None, tool_calls=[ToolCall("get_weather", {})])
     llm = ScriptedToolLLM([always_tool, always_tool, always_tool])
-    agent = CareAgent(
-        llm, SpyMemory(), SpyContext(""), tools=_registry_with_weather(), max_tool_iters=3
-    )
+    agent = CareAgent(llm, SpySession(), tools=_registry_with_weather(), max_tool_iters=3)
     reply = agent.handle("u1", "天氣")
     assert reply == FALLBACK_REPLY
     assert len(llm.calls) == 3

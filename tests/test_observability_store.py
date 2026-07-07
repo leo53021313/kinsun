@@ -47,22 +47,8 @@ def _record_full_trace(store, trace_id="t1", line_user_id="U1"):
     )
 
 
-def test_get_trace_bundles_all_stages():
-    store = FakeTraceStore()
-    _record_full_trace(store)
-    trace = store.get_trace("t1")
-    assert trace is not None
-    assert trace.line_user_id == "U1"
-    assert trace.webhook_event.payload == {"k": "v"}
-    assert trace.asr_call.transcript == "阿公早安"
-    assert [c.content for c in trace.llm_calls] == ["早安，睡得好嗎？"]
-    assert trace.tts_call.latency_ms == 300
-    assert trace.reply.audio_url == "https://x/out.m4a"
-    assert trace.risk_events == []
-
-
-def test_get_trace_missing_returns_none():
-    assert FakeTraceStore().get_trace("nope") is None
+# 記錄面 record_* → get_trace 往返（含 missing 回 None）已移到跨 adapter 合約
+# tests/test_observability_store_contract.py；此處只保留 Fake 專屬與查詢面測試。
 
 
 def test_get_trace_includes_seeded_risk_events():
