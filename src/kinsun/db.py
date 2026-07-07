@@ -169,6 +169,23 @@ OBSERVABILITY_DDL = (
 # risk_events 既有表補 trace_id（可空）：讓風險事件掛回該輪鏈路。
 RISK_EVENTS_TRACE_MIGRATION_DDL = "ALTER TABLE risk_events ADD COLUMN IF NOT EXISTS trace_id TEXT;"
 
+# elders／guardians 既有 LINE 綁定回填 channel_bindings（冪等）：擴張—收縮遷移的回填步。
+# 同一 line_user_id 髒資料的優先序：長輩先於家屬（先執行）、elder_id 排序小者先（確定性）。
+CHANNEL_BINDINGS_BACKFILL_DDL = (
+    "INSERT INTO channel_bindings "
+    "(channel, external_id, principal_type, principal_id, created_at) "
+    "SELECT 'line', line_user_id, 'elder', elder_id, EXTRACT(EPOCH FROM now()) "
+    "FROM elders WHERE line_user_id IS NOT NULL AND line_user_id <> '' "
+    "ORDER BY elder_id "
+    "ON CONFLICT (channel, external_id) DO NOTHING;"
+    "INSERT INTO channel_bindings "
+    "(channel, external_id, principal_type, principal_id, created_at) "
+    "SELECT 'line', line_user_id, 'guardian', guardian_id, EXTRACT(EPOCH FROM now()) "
+    "FROM guardians WHERE line_user_id IS NOT NULL AND line_user_id <> '' "
+    "ORDER BY guardian_id "
+    "ON CONFLICT (channel, external_id) DO NOTHING;"
+)
+
 # 遷移用的交易級諮詢鎖鍵：webhook 與 scheduler 同時啟動時，讓 ensure_schema 的 DDL
 # 串行化，避免併發跑遷移互搶 AccessExclusiveLock 造成 Postgres 死結。任意固定常數即可，
 # 全專案共用同一把鎖。
@@ -198,6 +215,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(CONVERSATION_SUMMARIES_DDL)
         conn.execute(OBSERVABILITY_DDL)
         conn.execute(RISK_EVENTS_TRACE_MIGRATION_DDL)
+        conn.execute(CHANNEL_BINDINGS_BACKFILL_DDL)
         conn.commit()
 
 

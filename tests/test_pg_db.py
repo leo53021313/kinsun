@@ -92,3 +92,26 @@ def test_ensure_schema_concurrent_no_deadlock():
 
     names = [type(e).__name__ for e in errors]
     assert not errors, f"併發 ensure_schema 出現錯誤（含死結）：{names}"
+
+
+def test_channel_bindings_backfill_idempotent(pg_database, ns):
+    from kinsun.db import ensure_schema
+
+    # 模擬「雙寫上線前」的舊資料：直接寫欄位、清掉綁定列。
+    pg_database.execute(
+        "INSERT INTO elders (elder_id, name, line_user_id) VALUES (%s, %s, %s) "
+        "ON CONFLICT (elder_id) DO UPDATE SET line_user_id = EXCLUDED.line_user_id",
+        (f"{ns}e-bf", "阿公", f"{ns}U-bf"),
+    )
+    pg_database.execute(
+        "DELETE FROM channel_bindings WHERE channel = 'line' AND external_id = %s",
+        (f"{ns}U-bf",),
+    )
+    ensure_schema(os.environ["DATABASE_URL"])
+    ensure_schema(os.environ["DATABASE_URL"])  # 冪等：跑兩次結果不變
+    rows = pg_database.query(
+        "SELECT principal_type, principal_id FROM channel_bindings "
+        "WHERE channel = 'line' AND external_id = %s",
+        (f"{ns}U-bf",),
+    )
+    assert rows == [("elder", f"{ns}e-bf")]
