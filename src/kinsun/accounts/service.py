@@ -236,6 +236,15 @@ class AccountService:
     def authenticate_token(self, token: str) -> ApiToken | None:
         return self._repo.get_api_token(hashlib.sha256(token.encode()).hexdigest())
 
+    def app_external_id_of_elder(self, elder_id: str) -> str | None:
+        """長輩的 App 通道帳號識別（無 App 綁定回 None；多裝置取排序第一筆）。"""
+        for binding in self._repo.list_channel_bindings_for_principal(
+            PrincipalType.ELDER, elder_id
+        ):
+            if binding.channel is Channel.APP:
+                return binding.external_id
+        return None
+
     def consented_elder_id(self, channel: Channel, external_id: str) -> str | None:
         """解析「已同意的長輩」：該通道帳號綁的是長輩且同意有效才回 elder_id，否則 None。"""
         binding = self._repo.get_channel_binding(channel, external_id)
