@@ -1,0 +1,166 @@
+"""App 對講機通道測試：POST /api/app/turns 收音檔、回文字＋語音 URL。"""
+
+from datetime import datetime, timedelta, timezone
+from itertools import count
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from kinsun.accounts.models import ConsentBy, InviteRole
+from kinsun.accounts.service import AccountService
+from kinsun.agent import CareAgent
+from kinsun.binding.gate import ConsentGate
+from kinsun.channels.app.turns import create_app_turns_router
+from kinsun.channels.inbound import VoiceReplyDelivery
+from kinsun.llm import Message
+from kinsun.pipeline import VoicePipeline
+from kinsun.safety.detector import RiskDetector
+from kinsun.speech.asr import MockAsrClient
+from kinsun.speech.tts import TextBubbleTts, TtsResult
+from tests.fakes import FakeAccountStore, FakeRiskEventStore, FakeTraceStore
+
+TPE = timezone(timedelta(hours=8))
+NOW = datetime(2026, 7, 7, 12, 0, tzinfo=TPE)
+
+
+class _EchoLLM:
+    def generate(self, *, system_prompt: str, messages: list[Message]) -> str:
+        return f"你說的是：{messages[-1].content}"
+
+
+class _NullSession:
+    def assemble(self, elder_id, query):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(system_suffix="", history=[])
+
+    def record_turn(self, elder_id, *messages):
+        pass
+
+
+class _NullClassifier:
+    def classify(self, text):
+        from kinsun.safety.tiers import RiskAssessment, RiskTier
+
+        return RiskAssessment(RiskTier.L0, 0.0, "", [])
+
+
+class _NullNotifier:
+    def notify(self, elder_id, assessment):
+        pass
+
+
+class _VoiceTts:
+    """回帶音檔的 TTS（觸發語音回覆路徑）。"""
+
+    def synthesize(self, text: str) -> TtsResult:
+        return TtsResult(text=text, audio=b"fake-m4a", duration_ms=1200)
+
+
+class _FakePublisher:
+    def publish(self, audio: bytes, *, content_type: str) -> str:
+        return "https://cdn.example/reply.m4a"
+
+
+def _service():
+    ids = (f"id{i}" for i in count(1))
+    return AccountService(
+        FakeAccountStore(), clock=lambda: NOW, new_id=lambda: next(ids), new_code=lambda: "code1"
+    )
+
+
+def _bound_elder_token(svc):
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    invite = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
+    _, token = svc.bind_elder_device(invite.code, consent_by=ConsentBy.PROXY)
+    return elder, token
+
+
+def _client(svc, *, tts=None, publisher=None, traces=None):
+    pipeline = VoicePipeline(
+        asr=MockAsrClient("阿公早安"),
+        agent=CareAgent(_EchoLLM(), _NullSession()),
+        tts=tts or TextBubbleTts(),
+        detector=RiskDetector(_NullClassifier()),
+        notifier=_NullNotifier(),
+        risk_events=FakeRiskEventStore(),
+        traces=traces,
+    )
+    voice = VoiceReplyDelivery(publisher, include_text=True)
+    app = FastAPI()
+    app.include_router(
+        create_app_turns_router(
+            accounts=svc,
+            pipeline=pipeline,
+            gate=ConsentGate(svc),
+            voice=voice,
+            traces=traces,
+            new_id=lambda: "trace-1",
+        )
+    )
+    return TestClient(app)
+
+
+def _post_audio(client, token, body=b"\x00fake-audio"):
+    return client.post(
+        "/api/app/turns",
+        content=body,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "audio/m4a"},
+    )
+
+
+def test_turn_replies_text_and_voice():
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    res = _post_audio(_client(svc, tts=_VoiceTts(), publisher=_FakePublisher()), token)
+    assert res.status_code == 201
+    body = res.json()
+    assert body["text"] == "你說的是：阿公早安"
+    assert body["audio_url"] == "https://cdn.example/reply.m4a"
+    assert body["duration_ms"] == 1200
+
+
+def test_turn_degrades_to_text_without_audio():
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    res = _post_audio(_client(svc), token)  # TextBubbleTts：無音檔
+    assert res.status_code == 201
+    body = res.json()
+    assert body["text"] == "你說的是：阿公早安"
+    assert body["audio_url"] == ""
+
+
+def test_turn_records_trace_chain():
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    traces = FakeTraceStore()
+    res = _post_audio(_client(svc, traces=traces), token)
+    assert res.status_code == 201
+    assert len(traces.asr_calls) == 1
+    assert len(traces.llm_calls) == 1
+    assert len(traces.replies) == 1
+
+
+def test_turn_requires_elder_token():
+    svc = _service()
+    client = _client(svc)
+    assert _post_audio(client, "not-a-token").status_code == 401
+    # 家屬 token 也不行（principal_type 不符）。
+    _, guardian_token = svc.register_guardian_account("son@example.com", "correct-horse-8", "兒子")
+    assert _post_audio(client, guardian_token).status_code == 401
+
+
+def test_turn_blocked_after_consent_revoked():
+    svc = _service()
+    elder, token = _bound_elder_token(svc)
+    svc.revoke_consent(elder.elder_id)
+    res = _post_audio(_client(svc), token)
+    assert res.status_code == 403
+    assert res.json()["detail"] == "consent_revoked"
+
+
+def test_turn_rejects_oversized_audio():
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    res = _post_audio(_client(svc), token, body=b"\x00" * (10 * 1024 * 1024 + 1))
+    assert res.status_code == 413
