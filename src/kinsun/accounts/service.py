@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from kinsun.accounts.models import (
+    Channel,
     Consent,
     ConsentBy,
     Elder,
@@ -16,6 +17,7 @@ from kinsun.accounts.models import (
     Guardian,
     Invite,
     InviteRole,
+    PrincipalType,
     Role,
 )
 from kinsun.accounts.store import AccountStore
@@ -139,18 +141,20 @@ class AccountService:
     def guardians_of(self, elder_id: str) -> list[ElderGuardian]:
         return self._repo.list_elder_guardians(elder_id)
 
-    def is_consented_elder(self, line_user_id: str) -> bool:
-        elder = self._repo.get_elder_by_line(line_user_id)
-        if elder is None:
-            return False
-        consent = self._repo.get_consent(elder.elder_id)
+    def has_valid_consent(self, elder_id: str) -> bool:
+        """長輩同意是否有效（存在且未撤回）。"""
+        consent = self._repo.get_consent(elder_id)
         return consent is not None and consent.revoked_at is None
+
+    def consented_elder_id(self, channel: Channel, external_id: str) -> str | None:
+        """解析「已同意的長輩」：該通道帳號綁的是長輩且同意有效才回 elder_id，否則 None。"""
+        binding = self._repo.get_channel_binding(channel, external_id)
+        if binding is None or binding.principal_type is not PrincipalType.ELDER:
+            return None
+        return binding.principal_id if self.has_valid_consent(binding.principal_id) else None
 
     def get_elder(self, elder_id: str):
         return self._repo.get_elder(elder_id)
-
-    def elder_by_line(self, line_user_id: str):
-        return self._repo.get_elder_by_line(line_user_id)
 
     def preview_invite(self, code: str) -> InvitePreview | None:
         invite = self._repo.get_invite(code)
@@ -177,20 +181,6 @@ class AccountService:
             if elder is not None:
                 elders.append(elder)
         return elders
-
-    def guardian_line_ids_of_elder(self, elder_id: str) -> list[str]:
-        line_ids: list[str] = []
-        for eg in self._repo.list_elder_guardians(elder_id):
-            guardian = self._repo.get_guardian(eg.guardian_id)
-            if guardian is not None and guardian.line_user_id:
-                line_ids.append(guardian.line_user_id)
-        return line_ids
-
-    def guardian_line_ids(self, line_user_id: str) -> list[str]:
-        elder = self._repo.get_elder_by_line(line_user_id)
-        if elder is None:
-            return []
-        return self.guardian_line_ids_of_elder(elder.elder_id)
 
     def can_view_transcript(self, elder_id: str, guardian_id: str) -> bool:
         eg = self._repo.get_elder_guardian(elder_id, guardian_id)

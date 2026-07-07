@@ -13,6 +13,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from kinsun.accounts.models import PrincipalType
 from kinsun.appointments.jobs import build_appointment_reminder_job
 from kinsun.audio.publisher import build_audio_publisher
 from kinsun.composition import assemble_core, build_externals
@@ -52,38 +53,38 @@ def build_scheduler(
     appt_store = core.appt_store
     reminder_logs = core.reminder_logs
     agent = core.agent
-    channel = core.channel
+    router = core.router
     traces = core.traces
     summaries = PgConversationSummaryStore(db, clock=clock)
 
-    def _record_push(line_user_id: str, kind: str, content: str) -> None:
-        # 主動推播補記 reminder_logs：查得到綁定長輩才記（觀測用，失敗不影響推播）。
-        elder = accounts.elder_by_line(line_user_id)
-        if elder is not None:
-            safe_record(reminder_logs.record, elder.elder_id, kind, content)
-
-    def run_one(line_user_id: str) -> None:
-        run_consolidation(line_user_id, short_term=memory, long_term=long_term)
+    def run_one(elder_id: str) -> None:
+        run_consolidation(elder_id, short_term=memory, long_term=long_term)
         try:
             summarize_day(
-                line_user_id,
+                elder_id,
                 short_term=memory,
                 summarizer=gemini,
                 summaries=summaries,
                 clock=clock,
             )
         except Exception:  # noqa: BLE001 - 摘要失敗不影響整理與其他長輩
-            logger.warning("對話摘要失敗 session=%s", line_user_id)
+            logger.warning("對話摘要失敗 elder=%s", elder_id)
 
-    def greet_one(line_user_id: str) -> None:
-        content = agent.proactive(line_user_id, GREETING_INTENT)
-        channel.send_text(line_user_id, content)
-        _record_push(line_user_id, "proactive-greeting", content)
+    def _push_to_elder(elder_id: str, intent: str, kind: str) -> None:
+        # 先確認可達再生成內容（避免白花一次 LLM 呼叫）；出站由 router 依綁定通道投遞。
+        if not router.has_route(PrincipalType.ELDER, elder_id):
+            logger.warning("主動推播略過（長輩無任何綁定通道）elder=%s kind=%s", elder_id, kind)
+            return
+        content = agent.proactive(elder_id, intent)
+        router.send_text(PrincipalType.ELDER, elder_id, content)
+        # 主動推播補記 reminder_logs（觀測用，失敗不影響推播）。
+        safe_record(reminder_logs.record, elder_id, kind, content)
 
-    def care_one(line_user_id: str) -> None:
-        content = agent.proactive(line_user_id, INACTIVITY_INTENT)
-        channel.send_text(line_user_id, content)
-        _record_push(line_user_id, "proactive-care", content)
+    def greet_one(elder_id: str) -> None:
+        _push_to_elder(elder_id, GREETING_INTENT, "proactive-greeting")
+
+    def care_one(elder_id: str) -> None:
+        _push_to_elder(elder_id, INACTIVITY_INTENT, "proactive-care")
 
     jobs = [
         build_consolidation_job(
@@ -115,8 +116,8 @@ def build_scheduler(
                 slot=slot,
                 meds_at_slot=lambda s=slot: med_store.list_for_slot(s),
                 lookup_elder=accounts.get_elder,
-                is_consented_elder=accounts.is_consented_elder,
-                channel=channel,
+                has_valid_consent=accounts.has_valid_consent,
+                router=router,
                 hour=hour,
                 name=name,
                 record=reminder_logs.record,
@@ -128,9 +129,9 @@ def build_scheduler(
             today=lambda: clock().date().isoformat(),
             tomorrow=lambda: (clock().date() + timedelta(days=1)).isoformat(),
             lookup_elder=accounts.get_elder,
-            is_consented_elder=accounts.is_consented_elder,
-            guardian_line_ids=accounts.guardian_line_ids_of_elder,
-            channel=channel,
+            has_valid_consent=accounts.has_valid_consent,
+            guardians_of=accounts.guardians_of,
+            router=router,
             hour=settings.appointment_reminder_hour,
             record=reminder_logs.record,
         )

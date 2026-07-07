@@ -20,10 +20,10 @@ class _NullCtx:
 
 
 class NullSession:
-    def assemble(self, line_user_id: str, query: str) -> _NullCtx:
+    def assemble(self, elder_id: str, query: str) -> _NullCtx:
         return _NullCtx()
 
-    def record_turn(self, line_user_id: str, *messages: Message) -> None:
+    def record_turn(self, elder_id: str, *messages: Message) -> None:
         pass
 
 
@@ -39,8 +39,8 @@ class SpyNotifier:
     def __init__(self) -> None:
         self.calls: list[tuple[str, RiskTier]] = []
 
-    def notify(self, line_user_id: str, assessment: RiskAssessment) -> None:
-        self.calls.append((line_user_id, assessment.tier))
+    def notify(self, elder_id: str, assessment: RiskAssessment) -> None:
+        self.calls.append((elder_id, assessment.tier))
 
 
 def _pipeline(detector, notifier, risk_events=None):
@@ -56,41 +56,41 @@ def _pipeline(detector, notifier, risk_events=None):
 
 def test_pipeline_replies_and_runs_detection():
     notifier = SpyNotifier()
-    result = _pipeline(StubDetector(RiskTier.L0), notifier).process(b"\x00", line_user_id="u1")
+    result = _pipeline(StubDetector(RiskTier.L0), notifier).process(b"\x00", elder_id="u1")
     assert result.text == "你說的是：阿公早安"
     assert notifier.calls == []
 
 
 def test_pipeline_notifies_on_l2_or_above():
     notifier = SpyNotifier()
-    _pipeline(StubDetector(RiskTier.L3), notifier).process(b"\x00", line_user_id="u1")
+    _pipeline(StubDetector(RiskTier.L3), notifier).process(b"\x00", elder_id="u1")
     assert notifier.calls == [("u1", RiskTier.L3)]
 
 
 class _BoomRiskEvents:
-    def record(self, line_user_id, assessment, *, trace_id=None):
+    def record(self, elder_id, assessment, *, trace_id=None):
         raise RuntimeError("db down")
 
-    def list_for_line_user(self, line_user_id):
+    def list_for_elder(self, elder_id):
         return []
 
 
 def test_pipeline_records_risk_event_on_l2():
     notifier = SpyNotifier()
     events = FakeRiskEventStore()
-    _pipeline(StubDetector(RiskTier.L2), notifier, events).process(b"\x00", line_user_id="u1")
+    _pipeline(StubDetector(RiskTier.L2), notifier, events).process(b"\x00", elder_id="u1")
     assert [s for s, _ in events.recorded] == ["u1"]
     assert notifier.calls == [("u1", RiskTier.L2)]
 
 
 def test_pipeline_does_not_record_below_l2():
     events = FakeRiskEventStore()
-    _pipeline(StubDetector(RiskTier.L1), SpyNotifier(), events).process(b"\x00", line_user_id="u1")
+    _pipeline(StubDetector(RiskTier.L1), SpyNotifier(), events).process(b"\x00", elder_id="u1")
     assert events.recorded == []
 
 
 class _BoomAgent:
-    def handle(self, line_user_id, user_text):
+    def handle(self, elder_id, user_text):
         raise RuntimeError("llm down")
 
 
@@ -106,14 +106,14 @@ def test_pipeline_notifies_before_reply_generation():
         risk_events=FakeRiskEventStore(),
     )
     with pytest.raises(RuntimeError):
-        pipeline.process(b"\x00", line_user_id="u1")
+        pipeline.process(b"\x00", elder_id="u1")
     assert notifier.calls == [("u1", RiskTier.L3)]
 
 
 def test_pipeline_record_failure_does_not_break():
     notifier = SpyNotifier()
     result = _pipeline(StubDetector(RiskTier.L3), notifier, _BoomRiskEvents()).process(
-        b"\x00", line_user_id="u1"
+        b"\x00", elder_id="u1"
     )
     assert result.text == "你說的是：阿公早安"
     assert notifier.calls == [("u1", RiskTier.L3)]
@@ -133,14 +133,14 @@ def test_pipeline_tts_failure_degrades_to_text():
         notifier=SpyNotifier(),
         risk_events=FakeRiskEventStore(),
     )
-    result = pipeline.process(b"\x00", line_user_id="u1")
+    result = pipeline.process(b"\x00", elder_id="u1")
     assert isinstance(result, TtsResult)
     assert result.text == "你說的是：阿公早安"
     assert result.audio is None
 
 
 def test_pipeline_sets_transcript_from_asr():
-    result = _pipeline(StubDetector(RiskTier.L0), SpyNotifier()).process(b"\x00", line_user_id="u1")
+    result = _pipeline(StubDetector(RiskTier.L0), SpyNotifier()).process(b"\x00", elder_id="u1")
     assert result.transcript == "阿公早安"
 
 
@@ -171,7 +171,7 @@ def _traced_pipeline(traces, *, tts=None, llm=None):
 def test_pipeline_records_all_stages_on_success():
     traces = FakeTraceStore()
     _traced_pipeline(traces).process(
-        b"\x00", line_user_id="u1", trace_id="t1", audio_url="https://x/in.m4a"
+        b"\x00", elder_id="u1", trace_id="t1", audio_url="https://x/in.m4a"
     )
     assert len(traces.asr_calls) == 1
     assert traces.asr_calls[0].status == "ok"
@@ -187,7 +187,7 @@ def test_pipeline_records_all_stages_on_success():
 def test_pipeline_records_llm_error_and_reraises():
     traces = FakeTraceStore()
     with pytest.raises(LLMError):
-        _traced_pipeline(traces, llm=BoomLLM()).process(b"\x00", line_user_id="u1", trace_id="t1")
+        _traced_pipeline(traces, llm=BoomLLM()).process(b"\x00", elder_id="u1", trace_id="t1")
     assert traces.llm_calls[0].status == "error"
     assert "模型掛了" in traces.llm_calls[0].error_message
     assert traces.tts_calls == []  # LLM 失敗即中止，不會記 TTS
@@ -195,9 +195,7 @@ def test_pipeline_records_llm_error_and_reraises():
 
 def test_pipeline_records_tts_degradation_and_still_replies_text():
     traces = FakeTraceStore()
-    result = _traced_pipeline(traces, tts=BoomTts()).process(
-        b"\x00", line_user_id="u1", trace_id="t1"
-    )
+    result = _traced_pipeline(traces, tts=BoomTts()).process(b"\x00", elder_id="u1", trace_id="t1")
     assert result.audio is None
     assert traces.tts_calls[0].status == "error"
 
@@ -212,7 +210,7 @@ def test_pipeline_records_tts_non_ttserror_then_propagates():
     traces = FakeTraceStore()
     with pytest.raises(RuntimeError):
         _traced_pipeline(traces, tts=_NonTtsErrorTts()).process(
-            b"\x00", line_user_id="u1", trace_id="t1"
+            b"\x00", elder_id="u1", trace_id="t1"
         )
     assert traces.tts_calls[0].status == "error"
 
@@ -229,13 +227,13 @@ def test_pipeline_passes_trace_id_to_risk_events():
         risk_events=risk_events,
         traces=traces,
     )
-    pipeline.process(b"\x00", line_user_id="u1", trace_id="t7")
+    pipeline.process(b"\x00", elder_id="u1", trace_id="t7")
     assert risk_events.recorded_trace_ids == ["t7"]
 
 
 def test_pipeline_without_traces_keeps_working():
     notifier = SpyNotifier()
-    result = _pipeline(StubDetector(RiskTier.L0), notifier).process(b"\x00", line_user_id="u1")
+    result = _pipeline(StubDetector(RiskTier.L0), notifier).process(b"\x00", elder_id="u1")
     assert result.text == "你說的是：阿公早安"
 
 
@@ -258,7 +256,7 @@ def _text_pipeline(detector, notifier, risk_events=None):
 def test_process_text_skips_asr_and_replies():
     notifier = SpyNotifier()
     result = _text_pipeline(StubDetector(RiskTier.L0), notifier).process_text(
-        "我想聊天", line_user_id="u1"
+        "我想聊天", elder_id="u1"
     )
     assert result.text == "你說的是：我想聊天"
     assert result.transcript == "我想聊天"
@@ -269,7 +267,7 @@ def test_process_text_notifies_and_records_on_l3():
     notifier = SpyNotifier()
     events = FakeRiskEventStore()
     _text_pipeline(StubDetector(RiskTier.L3), notifier, events).process_text(
-        "救命", line_user_id="u1", trace_id="t9"
+        "救命", elder_id="u1", trace_id="t9"
     )
     assert notifier.calls == [("u1", RiskTier.L3)]
     assert events.recorded_trace_ids == ["t9"]

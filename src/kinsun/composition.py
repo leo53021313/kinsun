@@ -15,6 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
+from kinsun.accounts.models import Channel
 from kinsun.accounts.service import AccountService
 from kinsun.accounts.store import PgAccountStore
 from kinsun.agent import CareAgent
@@ -22,7 +23,7 @@ from kinsun.appointments.facts import AppointmentFacts
 from kinsun.appointments.service import AppointmentService
 from kinsun.appointments.store import PgAppointmentStore
 from kinsun.channels.line.messenger import LineApiMessenger, LineOutboundChannel
-from kinsun.channels.outbound import OutboundChannel
+from kinsun.channels.router import ChannelRouter
 from kinsun.config import Settings
 from kinsun.db import Database, ensure_schema
 from kinsun.llm import GeminiClient, LLMClient
@@ -64,7 +65,7 @@ class Core:
     gemini: LLMClient
     long_term: Mem0LongTermStore
     messenger: LineApiMessenger
-    channel: OutboundChannel
+    router: ChannelRouter
     accounts: AccountService
     med_store: PgMedicationStore
     appt_store: PgAppointmentStore
@@ -111,8 +112,9 @@ def assemble_core(
 
     db = externals.db
     memory = PgMemoryStore(db, clock=clock, max_turns=settings.memory_max_turns)
+    account_store = PgAccountStore(db)
     accounts = AccountService(
-        PgAccountStore(db),
+        account_store,
         clock=clock,
         ttl_hours=settings.invite_ttl_hours,
         max_attempts=settings.invite_max_attempts,
@@ -125,8 +127,8 @@ def assemble_core(
         memory,
         externals.long_term,
         facts=[
-            MedicationFacts(accounts, medications),
-            AppointmentFacts(accounts, appointments, clock=clock),
+            MedicationFacts(medications),
+            AppointmentFacts(appointments, clock=clock),
         ],
     )
     rag_service = HealthEducationRagService(
@@ -151,7 +153,9 @@ def assemble_core(
         gemini=externals.gemini,
         long_term=externals.long_term,
         messenger=externals.messenger,
-        channel=LineOutboundChannel(externals.messenger),
+        router=ChannelRouter(
+            account_store, {Channel.LINE: LineOutboundChannel(externals.messenger)}
+        ),
         accounts=accounts,
         med_store=med_store,
         appt_store=appt_store,

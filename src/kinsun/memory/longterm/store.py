@@ -17,9 +17,9 @@ HEALTH_QUERY = "用藥 慢性病 過敏 回診 健康狀況"
 
 class LongTermStore(Protocol):
     def add(
-        self, line_user_id: str, messages: list[Message], *, provenance: str = "self_claimed"
+        self, elder_id: str, messages: list[Message], *, provenance: str = "self_claimed"
     ) -> None: ...
-    def search(self, line_user_id: str, query: str, *, top_k: int = 5) -> list[MemoryItem]: ...
+    def search(self, elder_id: str, query: str, *, top_k: int = 5) -> list[MemoryItem]: ...
 
 
 def _created_at(item: dict) -> str:
@@ -47,14 +47,14 @@ class Mem0LongTermStore:
         self._health_top_k = health_top_k
 
     def add(
-        self, line_user_id: str, messages: list[Message], *, provenance: str = prov.SELF_CLAIMED
+        self, elder_id: str, messages: list[Message], *, provenance: str = prov.SELF_CLAIMED
     ) -> None:
         payload = [{"role": m.role, "content": m.content} for m in messages]
-        self._memory.add(payload, user_id=line_user_id, metadata={"provenance": provenance})
+        self._memory.add(payload, user_id=elder_id, metadata={"provenance": provenance})
 
-    def _search_raw(self, query: str, line_user_id: str, top_k: int) -> list[dict]:
+    def _search_raw(self, query: str, elder_id: str, top_k: int) -> list[dict]:
         try:
-            result = self._memory.search(query, filters={"user_id": line_user_id}, top_k=top_k)
+            result = self._memory.search(query, filters={"user_id": elder_id}, top_k=top_k)
         except Exception as exc:  # noqa: BLE001 — 記憶壞掉不可中斷對話
             logger.warning("長期記憶檢索失敗，退化為無記憶：%s", exc)
             return []
@@ -74,11 +74,9 @@ class Mem0LongTermStore:
             out.append(item)
         return out
 
-    def search(
-        self, line_user_id: str, query: str, *, top_k: int | None = None
-    ) -> list[MemoryItem]:
-        user_items = self._search_raw(query, line_user_id, top_k or self._top_k)
-        health_items = self._search_raw(HEALTH_QUERY, line_user_id, self._health_top_k)
+    def search(self, elder_id: str, query: str, *, top_k: int | None = None) -> list[MemoryItem]:
+        user_items = self._search_raw(query, elder_id, top_k or self._top_k)
+        health_items = self._search_raw(HEALTH_QUERY, elder_id, self._health_top_k)
         merged = self._dedup(user_items + health_items)
         # 由新到舊：created_at 遞減；缺 created_at 者排最後（與原排版排序一致）。
         ordered = sorted(merged, key=_created_at, reverse=True)

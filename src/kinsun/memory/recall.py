@@ -14,7 +14,7 @@ logger = logging.getLogger("kinsun.memory.recall")
 
 
 class FactProvider(Protocol):
-    def facts(self, line_user_id: str) -> FactSection | None: ...
+    def facts(self, elder_id: str) -> FactSection | None: ...
 
 
 class SessionMemory:
@@ -35,22 +35,22 @@ class SessionMemory:
         self._long_term = long_term
         self._facts = facts or []
 
-    def assemble(self, line_user_id: str, query: str) -> TurnContext:
+    def assemble(self, elder_id: str, query: str) -> TurnContext:
         return TurnContext(
-            injected=self._inject(line_user_id, query),
-            history=self._short_term.recent(line_user_id),
+            injected=self._inject(elder_id, query),
+            history=self._short_term.recent(elder_id),
         )
 
-    def record_turn(self, line_user_id: str, *messages: Message) -> None:
+    def record_turn(self, elder_id: str, *messages: Message) -> None:
         for message in messages:
-            self._short_term.append(line_user_id, message)
+            self._short_term.append(elder_id, message)
 
-    def _inject(self, line_user_id: str, query: str) -> InjectedContext:
-        memories = self._long_term.search(line_user_id, query)
+    def _inject(self, elder_id: str, query: str) -> InjectedContext:
+        memories = self._long_term.search(elder_id, query)
         sections = []
         for provider in self._facts:
             try:
-                section = provider.facts(line_user_id)
+                section = provider.facts(elder_id)
             except Exception:  # noqa: BLE001 - 事實提供者失敗不可中斷對話
                 logger.warning("事實提供者失敗，略過該段")
                 continue

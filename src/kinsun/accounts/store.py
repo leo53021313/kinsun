@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Protocol
 
 from kinsun.accounts.models import (
+    Channel,
+    ChannelBinding,
     Consent,
     ConsentBy,
     Elder,
@@ -14,6 +17,7 @@ from kinsun.accounts.models import (
     Guardian,
     Invite,
     InviteRole,
+    PrincipalType,
     Role,
 )
 from kinsun.db import Database, Executor, _Errors
@@ -38,6 +42,13 @@ class AccountStore(Protocol):
     def get_consent(self, elder_id: str) -> Consent | None: ...
     def save_invite(self, invite: Invite, *, tx: Executor | None = None) -> None: ...
     def get_invite(self, code: str) -> Invite | None: ...
+    def save_channel_binding(
+        self, binding: ChannelBinding, *, tx: Executor | None = None
+    ) -> None: ...
+    def get_channel_binding(self, channel: Channel, external_id: str) -> ChannelBinding | None: ...
+    def list_channel_bindings_for_principal(
+        self, principal_type: PrincipalType, principal_id: str
+    ) -> list[ChannelBinding]: ...
     def transaction(self) -> object: ...
 
 
@@ -59,6 +70,18 @@ class PgAccountStore:
             "name = EXCLUDED.name, line_user_id = EXCLUDED.line_user_id",
             (elder.elder_id, elder.name, elder.line_user_id),
         )
+        # 擴張—收縮遷移的雙寫：欄位與 channel_bindings 同步，讀取端切換前兩邊恆一致。
+        if elder.line_user_id:
+            self.save_channel_binding(
+                ChannelBinding(
+                    Channel.LINE,
+                    elder.line_user_id,
+                    PrincipalType.ELDER,
+                    elder.elder_id,
+                    time.time(),
+                ),
+                tx=tx,
+            )
 
     def get_elder(self, elder_id: str) -> Elder | None:
         rows = self._db.query(
@@ -73,13 +96,25 @@ class PgAccountStore:
             "line_user_id = EXCLUDED.line_user_id, name = EXCLUDED.name",
             (guardian.guardian_id, guardian.line_user_id, guardian.name),
         )
+        # 擴張—收縮遷移的雙寫：欄位與 channel_bindings 同步，讀取端切換前兩邊恆一致。
+        if guardian.line_user_id:
+            self.save_channel_binding(
+                ChannelBinding(
+                    Channel.LINE,
+                    guardian.line_user_id,
+                    PrincipalType.GUARDIAN,
+                    guardian.guardian_id,
+                    time.time(),
+                ),
+                tx=tx,
+            )
 
     def get_guardian_by_line(self, line_user_id: str) -> Guardian | None:
-        rows = self._db.query(
-            "SELECT guardian_id, line_user_id, name FROM guardians WHERE line_user_id = %s",
-            (line_user_id,),
-        )
-        return Guardian(*rows[0]) if rows else None
+        # 讀取端已切經 channel_bindings（1C）；欄位 guardians.line_user_id 僅剩雙寫，1D 退役。
+        binding = self.get_channel_binding(Channel.LINE, line_user_id)
+        if binding is None or binding.principal_type is not PrincipalType.GUARDIAN:
+            return None
+        return self.get_guardian(binding.principal_id)
 
     def get_guardian(self, guardian_id: str) -> Guardian | None:
         rows = self._db.query(
@@ -89,11 +124,11 @@ class PgAccountStore:
         return Guardian(*rows[0]) if rows else None
 
     def get_elder_by_line(self, line_user_id: str) -> Elder | None:
-        rows = self._db.query(
-            "SELECT elder_id, name, line_user_id FROM elders WHERE line_user_id = %s",
-            (line_user_id,),
-        )
-        return Elder(*rows[0]) if rows else None
+        # 讀取端已切經 channel_bindings（1C）；欄位 elders.line_user_id 僅剩雙寫，1D 退役。
+        binding = self.get_channel_binding(Channel.LINE, line_user_id)
+        if binding is None or binding.principal_type is not PrincipalType.ELDER:
+            return None
+        return self.get_elder(binding.principal_id)
 
     def save_elder_guardian(self, eg: ElderGuardian, *, tx: Executor | None = None) -> None:
         (tx or self._db).execute(
@@ -194,6 +229,43 @@ class PgAccountStore:
         c, elder, role, expires, max_a, attempts, used = rows[0]
         return Invite(c, elder, InviteRole(role), expires, max_a, attempts, used)
 
+    def save_channel_binding(self, binding: ChannelBinding, *, tx: Executor | None = None) -> None:
+        (tx or self._db).execute(
+            "INSERT INTO channel_bindings "
+            "(channel, external_id, principal_type, principal_id, created_at) "
+            "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (channel, external_id) DO UPDATE SET "
+            "principal_type = EXCLUDED.principal_type, principal_id = EXCLUDED.principal_id",
+            (
+                binding.channel.value,
+                binding.external_id,
+                binding.principal_type.value,
+                binding.principal_id,
+                binding.created_at,
+            ),
+        )
+
+    def get_channel_binding(self, channel: Channel, external_id: str) -> ChannelBinding | None:
+        rows = self._db.query(
+            "SELECT channel, external_id, principal_type, principal_id, created_at "
+            "FROM channel_bindings WHERE channel = %s AND external_id = %s",
+            (channel.value, external_id),
+        )
+        if not rows:
+            return None
+        ch, ext, ptype, pid, created = rows[0]
+        return ChannelBinding(Channel(ch), ext, PrincipalType(ptype), pid, created)
+
+    def list_channel_bindings_for_principal(
+        self, principal_type: PrincipalType, principal_id: str
+    ) -> list[ChannelBinding]:
+        rows = self._db.query(
+            "SELECT channel, external_id, principal_type, principal_id, created_at "
+            "FROM channel_bindings WHERE principal_type = %s AND principal_id = %s "
+            "ORDER BY channel, external_id",
+            (principal_type.value, principal_id),
+        )
+        return [ChannelBinding(Channel(c), e, PrincipalType(p), i, t) for (c, e, p, i, t) in rows]
+
 
 class FakeAccountStore:
     """AccountStore 的記憶體替身（測試用，不碰 DB）。
@@ -208,6 +280,7 @@ class FakeAccountStore:
         self.elder_guardians: dict[tuple[str, str], ElderGuardian] = {}
         self.consents: dict[str, Consent] = {}
         self.invites: dict[str, Invite] = {}
+        self.channel_bindings: dict[tuple[Channel, str], ChannelBinding] = {}
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
@@ -215,25 +288,49 @@ class FakeAccountStore:
 
     def save_elder(self, elder: Elder, *, tx: Executor | None = None) -> None:
         self.elders[elder.elder_id] = elder
+        # 擴張—收縮遷移的雙寫：欄位與 channel_bindings 同步，讀取端切換前兩邊恆一致。
+        if elder.line_user_id:
+            self.save_channel_binding(
+                ChannelBinding(
+                    Channel.LINE,
+                    elder.line_user_id,
+                    PrincipalType.ELDER,
+                    elder.elder_id,
+                    time.time(),
+                ),
+                tx=tx,
+            )
 
     def get_elder(self, elder_id: str) -> Elder | None:
         return self.elders.get(elder_id)
 
     def save_guardian(self, guardian: Guardian, *, tx: Executor | None = None) -> None:
         self.guardians[guardian.guardian_id] = guardian
+        # 擴張—收縮遷移的雙寫：欄位與 channel_bindings 同步，讀取端切換前兩邊恆一致。
+        if guardian.line_user_id:
+            self.save_channel_binding(
+                ChannelBinding(
+                    Channel.LINE,
+                    guardian.line_user_id,
+                    PrincipalType.GUARDIAN,
+                    guardian.guardian_id,
+                    time.time(),
+                ),
+                tx=tx,
+            )
 
     def get_guardian_by_line(self, line_user_id: str) -> Guardian | None:
-        # 逐筆比對「當前」line_user_id，與 Pg 一致；不維護獨立索引以免更新後殘留舊值。
-        for guardian in self.guardians.values():
-            if guardian.line_user_id == line_user_id:
-                return guardian
-        return None
+        # 讀取端已切經 channel_bindings（1C），與 Pg 同形。
+        binding = self.get_channel_binding(Channel.LINE, line_user_id)
+        if binding is None or binding.principal_type is not PrincipalType.GUARDIAN:
+            return None
+        return self.get_guardian(binding.principal_id)
 
     def get_elder_by_line(self, line_user_id: str) -> Elder | None:
-        for elder in self.elders.values():
-            if elder.line_user_id == line_user_id:
-                return elder
-        return None
+        binding = self.get_channel_binding(Channel.LINE, line_user_id)
+        if binding is None or binding.principal_type is not PrincipalType.ELDER:
+            return None
+        return self.get_elder(binding.principal_id)
 
     def get_guardian(self, guardian_id: str) -> Guardian | None:
         return self.guardians.get(guardian_id)
@@ -262,3 +359,30 @@ class FakeAccountStore:
 
     def get_invite(self, code: str) -> Invite | None:
         return self.invites.get(code)
+
+    def save_channel_binding(self, binding: ChannelBinding, *, tx: Executor | None = None) -> None:
+        key = (binding.channel, binding.external_id)
+        existing = self.channel_bindings.get(key)
+        if existing is not None:
+            # 與 Pg 一致：upsert 不覆寫 created_at（保留首次綁定時間）。
+            binding = ChannelBinding(
+                binding.channel,
+                binding.external_id,
+                binding.principal_type,
+                binding.principal_id,
+                existing.created_at,
+            )
+        self.channel_bindings[key] = binding
+
+    def get_channel_binding(self, channel: Channel, external_id: str) -> ChannelBinding | None:
+        return self.channel_bindings.get((channel, external_id))
+
+    def list_channel_bindings_for_principal(
+        self, principal_type: PrincipalType, principal_id: str
+    ) -> list[ChannelBinding]:
+        rows = [
+            b
+            for b in self.channel_bindings.values()
+            if b.principal_type == principal_type and b.principal_id == principal_id
+        ]
+        return sorted(rows, key=lambda b: (b.channel.value, b.external_id))

@@ -29,7 +29,7 @@ from kinsun.pipeline import VoicePipeline
 from kinsun.safety.classifier import LlmRiskClassifier
 from kinsun.safety.detector import RiskDetector
 from kinsun.safety.events import PgRiskEventStore
-from kinsun.safety.notifier import LineGuardianNotifier
+from kinsun.safety.notifier import GuardianNotifier
 from kinsun.speech.asr import build_asr_client
 from kinsun.speech.tts import build_tts_client
 from kinsun.web.admin_api import create_admin_api_router
@@ -67,7 +67,7 @@ def build_app() -> FastAPI:
         agent=core.agent,
         tts=build_tts_client(settings),
         detector=RiskDetector(LlmRiskClassifier(core.gemini)),
-        notifier=LineGuardianNotifier(core.accounts, core.channel),
+        notifier=GuardianNotifier(core.accounts, core.router),
         risk_events=risk_events,
         traces=core.traces,
         model_name=settings.gemini_model,

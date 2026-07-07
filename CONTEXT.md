@@ -33,15 +33,23 @@ _Avoid_: 授權、許可
 _Avoid_: 平台、介面、端點
 
 **入站訊息（InboundMessage）**：
-通道轉接器把原始事件正規化後、與通道無關的領域型別：`line_user_id`、種類（文字／語音）、文字內容、語音 bytes，以及一個可呼叫的回覆 handle。分派邏輯只認這個型別，不碰 LINE SDK。
+通道轉接器把原始事件正規化後、與通道無關的領域型別：`channel`＋`external_id`（來源通道與其帳號識別）、種類（文字／語音）、文字內容、語音 bytes，以及一個可呼叫的回覆 handle。分派時由閘門把 (channel, external_id) 解析成本人，之後管線只認 `elder_id`；分派邏輯不碰 LINE SDK。
 _Avoid_: event、payload
 
 **出站通道（OutboundChannel）**：
-主動送訊息給長輩／家屬的通道中立門面（`channels/outbound.py`）：`send_text(line_user_id, text)`。主動關懷、提醒 jobs、危急通知皆依賴它，LINE 版 `LineOutboundChannel` 為 adapter（內部呼叫 `push_message`）。與入站的 `InboundMessage` 對稱；未來語音再於此加 `send_voice`。
+對單一通道帳號送訊息的門面（`channels/outbound.py`）：`send_text(external_id, text)`。LINE 版 `LineOutboundChannel` 為 adapter（內部呼叫 `push_message`）。主動關懷、提醒 jobs、危急通知不直接呼叫它，改依賴通道路由（ChannelRouter）；未來語音再於此加 `send_voice`。
 _Avoid_: Pusher、push_text、messenger
 
+**通道路由（ChannelRouter）**：
+本人 → 綁定通道的出站路由（`channels/router.py`）：`send_text(principal_type, principal_id, text)` 查 `channel_bindings` 後對每個已綁定且有 adapter 的通道各送一次，單通道失敗隔離。新增通道＝多註冊一個 adapter，呼叫端不變。
+_Avoid_: dispatcher、broadcaster
+
+**通道綁定（ChannelBinding）**：
+通道帳號對應本人的持久對應（`channel_bindings` 表）：`(channel, external_id) → (principal_type, principal_id)`。一人可同時有 LINE 與 App 綁定；換手機＝改一筆綁定，記憶不動。寫入端雙寫維持中；會話主鍵（1B）與帳號讀取端、入站解析、出站路由（1C）皆已切換至本表，`elders.line_user_id`／`guardians.line_user_id` 欄位退役留給收縮步（1D）。
+_Avoid_: mapping、link、account_binding
+
 **會話（Session）**：
-一位長輩的對話脈絡，以 LINE user_id 識別（即 `line_user_id`）。
+一位長輩的對話脈絡，以 `elder_id` 識別（通道中立，記憶跟人走）；通道識別（如 `line_user_id`）只活在邊界，於入站閘門解析成本人。
 
 ### 記憶與情境
 
@@ -58,7 +66,7 @@ _Avoid_: 知識庫、向量庫
 _Avoid_: prompt、記憶字串
 
 **會話記憶（SessionMemory）**：
-`CareAgent` 對「本次會話短期記憶 ＋ 情境」的單一門面（`memory/recall.py`）：`assemble(line_user_id, query) -> TurnContext` 一手包三層（今日對話 ＋ 長期記憶 ＋ 事實），`record_turn(line_user_id, *messages)` 記錄本輪。agent 不再直接碰 `MemoryStore`。
+`CareAgent` 對「本次會話短期記憶 ＋ 情境」的單一門面（`memory/recall.py`）：`assemble(elder_id, query) -> TurnContext` 一手包三層（今日對話 ＋ 長期記憶 ＋ 事實），`record_turn(elder_id, *messages)` 記錄本輪。agent 不再直接碰 `MemoryStore`。
 _Avoid_: MemoryContext、context
 
 **單輪情境（TurnContext）**：
@@ -66,7 +74,7 @@ _Avoid_: MemoryContext、context
 _Avoid_: prompt、bundle
 
 **用藥事實（MedicationFacts）**：
-長輩當前用藥清單，作為注入情境的一部分每輪固定帶；由 LINE 帳號解析到 elder 後查得。
+長輩當前用藥清單，作為注入情境的一部分每輪固定帶；以 `elder_id` 直查。
 _Avoid_: 藥單、處方
 
 ### 安全與關懷
@@ -80,7 +88,7 @@ _Avoid_: 警報等級、嚴重度
 _Avoid_: 推播、通知
 
 **健康報告（HealthReport）**：
-家屬端看的長輩近況彙整：近 N 天（預設 30）的危急事件 ＋ 提醒紀錄。由 `reports/health.py` 的 `build_health_report` 組裝（解析長輩 `line_user_id`、抓資料、依時間窗過濾），route handler 只驗身分並出 JSON。與 observability 的管理端活動時間軸（feed／timeline）是不同報告、不同受眾。
+家屬端看的長輩近況彙整：近 N 天（預設 30）的危急事件 ＋ 提醒紀錄。由 `reports/health.py` 的 `build_health_report` 組裝（以 `elder_id` 直查、依時間窗過濾），route handler 只驗身分並出 JSON。與 observability 的管理端活動時間軸（feed／timeline）是不同報告、不同受眾。
 _Avoid_: 儀表板、timeline、feed
 
 **組裝根（Composition Root）**：

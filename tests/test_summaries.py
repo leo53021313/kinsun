@@ -36,7 +36,7 @@ def test_summarize_day_writes_summary():
         summaries=summaries,
         clock=lambda: NOW,
     )
-    rows = summaries.list_for_line_user("u1")
+    rows = summaries.list_for_elder("u1")
     assert len(rows) == 1
     assert rows[0].date == "2026-07-10"
     assert rows[0].content == "阿公今天聊天氣，心情不錯"
@@ -51,4 +51,4 @@ def test_summarize_day_skips_when_no_turns():
         summaries=summaries,
         clock=lambda: NOW,
     )
-    assert summaries.list_for_line_user("u1") == []
+    assert summaries.list_for_elder("u1") == []

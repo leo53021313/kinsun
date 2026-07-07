@@ -92,3 +92,64 @@ def test_ensure_schema_concurrent_no_deadlock():
 
     names = [type(e).__name__ for e in errors]
     assert not errors, f"併發 ensure_schema 出現錯誤（含死結）：{names}"
+
+
+def test_channel_bindings_backfill_idempotent(pg_database, ns):
+    from kinsun.db import ensure_schema
+
+    # 模擬「雙寫上線前」的舊資料：直接寫欄位、清掉綁定列。
+    pg_database.execute(
+        "INSERT INTO elders (elder_id, name, line_user_id) VALUES (%s, %s, %s) "
+        "ON CONFLICT (elder_id) DO UPDATE SET line_user_id = EXCLUDED.line_user_id",
+        (f"{ns}e-bf", "阿公", f"{ns}U-bf"),
+    )
+    pg_database.execute(
+        "DELETE FROM channel_bindings WHERE channel = 'line' AND external_id = %s",
+        (f"{ns}U-bf",),
+    )
+    ensure_schema(os.environ["DATABASE_URL"])
+    ensure_schema(os.environ["DATABASE_URL"])  # 冪等：跑兩次結果不變
+    rows = pg_database.query(
+        "SELECT principal_type, principal_id FROM channel_bindings "
+        "WHERE channel = 'line' AND external_id = %s",
+        (f"{ns}U-bf",),
+    )
+    assert rows == [("elder", f"{ns}e-bf")]
+
+
+def test_session_key_migration_columns_and_backfill(pg_database, ns):
+    from kinsun.db import ensure_schema
+
+    # 造一筆「可對應長輩」的舊制對話（直接寫 line_user_id 欄），與一位已綁定長輩。
+    pg_database.execute(
+        "INSERT INTO elders (elder_id, name, line_user_id) VALUES (%s, %s, %s) "
+        "ON CONFLICT (elder_id) DO UPDATE SET line_user_id = EXCLUDED.line_user_id",
+        (f"{ns}e-mig", "阿公", f"{ns}U-mig"),
+    )
+    pg_database.execute(
+        "INSERT INTO turns (line_user_id, role, content, created_at) VALUES (%s, %s, %s, %s)",
+        (f"{ns}U-mig", "user", "舊制訊息", 1000.0),
+    )
+    ensure_schema(os.environ["DATABASE_URL"])
+    ensure_schema(os.environ["DATABASE_URL"])  # 冪等
+    rows = pg_database.query("SELECT elder_id FROM turns WHERE line_user_id = %s", (f"{ns}U-mig",))
+    assert rows == [(f"{ns}e-mig",)]
+    # 新制寫入：不帶 line_user_id 也能落列（欄位已可空）。
+    pg_database.execute(
+        "INSERT INTO turns (elder_id, role, content, created_at) VALUES (%s, %s, %s, %s)",
+        (f"{ns}e-mig", "user", "新制訊息", 2000.0),
+    )
+    # 摘要：新制以 (elder_id, date) upsert（部分唯一索引生效）。
+    for content in ("v1", "v2"):
+        pg_database.execute(
+            "INSERT INTO conversation_summaries (elder_id, date, content, created_at) "
+            "VALUES (%s, %s, %s, %s) "
+            "ON CONFLICT (elder_id, date) WHERE elder_id IS NOT NULL "
+            "DO UPDATE SET content = EXCLUDED.content, created_at = EXCLUDED.created_at",
+            (f"{ns}e-mig", "2026-07-07", content, 3000.0),
+        )
+    rows = pg_database.query(
+        "SELECT content FROM conversation_summaries WHERE elder_id = %s AND date = %s",
+        (f"{ns}e-mig", "2026-07-07"),
+    )
+    assert rows == [("v2",)]

@@ -27,9 +27,9 @@ class FakeLongTermStore:
         self._memories = list(memories or [])
 
     def add(
-        self, line_user_id: str, messages: list[Message], *, provenance: str = "self_claimed"
+        self, elder_id: str, messages: list[Message], *, provenance: str = "self_claimed"
     ) -> None:
-        self.added.append((line_user_id, list(messages), provenance))
+        self.added.append((elder_id, list(messages), provenance))
 
-    def search(self, line_user_id: str, query: str, *, top_k: int = 5) -> list[MemoryItem]:
+    def search(self, elder_id: str, query: str, *, top_k: int = 5) -> list[MemoryItem]:
         return list(self._memories)
