@@ -123,3 +123,24 @@ def test_channel_bindings_listed_by_principal(store, ns):
         (Channel.LINE, f"{ns}U-line"),
     ]
     assert store.list_channel_bindings_for_principal(PrincipalType.GUARDIAN, f"{ns}e1") == []
+
+
+def test_save_elder_with_line_writes_channel_binding(store, ns):
+    store.save_elder(Elder(f"{ns}e1", "阿公", f"{ns}U-elder"))
+    binding = store.get_channel_binding(Channel.LINE, f"{ns}U-elder")
+    assert binding is not None
+    assert binding.principal_type == PrincipalType.ELDER
+    assert binding.principal_id == f"{ns}e1"
+
+
+def test_save_elder_without_line_writes_no_binding(store, ns):
+    store.save_elder(Elder(f"{ns}e-none", "阿嬤", None))
+    assert store.list_channel_bindings_for_principal(PrincipalType.ELDER, f"{ns}e-none") == []
+
+
+def test_save_guardian_writes_channel_binding(store, ns):
+    store.save_guardian(Guardian(f"{ns}g1", f"{ns}U-guard", "女兒"))
+    binding = store.get_channel_binding(Channel.LINE, f"{ns}U-guard")
+    assert binding is not None
+    assert binding.principal_type == PrincipalType.GUARDIAN
+    assert binding.principal_id == f"{ns}g1"

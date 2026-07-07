@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Protocol
@@ -69,6 +70,18 @@ class PgAccountStore:
             "name = EXCLUDED.name, line_user_id = EXCLUDED.line_user_id",
             (elder.elder_id, elder.name, elder.line_user_id),
         )
+        # 擴張—收縮遷移的雙寫：欄位與 channel_bindings 同步，讀取端切換前兩邊恆一致。
+        if elder.line_user_id:
+            self.save_channel_binding(
+                ChannelBinding(
+                    Channel.LINE,
+                    elder.line_user_id,
+                    PrincipalType.ELDER,
+                    elder.elder_id,
+                    time.time(),
+                ),
+                tx=tx,
+            )
 
     def get_elder(self, elder_id: str) -> Elder | None:
         rows = self._db.query(
@@ -83,6 +96,18 @@ class PgAccountStore:
             "line_user_id = EXCLUDED.line_user_id, name = EXCLUDED.name",
             (guardian.guardian_id, guardian.line_user_id, guardian.name),
         )
+        # 擴張—收縮遷移的雙寫：欄位與 channel_bindings 同步，讀取端切換前兩邊恆一致。
+        if guardian.line_user_id:
+            self.save_channel_binding(
+                ChannelBinding(
+                    Channel.LINE,
+                    guardian.line_user_id,
+                    PrincipalType.GUARDIAN,
+                    guardian.guardian_id,
+                    time.time(),
+                ),
+                tx=tx,
+            )
 
     def get_guardian_by_line(self, line_user_id: str) -> Guardian | None:
         rows = self._db.query(
@@ -263,12 +288,36 @@ class FakeAccountStore:
 
     def save_elder(self, elder: Elder, *, tx: Executor | None = None) -> None:
         self.elders[elder.elder_id] = elder
+        # 擴張—收縮遷移的雙寫：欄位與 channel_bindings 同步，讀取端切換前兩邊恆一致。
+        if elder.line_user_id:
+            self.save_channel_binding(
+                ChannelBinding(
+                    Channel.LINE,
+                    elder.line_user_id,
+                    PrincipalType.ELDER,
+                    elder.elder_id,
+                    time.time(),
+                ),
+                tx=tx,
+            )
 
     def get_elder(self, elder_id: str) -> Elder | None:
         return self.elders.get(elder_id)
 
     def save_guardian(self, guardian: Guardian, *, tx: Executor | None = None) -> None:
         self.guardians[guardian.guardian_id] = guardian
+        # 擴張—收縮遷移的雙寫：欄位與 channel_bindings 同步，讀取端切換前兩邊恆一致。
+        if guardian.line_user_id:
+            self.save_channel_binding(
+                ChannelBinding(
+                    Channel.LINE,
+                    guardian.line_user_id,
+                    PrincipalType.GUARDIAN,
+                    guardian.guardian_id,
+                    time.time(),
+                ),
+                tx=tx,
+            )
 
     def get_guardian_by_line(self, line_user_id: str) -> Guardian | None:
         # 逐筆比對「當前」line_user_id，與 Pg 一致；不維護獨立索引以免更新後殘留舊值。
