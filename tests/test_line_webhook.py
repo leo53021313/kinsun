@@ -113,14 +113,14 @@ class _StubBinding:
 
 
 class _AllowGate:
-    """passthrough：以 line id 充當 elder id（同 AllowAllGate 的 dev 語意）。"""
+    """passthrough：以 external_id 充當 elder id（同 AllowAllGate 的 dev 語意）。"""
 
-    def resolve_elder(self, line_user_id):
-        return line_user_id
+    def resolve_elder(self, channel, external_id):
+        return external_id
 
 
 class _DenyGate:
-    def resolve_elder(self, line_user_id):
+    def resolve_elder(self, channel, external_id):
         return None
 
 

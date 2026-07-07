@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from kinsun.accounts.models import (
+    Channel,
     Consent,
     ConsentBy,
     Elder,
@@ -16,6 +17,7 @@ from kinsun.accounts.models import (
     Guardian,
     Invite,
     InviteRole,
+    PrincipalType,
     Role,
 )
 from kinsun.accounts.store import AccountStore
@@ -139,18 +141,20 @@ class AccountService:
     def guardians_of(self, elder_id: str) -> list[ElderGuardian]:
         return self._repo.list_elder_guardians(elder_id)
 
-    def consented_elder_id(self, line_user_id: str) -> str | None:
-        """解析「已同意的長輩」：綁定且同意有效才回 elder_id，否則 None。"""
-        elder = self._repo.get_elder_by_line(line_user_id)
-        if elder is None:
+    def has_valid_consent(self, elder_id: str) -> bool:
+        """長輩同意是否有效（存在且未撤回）。"""
+        consent = self._repo.get_consent(elder_id)
+        return consent is not None and consent.revoked_at is None
+
+    def consented_elder_id(self, channel: Channel, external_id: str) -> str | None:
+        """解析「已同意的長輩」：該通道帳號綁的是長輩且同意有效才回 elder_id，否則 None。"""
+        binding = self._repo.get_channel_binding(channel, external_id)
+        if binding is None or binding.principal_type is not PrincipalType.ELDER:
             return None
-        consent = self._repo.get_consent(elder.elder_id)
-        if consent is not None and consent.revoked_at is None:
-            return elder.elder_id
-        return None
+        return binding.principal_id if self.has_valid_consent(binding.principal_id) else None
 
     def is_consented_elder(self, line_user_id: str) -> bool:
-        return self.consented_elder_id(line_user_id) is not None
+        return self.consented_elder_id(Channel.LINE, line_user_id) is not None
 
     def get_elder(self, elder_id: str):
         return self._repo.get_elder(elder_id)

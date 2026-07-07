@@ -3,7 +3,7 @@ from itertools import count
 
 import pytest
 
-from kinsun.accounts.models import ConsentBy, InviteRole, Role
+from kinsun.accounts.models import Channel, ConsentBy, InviteRole, Role
 from kinsun.accounts.service import AccountService, InviteError
 from tests.fakes import FakeAccountStore
 
@@ -243,10 +243,10 @@ def test_consented_elder_id_resolves_and_rejects():
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv_elder = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
     svc.redeem_invite(inv_elder.code, "U-elder", consent_by=ConsentBy.SELF)
-    assert svc.consented_elder_id("U-elder") == elder.elder_id
-    assert svc.consented_elder_id("U-nobody") is None
+    assert svc.consented_elder_id(Channel.LINE, "U-elder") == elder.elder_id
+    assert svc.consented_elder_id(Channel.LINE, "U-nobody") is None
     svc.revoke_consent(elder.elder_id)
-    assert svc.consented_elder_id("U-elder") is None
+    assert svc.consented_elder_id(Channel.LINE, "U-elder") is None
 
 
 def test_create_elder_uses_repo_transaction():

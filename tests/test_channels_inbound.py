@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+from kinsun.accounts.models import Channel
 from kinsun.channels.inbound import (
     BIND_FIRST_PROMPT,
     FALLBACK_PROMPT,
@@ -58,7 +59,7 @@ class _Gate:
     def __init__(self, allow):
         self._allow = allow
 
-    def resolve_elder(self, line_user_id):
+    def resolve_elder(self, channel, external_id):
         return "e-1" if self._allow else None
 
 
@@ -75,11 +76,11 @@ class _SpyVoice:
         self.delivered = []
 
     def deliver(self, msg, result):
-        self.delivered.append((msg.line_user_id, result.text))
+        self.delivered.append((msg.external_id, result.text))
 
 
-def _msg(kind, *, reply, text="", audio=b"", line_user_id="U-1"):
-    return InboundMessage(line_user_id, kind, text, audio, reply)
+def _msg(kind, *, reply, text="", audio=b"", external_id="U-1"):
+    return InboundMessage(Channel.LINE, external_id, kind, text, audio, reply)
 
 
 def test_text_routes_to_binding():
@@ -231,7 +232,7 @@ class _Publisher:
 
 
 def _voice_msg(cap):
-    return InboundMessage("U-1", "audio", "", b"x", cap.reply, cap.reply_voice)
+    return InboundMessage(Channel.LINE, "U-1", "audio", "", b"x", cap.reply, cap.reply_voice)
 
 
 def test_deliver_text_when_no_audio():
@@ -311,6 +312,7 @@ def test_dispatch_records_voice_reply():
     traces = FakeTraceStore()
     cap = _VoiceCapture()
     msg = InboundMessage(
+        Channel.LINE,
         "U-1",
         "audio",
         "",
@@ -341,7 +343,7 @@ def test_dispatch_records_voice_reply():
 def test_dispatch_records_text_reply_when_no_voice():
     traces = FakeTraceStore()
     r = _Replies()
-    msg = InboundMessage("U-1", "audio", "", b"xy", r, trace_id="t2")
+    msg = InboundMessage(Channel.LINE, "U-1", "audio", "", b"xy", r, trace_id="t2")
     dispatch(
         msg,
         pipeline=_VoicePipeline(TtsResult(text="純文字")),
