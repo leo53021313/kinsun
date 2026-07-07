@@ -40,6 +40,10 @@ _Avoid_: event、payload
 主動送訊息給長輩／家屬的通道中立門面（`channels/outbound.py`）：`send_text(line_user_id, text)`。主動關懷、提醒 jobs、危急通知皆依賴它，LINE 版 `LineOutboundChannel` 為 adapter（內部呼叫 `push_message`）。與入站的 `InboundMessage` 對稱；未來語音再於此加 `send_voice`。
 _Avoid_: Pusher、push_text、messenger
 
+**通道綁定（ChannelBinding）**：
+通道帳號對應本人的持久對應（`channel_bindings` 表）：`(channel, external_id) → (principal_type, principal_id)`。一人可同時有 LINE 與 App 綁定；換手機＝改一筆綁定，記憶不動。目前為擴張期——寫入端雙寫、讀取端仍走 `elders.line_user_id`／`guardians.line_user_id`，切換由階段 1B／1C 計畫接手。
+_Avoid_: mapping、link、account_binding
+
 **會話（Session）**：
 一位長輩的對話脈絡，以 LINE user_id 識別（即 `line_user_id`）。
 

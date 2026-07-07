@@ -15,7 +15,7 @@ DDL 無 DEFAULT（皆由應用層填值）。⚠ E-11：所有 TEXT 欄位**無�
 | 領域 | 表 | 用途 | 自動清理 |
 |------|----|------|---------|
 | 短期記憶 | `turns` | 每輪對話逐筆（今日上下文＋夜間整理來源） | ❌ 永久保存 ⚠ T-14 |
-| 帳號 | `elders`、`guardians`、`elder_guardians`、`consents`、`invites` | 長輩／家屬／關聯／同意／邀請碼 | ❌ |
+| 帳號 | `elders`、`guardians`、`elder_guardians`、`consents`、`invites`、`channel_bindings` | 長輩／家屬／關聯／同意／邀請碼／通道綁定 | ❌ |
 | 綁定 | `binding_sessions` | 綁定引導狀態機（每人一列） | ❌（TTL 只影響邏輯不刪列） |
 | 排程 | `scheduler_state` | 各 job 最後執行時間 | ❌ |
 | 照護 | `medications`、`appointments` | 用藥／回診 | ❌ |
@@ -57,6 +57,13 @@ DDL 無 DEFAULT（皆由應用層填值）。⚠ E-11：所有 TEXT 欄位**無�
 
 **`invites`**：`code` TEXT PK（天然唯一鍵當主鍵）、`elder_id`、`role`、`expires_at`
 （TTL 24h）、`max_attempts` INTEGER（5，死設定 ⚠ T-29）、`attempts` INTEGER、`used_at`（可空）。
+
+**`channel_bindings`**（通道帳號 → 本人）：PK `(channel, external_id)`、`channel` TEXT
+（`line`／`app`）、`external_id` TEXT（LINE userId／App 裝置帳號）、`principal_type` TEXT
+（`elder`／`guardian`）、`principal_id` TEXT（elder_id 或 guardian_id）、`created_at`
+（首次綁定時間，upsert 不覆寫）。索引 `idx_channel_bindings_principal (principal_type, principal_id)`。
+遷移：`CHANNEL_BINDINGS_BACKFILL_DDL` 冪等回填 `elders`／`guardians` 的既有 `line_user_id`；
+寫入端由 `save_elder`／`save_guardian` 雙寫（擴張—收縮，讀取端切換見階段 1C 計畫）。
 
 ### 2.3 綁定會話／排程狀態
 
