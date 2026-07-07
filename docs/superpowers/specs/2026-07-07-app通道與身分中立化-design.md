@@ -88,7 +88,7 @@
 
 4. **順帶解決待議清單三項已知風險**：換手機記憶孤兒（`docs/全庫人工決策盤點-待議.md`）、`elders.line_user_id` 無 UNIQUE 約束、`risk_events` 缺 `elder_id`。
 
-5. **觀測五表**（`webhook_events`／`asr_calls`／`llm_calls`／`tts_calls`／`replies`）屬事件日誌，維持記錄通道層識別即可，另補記 `elder_id` 欄位以利查詢；不做歷史回填（日誌性質，成本效益不符）。
+5. **觀測五表**（`webhook_events`／`asr_calls`／`llm_calls`／`tts_calls`／`replies`）屬事件日誌，維持記錄通道層識別即可；補記 `elder_id` 欄位**延後**至管理端出現以人查詢的需求時一併做（1C 實作時評估：改動面涵蓋五表 DDL 與 TraceStore 全簽名，現階段無讀取端受益，YAGNI）。不做歷史回填（日誌性質，成本效益不符）。
 
 ### 4.2 App 帳號與認證
 

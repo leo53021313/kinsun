@@ -114,8 +114,8 @@ worker 無存活監控 ⚠ E-17：行程死掉＝所有提醒靜默停止。job 
 | Seam | 介面 | 正式／替身 |
 |------|------|-----------|
 | HTTP 出站 | `Transport`（`transport.py`） | `UrllibTransport`／FakeTransport（測試注入，不 monkeypatch） |
-| 訊息出站 | `OutboundChannel`（`channels/outbound.py`） | `LineOutboundChannel`（push）／fake |
-| 訊息入站 | `InboundMessage`＋`dispatch` | LINE adapter 正規化，分派邏輯不碰 SDK |
+| 訊息出站 | `OutboundChannel`（`channels/outbound.py`）＋`ChannelRouter`（`channels/router.py`，本人→綁定通道選路） | `LineOutboundChannel`（push）／fake |
+| 訊息入站 | `InboundMessage`（`channel`＋`external_id`）＋`dispatch`（閘門解析成本人） | LINE adapter 正規化，分派邏輯不碰 SDK |
 | 持久層 | `<領域>Store` Protocol ×11 | `Pg*`／`Fake*` 同住 store.py，合約測試保證等價 |
 | 觀測 | `TraceStore`＋pipeline `_span` | `PgTraceStore`／`FakeTraceStore`；失敗不中斷 |
 | 模型服務 | `ASRClient`／`TTSClient`／`AudioPublisher` | mock↔dgx 環境變數切換，位置無關 |
