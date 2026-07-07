@@ -125,8 +125,8 @@ def assemble_core(
         memory,
         externals.long_term,
         facts=[
-            MedicationFacts(accounts, medications),
-            AppointmentFacts(accounts, appointments, clock=clock),
+            MedicationFacts(medications),
+            AppointmentFacts(appointments, clock=clock),
         ],
     )
     rag_service = HealthEducationRagService(

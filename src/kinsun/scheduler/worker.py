@@ -56,34 +56,35 @@ def build_scheduler(
     traces = core.traces
     summaries = PgConversationSummaryStore(db, clock=clock)
 
-    def _record_push(line_user_id: str, kind: str, content: str) -> None:
-        # 主動推播補記 reminder_logs：查得到綁定長輩才記（觀測用，失敗不影響推播）。
-        elder = accounts.elder_by_line(line_user_id)
-        if elder is not None:
-            safe_record(reminder_logs.record, elder.elder_id, kind, content)
-
-    def run_one(line_user_id: str) -> None:
-        run_consolidation(line_user_id, short_term=memory, long_term=long_term)
+    def run_one(elder_id: str) -> None:
+        run_consolidation(elder_id, short_term=memory, long_term=long_term)
         try:
             summarize_day(
-                line_user_id,
+                elder_id,
                 short_term=memory,
                 summarizer=gemini,
                 summaries=summaries,
                 clock=clock,
             )
         except Exception:  # noqa: BLE001 - 摘要失敗不影響整理與其他長輩
-            logger.warning("對話摘要失敗 session=%s", line_user_id)
+            logger.warning("對話摘要失敗 elder=%s", elder_id)
 
-    def greet_one(line_user_id: str) -> None:
-        content = agent.proactive(line_user_id, GREETING_INTENT)
-        channel.send_text(line_user_id, content)
-        _record_push(line_user_id, "proactive-greeting", content)
+    def _push_to_elder(elder_id: str, intent: str, kind: str) -> None:
+        # 會話以 elder_id 識別；出站仍走 LINE，須反查綁定，未綁 LINE 即略過。
+        elder = accounts.get_elder(elder_id)
+        if elder is None or not elder.line_user_id:
+            logger.warning("主動推播略過（長輩未綁 LINE）elder=%s kind=%s", elder_id, kind)
+            return
+        content = agent.proactive(elder_id, intent)
+        channel.send_text(elder.line_user_id, content)
+        # 主動推播補記 reminder_logs（觀測用，失敗不影響推播）。
+        safe_record(reminder_logs.record, elder_id, kind, content)
 
-    def care_one(line_user_id: str) -> None:
-        content = agent.proactive(line_user_id, INACTIVITY_INTENT)
-        channel.send_text(line_user_id, content)
-        _record_push(line_user_id, "proactive-care", content)
+    def greet_one(elder_id: str) -> None:
+        _push_to_elder(elder_id, GREETING_INTENT, "proactive-greeting")
+
+    def care_one(elder_id: str) -> None:
+        _push_to_elder(elder_id, INACTIVITY_INTENT, "proactive-care")
 
     jobs = [
         build_consolidation_job(

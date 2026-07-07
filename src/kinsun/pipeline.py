@@ -48,7 +48,8 @@ class VoicePipeline:
         self,
         audio: bytes,
         *,
-        line_user_id: str,
+        elder_id: str,
+        line_user_id: str = "",
         content_type: str = "audio/m4a",
         trace_id: str = "",
         audio_url: str = "",
@@ -60,25 +61,34 @@ class VoicePipeline:
             trace_id=trace_id,
             audio_url=audio_url,
         )
-        return self._process_transcribed(user_text, line_user_id=line_user_id, trace_id=trace_id)
+        return self._process_transcribed(
+            user_text, elder_id=elder_id, line_user_id=line_user_id, trace_id=trace_id
+        )
 
-    def process_text(self, text: str, *, line_user_id: str, trace_id: str = "") -> TtsResult:
+    def process_text(
+        self, text: str, *, elder_id: str, line_user_id: str = "", trace_id: str = ""
+    ) -> TtsResult:
         """文字輸入路徑（Debug）：跳過 ASR，直接以輸入文字進入對話核心。"""
-        return self._process_transcribed(text, line_user_id=line_user_id, trace_id=trace_id)
+        return self._process_transcribed(
+            text, elder_id=elder_id, line_user_id=line_user_id, trace_id=trace_id
+        )
 
     def _process_transcribed(
-        self, user_text: str, *, line_user_id: str, trace_id: str
+        self, user_text: str, *, elder_id: str, line_user_id: str, trace_id: str
     ) -> TtsResult:
+        """會話鍵為 elder_id；line_user_id 僅供觀測五表標記（可為空字串）。"""
         assessment = self._detector.assess(user_text)
         # 危急通知須獨立於回覆生成：先落庫＋通知家屬，才產生回覆。
         # 否則 agent 生成回覆時若丟例外，會讓已偵測到的危急漏通知。
         if assessment.tier >= RiskTier.L2:
             try:
-                self._risk_events.record(line_user_id, assessment, trace_id=trace_id or None)
+                self._risk_events.record(elder_id, assessment, trace_id=trace_id or None)
             except Exception:  # noqa: BLE001 - 落庫失敗不可中斷對話
                 logger.warning("危急事件落庫失敗")
-            self._notifier.notify(line_user_id, assessment)
-        reply_text = self._generate(line_user_id, user_text, trace_id=trace_id)
+            self._notifier.notify(elder_id, assessment)
+        reply_text = self._generate(
+            elder_id, user_text, line_user_id=line_user_id, trace_id=trace_id
+        )
         result = self._synthesize(reply_text, line_user_id=line_user_id, trace_id=trace_id)
         # 附上本輪的使用者原話（語音為 ASR 辨識、文字為輸入），供 debug 顯示。
         return replace(result, transcript=user_text)
@@ -132,7 +142,9 @@ class VoicePipeline:
             text = self._asr.transcribe(audio, content_type=content_type)
         return text
 
-    def _generate(self, line_user_id: str, user_text: str, *, trace_id: str) -> str:
+    def _generate(
+        self, elder_id: str, user_text: str, *, line_user_id: str, trace_id: str
+    ) -> str:
         # 現階段每輪記一筆（涵蓋整個 agent 含工具迴圈）；token 由 Gemini usage
         # 尚未透出，先記 NULL——見規格「未來工作」。
         reply = ""
@@ -149,7 +161,7 @@ class VoicePipeline:
                 error_message=error_message,
             )
         ):
-            reply = self._agent.handle(line_user_id, user_text)
+            reply = self._agent.handle(elder_id, user_text)
         return reply
 
     def _synthesize(self, reply_text: str, *, line_user_id: str, trace_id: str) -> TtsResult:

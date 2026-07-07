@@ -16,10 +16,10 @@ class _SpyChannel:
         self.sent = []
         self._fail_on = fail_on
 
-    def send_text(self, line_user_id, text):
-        if line_user_id == self._fail_on:
+    def send_text(self, elder_id, text):
+        if elder_id == self._fail_on:
             raise RuntimeError("push failed")
-        self.sent.append((line_user_id, text))
+        self.sent.append((elder_id, text))
 
 
 class _StubDirectory:
@@ -27,7 +27,7 @@ class _StubDirectory:
         self._line_ids = line_ids
         self._raises = raises
 
-    def guardian_line_ids(self, line_user_id):
+    def guardian_line_ids_of_elder(self, elder_id):
         if self._raises:
             raise RuntimeError("db down")
         return list(self._line_ids)

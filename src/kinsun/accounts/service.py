@@ -139,12 +139,18 @@ class AccountService:
     def guardians_of(self, elder_id: str) -> list[ElderGuardian]:
         return self._repo.list_elder_guardians(elder_id)
 
-    def is_consented_elder(self, line_user_id: str) -> bool:
+    def consented_elder_id(self, line_user_id: str) -> str | None:
+        """解析「已同意的長輩」：綁定且同意有效才回 elder_id，否則 None。"""
         elder = self._repo.get_elder_by_line(line_user_id)
         if elder is None:
-            return False
+            return None
         consent = self._repo.get_consent(elder.elder_id)
-        return consent is not None and consent.revoked_at is None
+        if consent is not None and consent.revoked_at is None:
+            return elder.elder_id
+        return None
+
+    def is_consented_elder(self, line_user_id: str) -> bool:
+        return self.consented_elder_id(line_user_id) is not None
 
     def get_elder(self, elder_id: str):
         return self._repo.get_elder(elder_id)
@@ -185,12 +191,6 @@ class AccountService:
             if guardian is not None and guardian.line_user_id:
                 line_ids.append(guardian.line_user_id)
         return line_ids
-
-    def guardian_line_ids(self, line_user_id: str) -> list[str]:
-        elder = self._repo.get_elder_by_line(line_user_id)
-        if elder is None:
-            return []
-        return self.guardian_line_ids_of_elder(elder.elder_id)
 
     def can_view_transcript(self, elder_id: str, guardian_id: str) -> bool:
         eg = self._repo.get_elder_guardian(elder_id, guardian_id)

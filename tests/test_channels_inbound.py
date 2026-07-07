@@ -29,14 +29,14 @@ class _Pipeline:
         self.calls = []
         self.text_calls = []
 
-    def process(self, audio, *, line_user_id, trace_id="", audio_url=""):
-        self.calls.append((audio, line_user_id))
+    def process(self, audio, *, elder_id, line_user_id="", trace_id="", audio_url=""):
+        self.calls.append((audio, elder_id))
         if self._boom is not None:
             raise self._boom
         return SimpleNamespace(text=self._text)
 
-    def process_text(self, text, *, line_user_id, trace_id=""):
-        self.text_calls.append((text, line_user_id))
+    def process_text(self, text, *, elder_id, line_user_id="", trace_id=""):
+        self.text_calls.append((text, elder_id))
         if self._boom is not None:
             raise self._boom
         return SimpleNamespace(text=self._text)
@@ -53,18 +53,20 @@ class _Binding:
 
 
 class _Gate:
+    """resolve_elder 測試替身：allow=True 時把 line id 映到固定 elder id。"""
+
     def __init__(self, allow):
         self._allow = allow
 
-    def allows(self, line_user_id):
-        return self._allow
+    def resolve_elder(self, line_user_id):
+        return "e-1" if self._allow else None
 
 
 class _VoicePipeline:
     def __init__(self, result):
         self._result = result
 
-    def process(self, audio, *, line_user_id, trace_id="", audio_url=""):
+    def process(self, audio, *, elder_id, line_user_id="", trace_id="", audio_url=""):
         return self._result
 
 
@@ -120,7 +122,7 @@ def test_text_flag_on_runs_pipeline():
         gate=_Gate(True),
         text_input_enabled=True,
     )
-    assert pipe.text_calls == [("哈囉", "U-1")]
+    assert pipe.text_calls == [("哈囉", "e-1")]
     assert r.sent == ["你說的是：哈囉"]
 
 
@@ -188,7 +190,7 @@ def test_audio_runs_pipeline_when_allowed():
         binding=_Binding(None),
         gate=_Gate(True),
     )
-    assert pipe.calls == [(b"xy", "U-1")]
+    assert pipe.calls == [(b"xy", "e-1")]
     assert r.sent == ["你說的是：早安"]
 
 

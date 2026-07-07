@@ -11,19 +11,15 @@ _TITLE = "\n這位長者即將到來的回診（系統設定，僅供參考）�
 
 
 class AppointmentFacts:
-    """facts(line_user_id) -> FactSection | None（無綁定或無回診回 None）。"""
+    """facts(elder_id) -> FactSection | None（無回診回 None）。"""
 
-    def __init__(self, accounts, appointments, *, clock: Callable[[], datetime]) -> None:
-        self._accounts = accounts
+    def __init__(self, appointments, *, clock: Callable[[], datetime]) -> None:
         self._appointments = appointments
         self._clock = clock
 
-    def facts(self, line_user_id: str) -> FactSection | None:
-        elder = self._accounts.elder_by_line(line_user_id)
-        if elder is None:
-            return None
+    def facts(self, elder_id: str) -> FactSection | None:
         today = self._clock().date().isoformat()
-        ups = self._appointments.upcoming(elder.elder_id, today)
+        ups = self._appointments.upcoming(elder_id, today)
         if not ups:
             return None
         return FactSection(_TITLE, [f"{a.date} {a.label}" for a in ups])

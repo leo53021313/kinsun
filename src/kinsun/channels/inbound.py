@@ -101,13 +101,17 @@ def dispatch(
         if not text_input_enabled:
             msg.reply(NON_AUDIO_PROMPT)
             return
-        if not gate.allows(msg.line_user_id):
+        elder_id = gate.resolve_elder(msg.line_user_id)
+        if elder_id is None:
             msg.reply(BIND_FIRST_PROMPT)
             return
         _run_pipeline(
             msg,
             lambda: pipeline.process_text(
-                msg.text, line_user_id=msg.line_user_id, trace_id=msg.trace_id
+                msg.text,
+                elder_id=elder_id,
+                line_user_id=msg.line_user_id,
+                trace_id=msg.trace_id,
             ),
             voice=voice,
             traces=traces,
@@ -117,13 +121,15 @@ def dispatch(
     if msg.kind != "audio":
         msg.reply(NON_AUDIO_PROMPT)
         return
-    if not gate.allows(msg.line_user_id):
+    elder_id = gate.resolve_elder(msg.line_user_id)
+    if elder_id is None:
         msg.reply(BIND_FIRST_PROMPT)
         return
     _run_pipeline(
         msg,
         lambda: pipeline.process(
             msg.audio,
+            elder_id=elder_id,
             line_user_id=msg.line_user_id,
             trace_id=msg.trace_id,
             audio_url=msg.audio_url,

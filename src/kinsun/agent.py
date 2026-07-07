@@ -43,19 +43,19 @@ class CareAgent:
         self._tools = tools
         self._max_tool_iters = max_tool_iters
 
-    def _envelope(self, line_user_id: str, query: str) -> tuple[str, list[Message]]:
-        ctx = self._session.assemble(line_user_id, query)
+    def _envelope(self, elder_id: str, query: str) -> tuple[str, list[Message]]:
+        ctx = self._session.assemble(elder_id, query)
         return SYSTEM_PROMPT + ctx.system_suffix, ctx.history
 
-    def handle(self, line_user_id: str, user_text: str) -> str:
-        system_prompt, history = self._envelope(line_user_id, user_text)
+    def handle(self, elder_id: str, user_text: str) -> str:
+        system_prompt, history = self._envelope(elder_id, user_text)
         user_msg = Message("user", user_text)
         base = [*history, user_msg]
         if self._tools is None:
             reply = self._llm.generate(system_prompt=system_prompt, messages=base)
         else:
             reply = self._run_tool_loop(system_prompt, base)
-        self._session.record_turn(line_user_id, user_msg, Message("assistant", reply))
+        self._session.record_turn(elder_id, user_msg, Message("assistant", reply))
         return reply
 
     def _run_tool_loop(self, system_prompt: str, base: list[Message]) -> str:
@@ -73,9 +73,9 @@ class CareAgent:
                 results.append(ToolResult(call, self._tools.dispatch(call.name, call.arguments)))
         return FALLBACK_REPLY
 
-    def proactive(self, line_user_id: str, intent: str) -> str:
-        system_prompt, history = self._envelope(line_user_id, intent)
+    def proactive(self, elder_id: str, intent: str) -> str:
+        system_prompt, history = self._envelope(elder_id, intent)
         directive = Message("user", _PROACTIVE_DIRECTIVE.format(intent=intent))
         reply = self._llm.generate(system_prompt=system_prompt, messages=[*history, directive])
-        self._session.record_turn(line_user_id, Message("assistant", reply))
+        self._session.record_turn(elder_id, Message("assistant", reply))
         return reply

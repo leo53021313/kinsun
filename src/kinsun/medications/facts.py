@@ -9,17 +9,13 @@ _TITLE = "\n這位長者目前固定服用的藥（系統設定的提醒時段�
 
 
 class MedicationFacts:
-    """facts(line_user_id) -> FactSection | None（無綁定或無用藥回 None）。"""
+    """facts(elder_id) -> FactSection | None（無用藥回 None）。"""
 
-    def __init__(self, accounts, medications) -> None:
-        self._accounts = accounts
+    def __init__(self, medications) -> None:
         self._medications = medications
 
-    def facts(self, line_user_id: str) -> FactSection | None:
-        elder = self._accounts.elder_by_line(line_user_id)
-        if elder is None:
-            return None
-        meds = self._medications.list_for_elder(elder.elder_id)
+    def facts(self, elder_id: str) -> FactSection | None:
+        meds = self._medications.list_for_elder(elder_id)
         if not meds:
             return None
         return FactSection(_TITLE, [f"{m.name}（{slots_label(m.slots)}）" for m in meds])

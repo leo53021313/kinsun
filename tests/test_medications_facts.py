@@ -1,43 +1,30 @@
 """MedicationFacts 用藥事實提供者測試。"""
 
-from datetime import datetime, timedelta, timezone
-
-from kinsun.accounts.models import Elder
-from kinsun.accounts.service import AccountService
 from kinsun.medications.facts import MedicationFacts
 from kinsun.medications.models import MedicationSlot
 from kinsun.medications.service import MedicationService
-from tests.fakes import FakeAccountStore, FakeMedicationStore
-
-TPE = timezone(timedelta(hours=8))
-NOW = datetime(2026, 6, 29, 10, 0, tzinfo=TPE)
+from tests.fakes import FakeMedicationStore
 
 
 def _facts(*, meds):
-    repo = FakeAccountStore()
-    repo.save_elder(Elder("e1", "阿公", "U-elder"))
-    accounts = AccountService(repo, clock=lambda: NOW)
     medications = MedicationService(FakeMedicationStore(), new_id=lambda: "m1")
     for name, slots in meds:
         medications.save("e1", name, slots)
-    return MedicationFacts(accounts, medications)
+    return MedicationFacts(medications)
 
 
 def test_facts_lists_current_meds():
     facts = _facts(meds=[("降血壓藥", (MedicationSlot.MORNING, MedicationSlot.EVENING))])
-    section = facts.facts("U-elder")
+    section = facts.facts("e1")
     assert section.items == ["降血壓藥（早上、晚上）"]
     assert "固定服用的藥" in section.title
 
 
-def test_facts_none_when_unknown_line():
+def test_facts_none_when_unknown_elder():
     facts = _facts(meds=[("鈣片", (MedicationSlot.BEDTIME,))])
-    assert facts.facts("U-stranger") is None
+    assert facts.facts("e-stranger") is None
 
 
 def test_facts_none_when_no_meds():
-    repo = FakeAccountStore()
-    repo.save_elder(Elder("e1", "阿公", "U-elder"))
-    accounts = AccountService(repo, clock=lambda: NOW)
-    facts = MedicationFacts(accounts, MedicationService(FakeMedicationStore()))
-    assert facts.facts("U-elder") is None
+    facts = MedicationFacts(MedicationService(FakeMedicationStore()))
+    assert facts.facts("e1") is None

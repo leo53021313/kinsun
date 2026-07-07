@@ -219,22 +219,34 @@ def test_guardian_line_ids_in_escalation_order():
     svc.redeem_invite(inv_elder.code, "U-elder", consent_by=ConsentBy.SELF)
     inv_guard = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
     svc.redeem_invite(inv_guard.code, "U-daughter", consent_by=ConsentBy.SELF)
-    assert svc.guardian_line_ids("U-elder") == ["U-son", "U-daughter"]
+    assert svc.guardian_line_ids_of_elder(elder.elder_id) == ["U-son", "U-daughter"]
 
 
-def test_guardian_line_ids_unbound_elder_returns_empty():
+def test_guardian_line_ids_of_elder_unknown_returns_empty():
     repo = FakeAccountStore()
     svc = _service(repo)
-    assert svc.guardian_line_ids("U-nobody") == []
+    assert svc.guardian_line_ids_of_elder("e-nobody") == []
 
 
-def test_guardian_line_ids_only_primary():
+def test_guardian_line_ids_of_elder_only_primary():
     repo = FakeAccountStore()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
     inv_elder = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
     svc.redeem_invite(inv_elder.code, "U-elder", consent_by=ConsentBy.SELF)
-    assert svc.guardian_line_ids("U-elder") == ["U-son"]
+    assert svc.guardian_line_ids_of_elder(elder.elder_id) == ["U-son"]
+
+
+def test_consented_elder_id_resolves_and_rejects():
+    repo = FakeAccountStore()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    inv_elder = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
+    svc.redeem_invite(inv_elder.code, "U-elder", consent_by=ConsentBy.SELF)
+    assert svc.consented_elder_id("U-elder") == elder.elder_id
+    assert svc.consented_elder_id("U-nobody") is None
+    svc.revoke_consent(elder.elder_id)
+    assert svc.consented_elder_id("U-elder") is None
 
 
 def test_create_elder_uses_repo_transaction():
