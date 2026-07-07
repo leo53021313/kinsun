@@ -26,10 +26,11 @@
 ```
 ┌────────────── DGX Spark ──────────────┐
 │ webhook app :8000 ←── ngrok ←── LINE  │
-│   ├─ /line/webhook（驗簽）            │
-│   ├─ /api（LIFF idToken）             │      Supabase（雲端）
-│   ├─ /api/admin（X-Admin-Key）        │   ┌──────────────────┐
-│   └─ /liff、/admin（靜態 SPA）        │──▶│ Postgres+pgvector │
+│   ├─ /line/webhook（驗簽）            │      ↖── Expo App（app/：家屬＋長輩）
+│   ├─ /api（雙認證：App token／LIFF）  │      Supabase（雲端）
+│   ├─ /api/app（token；對講機＋帳號）  │   ┌──────────────────┐
+│   ├─ /api/admin（X-Admin-Key）        │──▶│ Postgres+pgvector │
+│   └─ /liff、/admin（靜態 SPA）        │   │                  │
 │ scheduler worker（python -m kinsun.   │──▶│ Storage（音檔）    │
 │   scheduler，tick 60s）               │   └──────────────────┘
 │ ASR :8001（GPU）  TTS :8002（GPU）     │      Gemini API
