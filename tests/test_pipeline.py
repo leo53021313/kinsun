@@ -195,9 +195,7 @@ def test_pipeline_records_llm_error_and_reraises():
 
 def test_pipeline_records_tts_degradation_and_still_replies_text():
     traces = FakeTraceStore()
-    result = _traced_pipeline(traces, tts=BoomTts()).process(
-        b"\x00", elder_id="u1", trace_id="t1"
-    )
+    result = _traced_pipeline(traces, tts=BoomTts()).process(b"\x00", elder_id="u1", trace_id="t1")
     assert result.audio is None
     assert traces.tts_calls[0].status == "error"
 

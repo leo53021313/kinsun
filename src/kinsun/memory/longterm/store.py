@@ -74,9 +74,7 @@ class Mem0LongTermStore:
             out.append(item)
         return out
 
-    def search(
-        self, elder_id: str, query: str, *, top_k: int | None = None
-    ) -> list[MemoryItem]:
+    def search(self, elder_id: str, query: str, *, top_k: int | None = None) -> list[MemoryItem]:
         user_items = self._search_raw(query, elder_id, top_k or self._top_k)
         health_items = self._search_raw(HEALTH_QUERY, elder_id, self._health_top_k)
         merged = self._dedup(user_items + health_items)

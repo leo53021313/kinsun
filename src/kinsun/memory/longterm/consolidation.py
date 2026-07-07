@@ -19,9 +19,7 @@ from kinsun.memory.longterm.store import LongTermStore
 from kinsun.memory.shortterm import MemoryStore
 
 
-def run_consolidation(
-    elder_id: str, *, short_term: MemoryStore, long_term: LongTermStore
-) -> int:
+def run_consolidation(elder_id: str, *, short_term: MemoryStore, long_term: LongTermStore) -> int:
     turns = short_term.previous_day(elder_id)
     if not turns:
         return 0

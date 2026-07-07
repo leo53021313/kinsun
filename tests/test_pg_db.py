@@ -132,9 +132,7 @@ def test_session_key_migration_columns_and_backfill(pg_database, ns):
     )
     ensure_schema(os.environ["DATABASE_URL"])
     ensure_schema(os.environ["DATABASE_URL"])  # 冪等
-    rows = pg_database.query(
-        "SELECT elder_id FROM turns WHERE line_user_id = %s", (f"{ns}U-mig",)
-    )
+    rows = pg_database.query("SELECT elder_id FROM turns WHERE line_user_id = %s", (f"{ns}U-mig",))
     assert rows == [(f"{ns}e-mig",)]
     # 新制寫入：不帶 line_user_id 也能落列（欄位已可空）。
     pg_database.execute(

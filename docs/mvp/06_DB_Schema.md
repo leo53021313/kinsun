@@ -33,13 +33,14 @@ DDL 無 DEFAULT（皆由應用層填值）。⚠ E-11：所有 TEXT 欄位**無�
 | 欄位 | 型別 | 說明 |
 |------|------|------|
 | id | BIGSERIAL PK | |
-| line_user_id | TEXT | LINE 平台識別碼（≠ elder_id） |
+| elder_id | TEXT（可空） | 會話主鍵（通道中立）；遷移前孤兒列為 NULL、對新讀取不可見 |
+| line_user_id | TEXT（可空） | 舊制通道識別（僅存於遷移前資料，新寫入不填） |
 | role | TEXT | user／assistant |
 | content | TEXT | 訊息內容 |
 | created_at | DOUBLE PRECISION | |
 
-索引：`idx_turns_line_user_created (line_user_id, created_at)`
-⚠ E-08：缺 user_id 的訊息全部落進共用的 `"unknown"` 會話。
+索引：`idx_turns_elder_created (elder_id, created_at)`（`SESSION_KEY_MIGRATION_DDL` 建）
+⚠ E-08：缺 user_id 的訊息全部落進共用的 `"unknown"` 會話（僅 `BINDING_GATE_ENABLED=false` 時）。
 
 ### 2.2 帳號綁定
 
@@ -82,15 +83,18 @@ DDL 無 DEFAULT（皆由應用層填值）。⚠ E-11：所有 TEXT 欄位**無�
 
 ### 2.5 安全與報告
 
-**`risk_events`**：`risk_event_id` TEXT PK、`line_user_id`、`tier` INTEGER（0–3）、
+**`risk_events`**：`risk_event_id` TEXT PK、`elder_id`（會話主鍵，可空＝遷移前孤兒）、
+`line_user_id`（可空，僅舊資料）、`tier` INTEGER（0–3）、
 `reason` TEXT（LLM 轉述，可能含長輩發言 ⚠ T-17）、`created_at`、`trace_id` TEXT（可空，後補欄位）。
-索引：`idx_risk_events_line_user_created`。
+索引：`idx_risk_events_elder_created`。
 
 **`reminder_logs`**（append-only）：`reminder_log_id` TEXT PK、`elder_id`、`kind` TEXT
 （medication／appointment／proactive-greeting／proactive-care）、`content`、`created_at`。
 索引：`idx_reminder_logs_elder_created`。
 
-**`conversation_summaries`**：PK `(line_user_id, date)`、`content`、`created_at`。
+**`conversation_summaries`**：無主鍵（遷移卸下舊 PK），upsert 走部分唯一索引
+`uq_conversation_summaries_elder_date (elder_id, date) WHERE elder_id IS NOT NULL`；
+欄位 `elder_id`（會話主鍵，可空＝遷移前孤兒）、`line_user_id`（可空，僅舊資料）、`date`、`content`、`created_at`。
 ⚠ T-18：摘要無揭露邊界。
 
 ### 2.6 觀測五表（append-only，皆帶 `trace_id`）

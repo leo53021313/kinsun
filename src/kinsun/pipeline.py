@@ -142,9 +142,7 @@ class VoicePipeline:
             text = self._asr.transcribe(audio, content_type=content_type)
         return text
 
-    def _generate(
-        self, elder_id: str, user_text: str, *, line_user_id: str, trace_id: str
-    ) -> str:
+    def _generate(self, elder_id: str, user_text: str, *, line_user_id: str, trace_id: str) -> str:
         # 現階段每輪記一筆（涵蓋整個 agent 含工具迴圈）；token 由 Gemini usage
         # 尚未透出，先記 NULL——見規格「未來工作」。
         reply = ""
