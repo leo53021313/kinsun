@@ -94,47 +94,19 @@ def test_ensure_schema_concurrent_no_deadlock():
     assert not errors, f"併發 ensure_schema 出現錯誤（含死結）：{names}"
 
 
-def test_channel_bindings_backfill_idempotent(pg_database, ns):
+
+def test_session_key_schema_supports_elder_keys(pg_database, ns):
     from kinsun.db import ensure_schema
 
-    # 模擬「雙寫上線前」的舊資料：直接寫欄位、清掉綁定列。
-    pg_database.execute(
-        "INSERT INTO elders (elder_id, name, line_user_id) VALUES (%s, %s, %s) "
-        "ON CONFLICT (elder_id) DO UPDATE SET line_user_id = EXCLUDED.line_user_id",
-        (f"{ns}e-bf", "阿公", f"{ns}U-bf"),
-    )
-    pg_database.execute(
-        "DELETE FROM channel_bindings WHERE channel = 'line' AND external_id = %s",
-        (f"{ns}U-bf",),
-    )
     ensure_schema(os.environ["DATABASE_URL"])
-    ensure_schema(os.environ["DATABASE_URL"])  # 冪等：跑兩次結果不變
-    rows = pg_database.query(
-        "SELECT principal_type, principal_id FROM channel_bindings "
-        "WHERE channel = 'line' AND external_id = %s",
-        (f"{ns}U-bf",),
+    ensure_schema(os.environ["DATABASE_URL"])  # 冪等（含帳號欄位退役 DDL）
+    # 帳號欄位已退役：elders 不再有 line_user_id。
+    cols = pg_database.query(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = 'elders' AND column_name = 'line_user_id'",
     )
-    assert rows == [("elder", f"{ns}e-bf")]
-
-
-def test_session_key_migration_columns_and_backfill(pg_database, ns):
-    from kinsun.db import ensure_schema
-
-    # 造一筆「可對應長輩」的舊制對話（直接寫 line_user_id 欄），與一位已綁定長輩。
-    pg_database.execute(
-        "INSERT INTO elders (elder_id, name, line_user_id) VALUES (%s, %s, %s) "
-        "ON CONFLICT (elder_id) DO UPDATE SET line_user_id = EXCLUDED.line_user_id",
-        (f"{ns}e-mig", "阿公", f"{ns}U-mig"),
-    )
-    pg_database.execute(
-        "INSERT INTO turns (line_user_id, role, content, created_at) VALUES (%s, %s, %s, %s)",
-        (f"{ns}U-mig", "user", "舊制訊息", 1000.0),
-    )
-    ensure_schema(os.environ["DATABASE_URL"])
-    ensure_schema(os.environ["DATABASE_URL"])  # 冪等
-    rows = pg_database.query("SELECT elder_id FROM turns WHERE line_user_id = %s", (f"{ns}U-mig",))
-    assert rows == [(f"{ns}e-mig",)]
-    # 新制寫入：不帶 line_user_id 也能落列（欄位已可空）。
+    assert cols == []
+    # 新制寫入：turns 以 elder_id 為鍵、不帶 line_user_id 也能落列。
     pg_database.execute(
         "INSERT INTO turns (elder_id, role, content, created_at) VALUES (%s, %s, %s, %s)",
         (f"{ns}e-mig", "user", "新制訊息", 2000.0),
