@@ -1,0 +1,146 @@
+"""AccountStore 合約：Fake 與 Pg 兩個 adapter 必須對同一情境給出相同結果。
+
+Fake 每次都跑；Pg 需 `KINSUN_IT=1`（連真庫）。斷言一律以 `ns` 前綴 scope 到
+本測試自己的資料，才能在共用真庫上以「成員」關係斷言而互不干擾。
+
+不涵蓋 transaction() 回滾：FakeAccountStore 的 `transaction()` 為 no-op（不落實
+回滾語意），交易行為不在本合約範圍。所有方法皆以 `tx=None` 呼叫（兩個 adapter 皆支援）。
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from kinsun.accounts.models import (
+    Channel,
+    ChannelBinding,
+    Consent,
+    ConsentBy,
+    Elder,
+    ElderGuardian,
+    Guardian,
+    Invite,
+    InviteRole,
+    PrincipalType,
+    Role,
+)
+from kinsun.accounts.store import FakeAccountStore, PgAccountStore
+
+
+@pytest.fixture(params=["fake", "pg"])
+def store(request):
+    if request.param == "pg":
+        return PgAccountStore(request.getfixturevalue("pg_database"))
+    return FakeAccountStore()
+
+
+def test_elder_roundtrip_and_by_line(store, ns):
+    store.save_elder(Elder(f"{ns}e1", "阿公", f"{ns}U-elder"))
+    got = store.get_elder(f"{ns}e1")
+    assert got.name == "阿公"
+    assert got.line_user_id == f"{ns}U-elder"
+    assert store.get_elder_by_line(f"{ns}U-elder").elder_id == f"{ns}e1"
+    assert store.get_elder_by_line(f"{ns}nope") is None
+
+
+def test_guardian_roundtrip_and_by_line(store, ns):
+    store.save_guardian(Guardian(f"{ns}g1", f"{ns}U-guard", "女兒"))
+    assert store.get_guardian(f"{ns}g1").line_user_id == f"{ns}U-guard"
+    assert store.get_guardian(f"{ns}nope") is None
+    by_line = store.get_guardian_by_line(f"{ns}U-guard")
+    assert by_line.guardian_id == f"{ns}g1"
+    assert by_line.name == "女兒"
+
+
+def test_elder_guardians_ordered_by_escalation(store, ns):
+    elder_id = f"{ns}e1"
+    # 存入順序刻意與 escalation_order 相反，證明回傳依 escalation_order 排序而非存入順序。
+    store.save_elder_guardian(ElderGuardian(elder_id, f"{ns}g2", Role.GUARDIAN, 2, False))
+    store.save_elder_guardian(ElderGuardian(elder_id, f"{ns}g1", Role.PRIMARY, 1, True))
+    egs = store.list_elder_guardians(elder_id)
+    assert [e.guardian_id for e in egs] == [f"{ns}g1", f"{ns}g2"]
+    assert [e.escalation_order for e in egs] == [1, 2]
+    assert f"{ns}e1" in store.elder_ids_of_guardian(f"{ns}g1")
+    assert store.elder_ids_of_guardian(f"{ns}nope") == []
+
+
+def test_consent_roundtrip(store, ns):
+    store.save_consent(Consent(f"{ns}e1", ConsentBy.SELF, "v1", 1000.0, None))
+    got = store.get_consent(f"{ns}e1")
+    assert got.consent_by == ConsentBy.SELF
+    assert got.version == "v1"
+    assert got.granted_at == 1000.0
+    assert got.revoked_at is None
+    assert store.get_consent(f"{ns}nope") is None
+
+
+def test_invite_roundtrip_by_code(store, ns):
+    store.save_invite(Invite(f"{ns}code1", f"{ns}e1", InviteRole.ELDER, 9999999999.0, 5, 0, None))
+    got = store.get_invite(f"{ns}code1")
+    assert got.code == f"{ns}code1"
+    assert got.elder_id == f"{ns}e1"
+    assert got.role == InviteRole.ELDER
+    assert got.expires_at == 9999999999.0
+    assert got.max_attempts == 5
+    assert got.attempts == 0
+    assert got.used_at is None
+    assert store.get_invite(f"{ns}nope") is None
+
+
+def test_channel_binding_roundtrip_and_upsert_keeps_created_at(store, ns):
+    store.save_channel_binding(
+        ChannelBinding(Channel.LINE, f"{ns}U1", PrincipalType.ELDER, f"{ns}e1", 1000.0)
+    )
+    got = store.get_channel_binding(Channel.LINE, f"{ns}U1")
+    assert got.principal_type == PrincipalType.ELDER
+    assert got.principal_id == f"{ns}e1"
+    assert got.created_at == 1000.0
+    # upsert：改指到別的本人，但 created_at 保留首次綁定時間。
+    store.save_channel_binding(
+        ChannelBinding(Channel.LINE, f"{ns}U1", PrincipalType.GUARDIAN, f"{ns}g1", 2000.0)
+    )
+    got = store.get_channel_binding(Channel.LINE, f"{ns}U1")
+    assert got.principal_type == PrincipalType.GUARDIAN
+    assert got.principal_id == f"{ns}g1"
+    assert got.created_at == 1000.0
+    assert store.get_channel_binding(Channel.LINE, f"{ns}nope") is None
+
+
+def test_channel_bindings_listed_by_principal(store, ns):
+    # 同一位長輩兩個通道綁定；另一人的綁定不得混入。
+    store.save_channel_binding(
+        ChannelBinding(Channel.LINE, f"{ns}U-line", PrincipalType.ELDER, f"{ns}e1", 1000.0)
+    )
+    store.save_channel_binding(
+        ChannelBinding(Channel.APP, f"{ns}dev-1", PrincipalType.ELDER, f"{ns}e1", 1100.0)
+    )
+    store.save_channel_binding(
+        ChannelBinding(Channel.LINE, f"{ns}U-other", PrincipalType.ELDER, f"{ns}e2", 1200.0)
+    )
+    got = store.list_channel_bindings_for_principal(PrincipalType.ELDER, f"{ns}e1")
+    assert [(b.channel, b.external_id) for b in got] == [
+        (Channel.APP, f"{ns}dev-1"),
+        (Channel.LINE, f"{ns}U-line"),
+    ]
+    assert store.list_channel_bindings_for_principal(PrincipalType.GUARDIAN, f"{ns}e1") == []
+
+
+def test_save_elder_with_line_writes_channel_binding(store, ns):
+    store.save_elder(Elder(f"{ns}e1", "阿公", f"{ns}U-elder"))
+    binding = store.get_channel_binding(Channel.LINE, f"{ns}U-elder")
+    assert binding is not None
+    assert binding.principal_type == PrincipalType.ELDER
+    assert binding.principal_id == f"{ns}e1"
+
+
+def test_save_elder_without_line_writes_no_binding(store, ns):
+    store.save_elder(Elder(f"{ns}e-none", "阿嬤", None))
+    assert store.list_channel_bindings_for_principal(PrincipalType.ELDER, f"{ns}e-none") == []
+
+
+def test_save_guardian_writes_channel_binding(store, ns):
+    store.save_guardian(Guardian(f"{ns}g1", f"{ns}U-guard", "女兒"))
+    binding = store.get_channel_binding(Channel.LINE, f"{ns}U-guard")
+    assert binding is not None
+    assert binding.principal_type == PrincipalType.GUARDIAN
+    assert binding.principal_id == f"{ns}g1"

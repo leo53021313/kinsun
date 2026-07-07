@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import json
 import logging
-import urllib.error
-import urllib.request
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Protocol
+
+from kinsun.transport import Transport, TransportError, UrllibTransport, read_json
 
 logger = logging.getLogger("kinsun.audio")
 
@@ -37,6 +37,7 @@ class SupabaseAudioPublisher:
         clock: Callable[[], datetime],
         new_id: Callable[[], str],
         prefix: str = "tts",
+        transport: Transport | None = None,
     ) -> None:
         self._base = base_url.rstrip("/")
         self._key = service_key
@@ -45,6 +46,7 @@ class SupabaseAudioPublisher:
         self._clock = clock
         self._new_id = new_id
         self._prefix = prefix.strip("/")
+        self._transport = transport or UrllibTransport()
 
     def _object_path(self, name: str) -> str:
         return f"{self._prefix}/{self._clock().strftime('%Y%m%d')}/{name}"
@@ -52,19 +54,15 @@ class SupabaseAudioPublisher:
     def publish(self, audio: bytes, *, content_type: str) -> str:
         path = self._object_path(f"{self._new_id()}.m4a")
         upload_url = f"{self._base}/storage/v1/object/{self._bucket}/{path}"
-        request = urllib.request.Request(
-            upload_url,
-            data=audio,
-            headers={
-                "Authorization": f"Bearer {self._key}",
-                "Content-Type": content_type,
-            },
-            method="POST",
-        )
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout) as response:
-                response.read()
-        except (urllib.error.URLError, OSError) as exc:
+            self._transport.request(
+                "POST",
+                upload_url,
+                data=audio,
+                headers={"Authorization": f"Bearer {self._key}", "Content-Type": content_type},
+                timeout=self._timeout,
+            )
+        except TransportError as exc:
             raise AudioPublishError(f"音檔上傳失敗：{exc}") from exc
         return f"{self._base}/storage/v1/object/public/{self._bucket}/{path}"
 
@@ -77,16 +75,19 @@ class SupabaseAudioPublisher:
     def _list_date_folders(self) -> list[str]:
         list_url = f"{self._base}/storage/v1/object/list/{self._bucket}"
         body = json.dumps({"prefix": f"{self._prefix}/", "limit": 1000}).encode("utf-8")
-        request = urllib.request.Request(
-            list_url,
-            data=body,
-            headers={"Authorization": f"Bearer {self._key}", "Content-Type": "application/json"},
-            method="POST",
-        )
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout) as response:
-                rows = json.loads(response.read().decode("utf-8"))
-        except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
+            response = self._transport.request(
+                "POST",
+                list_url,
+                data=body,
+                headers={
+                    "Authorization": f"Bearer {self._key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=self._timeout,
+            )
+            rows = read_json(response)
+        except TransportError as exc:
             raise AudioPublishError(f"音檔清單讀取失敗：{exc}") from exc
         return [r["name"] for r in rows if isinstance(r, dict) and "name" in r]
 
@@ -95,14 +96,14 @@ class SupabaseAudioPublisher:
         list_url = f"{self._base}/storage/v1/object/list/{self._bucket}"
         prefix = f"{self._prefix}/{folder}/"
         body = json.dumps({"prefix": prefix, "limit": 1000}).encode("utf-8")
-        request = urllib.request.Request(
+        response = self._transport.request(
+            "POST",
             list_url,
             data=body,
             headers={"Authorization": f"Bearer {self._key}", "Content-Type": "application/json"},
-            method="POST",
+            timeout=self._timeout,
         )
-        with urllib.request.urlopen(request, timeout=self._timeout) as response:
-            rows = json.loads(response.read().decode("utf-8"))
+        rows = read_json(response)
         return [f"{prefix}{r['name']}" for r in rows if isinstance(r, dict) and "name" in r]
 
     def _delete_folder(self, folder: str) -> None:
@@ -118,18 +119,17 @@ class SupabaseAudioPublisher:
                 return
             del_url = f"{self._base}/storage/v1/object/{self._bucket}"
             body = json.dumps({"paths": paths}).encode("utf-8")
-            request = urllib.request.Request(
+            self._transport.request(
+                "DELETE",
                 del_url,
                 data=body,
                 headers={
                     "Authorization": f"Bearer {self._key}",
                     "Content-Type": "application/json",
                 },
-                method="DELETE",
+                timeout=self._timeout,
             )
-            with urllib.request.urlopen(request, timeout=self._timeout) as response:
-                response.read()
-        except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
+        except TransportError as exc:
             logger.warning("音檔資料夾刪除失敗 folder=%s：%s", folder, exc)
 
 

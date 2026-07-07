@@ -11,6 +11,7 @@ AIPE03 第五組期末專案。
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 多人協作流程（分支、PR、合併規則）— **開始開發前必讀** |
 | [AGENTS.md](AGENTS.md) | 開發規範（程式碼品質、安全性、測試…），所有 AI 代理共用 |
 | [progress.md](progress.md) | 開發進度快照（已完成模組、架構、程式結構、待辦） |
+| [docs/mvp/](docs/mvp/) | MVP 階段文件組合（PRD、User Flow、API/DB Spec、測試清單…），含待議決策標記 |
 | [docs/](docs/) | 策略/設計文件、各模組 spec 與實作計畫 |
 
 ## 開發團隊

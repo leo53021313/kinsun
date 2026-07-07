@@ -62,3 +62,24 @@ class Invite:
     max_attempts: int
     attempts: int = 0
     used_at: float | None = None
+
+
+class Channel(StrEnum):
+    LINE = "line"
+    APP = "app"
+
+
+class PrincipalType(StrEnum):
+    ELDER = "elder"
+    GUARDIAN = "guardian"
+
+
+@dataclass(frozen=True)
+class ChannelBinding:
+    """通道帳號 → 本人（長輩／家屬）的對應：一人可同時有多通道綁定。"""
+
+    channel: Channel
+    external_id: str
+    principal_type: PrincipalType
+    principal_id: str
+    created_at: float
