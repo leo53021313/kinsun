@@ -7,8 +7,10 @@ from contextlib import contextmanager
 from typing import Protocol
 
 from kinsun.accounts.models import (
+    ApiToken,
     Channel,
     ChannelBinding,
+    GuardianAccount,
     Consent,
     ConsentBy,
     Elder,
@@ -48,6 +50,12 @@ class AccountStore(Protocol):
     def list_channel_bindings_for_principal(
         self, principal_type: PrincipalType, principal_id: str
     ) -> list[ChannelBinding]: ...
+    def save_guardian_account(
+        self, account: GuardianAccount, *, tx: Executor | None = None
+    ) -> None: ...
+    def get_guardian_account_by_email(self, email: str) -> GuardianAccount | None: ...
+    def save_api_token(self, token: ApiToken, *, tx: Executor | None = None) -> None: ...
+    def get_api_token(self, token_hash: str) -> ApiToken | None: ...
     def transaction(self) -> object: ...
 
 
@@ -236,6 +244,42 @@ class PgAccountStore:
         )
         return [ChannelBinding(Channel(c), e, PrincipalType(p), i, t) for (c, e, p, i, t) in rows]
 
+    def save_guardian_account(
+        self, account: GuardianAccount, *, tx: Executor | None = None
+    ) -> None:
+        (tx or self._db).execute(
+            "INSERT INTO guardian_accounts (guardian_id, email, password_hash, created_at) "
+            "VALUES (%s, %s, %s, %s) ON CONFLICT (guardian_id) DO UPDATE SET "
+            "email = EXCLUDED.email, password_hash = EXCLUDED.password_hash",
+            (account.guardian_id, account.email, account.password_hash, account.created_at),
+        )
+
+    def get_guardian_account_by_email(self, email: str) -> GuardianAccount | None:
+        rows = self._db.query(
+            "SELECT guardian_id, email, password_hash, created_at "
+            "FROM guardian_accounts WHERE email = %s",
+            (email,),
+        )
+        return GuardianAccount(*rows[0]) if rows else None
+
+    def save_api_token(self, token: ApiToken, *, tx: Executor | None = None) -> None:
+        (tx or self._db).execute(
+            "INSERT INTO api_tokens (token_hash, principal_type, principal_id, created_at) "
+            "VALUES (%s, %s, %s, %s) ON CONFLICT (token_hash) DO NOTHING",
+            (token.token_hash, token.principal_type.value, token.principal_id, token.created_at),
+        )
+
+    def get_api_token(self, token_hash: str) -> ApiToken | None:
+        rows = self._db.query(
+            "SELECT token_hash, principal_type, principal_id, created_at "
+            "FROM api_tokens WHERE token_hash = %s",
+            (token_hash,),
+        )
+        if not rows:
+            return None
+        h, ptype, pid, created = rows[0]
+        return ApiToken(h, PrincipalType(ptype), pid, created)
+
 
 class FakeAccountStore:
     """AccountStore 的記憶體替身（測試用，不碰 DB）。
@@ -251,6 +295,8 @@ class FakeAccountStore:
         self.consents: dict[str, Consent] = {}
         self.invites: dict[str, Invite] = {}
         self.channel_bindings: dict[tuple[Channel, str], ChannelBinding] = {}
+        self.guardian_accounts: dict[str, GuardianAccount] = {}
+        self.api_tokens: dict[str, ApiToken] = {}
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
@@ -332,3 +378,18 @@ class FakeAccountStore:
             if b.principal_type == principal_type and b.principal_id == principal_id
         ]
         return sorted(rows, key=lambda b: (b.channel.value, b.external_id))
+
+    def save_guardian_account(
+        self, account: GuardianAccount, *, tx: Executor | None = None
+    ) -> None:
+        self.guardian_accounts[account.guardian_id] = account
+
+    def get_guardian_account_by_email(self, email: str) -> GuardianAccount | None:
+        return next((a for a in self.guardian_accounts.values() if a.email == email), None)
+
+    def save_api_token(self, token: ApiToken, *, tx: Executor | None = None) -> None:
+        # 與 Pg 一致：ON CONFLICT DO NOTHING（token_hash 不覆寫）。
+        self.api_tokens.setdefault(token.token_hash, token)
+
+    def get_api_token(self, token_hash: str) -> ApiToken | None:
+        return self.api_tokens.get(token_hash)
