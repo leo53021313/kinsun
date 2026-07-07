@@ -44,10 +44,11 @@ DDL 無 DEFAULT（皆由應用層填值）。⚠ E-11：所有 TEXT 欄位**無�
 
 ### 2.2 帳號綁定
 
-**`elders`**：`elder_id` TEXT PK、`name` TEXT、`line_user_id` TEXT（可空＝未綁定）。
-⚠ T-27：一個 LINE 帳號可綁定多個長輩檔（無唯一約束）。
+**`elders`**：`elder_id` TEXT PK、`name` TEXT。
+（T-27 已解：LINE 識別遷入 `channel_bindings`，其 PK `(channel, external_id)` 保證一個
+LINE 帳號只對應一位本人。）
 
-**`guardians`**：`guardian_id` TEXT PK、`line_user_id` TEXT UNIQUE、`name` TEXT。
+**`guardians`**：`guardian_id` TEXT PK、`name` TEXT。
 
 **`elder_guardians`**（多對多）：PK `(elder_id, guardian_id)`、`role` TEXT、
 `escalation_order` INTEGER、`can_view_transcript` BOOLEAN。
@@ -63,8 +64,9 @@ DDL 無 DEFAULT（皆由應用層填值）。⚠ E-11：所有 TEXT 欄位**無�
 （`line`／`app`）、`external_id` TEXT（LINE userId／App 裝置帳號）、`principal_type` TEXT
 （`elder`／`guardian`）、`principal_id` TEXT（elder_id 或 guardian_id）、`created_at`
 （首次綁定時間，upsert 不覆寫）。索引 `idx_channel_bindings_principal (principal_type, principal_id)`。
-遷移：`CHANNEL_BINDINGS_BACKFILL_DDL` 冪等回填 `elders`／`guardians` 的既有 `line_user_id`；
-寫入端由 `save_elder`／`save_guardian` 雙寫（擴張—收縮，讀取端切換見階段 1C 計畫）。
+擴張—收縮遷移已完成收縮（1D）：`elders`／`guardians` 的 `line_user_id` 欄位已退役
+（`ACCOUNTS_LINE_COLUMNS_RETIRE_DDL`），綁定寫入由 `AccountService`（`redeem_invite`／
+`_guardian_for`）直接寫本表；歷史回填 DDL 已隨之移除。
 
 ### 2.3 綁定會話／排程狀態
 

@@ -51,7 +51,7 @@ export type Overview = {
 
 export type FeedMessage = {
   kind: string;
-  line_user_id: string;
+  elder_id: string;
   elder_name: string;
   role: string;
   content: string;
@@ -63,7 +63,7 @@ export type FeedMessage = {
 export type AdminElder = {
   elder_id: string;
   name: string;
-  line_user_id: string;
+  bound_channels: string;
   last_active_at: number | null;
 };
 

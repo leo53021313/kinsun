@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 
 from kinsun.accounts.models import (
     Channel,
+    ChannelBinding,
     Consent,
     ConsentBy,
     Elder,
@@ -60,8 +61,18 @@ class AccountService:
         existing = self._repo.get_guardian_by_line(line_user_id)
         if existing is not None:
             return existing
-        guardian = Guardian(self._new_id(), line_user_id, name)
+        guardian = Guardian(self._new_id(), name)
         self._repo.save_guardian(guardian, tx=tx)
+        self._repo.save_channel_binding(
+            ChannelBinding(
+                Channel.LINE,
+                line_user_id,
+                PrincipalType.GUARDIAN,
+                guardian.guardian_id,
+                self._clock().timestamp(),
+            ),
+            tx=tx,
+        )
         return guardian
 
     def create_elder(self, guardian_line_id: str, guardian_name: str, elder_name: str) -> Elder:
@@ -97,7 +108,16 @@ class AccountService:
                 elder = self._repo.get_elder(invite.elder_id)
                 if elder is None:
                     raise InviteError("not_found")
-                self._repo.save_elder(Elder(elder.elder_id, elder.name, line_user_id), tx=tx)
+                self._repo.save_channel_binding(
+                    ChannelBinding(
+                        Channel.LINE,
+                        line_user_id,
+                        PrincipalType.ELDER,
+                        elder.elder_id,
+                        now.timestamp(),
+                    ),
+                    tx=tx,
+                )
                 self._repo.save_consent(
                     Consent(invite.elder_id, consent_by, CONSENT_VERSION, now.timestamp()), tx=tx
                 )
