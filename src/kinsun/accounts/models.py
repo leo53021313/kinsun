@@ -25,13 +25,11 @@ class ConsentBy(StrEnum):
 class Elder:
     elder_id: str
     name: str
-    line_user_id: str | None = None
 
 
 @dataclass(frozen=True)
 class Guardian:
     guardian_id: str
-    line_user_id: str
     name: str
 
 

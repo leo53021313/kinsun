@@ -45,7 +45,7 @@ _Avoid_: Pusher、push_text、messenger
 _Avoid_: dispatcher、broadcaster
 
 **通道綁定（ChannelBinding）**：
-通道帳號對應本人的持久對應（`channel_bindings` 表）：`(channel, external_id) → (principal_type, principal_id)`。一人可同時有 LINE 與 App 綁定；換手機＝改一筆綁定，記憶不動。寫入端雙寫維持中；會話主鍵（1B）與帳號讀取端、入站解析、出站路由（1C）皆已切換至本表，`elders.line_user_id`／`guardians.line_user_id` 欄位退役留給收縮步（1D）。
+通道帳號對應本人的持久對應（`channel_bindings` 表）：`(channel, external_id) → (principal_type, principal_id)`。一人可同時有 LINE 與 App 綁定；換手機＝改一筆綁定，記憶不動。擴張—收縮遷移已全程完成（1A–1D）：會話主鍵、帳號讀取端、入站解析、出站路由皆以本表為準，`elders.line_user_id`／`guardians.line_user_id` 欄位已退役、綁定由帳號服務直接寫入。
 _Avoid_: mapping、link、account_binding
 
 **會話（Session）**：

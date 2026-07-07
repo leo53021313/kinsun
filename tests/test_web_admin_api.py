@@ -43,7 +43,7 @@ def test_unconfigured_key_returns_503():
 
 def test_overview_shape():
     traces = FakeTraceStore()
-    traces.seed_turn("U1", "user", "hi", TODAY_TS)
+    traces.seed_turn("e1", "user", "hi", TODAY_TS)
     res = _client(traces).get("/api/admin/overview", headers=_auth())
     assert res.status_code == 200
     body = res.json()
@@ -56,15 +56,16 @@ def test_overview_shape():
 
 def test_list_elders():
     traces = FakeTraceStore()
-    traces.seed_elder("e1", "阿公", "U1")
-    traces.seed_turn("U1", "user", "hi", TODAY_TS)
+    traces.seed_elder("e1", "阿公")
+    traces.seed_binding("U1", "e1")
+    traces.seed_turn("e1", "user", "hi", TODAY_TS)
     res = _client(traces).get("/api/admin/elders", headers=_auth())
     assert res.status_code == 200
     assert res.json()["elders"] == [
         {
             "elder_id": "e1",
             "name": "阿公",
-            "line_user_id": "U1",
+            "bound_channels": "line",
             "last_active_at": TODAY_TS,
         }
     ]
@@ -72,9 +73,9 @@ def test_list_elders():
 
 def test_messages_feed_desc_with_after():
     traces = FakeTraceStore()
-    traces.seed_elder("e1", "阿公", "U1")
-    traces.seed_turn("U1", "user", "早安", TODAY_TS)
-    traces.seed_risk("U1", 2, "頭暈", TODAY_TS + 10, trace_id="t1")
+    traces.seed_elder("e1", "阿公")
+    traces.seed_turn("e1", "user", "早安", TODAY_TS)
+    traces.seed_risk("e1", 2, "頭暈", TODAY_TS + 10, trace_id="t1")
     res = _client(traces).get(
         "/api/admin/messages", params={"after": TODAY_TS - 1}, headers=_auth()
     )
@@ -92,8 +93,8 @@ def test_messages_limit_validation():
 
 def test_timeline_for_elder():
     traces = FakeTraceStore()
-    traces.seed_elder("e1", "阿公", "U1")
-    traces.seed_turn("U1", "user", "早安", TODAY_TS)
+    traces.seed_elder("e1", "阿公")
+    traces.seed_turn("e1", "user", "早安", TODAY_TS)
     res = _client(traces).get(
         "/api/admin/elders/e1/timeline", params={"date": "2026-07-03"}, headers=_auth()
     )
@@ -111,7 +112,7 @@ def test_timeline_unknown_elder_404():
 
 def test_timeline_bad_date_400():
     traces = FakeTraceStore()
-    traces.seed_elder("e1", "阿公", "U1")
+    traces.seed_elder("e1", "阿公")
     res = _client(traces).get(
         "/api/admin/elders/e1/timeline", params={"date": "07/03"}, headers=_auth()
     )
@@ -120,7 +121,8 @@ def test_timeline_bad_date_400():
 
 def test_trace_detail_and_404():
     traces = FakeTraceStore()
-    traces.seed_elder("e1", "阿公", "U1")
+    traces.seed_elder("e1", "阿公")
+    traces.seed_binding("U1", "e1")
     traces.now = TODAY_TS
     traces.record_asr_call(
         trace_id="t1",

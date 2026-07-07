@@ -2,7 +2,6 @@ from kinsun.accounts.models import (
     Channel,
     ChannelBinding,
     ConsentBy,
-    Elder,
     ElderGuardian,
     Invite,
     InviteRole,
@@ -15,10 +14,6 @@ def test_enums():
     assert Role.PRIMARY.value == "primary"
     assert InviteRole.ELDER.value == "elder"
     assert ConsentBy.SELF.value == "self"
-
-
-def test_elder_default_line_none():
-    assert Elder("e1", "阿公").line_user_id is None
 
 
 def test_invite_defaults():
