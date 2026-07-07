@@ -20,6 +20,7 @@ from kinsun.audio.publisher import build_audio_publisher
 from kinsun.binding.flow import BindingFlow
 from kinsun.binding.gate import AllowAllGate, ConsentGate
 from kinsun.binding.session import PgBindingSessionStore
+from kinsun.channels.app.turns import create_app_turns_router
 from kinsun.channels.inbound import VoiceReplyDelivery
 from kinsun.channels.line.webhook import create_app
 from kinsun.composition import assemble_core, build_externals
@@ -135,6 +136,17 @@ def build_app() -> FastAPI:
         )
     )
     app.include_router(create_app_api_router(accounts=core.accounts))
+    # App 對講機：JSON 回應固定帶文字（include_text 與 LINE 的訊息額度考量無關）。
+    app.include_router(
+        create_app_turns_router(
+            accounts=core.accounts,
+            pipeline=pipeline,
+            gate=gate,
+            voice=VoiceReplyDelivery(publisher, include_text=True),
+            traces=core.traces,
+            inbound_audio=inbound_audio,
+        )
+    )
     dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     if dist.is_dir():
         app.mount("/liff", StaticFiles(directory=dist, html=True), name="liff")
