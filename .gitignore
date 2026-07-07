@@ -242,3 +242,6 @@ claude-Godzilla-z/
 frontend/node_modules/
 frontend/dist/
 frontend/dist-admin/
+
+# Expo App 原始碼目錄不是 Python 打包產物（lib/ 型樣的例外）
+!app/src/lib/
