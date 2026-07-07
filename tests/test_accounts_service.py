@@ -11,7 +11,7 @@ from kinsun.accounts.models import (
     PrincipalType,
     Role,
 )
-from kinsun.accounts.service import AccountService, InviteError
+from kinsun.accounts.service import AccountService, AppAccountError, InviteError
 from tests.fakes import FakeAccountStore
 
 TPE = timezone(timedelta(hours=8))
@@ -243,3 +243,77 @@ def test_create_elder_uses_repo_transaction():
     # create_elder 同時寫 elder 與 elder_guardian，且兩者皆落地
     assert repo.get_elder(elder.elder_id).name == "阿公"
     assert repo.list_elder_guardians(elder.elder_id)[0].role.value == "primary"
+
+
+# --- App 帳號（階段 2）---
+
+
+def test_register_guardian_account_and_login():
+    repo = FakeAccountStore()
+    svc = _service(repo)
+    guardian, token = svc.register_guardian_account("Son@Example.com ", "correct-horse-8", "兒子")
+    assert guardian.name == "兒子"
+    assert len(token) >= 32
+    # email 正規化：大小寫與空白不敏感。
+    same, token2 = svc.login_guardian("son@example.com", "correct-horse-8")
+    assert same.guardian_id == guardian.guardian_id
+    assert token2 != token  # 每次登入發新 token
+    auth = svc.authenticate_token(token2)
+    assert auth is not None
+    assert auth.principal_type == PrincipalType.GUARDIAN
+    assert auth.principal_id == guardian.guardian_id
+
+
+def test_register_duplicate_email_rejected():
+    repo = FakeAccountStore()
+    svc = _service(repo)
+    svc.register_guardian_account("son@example.com", "correct-horse-8", "兒子")
+    with pytest.raises(AppAccountError) as exc:
+        svc.register_guardian_account("SON@example.com", "other-pass-123", "路人")
+    assert exc.value.reason == "email_taken"
+
+
+def test_login_failures_are_indistinguishable():
+    repo = FakeAccountStore()
+    svc = _service(repo)
+    svc.register_guardian_account("son@example.com", "correct-horse-8", "兒子")
+    with pytest.raises(AppAccountError) as wrong_pw:
+        svc.login_guardian("son@example.com", "wrong-password")
+    with pytest.raises(AppAccountError) as no_user:
+        svc.login_guardian("nobody@example.com", "correct-horse-8")
+    assert wrong_pw.value.reason == no_user.value.reason == "invalid_credentials"
+
+
+def test_bind_elder_device_issues_token_and_app_binding():
+    repo = FakeAccountStore()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    inv = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
+    bound, token = svc.bind_elder_device(inv.code, consent_by=ConsentBy.PROXY)
+    assert bound.elder_id == elder.elder_id
+    auth = svc.authenticate_token(token)
+    assert auth.principal_type == PrincipalType.ELDER
+    assert auth.principal_id == elder.elder_id
+    # channel_bindings 應有一筆 app 綁定指向該長輩，且同意已寫入。
+    bindings = repo.list_channel_bindings_for_principal(PrincipalType.ELDER, elder.elder_id)
+    assert [b.channel for b in bindings] == [Channel.APP]
+    assert svc.has_valid_consent(elder.elder_id) is True
+    # 邀請碼一次性：再用即失敗。
+    with pytest.raises(InviteError):
+        svc.bind_elder_device(inv.code, consent_by=ConsentBy.PROXY)
+
+
+def test_authenticate_token_rejects_unknown():
+    svc = _service(FakeAccountStore())
+    assert svc.authenticate_token("not-a-real-token") is None
+
+
+def test_redeem_invite_line_channel_unchanged():
+    # 既有 LINE 路徑（預設 channel）不受簽名擴充影響。
+    repo = FakeAccountStore()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    inv = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
+    svc.redeem_invite(inv.code, "U-elder", consent_by=ConsentBy.SELF)
+    binding = repo.get_channel_binding(Channel.LINE, "U-elder")
+    assert binding is not None and binding.principal_id == elder.elder_id

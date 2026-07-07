@@ -30,6 +30,8 @@ tags:
     description: 觀測後台唯讀 API（prefix /api/admin）
   - name: sidecar
     description: DGX 端 ASR/TTS 微服務（獨立行程，非本 app 路由）
+  - name: app
+    description: App 認證 API（prefix /api/app，token Bearer；階段 2 起）
 
 paths:
   /line/webhook:
@@ -593,6 +595,94 @@ paths:
               schema: { type: string, format: binary }
         "503": { description: TTS 過載（佇列滿） }
 
+  /api/app/guardians:
+    post:
+      tags: [app]
+      summary: 家屬註冊（email＋密碼）
+      description: 建 Guardian＋登入帳號（scrypt 雜湊）並發 API token（明文僅此一次）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, name]
+              properties:
+                email: { type: string, maxLength: 254 }
+                password: { type: string, minLength: 8, maxLength: 128 }
+                name: { type: string, maxLength: 50 }
+      responses:
+        "201":
+          description: 已建立
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  guardian_id: { type: string, format: uuid }
+                  name: { type: string }
+                  token: { type: string, description: 不透明 token，DB 僅存 SHA-256 }
+        "409": { description: email_taken }
+        "422": { description: 欄位驗證失敗（密碼未達 8 碼等） }
+
+  /api/app/sessions:
+    post:
+      tags: [app]
+      summary: 家屬登入
+      description: 查無帳號或密碼錯一律 401 invalid_credentials（不洩漏帳號存在性）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string }
+                password: { type: string }
+      responses:
+        "200":
+          description: 登入成功（發新 token）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  guardian_id: { type: string, format: uuid }
+                  name: { type: string }
+                  token: { type: string }
+        "401": { description: invalid_credentials }
+
+  /api/app/device-bindings:
+    post:
+      tags: [app]
+      summary: 長輩裝置綁定（綁定碼換裝置 token）
+      description: |
+        沿用 invites 綁定碼（role=elder）：成功即寫入 channel_bindings(channel='app')
+        ＋同意（consent_by=proxy），回長輩裝置 token（永久登入）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string }
+      responses:
+        "201":
+          description: 綁定成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  elder_id: { type: string, format: uuid }
+                  name: { type: string }
+                  token: { type: string }
+        "404": { description: not_found }
+        "409": { description: used／expired／too_many_attempts }
+
 components:
   parameters:
     ElderId:
@@ -696,3 +786,7 @@ components:
       in: header
       name: X-Admin-Key
       description: 觀測後台共用金鑰（hmac.compare_digest 常數時間比對；未設定則整組 API 回 503）
+    appToken:
+      type: http
+      scheme: bearer
+      description: App API token（不透明隨機字串；DB 僅存 SHA-256，可撤銷＝刪列）
