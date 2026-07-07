@@ -7,10 +7,9 @@ from typing import Protocol
 
 from kinsun.llm import Message
 from kinsun.memory.longterm import provenance as prov
+from kinsun.memory.models import MemoryItem
 
 logger = logging.getLogger(__name__)
-
-_PREFIX = "\n以下為這位長者的長期記憶（部分為長者自述、未必經確認，請勿當成醫療診斷）：\n"
 
 # 每輪固定增補檢索：讓用藥/慢性病等穩定健康事實即使與當下話題無關也浮現。
 HEALTH_QUERY = "用藥 慢性病 過敏 回診 健康狀況"
@@ -20,24 +19,25 @@ class LongTermStore(Protocol):
     def add(
         self, line_user_id: str, messages: list[Message], *, provenance: str = "self_claimed"
     ) -> None: ...
-    def search(self, line_user_id: str, query: str, *, top_k: int = 5) -> str: ...
+    def search(self, line_user_id: str, query: str, *, top_k: int = 5) -> list[MemoryItem]: ...
 
 
-def _format_memories_for_prompt(result: dict) -> str:
-    items = result.get("results") or []
-    if not items:
-        return ""
-    lines = []
-    for item in items:
-        text = item.get("memory") or item.get("text") or ""
-        if not text:
-            continue
-        src = (item.get("metadata") or {}).get("provenance")
-        suffix = f"（{prov.label(src)}）" if src else ""
-        lines.append(f"- {text}{suffix}")
-    if not lines:
-        return ""
-    return _PREFIX + "\n".join(lines) + "\n"
+def _created_at(item: dict) -> str:
+    """取出 mem0 item 的 created_at（ISO 字串）；缺值或非字串回空字串。"""
+    value = item.get("created_at") or (item.get("metadata") or {}).get("created_at")
+    return value if isinstance(value, str) else ""
+
+
+def _to_memory_item(item: dict) -> MemoryItem:
+    """把 mem0 raw dict 轉為結構化 MemoryItem（來源解析為標籤、日期取 YYYY-MM-DD）。"""
+    text = item.get("memory") or item.get("text") or ""
+    src = (item.get("metadata") or {}).get("provenance")
+    created_at = _created_at(item)
+    return MemoryItem(
+        text=text,
+        provenance=prov.label(src) if src else "",
+        date=created_at[:10] if created_at else "",  # ISO-8601 前 10 碼即 YYYY-MM-DD
+    )
 
 
 class Mem0LongTermStore:
@@ -74,8 +74,12 @@ class Mem0LongTermStore:
             out.append(item)
         return out
 
-    def search(self, line_user_id: str, query: str, *, top_k: int | None = None) -> str:
+    def search(
+        self, line_user_id: str, query: str, *, top_k: int | None = None
+    ) -> list[MemoryItem]:
         user_items = self._search_raw(query, line_user_id, top_k or self._top_k)
         health_items = self._search_raw(HEALTH_QUERY, line_user_id, self._health_top_k)
         merged = self._dedup(user_items + health_items)
-        return _format_memories_for_prompt({"results": merged})
+        # 由新到舊：created_at 遞減；缺 created_at 者排最後（與原排版排序一致）。
+        ordered = sorted(merged, key=_created_at, reverse=True)
+        return [item for item in map(_to_memory_item, ordered) if item.text]

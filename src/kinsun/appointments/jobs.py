@@ -6,6 +6,7 @@ import logging
 from collections.abc import Callable
 
 from kinsun.appointments.models import Appointment
+from kinsun.channels.outbound import OutboundChannel
 from kinsun.reports.reminders import safe_record
 from kinsun.scheduler.fanout import fanout_job
 from kinsun.scheduler.scheduler import Job
@@ -21,7 +22,7 @@ def build_appointment_reminder_job(
     lookup_elder: Callable[[str], object],
     is_consented_elder: Callable[[str], bool],
     guardian_line_ids: Callable[[str], list[str]],
-    push: Callable[[str, str], None],
+    channel: OutboundChannel,
     hour: int,
     minute: int = 0,
     name: str = "appointment-reminder",
@@ -39,12 +40,14 @@ def build_appointment_reminder_job(
             return
         when_word = "今天" if when == "today" else "明天"
         if elder.line_user_id and is_consented_elder(elder.line_user_id):
-            push(
+            channel.send_text(
                 elder.line_user_id,
                 f"{elder.name}，{when_word}要回診囉：{appt.label}。記得準時，需要的話請家人陪您去。",
             )
         for line_user_id in guardian_line_ids(appt.elder_id):
-            push(line_user_id, f"【金孫提醒】{elder.name} {when_word}要回診——{appt.label}。")
+            channel.send_text(
+                line_user_id, f"【金孫提醒】{elder.name} {when_word}要回診——{appt.label}。"
+            )
         safe_record(record, appt.elder_id, "appointment", f"{when_word}回診：{appt.label}")
 
     return fanout_job(

@@ -25,19 +25,19 @@ def _facts(*, meds):
 
 def test_facts_lists_current_meds():
     facts = _facts(meds=[("降血壓藥", (MedicationSlot.MORNING, MedicationSlot.EVENING))])
-    out = facts.facts("U-elder")
-    assert "降血壓藥" in out
-    assert "早上、晚上" in out
+    section = facts.facts("U-elder")
+    assert section.items == ["降血壓藥（早上、晚上）"]
+    assert "固定服用的藥" in section.title
 
 
-def test_facts_empty_when_unknown_line():
+def test_facts_none_when_unknown_line():
     facts = _facts(meds=[("鈣片", (MedicationSlot.BEDTIME,))])
-    assert facts.facts("U-stranger") == ""
+    assert facts.facts("U-stranger") is None
 
 
-def test_facts_empty_when_no_meds():
+def test_facts_none_when_no_meds():
     repo = FakeAccountStore()
     repo.save_elder(Elder("e1", "阿公", "U-elder"))
     accounts = AccountService(repo, clock=lambda: NOW)
     facts = MedicationFacts(accounts, MedicationService(FakeMedicationStore()))
-    assert facts.facts("U-elder") == ""
+    assert facts.facts("U-elder") is None

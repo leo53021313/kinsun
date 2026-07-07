@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 
 from kinsun.agent import CareAgent
@@ -85,6 +86,28 @@ class VoicePipeline:
     def _latency_ms(self, started: float) -> int:
         return int((self._timer() - started) * 1000)
 
+    @contextmanager
+    def _span(self, record: Callable[[TraceStore, str, int, str], object]) -> Iterator[None]:
+        """量測一個 stage 並記一筆 trace（成功或失敗），是三個階段共用的觀測 seam。
+
+        record 為記錄建構器：拿到 (traces, status, latency_ms, error_message) 後呼叫對應的
+        record_*_call；結果相依欄位（如 transcript／content）由呼叫端以 closure 抓區域變數帶入。
+        traces 為 None 時整段 no-op；記錄以 safe_record 包裹，觀測失敗不影響對話。
+        例外照原樣往外拋（tts 的退回文字由呼叫端在 with 外自行接住）。
+        """
+        started = self._timer()
+        status, error_message = "ok", ""
+        try:
+            yield
+        except Exception as exc:
+            status, error_message = "error", f"{type(exc).__name__}: {exc}"
+            raise
+        finally:
+            if self._traces is not None:
+                traces = self._traces
+                latency_ms = self._latency_ms(started)
+                safe_record(lambda: record(traces, status, latency_ms, error_message))
+
     def _transcribe(
         self,
         audio: bytes,
@@ -94,78 +117,27 @@ class VoicePipeline:
         trace_id: str,
         audio_url: str,
     ) -> str:
-        started = self._timer()
-        try:
-            text = self._asr.transcribe(audio, content_type=content_type)
-        except Exception as exc:
-            self._record_asr(
-                trace_id,
-                line_user_id,
-                "error",
-                started,
-                "",
-                audio_url,
-                f"{type(exc).__name__}: {exc}",
-            )
-            raise
-        self._record_asr(trace_id, line_user_id, "ok", started, text, audio_url, "")
-        return text
-
-    def _record_asr(
-        self,
-        trace_id: str,
-        line_user_id: str,
-        status: str,
-        started: float,
-        transcript: str,
-        audio_url: str,
-        error_message: str,
-    ) -> None:
-        if self._traces is None:
-            return
-        traces = self._traces
-        latency_ms = self._latency_ms(started)
-        safe_record(
-            lambda: traces.record_asr_call(
+        text = ""
+        with self._span(
+            lambda traces, status, latency_ms, error_message: traces.record_asr_call(
                 trace_id=trace_id,
                 line_user_id=line_user_id,
                 status=status,
                 latency_ms=latency_ms,
-                transcript=transcript,
+                transcript=text,
                 source_audio_url=audio_url,
                 error_message=error_message,
             )
-        )
+        ):
+            text = self._asr.transcribe(audio, content_type=content_type)
+        return text
 
     def _generate(self, line_user_id: str, user_text: str, *, trace_id: str) -> str:
-        started = self._timer()
-        try:
-            reply = self._agent.handle(line_user_id, user_text)
-        except Exception as exc:
-            self._record_llm(
-                trace_id, line_user_id, "error", started, "", f"{type(exc).__name__}: {exc}"
-            )
-            raise
-        self._record_llm(trace_id, line_user_id, "ok", started, reply, "")
-        return reply
-
-    def _record_llm(
-        self,
-        trace_id: str,
-        line_user_id: str,
-        status: str,
-        started: float,
-        content: str,
-        error_message: str,
-    ) -> None:
         # 現階段每輪記一筆（涵蓋整個 agent 含工具迴圈）；token 由 Gemini usage
         # 尚未透出，先記 NULL——見規格「未來工作」。
-        if self._traces is None:
-            return
-        traces = self._traces
-        latency_ms = self._latency_ms(started)
-        safe_record(
-            lambda: traces.record_llm_call(
+        reply = ""
+        with self._span(
+            lambda traces, status, latency_ms, error_message: traces.record_llm_call(
                 trace_id=trace_id,
                 line_user_id=line_user_id,
                 status=status,
@@ -173,44 +145,26 @@ class VoicePipeline:
                 model_name=self._model_name,
                 input_tokens=None,
                 output_tokens=None,
-                content=content,
+                content=reply,
                 error_message=error_message,
             )
-        )
+        ):
+            reply = self._agent.handle(line_user_id, user_text)
+        return reply
 
     def _synthesize(self, reply_text: str, *, line_user_id: str, trace_id: str) -> TtsResult:
-        started = self._timer()
         try:
-            result = self._tts.synthesize(reply_text)
-        except TTSError as exc:
+            with self._span(
+                lambda traces, status, latency_ms, error_message: traces.record_tts_call(
+                    trace_id=trace_id,
+                    line_user_id=line_user_id,
+                    status=status,
+                    latency_ms=latency_ms,
+                    content=reply_text,
+                    error_message=error_message,
+                )
+            ):
+                return self._tts.synthesize(reply_text)
+        except TTSError:
             logger.warning("TTS 合成失敗，退化為純文字回覆")
-            self._record_tts(
-                trace_id, line_user_id, "error", started, reply_text, f"{type(exc).__name__}: {exc}"
-            )
             return TtsResult(text=reply_text, audio=None)
-        self._record_tts(trace_id, line_user_id, "ok", started, reply_text, "")
-        return result
-
-    def _record_tts(
-        self,
-        trace_id: str,
-        line_user_id: str,
-        status: str,
-        started: float,
-        content: str,
-        error_message: str,
-    ) -> None:
-        if self._traces is None:
-            return
-        traces = self._traces
-        latency_ms = self._latency_ms(started)
-        safe_record(
-            lambda: traces.record_tts_call(
-                trace_id=trace_id,
-                line_user_id=line_user_id,
-                status=status,
-                latency_ms=latency_ms,
-                content=content,
-                error_message=error_message,
-            )
-        )

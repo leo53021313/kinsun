@@ -193,3 +193,72 @@ class PgAccountStore:
             return None
         c, elder, role, expires, max_a, attempts, used = rows[0]
         return Invite(c, elder, InviteRole(role), expires, max_a, attempts, used)
+
+
+class FakeAccountStore:
+    """AccountStore 的記憶體替身（測試用，不碰 DB）。
+
+    `transaction()` 為 no-op（僅 yield None）、`tx` 參數一律忽略，故本替身
+    不模擬交易回滾語意，相關行為不在合約範圍內。
+    """
+
+    def __init__(self) -> None:
+        self.elders: dict[str, Elder] = {}
+        self.guardians: dict[str, Guardian] = {}
+        self.elder_guardians: dict[tuple[str, str], ElderGuardian] = {}
+        self.consents: dict[str, Consent] = {}
+        self.invites: dict[str, Invite] = {}
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        yield None
+
+    def save_elder(self, elder: Elder, *, tx: Executor | None = None) -> None:
+        self.elders[elder.elder_id] = elder
+
+    def get_elder(self, elder_id: str) -> Elder | None:
+        return self.elders.get(elder_id)
+
+    def save_guardian(self, guardian: Guardian, *, tx: Executor | None = None) -> None:
+        self.guardians[guardian.guardian_id] = guardian
+
+    def get_guardian_by_line(self, line_user_id: str) -> Guardian | None:
+        # 逐筆比對「當前」line_user_id，與 Pg 一致；不維護獨立索引以免更新後殘留舊值。
+        for guardian in self.guardians.values():
+            if guardian.line_user_id == line_user_id:
+                return guardian
+        return None
+
+    def get_elder_by_line(self, line_user_id: str) -> Elder | None:
+        for elder in self.elders.values():
+            if elder.line_user_id == line_user_id:
+                return elder
+        return None
+
+    def get_guardian(self, guardian_id: str) -> Guardian | None:
+        return self.guardians.get(guardian_id)
+
+    def save_elder_guardian(self, eg: ElderGuardian, *, tx: Executor | None = None) -> None:
+        self.elder_guardians[(eg.elder_id, eg.guardian_id)] = eg
+
+    def get_elder_guardian(self, elder_id: str, guardian_id: str) -> ElderGuardian | None:
+        return self.elder_guardians.get((elder_id, guardian_id))
+
+    def list_elder_guardians(self, elder_id: str) -> list[ElderGuardian]:
+        rows = [v for (e, _), v in self.elder_guardians.items() if e == elder_id]
+        return sorted(rows, key=lambda x: x.escalation_order)
+
+    def elder_ids_of_guardian(self, guardian_id: str) -> list[str]:
+        return sorted(e for (e, g) in self.elder_guardians if g == guardian_id)
+
+    def save_consent(self, consent: Consent, *, tx: Executor | None = None) -> None:
+        self.consents[consent.elder_id] = consent
+
+    def get_consent(self, elder_id: str) -> Consent | None:
+        return self.consents.get(elder_id)
+
+    def save_invite(self, invite: Invite, *, tx: Executor | None = None) -> None:
+        self.invites[invite.code] = invite
+
+    def get_invite(self, code: str) -> Invite | None:
+        return self.invites.get(code)

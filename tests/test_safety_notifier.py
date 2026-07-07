@@ -11,15 +11,15 @@ def test_log_notifier_logs_warning(caplog):
     assert any("L3" in r.message and "U-1" in r.message for r in caplog.records)
 
 
-class _SpyPusher:
+class _SpyChannel:
     def __init__(self, fail_on=None):
-        self.calls = []
+        self.sent = []
         self._fail_on = fail_on
 
-    def push_text(self, line_user_id, text):
+    def send_text(self, line_user_id, text):
         if line_user_id == self._fail_on:
             raise RuntimeError("push failed")
-        self.calls.append((line_user_id, text))
+        self.sent.append((line_user_id, text))
 
 
 class _StubDirectory:
@@ -34,47 +34,47 @@ class _StubDirectory:
 
 
 def test_pushes_to_all_guardians_in_order():
-    pusher = _SpyPusher()
-    notifier = LineGuardianNotifier(_StubDirectory(["g1", "g2"]), pusher)
+    channel = _SpyChannel()
+    notifier = LineGuardianNotifier(_StubDirectory(["g1", "g2"]), channel)
     notifier.notify("U-elder", RiskAssessment(RiskTier.L2, 0.8, "胸口悶", ["symptom"]))
-    assert [c[0] for c in pusher.calls] == ["g1", "g2"]
-    assert "胸口悶" in pusher.calls[0][1]
+    assert [c[0] for c in channel.sent] == ["g1", "g2"]
+    assert "胸口悶" in channel.sent[0][1]
 
 
 def test_no_guardians_no_push(caplog):
-    pusher = _SpyPusher()
-    notifier = LineGuardianNotifier(_StubDirectory([]), pusher)
+    channel = _SpyChannel()
+    notifier = LineGuardianNotifier(_StubDirectory([]), channel)
     with caplog.at_level(logging.WARNING, logger="kinsun.safety"):
         notifier.notify("U-elder", RiskAssessment(RiskTier.L3, 0.9, "求救", []))
-    assert pusher.calls == []
+    assert channel.sent == []
     assert any("查無可通知家屬" in r.message for r in caplog.records)
 
 
 def test_l3_message_mentions_119_l2_does_not():
-    pusher = _SpyPusher()
-    LineGuardianNotifier(_StubDirectory(["g1"]), pusher).notify(
+    channel = _SpyChannel()
+    LineGuardianNotifier(_StubDirectory(["g1"]), channel).notify(
         "U-elder", RiskAssessment(RiskTier.L3, 0.9, "想不開", [])
     )
-    text_l3 = pusher.calls[0][1]
+    text_l3 = channel.sent[0][1]
     assert "119" in text_l3 and "醫療診斷" in text_l3
 
-    pusher2 = _SpyPusher()
-    LineGuardianNotifier(_StubDirectory(["g1"]), pusher2).notify(
+    channel2 = _SpyChannel()
+    LineGuardianNotifier(_StubDirectory(["g1"]), channel2).notify(
         "U-elder", RiskAssessment(RiskTier.L2, 0.7, "頭暈", [])
     )
-    assert "119" not in pusher2.calls[0][1]
+    assert "119" not in channel2.sent[0][1]
 
 
 def test_single_push_failure_isolated():
-    pusher = _SpyPusher(fail_on="g1")
-    notifier = LineGuardianNotifier(_StubDirectory(["g1", "g2"]), pusher)
+    channel = _SpyChannel(fail_on="g1")
+    notifier = LineGuardianNotifier(_StubDirectory(["g1", "g2"]), channel)
     notifier.notify("U-elder", RiskAssessment(RiskTier.L2, 0.8, "跌倒", []))
-    assert [c[0] for c in pusher.calls] == ["g2"]
+    assert [c[0] for c in channel.sent] == ["g2"]
 
 
 def test_directory_failure_does_not_raise(caplog):
-    pusher = _SpyPusher()
-    notifier = LineGuardianNotifier(_StubDirectory([], raises=True), pusher)
+    channel = _SpyChannel()
+    notifier = LineGuardianNotifier(_StubDirectory([], raises=True), channel)
     with caplog.at_level(logging.WARNING, logger="kinsun.safety"):
         notifier.notify("U-elder", RiskAssessment(RiskTier.L3, 0.9, "求救", []))
-    assert pusher.calls == []
+    assert channel.sent == []

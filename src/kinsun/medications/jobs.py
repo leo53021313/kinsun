@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
+from kinsun.channels.outbound import OutboundChannel
 from kinsun.medications.models import SLOT_LABELS, Medication, MedicationSlot
 from kinsun.reports.reminders import safe_record
 from kinsun.scheduler.fanout import fanout_job
@@ -19,7 +20,7 @@ def build_medication_slot_job(
     meds_at_slot: Callable[[], list[Medication]],
     lookup_elder: Callable[[str], object],
     is_consented_elder: Callable[[str], bool],
-    push: Callable[[str, str], None],
+    channel: OutboundChannel,
     hour: int,
     minute: int = 0,
     name: str,
@@ -40,7 +41,7 @@ def build_medication_slot_job(
             return
         if not is_consented_elder(elder.line_user_id):
             return
-        push(elder.line_user_id, f"{elder.name}，{label}該吃藥囉：{'、'.join(names)}")
+        channel.send_text(elder.line_user_id, f"{elder.name}，{label}該吃藥囉：{'、'.join(names)}")
         safe_record(record, elder_id, "medication", f"{label}用藥：{'、'.join(names)}")
 
     return fanout_job(

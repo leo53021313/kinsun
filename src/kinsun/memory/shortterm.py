@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
 from kinsun.db import Database, _Errors
@@ -83,3 +83,54 @@ class PgMemoryStore:
         now = self._clock()
         midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
         return midnight.timestamp()
+
+
+_FAKE_DEFAULT_NOW = datetime(2026, 6, 29, 3, 0, tzinfo=timezone(timedelta(hours=8)))
+
+
+class FakeMemoryStore:
+    """MemoryStore 的記憶體替身（測試用，不碰 DB）。
+
+    忠實複製 Pg 的 max_turns 上限與時序（依 created_at、再依寫入序）：
+    recent 回「今日最近 N 輪、由舊到新」，previous_day 回「前一天前 N 輪、由舊到新」。
+    """
+
+    def __init__(self, now: datetime | None = None, max_turns: int = 20) -> None:
+        self._now = now or _FAKE_DEFAULT_NOW
+        self._max_turns = max_turns
+        self._turns: dict[str, list[tuple[float, Message]]] = {}
+
+    def append(self, line_user_id: str, message: Message, *, at: datetime | None = None) -> None:
+        ts = (at or self._now).timestamp()
+        self._turns.setdefault(line_user_id, []).append((ts, message))
+
+    def recent(self, line_user_id: str) -> list[Message]:
+        midnight = self._now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        rows = sorted(
+            (
+                (ts, i, m)
+                for i, (ts, m) in enumerate(self._turns.get(line_user_id, []))
+                if ts >= midnight
+            ),
+            key=lambda r: (r[0], r[1]),
+        )
+        return [m for _, _, m in rows[-self._max_turns :]]
+
+    def previous_day(self, line_user_id: str) -> list[Message]:
+        start, end = previous_day_bounds(self._now)
+        rows = sorted(
+            (
+                (ts, i, m)
+                for i, (ts, m) in enumerate(self._turns.get(line_user_id, []))
+                if start <= ts < end
+            ),
+            key=lambda r: (r[0], r[1]),
+        )
+        return [m for _, _, m in rows[: self._max_turns]]
+
+    def sessions(self) -> list[str]:
+        return sorted(self._turns)
+
+    def last_active(self, line_user_id: str) -> float | None:
+        users = [ts for ts, m in self._turns.get(line_user_id, []) if m.role == "user"]
+        return max(users) if users else None

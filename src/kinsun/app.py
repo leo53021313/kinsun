@@ -15,48 +15,23 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from linebot.v3 import WebhookParser
 
-from kinsun.accounts.service import AccountService
-from kinsun.accounts.store import PgAccountStore
-from kinsun.agent import CareAgent
-from kinsun.appointments.facts import AppointmentFacts
 from kinsun.appointments.flow import AppointmentMenu
-from kinsun.appointments.service import AppointmentService
-from kinsun.appointments.store import PgAppointmentStore
 from kinsun.audio.publisher import build_audio_publisher
 from kinsun.binding.flow import BindingFlow
 from kinsun.binding.gate import AllowAllGate, ConsentGate
 from kinsun.binding.session import PgBindingSessionStore
 from kinsun.channels.inbound import VoiceReplyDelivery
-from kinsun.channels.line.messenger import LineApiMessenger
 from kinsun.channels.line.webhook import create_app
+from kinsun.composition import assemble_core, build_externals
 from kinsun.config import load_dotenv, load_settings
-from kinsun.db import Database, ensure_schema
-from kinsun.llm import GeminiClient
-from kinsun.medications.facts import MedicationFacts
 from kinsun.medications.flow import MedicationMenu
-from kinsun.medications.service import MedicationService
-from kinsun.medications.store import PgMedicationStore
-from kinsun.memory.longterm.mem0_factory import build_mem0_memory
-from kinsun.memory.longterm.store import Mem0LongTermStore
-from kinsun.memory.recall import MemoryContext
-from kinsun.memory.shortterm import PgMemoryStore
-from kinsun.observability.store import PgTraceStore
 from kinsun.pipeline import VoicePipeline
-from kinsun.rag.embeddings import GeminiEmbeddingModel
-from kinsun.rag.retriever import HealthEducationRetriever
-from kinsun.rag.service import HealthEducationRagService
-from kinsun.rag.vector_store import PgVectorStore
-from kinsun.reports.reminders import PgReminderLogStore
 from kinsun.safety.classifier import LlmRiskClassifier
 from kinsun.safety.detector import RiskDetector
 from kinsun.safety.events import PgRiskEventStore
 from kinsun.safety.notifier import LineGuardianNotifier
 from kinsun.speech.asr import build_asr_client
 from kinsun.speech.tts import build_tts_client
-from kinsun.tools.clock import CURRENT_TIME_SPEC, build_current_time_handler
-from kinsun.tools.health_rag import HEALTH_RAG_SPEC, build_health_rag_handler
-from kinsun.tools.registry import ToolRegistry
-from kinsun.tools.weather import WEATHER_SPEC, build_weather_handler
 from kinsun.web.admin_api import create_admin_api_router
 from kinsun.web.api import create_api_router
 from kinsun.web.auth import LineIdTokenVerifier
@@ -66,108 +41,60 @@ def build_app() -> FastAPI:
     load_dotenv()
     settings = load_settings(os.environ)
     tz = ZoneInfo(settings.timezone)
-    ensure_schema(settings.database_url)
-    db = Database.open(settings.database_url)
-    memory = PgMemoryStore(
-        db,
-        clock=lambda: datetime.now(tz),
-        max_turns=settings.memory_max_turns,
-    )
-    gemini = GeminiClient(
-        api_key=settings.gemini_api_key,
-        model=settings.gemini_model,
-        timeout=settings.gemini_timeout_seconds,
-    )
-    long_term = Mem0LongTermStore(build_mem0_memory(settings), top_k=settings.longterm_top_k)
-    accounts = AccountService(
-        PgAccountStore(db),
-        clock=lambda: datetime.now(tz),
-        ttl_hours=settings.invite_ttl_hours,
-        max_attempts=settings.invite_max_attempts,
-    )
-    medications = MedicationService(PgMedicationStore(db))
-    appointments = AppointmentService(PgAppointmentStore(db))
-    context = MemoryContext(
-        long_term,
-        facts=[
-            MedicationFacts(accounts, medications),
-            AppointmentFacts(accounts, appointments, clock=lambda: datetime.now(tz)),
-        ],
-    )
-    messenger = LineApiMessenger(settings.line_channel_access_token)
-    registry = ToolRegistry()
-    registry.register(WEATHER_SPEC, build_weather_handler())
-    registry.register(CURRENT_TIME_SPEC, build_current_time_handler(lambda: datetime.now(tz)))
-    rag_store = PgVectorStore(db)
-    rag_embedder = GeminiEmbeddingModel(
-        api_key=settings.gemini_api_key,
-        model=settings.longterm_embedding_model,
-    )
-    rag_retriever = HealthEducationRetriever(
-        vector_store=rag_store,
-        embedding_model=rag_embedder,
-    )
-    rag_service = HealthEducationRagService(
-        rag_retriever,
-        llm=gemini,
-        top_k=settings.rag_top_k,
-    )
-    registry.register(HEALTH_RAG_SPEC, build_health_rag_handler(rag_service))
-    risk_events = PgRiskEventStore(
-        db, clock=lambda: datetime.now(tz), new_id=lambda: uuid.uuid4().hex
-    )
-    traces = PgTraceStore(db, clock=lambda: datetime.now(tz), new_id=lambda: uuid.uuid4().hex)
+
+    def clock() -> datetime:
+        return datetime.now(tz)
+
+    externals = build_externals(settings)
+    core = assemble_core(settings, externals, clock=clock)
+    db = core.db
+
+    # --- web 專屬接線 ---
+    risk_events = PgRiskEventStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex)
     # 進站音檔託管：有 Supabase 憑證就啟用（獨立於 TTS 後端選擇）。
     inbound_audio = (
         build_audio_publisher(
             settings,
-            clock=lambda: datetime.now(tz),
+            clock=clock,
             new_id=lambda: uuid.uuid4().hex,
             prefix="inbound",
         )
         if settings.supabase_url and settings.supabase_service_key
         else None
     )
-    reminder_logs = PgReminderLogStore(
-        db, clock=lambda: datetime.now(tz), new_id=lambda: uuid.uuid4().hex
-    )
     pipeline = VoicePipeline(
         asr=build_asr_client(settings),
-        agent=CareAgent(gemini, memory, context, tools=registry),
+        agent=core.agent,
         tts=build_tts_client(settings),
-        detector=RiskDetector(LlmRiskClassifier(gemini)),
-        notifier=LineGuardianNotifier(accounts, messenger),
+        detector=RiskDetector(LlmRiskClassifier(core.gemini)),
+        notifier=LineGuardianNotifier(core.accounts, core.channel),
         risk_events=risk_events,
-        traces=traces,
+        traces=core.traces,
         model_name=settings.gemini_model,
     )
     binding_sessions = PgBindingSessionStore(db)
-    medication_menu = MedicationMenu(
-        medications, accounts, binding_sessions, clock=lambda: datetime.now(tz)
-    )
+    medication_menu = MedicationMenu(core.medications, core.accounts, binding_sessions, clock=clock)
     appointment_menu = AppointmentMenu(
-        appointments, accounts, binding_sessions, clock=lambda: datetime.now(tz)
+        core.appointments, core.accounts, binding_sessions, clock=clock
     )
 
     def _link_menu(line_user_id: str) -> None:
-        messenger.link_rich_menu(line_user_id, settings.rich_menu_id)
+        core.messenger.link_rich_menu(line_user_id, settings.rich_menu_id)
 
     on_guardian_bound = _link_menu if settings.rich_menu_id else None
     binding = BindingFlow(
-        accounts,
+        core.accounts,
         binding_sessions,
-        messenger,
+        core.messenger,
         medication_menu,
         appointment_menu,
-        clock=lambda: datetime.now(tz),
+        clock=clock,
         session_ttl_seconds=settings.binding_session_ttl_minutes * 60,
         on_guardian_bound=on_guardian_bound,
     )
-    gate = ConsentGate(accounts) if settings.binding_gate_enabled else AllowAllGate()
+    gate = ConsentGate(core.accounts) if settings.binding_gate_enabled else AllowAllGate()
     publisher = (
-        build_audio_publisher(
-            settings, clock=lambda: datetime.now(tz), new_id=lambda: uuid.uuid4().hex
-        )
+        build_audio_publisher(settings, clock=clock, new_id=lambda: uuid.uuid4().hex)
         if settings.tts_backend == "dgx"
         else None
     )
@@ -178,11 +105,11 @@ def build_app() -> FastAPI:
     app = create_app(
         parser=parser,
         pipeline=pipeline,
-        messenger=messenger,
+        messenger=core.messenger,
         binding=binding,
         gate=gate,
         voice=voice,
-        traces=traces,
+        traces=core.traces,
         inbound_audio=inbound_audio,
         text_input_enabled=settings.line_text_input_enabled,
         on_shutdown=db.close,
@@ -191,19 +118,19 @@ def build_app() -> FastAPI:
     app.include_router(
         create_api_router(
             verifier=verifier,
-            accounts=accounts,
-            medications=medications,
-            appointments=appointments,
-            clock=lambda: datetime.now(tz),
+            accounts=core.accounts,
+            medications=core.medications,
+            appointments=core.appointments,
+            clock=clock,
             risk_events=risk_events,
-            reminder_logs=reminder_logs,
+            reminder_logs=core.reminder_logs,
         )
     )
     app.include_router(
         create_admin_api_router(
             admin_api_key=settings.admin_api_key,
-            traces=traces,
-            clock=lambda: datetime.now(tz),
+            traces=core.traces,
+            clock=clock,
         )
     )
     dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"

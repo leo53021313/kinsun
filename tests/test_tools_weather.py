@@ -1,4 +1,7 @@
+import json
+
 from kinsun.tools.weather import WEATHER_SPEC, build_weather_handler
+from kinsun.transport import FakeTransport, Response
 
 _GEO = {"results": [{"latitude": 25.0, "longitude": 121.5, "name": "Taipei"}]}
 _FC = {
@@ -7,11 +10,12 @@ _FC = {
 }
 
 
-def _fetcher(geo, fc):
-    def fetch(url):
-        return geo if "geocoding" in url else fc
+def _transport(geo, fc):
+    def handler(method, url, data):
+        payload = geo if "geocoding" in url else fc
+        return Response(200, {}, json.dumps(payload).encode())
 
-    return fetch
+    return FakeTransport(handler=handler)
 
 
 def test_weather_spec_name():
@@ -19,17 +23,17 @@ def test_weather_spec_name():
 
 
 def test_handler_formats_weather():
-    out = build_weather_handler(_fetcher(_GEO, _FC))({"location": "台北"})
+    out = build_weather_handler(_transport(_GEO, _FC))({"location": "台北"})
     assert "台北" in out
     assert "多雲" in out
     assert "22" in out and "28" in out
 
 
 def test_handler_empty_location():
-    out = build_weather_handler(_fetcher(_GEO, _FC))({"location": "  "})
+    out = build_weather_handler(_transport(_GEO, _FC))({"location": "  "})
     assert "哪個地方" in out
 
 
 def test_handler_location_not_found():
-    out = build_weather_handler(_fetcher({"results": []}, _FC))({"location": "不存在地"})
+    out = build_weather_handler(_transport({"results": []}, _FC))({"location": "不存在地"})
     assert "查不到" in out

@@ -1,10 +1,11 @@
 from kinsun.accounts.models import Elder
 from kinsun.appointments.jobs import build_appointment_reminder_job
 from kinsun.appointments.models import Appointment
+from kinsun.channels.outbound import FakeOutboundChannel
 
 
 def _job(appts_by_date, *, elders, consented, guardians, hour=8, record=None):
-    pushed = []
+    channel = FakeOutboundChannel()
     job = build_appointment_reminder_job(
         appts_on=lambda d: appts_by_date.get(d, []),
         today=lambda: "2026-07-15",
@@ -12,11 +13,11 @@ def _job(appts_by_date, *, elders, consented, guardians, hour=8, record=None):
         lookup_elder=lambda eid: elders.get(eid),
         is_consented_elder=lambda line_user_id: consented.get(line_user_id, False),
         guardian_line_ids=lambda eid: guardians.get(eid, []),
-        push=lambda line_user_id, text: pushed.append((line_user_id, text)),
+        channel=channel,
         hour=hour,
         record=record,
     )
-    return job, pushed
+    return job, channel.sent
 
 
 def test_today_and_tomorrow_to_elder_and_guardians():

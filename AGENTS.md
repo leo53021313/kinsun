@@ -68,6 +68,7 @@
   * `speech/` 為 ASR／TTS 模型服務呼叫端（client）、`audio/` 為音檔上傳託管、`services/` 為 DGX 端可獨立部署伺服器實作，三者跨層同名（如 `speech/asr.py` 對 `services/asr/`）為合理設計，不需合併。
   * 各領域排程工廠統一放該領域自己的 `jobs.py`，如 `medications/jobs.py`。
   * 測試檔名固定 `test_<套件>_<檔>.py`，如 `test_channels_inbound.py`；連 Postgres 的整合測試獨立成 `test_pg_<套件>_<檔>.py`，以 `KINSUN_IT=1` 啟用。
+  * 一個 seam 兩個 adapter 的等價合約用 `test_<領域>_store_contract.py`，同一份斷言參數化跑 `Fake<領域>Store`（離線、每次跑）與 `Pg<領域>Store`（`KINSUN_IT=1` 才跑）；`Fake<領域>Store` 依三件套與 Protocol＋Pg 同住 `store.py`，`tests/fakes.py` 僅保留匯入轉出以相容既有測試。見 `CONTEXT.md`「合約測試」。
 * 動詞慣例：
   * `save` 為 upsert 語意（`ON CONFLICT DO UPDATE`），`record` 為 append-only 事件日誌；資料寫入不用 `add`／`upsert` 命名；例外：鏡射外部函式庫 API 的薄包裝（如 Mem0 介面的 `add`）維持外部詞彙。
   * 查詢動詞分工：`get_*` 取單筆、`list_for_<維度>` 取清單、`query`／`query_one` 為原生 SQL 執行器、`search` 為檢索、`load` 為載入外部內容，如 `list_for_elder`。
