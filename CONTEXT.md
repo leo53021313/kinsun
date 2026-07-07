@@ -56,6 +56,10 @@ _Avoid_: user、account（泛稱）
 App 呼叫 REST 的不透明憑證：發放時回明文一次，DB 僅存 SHA-256（`api_tokens` 表），撤銷＝刪列。以 `principal_type`＋`principal_id` 指向本人，家屬與長輩共用同一機制。
 _Avoid_: JWT、session id
 
+**對講機回合（App Turn）**：
+App 長輩端的一次語音互動（`POST /api/app/turns`）：上傳錄音、同一 HTTP 回應回文字＋回覆音檔 URL。是 `channels/app/` 通道的入站形態——正規化成 `InboundMessage(Channel.APP, …)` 進共用 `dispatch`，與 LINE 的 webhook／reply 兩段式對稱。
+_Avoid_: 語音訊息（LINE 用語）、對話 API
+
 **會話（Session）**：
 一位長輩的對話脈絡，以 `elder_id` 識別（通道中立，記憶跟人走）；通道識別（如 `line_user_id`）只活在邊界，於入站閘門解析成本人。
 
