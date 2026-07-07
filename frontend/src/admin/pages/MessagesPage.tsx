@@ -12,7 +12,7 @@ const KIND_LABEL: Record<string, string> = {
 };
 
 function messageKey(m: FeedMessage): string {
-  return `${m.kind}-${m.created_at}-${m.line_user_id}-${m.content}`;
+  return `${m.kind}-${m.created_at}-${m.elder_id}-${m.content}`;
 }
 
 export function MessagesPage() {
@@ -46,7 +46,7 @@ export function MessagesPage() {
           <span className="feed-time">{formatTime(m.created_at)}</span>
           <span className={`badge badge-${m.kind}`}>{KIND_LABEL[m.kind] ?? m.kind}</span>
           <span>
-            <strong>{m.elder_name || m.line_user_id}</strong>
+            <strong>{m.elder_name || m.elder_id}</strong>
             {m.role && <em>（{m.role === "user" ? "長輩" : "金孫"}）</em>}
             ：{m.content}
             {m.tier !== null && <span> 等級 L{m.tier}</span>}
