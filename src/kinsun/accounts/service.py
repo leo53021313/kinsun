@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import secrets
 import uuid
 from collections.abc import Callable
@@ -9,9 +10,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from kinsun.accounts.models import (
+    ApiToken,
     Channel,
     ChannelBinding,
     Consent,
+    GuardianAccount,
     ConsentBy,
     Elder,
     ElderGuardian,
@@ -21,12 +24,21 @@ from kinsun.accounts.models import (
     PrincipalType,
     Role,
 )
+from kinsun.accounts.passwords import hash_password, verify_password
 from kinsun.accounts.store import AccountStore
 
 CONSENT_VERSION = "1.0"
 
 
 class InviteError(Exception):
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
+
+
+class AppAccountError(Exception):
+    """App 帳號操作失敗：reason ∈ email_taken／invalid_credentials。"""
+
     def __init__(self, reason: str) -> None:
         self.reason = reason
         super().__init__(reason)
@@ -91,7 +103,14 @@ class AccountService:
         self._repo.save_invite(invite)
         return invite
 
-    def redeem_invite(self, code: str, line_user_id: str, *, consent_by: ConsentBy) -> None:
+    def redeem_invite(
+        self,
+        code: str,
+        external_id: str,
+        *,
+        channel: Channel = Channel.LINE,
+        consent_by: ConsentBy,
+    ) -> None:
         invite = self._repo.get_invite(code)
         if invite is None:
             raise InviteError("not_found")
@@ -110,8 +129,8 @@ class AccountService:
                     raise InviteError("not_found")
                 self._repo.save_channel_binding(
                     ChannelBinding(
-                        Channel.LINE,
-                        line_user_id,
+                        channel,
+                        external_id,
                         PrincipalType.ELDER,
                         elder.elder_id,
                         now.timestamp(),
@@ -122,7 +141,7 @@ class AccountService:
                     Consent(invite.elder_id, consent_by, CONSENT_VERSION, now.timestamp()), tx=tx
                 )
             else:
-                guardian = self._guardian_for(line_user_id, "", tx=tx)
+                guardian = self._guardian_for(external_id, "", tx=tx)
                 egs = self._repo.list_elder_guardians(invite.elder_id)
                 order = max((eg.escalation_order for eg in egs), default=0)
                 self._repo.save_elder_guardian(
@@ -165,6 +184,57 @@ class AccountService:
         """長輩同意是否有效（存在且未撤回）。"""
         consent = self._repo.get_consent(elder_id)
         return consent is not None and consent.revoked_at is None
+
+    def _issue_token(self, principal_type: PrincipalType, principal_id: str, *, tx=None) -> str:
+        token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        self._repo.save_api_token(
+            ApiToken(token_hash, principal_type, principal_id, self._clock().timestamp()), tx=tx
+        )
+        return token
+
+    def register_guardian_account(
+        self, email: str, password: str, name: str
+    ) -> tuple[Guardian, str]:
+        """家屬註冊：建 Guardian＋登入帳號並發 token。email 重複丟 email_taken。"""
+        normalized = email.strip().lower()
+        if self._repo.get_guardian_account_by_email(normalized) is not None:
+            raise AppAccountError("email_taken")
+        guardian = Guardian(self._new_id(), name)
+        with self._repo.transaction() as tx:
+            self._repo.save_guardian(guardian, tx=tx)
+            self._repo.save_guardian_account(
+                GuardianAccount(
+                    guardian.guardian_id,
+                    normalized,
+                    hash_password(password),
+                    self._clock().timestamp(),
+                ),
+                tx=tx,
+            )
+            token = self._issue_token(PrincipalType.GUARDIAN, guardian.guardian_id, tx=tx)
+        return guardian, token
+
+    def login_guardian(self, email: str, password: str) -> tuple[Guardian, str]:
+        """家屬登入：查無帳號或密碼錯一律 invalid_credentials（不洩漏帳號存在性）。"""
+        account = self._repo.get_guardian_account_by_email(email.strip().lower())
+        if account is None or not verify_password(password, account.password_hash):
+            raise AppAccountError("invalid_credentials")
+        guardian = self._repo.get_guardian(account.guardian_id)
+        if guardian is None:
+            raise AppAccountError("invalid_credentials")
+        return guardian, self._issue_token(PrincipalType.GUARDIAN, guardian.guardian_id)
+
+    def bind_elder_device(self, code: str, *, consent_by: ConsentBy) -> tuple[Elder, str]:
+        """長輩裝置綁定：綁定碼換 App 通道綁定＋裝置 token。InviteError 原樣上拋。"""
+        invite = self._repo.get_invite(code)
+        app_account_id = self._new_id()
+        self.redeem_invite(code, app_account_id, channel=Channel.APP, consent_by=consent_by)
+        elder = self._repo.get_elder(invite.elder_id)  # redeem 成功即存在
+        return elder, self._issue_token(PrincipalType.ELDER, elder.elder_id)
+
+    def authenticate_token(self, token: str) -> ApiToken | None:
+        return self._repo.get_api_token(hashlib.sha256(token.encode()).hexdigest())
 
     def consented_elder_id(self, channel: Channel, external_id: str) -> str | None:
         """解析「已同意的長輩」：該通道帳號綁的是長輩且同意有效才回 elder_id，否則 None。"""
