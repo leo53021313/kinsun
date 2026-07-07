@@ -7,6 +7,8 @@ from contextlib import contextmanager
 from typing import Protocol
 
 from kinsun.accounts.models import (
+    Channel,
+    ChannelBinding,
     Consent,
     ConsentBy,
     Elder,
@@ -14,6 +16,7 @@ from kinsun.accounts.models import (
     Guardian,
     Invite,
     InviteRole,
+    PrincipalType,
     Role,
 )
 from kinsun.db import Database, Executor, _Errors
@@ -38,6 +41,13 @@ class AccountStore(Protocol):
     def get_consent(self, elder_id: str) -> Consent | None: ...
     def save_invite(self, invite: Invite, *, tx: Executor | None = None) -> None: ...
     def get_invite(self, code: str) -> Invite | None: ...
+    def save_channel_binding(
+        self, binding: ChannelBinding, *, tx: Executor | None = None
+    ) -> None: ...
+    def get_channel_binding(self, channel: Channel, external_id: str) -> ChannelBinding | None: ...
+    def list_channel_bindings_for_principal(
+        self, principal_type: PrincipalType, principal_id: str
+    ) -> list[ChannelBinding]: ...
     def transaction(self) -> object: ...
 
 
@@ -194,6 +204,43 @@ class PgAccountStore:
         c, elder, role, expires, max_a, attempts, used = rows[0]
         return Invite(c, elder, InviteRole(role), expires, max_a, attempts, used)
 
+    def save_channel_binding(self, binding: ChannelBinding, *, tx: Executor | None = None) -> None:
+        (tx or self._db).execute(
+            "INSERT INTO channel_bindings "
+            "(channel, external_id, principal_type, principal_id, created_at) "
+            "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (channel, external_id) DO UPDATE SET "
+            "principal_type = EXCLUDED.principal_type, principal_id = EXCLUDED.principal_id",
+            (
+                binding.channel.value,
+                binding.external_id,
+                binding.principal_type.value,
+                binding.principal_id,
+                binding.created_at,
+            ),
+        )
+
+    def get_channel_binding(self, channel: Channel, external_id: str) -> ChannelBinding | None:
+        rows = self._db.query(
+            "SELECT channel, external_id, principal_type, principal_id, created_at "
+            "FROM channel_bindings WHERE channel = %s AND external_id = %s",
+            (channel.value, external_id),
+        )
+        if not rows:
+            return None
+        ch, ext, ptype, pid, created = rows[0]
+        return ChannelBinding(Channel(ch), ext, PrincipalType(ptype), pid, created)
+
+    def list_channel_bindings_for_principal(
+        self, principal_type: PrincipalType, principal_id: str
+    ) -> list[ChannelBinding]:
+        rows = self._db.query(
+            "SELECT channel, external_id, principal_type, principal_id, created_at "
+            "FROM channel_bindings WHERE principal_type = %s AND principal_id = %s "
+            "ORDER BY channel, external_id",
+            (principal_type.value, principal_id),
+        )
+        return [ChannelBinding(Channel(c), e, PrincipalType(p), i, t) for (c, e, p, i, t) in rows]
+
 
 class FakeAccountStore:
     """AccountStore 的記憶體替身（測試用，不碰 DB）。
@@ -208,6 +255,7 @@ class FakeAccountStore:
         self.elder_guardians: dict[tuple[str, str], ElderGuardian] = {}
         self.consents: dict[str, Consent] = {}
         self.invites: dict[str, Invite] = {}
+        self.channel_bindings: dict[tuple[Channel, str], ChannelBinding] = {}
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
@@ -262,3 +310,30 @@ class FakeAccountStore:
 
     def get_invite(self, code: str) -> Invite | None:
         return self.invites.get(code)
+
+    def save_channel_binding(self, binding: ChannelBinding, *, tx: Executor | None = None) -> None:
+        key = (binding.channel, binding.external_id)
+        existing = self.channel_bindings.get(key)
+        if existing is not None:
+            # 與 Pg 一致：upsert 不覆寫 created_at（保留首次綁定時間）。
+            binding = ChannelBinding(
+                binding.channel,
+                binding.external_id,
+                binding.principal_type,
+                binding.principal_id,
+                existing.created_at,
+            )
+        self.channel_bindings[key] = binding
+
+    def get_channel_binding(self, channel: Channel, external_id: str) -> ChannelBinding | None:
+        return self.channel_bindings.get((channel, external_id))
+
+    def list_channel_bindings_for_principal(
+        self, principal_type: PrincipalType, principal_id: str
+    ) -> list[ChannelBinding]:
+        rows = [
+            b
+            for b in self.channel_bindings.values()
+            if b.principal_type == principal_type and b.principal_id == principal_id
+        ]
+        return sorted(rows, key=lambda b: (b.channel.value, b.external_id))

@@ -12,6 +12,8 @@ from __future__ import annotations
 import pytest
 
 from kinsun.accounts.models import (
+    Channel,
+    ChannelBinding,
     Consent,
     ConsentBy,
     Elder,
@@ -19,6 +21,7 @@ from kinsun.accounts.models import (
     Guardian,
     Invite,
     InviteRole,
+    PrincipalType,
     Role,
 )
 from kinsun.accounts.store import FakeAccountStore, PgAccountStore
@@ -82,3 +85,41 @@ def test_invite_roundtrip_by_code(store, ns):
     assert got.attempts == 0
     assert got.used_at is None
     assert store.get_invite(f"{ns}nope") is None
+
+
+def test_channel_binding_roundtrip_and_upsert_keeps_created_at(store, ns):
+    store.save_channel_binding(
+        ChannelBinding(Channel.LINE, f"{ns}U1", PrincipalType.ELDER, f"{ns}e1", 1000.0)
+    )
+    got = store.get_channel_binding(Channel.LINE, f"{ns}U1")
+    assert got.principal_type == PrincipalType.ELDER
+    assert got.principal_id == f"{ns}e1"
+    assert got.created_at == 1000.0
+    # upsert：改指到別的本人，但 created_at 保留首次綁定時間。
+    store.save_channel_binding(
+        ChannelBinding(Channel.LINE, f"{ns}U1", PrincipalType.GUARDIAN, f"{ns}g1", 2000.0)
+    )
+    got = store.get_channel_binding(Channel.LINE, f"{ns}U1")
+    assert got.principal_type == PrincipalType.GUARDIAN
+    assert got.principal_id == f"{ns}g1"
+    assert got.created_at == 1000.0
+    assert store.get_channel_binding(Channel.LINE, f"{ns}nope") is None
+
+
+def test_channel_bindings_listed_by_principal(store, ns):
+    # 同一位長輩兩個通道綁定；另一人的綁定不得混入。
+    store.save_channel_binding(
+        ChannelBinding(Channel.LINE, f"{ns}U-line", PrincipalType.ELDER, f"{ns}e1", 1000.0)
+    )
+    store.save_channel_binding(
+        ChannelBinding(Channel.APP, f"{ns}dev-1", PrincipalType.ELDER, f"{ns}e1", 1100.0)
+    )
+    store.save_channel_binding(
+        ChannelBinding(Channel.LINE, f"{ns}U-other", PrincipalType.ELDER, f"{ns}e2", 1200.0)
+    )
+    got = store.list_channel_bindings_for_principal(PrincipalType.ELDER, f"{ns}e1")
+    assert [(b.channel, b.external_id) for b in got] == [
+        (Channel.APP, f"{ns}dev-1"),
+        (Channel.LINE, f"{ns}U-line"),
+    ]
+    assert store.list_channel_bindings_for_principal(PrincipalType.GUARDIAN, f"{ns}e1") == []
