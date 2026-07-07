@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from typing import Protocol
+
+from kinsun.transport import Transport, TransportError, UrllibTransport
 
 
 class TTSError(Exception):
@@ -35,24 +35,27 @@ class TextBubbleTts:
 class DgxTtsClient:
     """正式：POST {"text"} 到 DGX 上的 TTS 服務，取回 m4a bytes 與時長。"""
 
-    def __init__(self, endpoint: str, timeout: float) -> None:
+    def __init__(
+        self, endpoint: str, timeout: float, *, transport: Transport | None = None
+    ) -> None:
         self._endpoint = endpoint
         self._timeout = timeout
+        self._transport = transport or UrllibTransport()
 
     def synthesize(self, text: str) -> TtsResult:
         body = json.dumps({"text": text}, ensure_ascii=False).encode("utf-8")
-        request = urllib.request.Request(
-            self._endpoint,
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout) as response:
-                audio = response.read()
-                raw_ms = response.headers.get("X-Duration-Ms")
-        except (urllib.error.URLError, OSError) as exc:
+            response = self._transport.request(
+                "POST",
+                self._endpoint,
+                data=body,
+                headers={"Content-Type": "application/json"},
+                timeout=self._timeout,
+            )
+        except TransportError as exc:
             raise TTSError(f"DGX TTS 呼叫失敗：{exc}") from exc
+        audio = response.body
+        raw_ms = response.headers.get("X-Duration-Ms")
         if raw_ms is None:
             raise TTSError("DGX TTS 回應缺少 X-Duration-Ms 標頭")
         try:

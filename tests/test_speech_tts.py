@@ -1,8 +1,7 @@
-import urllib.error
-
 import pytest
 
 from kinsun.speech.tts import DgxTtsClient, TextBubbleTts, TTSError, TtsResult, build_tts_client
+from kinsun.transport import FakeTransport, Response, TransportError
 
 
 def test_text_bubble_returns_text_without_audio():
@@ -12,21 +11,6 @@ def test_text_bubble_returns_text_without_audio():
     assert result.audio is None
 
 
-class _FakeResp:
-    def __init__(self, body: bytes, duration_ms: str | None):
-        self._body = body
-        self.headers = {} if duration_ms is None else {"X-Duration-Ms": duration_ms}
-
-    def read(self):
-        return self._body
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        return False
-
-
 class _StubSettings:
     def __init__(self, backend="bubble", endpoint="", timeout=30.0):
         self.tts_backend = backend
@@ -34,39 +18,30 @@ class _StubSettings:
         self.tts_timeout_seconds = timeout
 
 
-def test_dgx_tts_returns_audio_and_duration(monkeypatch):
-    captured = {}
-
-    def fake_urlopen(req, timeout=None):
-        captured["url"] = req.full_url
-        captured["body"] = req.data
-        captured["ctype"] = req.headers.get("Content-type")
-        return _FakeResp(b"AUDIOBYTES", "1234")
-
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    client = DgxTtsClient("http://dgx:8002/synthesize", 30.0)
+def test_dgx_tts_returns_audio_and_duration():
+    transport = FakeTransport([Response(200, {"X-Duration-Ms": "1234"}, b"AUDIOBYTES")])
+    client = DgxTtsClient("http://dgx:8002/synthesize", 30.0, transport=transport)
     result = client.synthesize("阿公您好")
     assert result.text == "阿公您好"
     assert result.audio == b"AUDIOBYTES"
     assert result.duration_ms == 1234
-    assert captured["url"] == "http://dgx:8002/synthesize"
-    assert "阿公".encode() in captured["body"]  # JSON body 帶 text
-    assert captured["ctype"] == "application/json"
+    method, url, data, headers, timeout = transport.calls[0]
+    assert (method, url, timeout) == ("POST", "http://dgx:8002/synthesize", 30.0)
+    assert "阿公".encode() in data  # JSON body 帶 text
+    assert headers["Content-Type"] == "application/json"
 
 
-def test_dgx_tts_missing_duration_header_raises(monkeypatch):
-    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout=None: _FakeResp(b"A", None))
+def test_dgx_tts_missing_duration_header_raises():
+    transport = FakeTransport([Response(200, {}, b"A")])
     with pytest.raises(TTSError):
-        DgxTtsClient("http://dgx:8002/synthesize", 30.0).synthesize("嗨")
+        DgxTtsClient("http://dgx:8002/synthesize", 30.0, transport=transport).synthesize("嗨")
 
 
-def test_dgx_tts_http_error_raises(monkeypatch):
-    def boom(req, timeout=None):
-        raise urllib.error.URLError("connection refused")
-
-    monkeypatch.setattr("urllib.request.urlopen", boom)
+def test_dgx_tts_transport_error_raises():
+    transport = FakeTransport()
+    transport.error = TransportError("connection refused")
     with pytest.raises(TTSError):
-        DgxTtsClient("http://dgx:8002/synthesize", 30.0).synthesize("嗨")
+        DgxTtsClient("http://dgx:8002/synthesize", 30.0, transport=transport).synthesize("嗨")
 
 
 def test_build_returns_bubble_by_default():

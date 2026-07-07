@@ -53,3 +53,23 @@ class PgAppointmentStore:
 
     def remove(self, appointment_id: str) -> None:
         self._db.execute("DELETE FROM appointments WHERE appointment_id = %s", (appointment_id,))
+
+
+class FakeAppointmentStore:
+    """AppointmentStore 的記憶體替身（測試用，不碰 DB）。"""
+
+    def __init__(self) -> None:
+        self._appts: dict[str, Appointment] = {}
+
+    def save(self, appt: Appointment) -> None:
+        self._appts[appt.appointment_id] = appt
+
+    def list_for_elder(self, elder_id: str) -> list[Appointment]:
+        rows = [a for a in self._appts.values() if a.elder_id == elder_id]
+        return sorted(rows, key=lambda a: a.date)
+
+    def list_for_date(self, date: str) -> list[Appointment]:
+        return [a for a in self._appts.values() if a.date == date]
+
+    def remove(self, appointment_id: str) -> None:
+        self._appts.pop(appointment_id, None)
