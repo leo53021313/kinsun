@@ -23,7 +23,7 @@ export function EldersPage() {
             <strong>{e.name}</strong>
           </Link>
           <span className="feed-time">
-            {e.line_user_id ? `LINE：${e.line_user_id}` : "尚未綁定 LINE"}
+            {e.bound_channels ? `通道：${e.bound_channels}` : "尚未綁定"}
           </span>
           <span className="feed-time">
             {e.last_active_at ? `最後活動 ${formatTime(e.last_active_at)}` : "尚無對話"}

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Protocol
@@ -65,49 +64,21 @@ class PgAccountStore:
 
     def save_elder(self, elder: Elder, *, tx: Executor | None = None) -> None:
         (tx or self._db).execute(
-            "INSERT INTO elders (elder_id, name, line_user_id) VALUES (%s, %s, %s) "
-            "ON CONFLICT (elder_id) DO UPDATE SET "
-            "name = EXCLUDED.name, line_user_id = EXCLUDED.line_user_id",
-            (elder.elder_id, elder.name, elder.line_user_id),
+            "INSERT INTO elders (elder_id, name) VALUES (%s, %s) "
+            "ON CONFLICT (elder_id) DO UPDATE SET name = EXCLUDED.name",
+            (elder.elder_id, elder.name),
         )
-        # 擴張—收縮遷移的雙寫：欄位與 channel_bindings 同步，讀取端切換前兩邊恆一致。
-        if elder.line_user_id:
-            self.save_channel_binding(
-                ChannelBinding(
-                    Channel.LINE,
-                    elder.line_user_id,
-                    PrincipalType.ELDER,
-                    elder.elder_id,
-                    time.time(),
-                ),
-                tx=tx,
-            )
 
     def get_elder(self, elder_id: str) -> Elder | None:
-        rows = self._db.query(
-            "SELECT elder_id, name, line_user_id FROM elders WHERE elder_id = %s", (elder_id,)
-        )
+        rows = self._db.query("SELECT elder_id, name FROM elders WHERE elder_id = %s", (elder_id,))
         return Elder(*rows[0]) if rows else None
 
     def save_guardian(self, guardian: Guardian, *, tx: Executor | None = None) -> None:
         (tx or self._db).execute(
-            "INSERT INTO guardians (guardian_id, line_user_id, name) VALUES (%s, %s, %s) "
-            "ON CONFLICT (guardian_id) DO UPDATE SET "
-            "line_user_id = EXCLUDED.line_user_id, name = EXCLUDED.name",
-            (guardian.guardian_id, guardian.line_user_id, guardian.name),
+            "INSERT INTO guardians (guardian_id, name) VALUES (%s, %s) "
+            "ON CONFLICT (guardian_id) DO UPDATE SET name = EXCLUDED.name",
+            (guardian.guardian_id, guardian.name),
         )
-        # 擴張—收縮遷移的雙寫：欄位與 channel_bindings 同步，讀取端切換前兩邊恆一致。
-        if guardian.line_user_id:
-            self.save_channel_binding(
-                ChannelBinding(
-                    Channel.LINE,
-                    guardian.line_user_id,
-                    PrincipalType.GUARDIAN,
-                    guardian.guardian_id,
-                    time.time(),
-                ),
-                tx=tx,
-            )
 
     def get_guardian_by_line(self, line_user_id: str) -> Guardian | None:
         # 讀取端已切經 channel_bindings（1C）；欄位 guardians.line_user_id 僅剩雙寫，1D 退役。
@@ -118,8 +89,7 @@ class PgAccountStore:
 
     def get_guardian(self, guardian_id: str) -> Guardian | None:
         rows = self._db.query(
-            "SELECT guardian_id, line_user_id, name FROM guardians WHERE guardian_id = %s",
-            (guardian_id,),
+            "SELECT guardian_id, name FROM guardians WHERE guardian_id = %s", (guardian_id,)
         )
         return Guardian(*rows[0]) if rows else None
 
@@ -288,36 +258,12 @@ class FakeAccountStore:
 
     def save_elder(self, elder: Elder, *, tx: Executor | None = None) -> None:
         self.elders[elder.elder_id] = elder
-        # 擴張—收縮遷移的雙寫：欄位與 channel_bindings 同步，讀取端切換前兩邊恆一致。
-        if elder.line_user_id:
-            self.save_channel_binding(
-                ChannelBinding(
-                    Channel.LINE,
-                    elder.line_user_id,
-                    PrincipalType.ELDER,
-                    elder.elder_id,
-                    time.time(),
-                ),
-                tx=tx,
-            )
 
     def get_elder(self, elder_id: str) -> Elder | None:
         return self.elders.get(elder_id)
 
     def save_guardian(self, guardian: Guardian, *, tx: Executor | None = None) -> None:
         self.guardians[guardian.guardian_id] = guardian
-        # 擴張—收縮遷移的雙寫：欄位與 channel_bindings 同步，讀取端切換前兩邊恆一致。
-        if guardian.line_user_id:
-            self.save_channel_binding(
-                ChannelBinding(
-                    Channel.LINE,
-                    guardian.line_user_id,
-                    PrincipalType.GUARDIAN,
-                    guardian.guardian_id,
-                    time.time(),
-                ),
-                tx=tx,
-            )
 
     def get_guardian_by_line(self, line_user_id: str) -> Guardian | None:
         # 讀取端已切經 channel_bindings（1C），與 Pg 同形。

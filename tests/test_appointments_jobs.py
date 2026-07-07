@@ -33,7 +33,7 @@ def _job(appts_by_date, *, elders, consented, guardians, hour=8, record=None):
 
 
 def test_today_and_tomorrow_to_elder_and_guardians():
-    elders = {"e1": Elder("e1", "阿公", "U-elder")}
+    elders = {"e1": Elder("e1", "阿公")}
     appts = {
         "2026-07-15": [Appointment("a1", "e1", "2026-07-15", "心臟科回診")],
         "2026-07-16": [Appointment("a2", "e1", "2026-07-16", "眼科回診")],
@@ -50,7 +50,7 @@ def test_today_and_tomorrow_to_elder_and_guardians():
 
 
 def test_elder_skipped_without_consent_but_guardians_notified():
-    elders = {"e1": Elder("e1", "阿公", "U-elder")}
+    elders = {"e1": Elder("e1", "阿公")}
     appts = {"2026-07-15": [Appointment("a1", "e1", "2026-07-15", "回診")]}
     job, pushed = _job(appts, elders=elders, consented={"e1": False}, guardians={"e1": ["g-son"]})
     job.run()
@@ -58,7 +58,7 @@ def test_elder_skipped_without_consent_but_guardians_notified():
 
 
 def test_records_reminder_per_event():
-    elders = {"e1": Elder("e1", "阿公", "U-elder")}
+    elders = {"e1": Elder("e1", "阿公")}
     appts = {"2026-07-15": [Appointment("a1", "e1", "2026-07-15", "心臟科回診")]}
     recorded = []
     job, _ = _job(
@@ -73,7 +73,7 @@ def test_records_reminder_per_event():
 
 
 def test_unconsented_elder_still_notifies_guardians_in_order():
-    elders = {"e1": Elder("e1", "阿公", None)}
+    elders = {"e1": Elder("e1", "阿公")}
     appts = {"2026-07-16": [Appointment("a1", "e1", "2026-07-16", "回診")]}
     job, pushed = _job(appts, elders=elders, consented={}, guardians={"e1": ["g-son", "g-dau"]})
     job.run()
