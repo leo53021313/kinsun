@@ -81,3 +81,23 @@ class ChannelBinding:
     principal_type: PrincipalType
     principal_id: str
     created_at: float
+
+
+@dataclass(frozen=True)
+class GuardianAccount:
+    """家屬的 App 登入帳號：email＋密碼雜湊（scrypt，見 accounts/passwords.py）。"""
+
+    guardian_id: str
+    email: str
+    password_hash: str
+    created_at: float
+
+
+@dataclass(frozen=True)
+class ApiToken:
+    """API token 發放紀錄：DB 只存 SHA-256 雜湊，明文只在發放當下回傳一次。"""
+
+    token_hash: str
+    principal_type: PrincipalType
+    principal_id: str
+    created_at: float

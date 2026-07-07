@@ -35,6 +35,15 @@ ACCOUNTS_DDL = (
     "attempts INTEGER NOT NULL, used_at DOUBLE PRECISION);"
 )
 
+APP_ACCOUNTS_DDL = (
+    "CREATE TABLE IF NOT EXISTS guardian_accounts ("
+    "guardian_id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, "
+    "password_hash TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+    "CREATE TABLE IF NOT EXISTS api_tokens ("
+    "token_hash TEXT PRIMARY KEY, principal_type TEXT NOT NULL, "
+    "principal_id TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+)
+
 CHANNEL_BINDINGS_DDL = (
     "CREATE TABLE IF NOT EXISTS channel_bindings ("
     "channel TEXT NOT NULL, external_id TEXT NOT NULL, "
@@ -211,6 +220,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(MEMORY_DDL)
         conn.execute(ACCOUNTS_DDL)
         conn.execute(CHANNEL_BINDINGS_DDL)
+        conn.execute(APP_ACCOUNTS_DDL)
         conn.execute(BINDING_DDL)
         conn.execute(SCHEDULER_DDL)
         conn.execute(MEDICATIONS_DDL)
