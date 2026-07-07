@@ -231,6 +231,13 @@ __marimo__/
 # 參考用的外部 repo（hermes-agent、mem0 等），僅供架構/程式碼借鏡，不得進版控
 temp/
 
+# 老師的 AI vibecoding 開發整理包（僅本機參考使用，不進版控）
+claude-Godzilla-z/
+
+# 個人 Claude Code 開發配置（自整理包複製，僅本機使用，不影響隊友）
+.claude/
+.mcp.json
+
 # 前端（LIFF）
 frontend/node_modules/
 frontend/dist/

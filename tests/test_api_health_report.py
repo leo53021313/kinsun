@@ -51,9 +51,11 @@ def _client(line_user_id, *, risks, reminders, bind_elder=True):
     )
     elder = accounts.create_elder("U-son", "兒子", "阿公")
     if bind_elder:
-        from kinsun.accounts.models import Elder
+        from kinsun.accounts.models import Channel, ChannelBinding, PrincipalType
 
-        repo.save_elder(Elder(elder.elder_id, "阿公", "U-elder"))
+        repo.save_channel_binding(
+            ChannelBinding(Channel.LINE, "U-elder", PrincipalType.ELDER, elder.elder_id, 0.0)
+        )
     app = FastAPI()
     app.include_router(
         create_api_router(

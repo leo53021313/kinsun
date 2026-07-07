@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from itertools import count
 
-from kinsun.accounts.models import ConsentBy, InviteRole
+from kinsun.accounts.models import Channel, ConsentBy, InviteRole
 from kinsun.accounts.service import AccountService
 from kinsun.appointments.flow import AppointmentMenu
 from kinsun.appointments.service import AppointmentService
@@ -112,7 +112,8 @@ def test_flow3_redeem_elder_via_menu():
     confirm = flow.handle("U-elder", inv.code)
     assert "阿公" in confirm and "同意" in confirm
     assert "綁定成功" in flow.handle("U-elder", "是")
-    assert repo.get_elder(elder.elder_id).line_user_id == "U-elder"
+    binding = repo.get_channel_binding(Channel.LINE, "U-elder")
+    assert binding is not None and binding.principal_id == elder.elder_id
     assert repo.get_consent(elder.elder_id).consent_by == ConsentBy.SELF
 
 
@@ -143,7 +144,7 @@ def test_flow3_confirm_no_cancels():
     flow.handle("U-elder", "3")
     flow.handle("U-elder", inv.code)
     assert "取消" in flow.handle("U-elder", "否")
-    assert repo.get_elder(elder.elder_id).line_user_id is None
+    assert repo.get_channel_binding(Channel.LINE, "U-elder") is None
 
 
 def test_cancel_resets_to_idle():

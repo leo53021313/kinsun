@@ -38,7 +38,7 @@ def _job(meds, *, elders, consented, unreachable=(), hour=8, record=None):
 
 
 def test_merges_meds_per_elder():
-    elders = {"e1": Elder("e1", "阿公", "U-elder")}
+    elders = {"e1": Elder("e1", "阿公")}
     meds = [
         _med("e1", "降血壓藥", (MedicationSlot.MORNING,)),
         _med("e1", "鈣片", (MedicationSlot.MORNING,)),
@@ -50,7 +50,7 @@ def test_merges_meds_per_elder():
 
 
 def test_skips_unconsented():
-    elders = {"e1": Elder("e1", "阿公", "U-elder"), "e2": Elder("e2", "阿嬤", None)}
+    elders = {"e1": Elder("e1", "阿公"), "e2": Elder("e2", "阿嬤")}
     meds = [
         _med("e1", "藥A", (MedicationSlot.MORNING,)),
         _med("e2", "藥B", (MedicationSlot.MORNING,)),
@@ -61,7 +61,7 @@ def test_skips_unconsented():
 
 
 def test_records_reminder_when_pushed():
-    elders = {"e1": Elder("e1", "阿公", "U-elder")}
+    elders = {"e1": Elder("e1", "阿公")}
     recorded = []
     job, _ = _job(
         [_med("e1", "降血壓藥", (MedicationSlot.MORNING,))],
@@ -74,7 +74,7 @@ def test_records_reminder_when_pushed():
 
 
 def test_does_not_record_when_unconsented():
-    elders = {"e1": Elder("e1", "阿公", "U-elder")}
+    elders = {"e1": Elder("e1", "阿公")}
     recorded = []
     job, _ = _job(
         [_med("e1", "藥", (MedicationSlot.MORNING,))],
@@ -88,7 +88,7 @@ def test_does_not_record_when_unconsented():
 
 def test_does_not_record_when_no_reachable_channel():
     # 同意有效但無任何綁定通道（router 回 0）：不記 reminder_log。
-    elders = {"e1": Elder("e1", "阿公", None)}
+    elders = {"e1": Elder("e1", "阿公")}
     recorded = []
     job, pushed = _job(
         [_med("e1", "藥", (MedicationSlot.MORNING,))],

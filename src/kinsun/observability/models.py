@@ -87,6 +87,7 @@ class Trace:
     tts_call: TtsCall | None
     reply: Reply | None
     risk_events: list[TraceRiskEvent]
+    elder_name: str = ""  # 經 channel_bindings 解析的長輩姓名；查無時空字串
 
 
 @dataclass(frozen=True)
@@ -94,7 +95,7 @@ class FeedItem:
     """全域訊息流的一筆：kind ∈ turn／reminder／risk。"""
 
     kind: str
-    line_user_id: str
+    elder_id: str
     elder_name: str
     role: str  # turn 專用（user／assistant），其餘為空字串
     content: str
@@ -120,7 +121,7 @@ class TimelineItem:
 class ElderActivity:
     elder_id: str
     name: str
-    line_user_id: str  # 未綁定時為空字串
+    bound_channels: str  # 已綁定通道（逗號串接，如 "line"）；空字串＝未綁定
     last_active_at: float | None
 
 
