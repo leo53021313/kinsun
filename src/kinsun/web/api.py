@@ -206,7 +206,6 @@ def create_api_router(
             elder_id=elder_id,
             risk_events=risk_events,
             reminder_logs=reminder_logs,
-            accounts=accounts,
             now=clock(),
         )
         return {

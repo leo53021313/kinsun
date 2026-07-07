@@ -4,10 +4,10 @@ Fake 每次都跑；Pg 需 `KINSUN_IT=1`（連真庫）。斷言一律以 `ns` �
 本測試自己的資料，才能在共用真庫上以「成員／排除」關係斷言而互不干擾。
 
 漂移（drift）備註：這是 append/record 型 store，公開合約僅有 record 與
-list_for_line_user。兩個 adapter 皆「可靠產出」的欄位只有 line_user_id、tier、
+list_for_elder。兩個 adapter 皆「可靠產出」的欄位只有 elder_id、tier、
 reason；risk_event_id 與 created_at 在 Fake 為合成值（依記錄序號），與 Pg 的
 真實 UUID／時鐘時間不同，故不斷言。trace_id 兩者皆接受並保存，但 RiskEvent
-無此欄位、Pg 的 SELECT 亦未取該欄，故無法經 list_for_line_user 讀回——合約僅
+無此欄位、Pg 的 SELECT 亦未取該欄，故無法經 list_for_elder 讀回——合約僅
 斷言「帶或不帶 trace_id 都能記錄且可查回」，不斷言 trace_id 值本身。
 """
 
@@ -38,29 +38,29 @@ def store(request, ns):
 
 
 def test_record_then_list_returns_matching_tier_and_reason(store, ns):
-    line_user_id = f"{ns}U1"
-    store.record(line_user_id, RiskAssessment(RiskTier.L2, 0.9, "胸痛"))
-    got = [e for e in store.list_for_line_user(line_user_id) if e.reason == "胸痛"]
+    elder_id = f"{ns}U1"
+    store.record(elder_id, RiskAssessment(RiskTier.L2, 0.9, "胸痛"))
+    got = [e for e in store.list_for_elder(elder_id) if e.reason == "胸痛"]
     assert len(got) == 1
     assert got[0].tier == RiskTier.L2
-    assert got[0].line_user_id == line_user_id
+    assert got[0].elder_id == elder_id
 
 
 def test_list_is_scoped_to_line_user(store, ns):
-    line_user_id_1 = f"{ns}U1"
-    line_user_id_2 = f"{ns}U2"
-    store.record(line_user_id_1, RiskAssessment(RiskTier.L2, 0.9, "頭暈"))
-    store.record(line_user_id_2, RiskAssessment(RiskTier.L3, 0.95, "昏倒"))
-    reasons = {e.reason for e in store.list_for_line_user(line_user_id_1)}
+    elder_id_1 = f"{ns}U1"
+    elder_id_2 = f"{ns}U2"
+    store.record(elder_id_1, RiskAssessment(RiskTier.L2, 0.9, "頭暈"))
+    store.record(elder_id_2, RiskAssessment(RiskTier.L3, 0.95, "昏倒"))
+    reasons = {e.reason for e in store.list_for_elder(elder_id_1)}
     assert "頭暈" in reasons
     assert "昏倒" not in reasons
 
 
 def test_record_accepts_trace_id_and_event_stays_retrievable(store, ns):
-    # trace_id 兩個 adapter 皆接受並保存，但不經 list_for_line_user 對外揭露，
+    # trace_id 兩個 adapter 皆接受並保存，但不經 list_for_elder 對外揭露，
     # 故僅驗證「帶與不帶 trace_id 都能記錄且可查回」，不斷言 trace_id 值。
-    line_user_id = f"{ns}U1"
-    store.record(line_user_id, RiskAssessment(RiskTier.L2, 0.9, "帶追蹤"), trace_id=f"{ns}t1")
-    store.record(line_user_id, RiskAssessment(RiskTier.L1, 0.5, "不帶追蹤"))
-    reasons = {e.reason for e in store.list_for_line_user(line_user_id)}
+    elder_id = f"{ns}U1"
+    store.record(elder_id, RiskAssessment(RiskTier.L2, 0.9, "帶追蹤"), trace_id=f"{ns}t1")
+    store.record(elder_id, RiskAssessment(RiskTier.L1, 0.5, "不帶追蹤"))
+    reasons = {e.reason for e in store.list_for_elder(elder_id)}
     assert reasons == {"帶追蹤", "不帶追蹤"}
