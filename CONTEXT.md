@@ -48,6 +48,14 @@ _Avoid_: dispatcher、broadcaster
 通道帳號對應本人的持久對應（`channel_bindings` 表）：`(channel, external_id) → (principal_type, principal_id)`。一人可同時有 LINE 與 App 綁定；換手機＝改一筆綁定，記憶不動。擴張—收縮遷移已全程完成（1A–1D）：會話主鍵、帳號讀取端、入站解析、出站路由皆以本表為準，`elders.line_user_id`／`guardians.line_user_id` 欄位已退役、綁定由帳號服務直接寫入。
 _Avoid_: mapping、link、account_binding
 
+**App 帳號（GuardianAccount）**：
+家屬的 App 登入身分（email＋scrypt 密碼雜湊，`guardian_accounts` 表）；與 LINE 綁定並存，同一位家屬可同時有兩種入口。長輩不設帳密——以家屬產生的綁定碼換**裝置 token** 永久登入。
+_Avoid_: user、account（泛稱）
+
+**API token（ApiToken）**：
+App 呼叫 REST 的不透明憑證：發放時回明文一次，DB 僅存 SHA-256（`api_tokens` 表），撤銷＝刪列。以 `principal_type`＋`principal_id` 指向本人，家屬與長輩共用同一機制。
+_Avoid_: JWT、session id
+
 **會話（Session）**：
 一位長輩的對話脈絡，以 `elder_id` 識別（通道中立，記憶跟人走）；通道識別（如 `line_user_id`）只活在邊界，於入站閘門解析成本人。
 

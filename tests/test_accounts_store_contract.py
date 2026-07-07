@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 
 from kinsun.accounts.models import (
+    ApiToken,
     Channel,
     ChannelBinding,
     Consent,
@@ -19,6 +20,7 @@ from kinsun.accounts.models import (
     Elder,
     ElderGuardian,
     Guardian,
+    GuardianAccount,
     Invite,
     InviteRole,
     PrincipalType,
@@ -128,3 +130,31 @@ def test_channel_bindings_listed_by_principal(store, ns):
         (Channel.LINE, f"{ns}U-line"),
     ]
     assert store.list_channel_bindings_for_principal(PrincipalType.GUARDIAN, f"{ns}e1") == []
+
+
+def test_guardian_account_roundtrip_by_email(store, ns):
+    store.save_guardian_account(
+        GuardianAccount(f"{ns}g1", f"{ns}son@example.com", "scrypt$16384$8$1$00$00", 1000.0)
+    )
+    got = store.get_guardian_account_by_email(f"{ns}son@example.com")
+    assert got is not None
+    assert got.guardian_id == f"{ns}g1"
+    assert got.password_hash == "scrypt$16384$8$1$00$00"
+    assert got.created_at == 1000.0
+    assert store.get_guardian_account_by_email(f"{ns}nope@example.com") is None
+    # upsert：同 guardian_id 換密碼雜湊。
+    store.save_guardian_account(
+        GuardianAccount(f"{ns}g1", f"{ns}son@example.com", "scrypt$16384$8$1$11$11", 2000.0)
+    )
+    assert store.get_guardian_account_by_email(f"{ns}son@example.com").password_hash == (
+        "scrypt$16384$8$1$11$11"
+    )
+
+
+def test_api_token_roundtrip(store, ns):
+    store.save_api_token(ApiToken(f"{ns}hash1", PrincipalType.GUARDIAN, f"{ns}g1", 1000.0))
+    got = store.get_api_token(f"{ns}hash1")
+    assert got is not None
+    assert got.principal_type == PrincipalType.GUARDIAN
+    assert got.principal_id == f"{ns}g1"
+    assert store.get_api_token(f"{ns}nope") is None
