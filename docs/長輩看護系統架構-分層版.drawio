@@ -1,6 +1,6 @@
 <mxfile host="app.diagrams.net">
   <diagram name="分層版" id="layered-care-arch">
-    <mxGraphModel dx="3228" dy="939" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1460" pageHeight="1760" math="0" shadow="0">
+    <mxGraphModel dx="1768" dy="939" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1460" pageHeight="1760" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
@@ -187,7 +187,7 @@
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="e13" edge="1" parent="1" source="n-risk" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;entryX=0.5;entryY=0;" target="n-notify" value="L2/L3 危急→通知">
+        <mxCell id="e13" edge="1" parent="1" source="n-risk" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;entryX=0.5;entryY=0;" target="n-notify" value="">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
               <mxPoint x="1445" y="725" />
@@ -195,6 +195,11 @@
               <mxPoint x="680" y="90" />
               <mxPoint x="680" y="115" />
             </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="K8MWf7ImFLOBDwCQaYZK-6" connectable="0" parent="e13" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="L2/L3 危急→通知" vertex="1">
+          <mxGeometry relative="1" x="0.2709" y="2" as="geometry">
+            <mxPoint x="-1" as="offset" />
           </mxGeometry>
         </mxCell>
         <mxCell id="e14" edge="1" parent="1" source="n-notify" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n-guardian" value="LINE 推播（現況）">
@@ -259,14 +264,14 @@
             <mxPoint as="offset" />
             <Array as="points">
               <mxPoint x="70" y="755" />
-              <mxPoint x="70" y="1180" />
-              <mxPoint x="500" y="1180" />
+              <mxPoint x="70" y="1160" />
+              <mxPoint x="500" y="1160" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="2uOSCt6s8hO4hmBjRM9g-4" connectable="0" parent="e24" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="assemble 讀情境↔record_turn 寫本輪" vertex="1">
-          <mxGeometry relative="1" x="-0.0426" y="-1" as="geometry">
-            <mxPoint x="11" as="offset" />
+        <mxCell id="K8MWf7ImFLOBDwCQaYZK-3" connectable="0" parent="e24" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="assemble 讀情境↔record_turn 寫本輪" vertex="1">
+          <mxGeometry relative="1" x="0.3876" as="geometry">
+            <mxPoint x="-1" as="offset" />
           </mxGeometry>
         </mxCell>
         <mxCell id="e25" edge="1" parent="1" source="n-recall" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=classic;startFill=1;exitX=0;exitY=0.5;entryX=1;entryY=0.4;" target="n-stm" value="今日對話">
@@ -283,13 +288,18 @@
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="e28" edge="1" parent="1" source="n-binding" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=classic;startFill=1;exitX=1;exitY=0.5;entryX=0.5;entryY=1;" target="n-pg" value="後端各 Store：業務資料讀寫">
+        <mxCell id="e28" edge="1" parent="1" source="n-binding" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=classic;startFill=1;exitX=1;exitY=0.5;entryX=0.5;entryY=1;" target="n-pg" value="">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
               <mxPoint x="1435" y="385" />
               <mxPoint x="1435" y="1390" />
               <mxPoint x="1005" y="1390" />
             </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="K8MWf7ImFLOBDwCQaYZK-5" connectable="0" parent="e28" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="後端各 Store：業務資料讀寫" vertex="1">
+          <mxGeometry relative="1" x="0.7019" y="-2" as="geometry">
+            <mxPoint x="-1" as="offset" />
           </mxGeometry>
         </mxCell>
         <mxCell id="e29" edge="1" parent="1" source="n-audio" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=classic;startFill=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitDx=0;exitDy=0;" target="n-storage" value="音檔存取">
@@ -300,12 +310,17 @@
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="e30" edge="1" parent="1" source="n-obs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=classic;startFill=1;exitX=0;exitY=0.5;entryX=0;entryY=0.25;" target="n-agent" value="監控全鏈路（跨層）">
+        <mxCell id="e30" edge="1" parent="1" source="n-obs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=classic;startFill=1;exitX=0;exitY=0.5;entryX=0;entryY=0.25;" target="n-agent" value="">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
               <mxPoint x="20" y="1500" />
               <mxPoint x="20" y="700" />
             </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="K8MWf7ImFLOBDwCQaYZK-4" connectable="0" parent="e30" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="監控全鏈路（跨層）" vertex="1">
+          <mxGeometry relative="1" x="-0.7282" as="geometry">
+            <mxPoint x="-1" as="offset" />
           </mxGeometry>
         </mxCell>
         <mxCell id="note-lang" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;align=left;verticalAlign=top;fontSize=12;spacingLeft=8;spacingTop=6;" value="&lt;b&gt;語言流（重要）&lt;/b&gt;&lt;div&gt;全程文字＝繁體中文漢字；台語只發生在 TTS 聲學層。台語 TTS 於另一專案微調中（CosyVoice 3 vs VoxCPM2 對比，8 月初出結論）。&lt;/div&gt;" vertex="1">
