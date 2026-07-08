@@ -1,6 +1,6 @@
 <mxfile host="app.diagrams.net">
   <diagram name="分層版" id="layered-care-arch">
-    <mxGraphModel dx="2282" dy="1289" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1460" pageHeight="1760" math="0" shadow="0">
+    <mxGraphModel dx="3228" dy="939" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1460" pageHeight="1760" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
@@ -32,31 +32,31 @@
           <mxGeometry height="65" width="50" x="60" y="125" as="geometry" />
         </mxCell>
         <mxCell id="n-elder-app" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;金孫 App（長輩模式）&lt;/b&gt;&lt;div&gt;Expo React Native&lt;/div&gt;&lt;div&gt;對講機按住說話 → 聽語音回覆·大字介面&lt;/div&gt;" vertex="1">
-          <mxGeometry height="90" width="230" x="150" y="100" as="geometry" />
+          <mxGeometry height="90" width="230" x="250" y="112.5" as="geometry" />
         </mxCell>
         <mxCell id="n-line-frozen" parent="1" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;fillColor=#f5f5f5;strokeColor=#999999;fontColor=#666666;" value="LINE 語音通道（凍結，僅存量長輩）" vertex="1">
-          <mxGeometry height="50" width="230" x="150" y="205" as="geometry" />
+          <mxGeometry height="50" width="230" x="70" y="205" as="geometry" />
         </mxCell>
         <mxCell id="n-notify" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;守護通知（通知家屬）&lt;/b&gt;&lt;div&gt;現況：LINE 推播&lt;/div&gt;&lt;div&gt;App 內通知＝施工中（WBS 甲-6）&lt;/div&gt;" vertex="1">
-          <mxGeometry height="90" width="220" x="620" y="110" as="geometry" />
+          <mxGeometry height="90" width="220" x="570" y="115" as="geometry" />
         </mxCell>
         <mxCell id="n-guardian" parent="1" style="shape=actor;whiteSpace=wrap;html=1;" value="&lt;br&gt;&lt;br&gt;User&lt;br&gt;家屬" vertex="1">
-          <mxGeometry height="65" width="50" x="930" y="125" as="geometry" />
+          <mxGeometry height="65" width="50" x="910" y="125" as="geometry" />
         </mxCell>
         <mxCell id="n-guardian-app" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;金孫 App（家屬模式）&lt;/b&gt;&lt;div&gt;儀表板·用藥/回診設定·健康報告·綁定長輩&lt;/div&gt;" vertex="1">
-          <mxGeometry height="90" width="200" x="1010" y="100" as="geometry" />
+          <mxGeometry height="90" width="200" x="1020" y="112.5" as="geometry" />
         </mxCell>
         <mxCell id="n-admin" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;admin 營運後台&lt;/b&gt;&lt;div&gt;React＋Vite 網頁&lt;/div&gt;&lt;div&gt;（走同一 FastAPI）&lt;/div&gt;" vertex="1">
           <mxGeometry height="90" width="170" x="1240" y="100" as="geometry" />
         </mxCell>
         <mxCell id="n-liff" parent="1" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;fillColor=#f5f5f5;strokeColor=#999999;fontColor=#666666;" value="LIFF 家屬網頁（LINE 內，凍結）" vertex="1">
-          <mxGeometry height="50" width="170" x="1240" y="205" as="geometry" />
+          <mxGeometry height="50" width="170" x="1230" y="205" as="geometry" />
         </mxCell>
         <mxCell id="n-backend" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;FastAPI 後端（web/）&lt;/b&gt;&lt;div&gt;REST API：長輩語音 api·App app_api·後台 admin_api&lt;/div&gt;&lt;div&gt;auth 身分驗證：家屬 token／長輩裝置 token&lt;/div&gt;" vertex="1">
           <mxGeometry height="90" width="330" x="150" y="340" as="geometry" />
         </mxCell>
         <mxCell id="n-channels" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;通道中立入出站（channels/）&lt;/b&gt;&lt;div&gt;inbound 統一入站（app／line adapter）&lt;/div&gt;&lt;div&gt;outbound 出站路由（回覆·提醒·通知）&lt;/div&gt;" vertex="1">
-          <mxGeometry height="90" width="300" x="560" y="340" as="geometry" />
+          <mxGeometry height="90" width="300" x="575" y="340" as="geometry" />
         </mxCell>
         <mxCell id="n-binding" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;綁定與同意（binding/）&lt;/b&gt;&lt;div&gt;邀請碼綁定：家屬↔長輩&lt;/div&gt;&lt;div&gt;ConsentGate 知情同意閘門：未同意不進 AI 對話&lt;/div&gt;" vertex="1">
           <mxGeometry height="90" width="330" x="940" y="340" as="geometry" />
@@ -74,13 +74,13 @@
           <mxGeometry height="100" width="300" x="150" y="675" as="geometry" />
         </mxCell>
         <mxCell id="n-guard" parent="1" style="ellipse;shape=doubleEllipse;whiteSpace=wrap;html=1;aspect=fixed;" value="&lt;b&gt;安全邊界&lt;/b&gt;&lt;div&gt;系統指令（陪伴人設）&lt;/div&gt;&lt;div&gt;不做醫療診斷·免責&lt;/div&gt;" vertex="1">
-          <mxGeometry height="130" width="130" x="540" y="660" as="geometry" />
+          <mxGeometry height="130" width="130" x="680" y="660" as="geometry" />
         </mxCell>
         <mxCell id="n-llm" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;LLM（llm.py）&lt;/b&gt;&lt;div&gt;雲端 Gemini API（gemini-3.1-flash-lite）&lt;/div&gt;&lt;div&gt;In：指令＋記憶＋工具＋文字 → Out：繁中回應&lt;/div&gt;" vertex="1">
-          <mxGeometry height="90" width="250" x="740" y="675" as="geometry" />
+          <mxGeometry height="90" width="250" x="850" y="680" as="geometry" />
         </mxCell>
         <mxCell id="n-risk" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;危急偵測（safety/）&lt;/b&gt;&lt;div&gt;絕對危急詞→L3·LLM 分級＋信心門檻&lt;/div&gt;&lt;div&gt;L0 一般／L1 關注／L2 警示／L3 緊急&lt;/div&gt;&lt;div&gt;GuardianNotifier 觸發通知＋事件落庫&lt;/div&gt;" vertex="1">
-          <mxGeometry height="100" width="270" x="1060" y="675" as="geometry" />
+          <mxGeometry height="100" width="270" x="1120" y="675" as="geometry" />
         </mxCell>
         <mxCell id="n-registry" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="&lt;b&gt;ToolRegistry 工具註冊表&lt;/b&gt;&lt;div&gt;（tools/）&lt;/div&gt;" vertex="1">
           <mxGeometry height="110" width="180" x="150" y="865" as="geometry" />
@@ -92,28 +92,28 @@
           <mxGeometry height="90" width="90" x="485" y="845" as="geometry" />
         </mxCell>
         <mxCell id="n-edurag" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="&lt;b&gt;衛教 RAG（rag/）&lt;/b&gt;&lt;div&gt;檢索·重排·引用&lt;/div&gt;" vertex="1">
-          <mxGeometry height="110" width="140" x="620" y="855" as="geometry" />
+          <mxGeometry height="105" width="140" x="600" y="855" as="geometry" />
         </mxCell>
         <mxCell id="n-edudoc" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="&lt;b&gt;衛教文件庫&lt;/b&gt;&lt;div&gt;清洗→切塊→embeddings（pgvector）&lt;/div&gt;&lt;div&gt;內容入庫待會-14&lt;/div&gt;" vertex="1">
-          <mxGeometry height="110" width="200" x="820" y="855" as="geometry" />
+          <mxGeometry height="110" width="200" x="900" y="855" as="geometry" />
         </mxCell>
         <mxCell id="n-sched" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;自建排程器（scheduler/）&lt;/b&gt;&lt;div&gt;croniter＋scheduler_state·獨立 Worker 進程&lt;/div&gt;" vertex="1">
-          <mxGeometry height="75" width="300" x="150" y="1060" as="geometry" />
+          <mxGeometry height="75" width="300" x="240" y="1060" as="geometry" />
         </mxCell>
         <mxCell id="n-jobs" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;排程任務（各領域 jobs.py）&lt;/b&gt;&lt;div&gt;用藥提醒·回診提醒·定時問候·久未互動關懷&lt;/div&gt;&lt;div&gt;健康摘要報告·夜間記憶整理·音檔/監控清理　→ 經 channels 出站&lt;/div&gt;" vertex="1">
-          <mxGeometry height="75" width="460" x="560" y="1060" as="geometry" />
+          <mxGeometry height="75" width="460" x="640" y="1060" as="geometry" />
         </mxCell>
         <mxCell id="gf" parent="1" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;strokeColor=#9673a6;fillColor=none;verticalAlign=top;align=left;fontColor=#9673a6;fontStyle=1;fontSize=11;spacingLeft=8;spacingTop=4;" value="資料治理（隱私/安全/合規）：身分驗證 · 知情同意 · 週備份＝排定中（WBS 甲-1） · 私有音檔＝排定中（WBS 甲-2）" vertex="1">
           <mxGeometry height="200" width="1270" x="130" y="1205" as="geometry" />
         </mxCell>
         <mxCell id="n-stm" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="&lt;b&gt;短期記憶（memory/shortterm）&lt;/b&gt;&lt;div&gt;今日對話上下文&lt;/div&gt;&lt;div&gt;Postgres 持久化&lt;/div&gt;" vertex="1">
-          <mxGeometry height="140" width="180" x="180" y="1235" as="geometry" />
+          <mxGeometry height="140" width="180" x="150" y="1250" as="geometry" />
         </mxCell>
         <mxCell id="n-recall" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;情境聚合（memory/recall）&lt;/b&gt;&lt;div&gt;SessionMemory：今日對話＋長期記憶＋事實 → 單輪情境&lt;/div&gt;" vertex="1">
           <mxGeometry height="100" width="200" x="400" y="1255" as="geometry" />
         </mxCell>
         <mxCell id="n-ltm" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="&lt;b&gt;長期記憶（memory/longterm）&lt;/b&gt;&lt;div&gt;Mem0 2.0.10（OSS）·語意檢索&lt;/div&gt;&lt;div&gt;向量存 pgvector&lt;/div&gt;" vertex="1">
-          <mxGeometry height="140" width="190" x="650" y="1235" as="geometry" />
+          <mxGeometry height="140" width="190" x="670" y="1250" as="geometry" />
         </mxCell>
         <mxCell id="n-pg" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="&lt;b&gt;Supabase Postgres＋pgvector&lt;/b&gt;&lt;div&gt;長輩/家屬/用藥/回診/風險事件&lt;/div&gt;&lt;div&gt;綁定/同意/報告/監控&lt;/div&gt;" vertex="1">
           <mxGeometry height="140" width="230" x="890" y="1235" as="geometry" />
@@ -128,7 +128,13 @@
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="e2" edge="1" parent="1" source="n-elder-app" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=classic;startFill=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n-backend" value="HTTPS：語音/文字上行·回覆下行">
-          <mxGeometry relative="1" as="geometry" />
+          <mxGeometry relative="1" x="-0.0021" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="365" y="271" />
+              <mxPoint x="315" y="271" />
+            </Array>
+          </mxGeometry>
         </mxCell>
         <mxCell id="e3" edge="1" parent="1" source="n-backend" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n-channels" value="入站正規化">
           <mxGeometry relative="1" as="geometry" />
@@ -148,7 +154,7 @@
         <mxCell id="e8" edge="1" parent="1" source="n-llm" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=0;entryX=0.5;entryY=0;" target="n-agent" value="回應文字（繁中）">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="865" y="650" />
+              <mxPoint x="975" y="650" />
               <mxPoint x="300" y="650" />
             </Array>
           </mxGeometry>
@@ -169,7 +175,7 @@
             <Array as="points">
               <mxPoint x="1425" y="550" />
               <mxPoint x="1425" y="30" />
-              <mxPoint x="265" y="30" />
+              <mxPoint x="365" y="30" />
             </Array>
           </mxGeometry>
         </mxCell>
@@ -177,7 +183,7 @@
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
               <mxPoint x="351" y="810" />
-              <mxPoint x="1195" y="810" />
+              <mxPoint x="1255" y="810" />
             </Array>
           </mxGeometry>
         </mxCell>
@@ -186,7 +192,8 @@
             <Array as="points">
               <mxPoint x="1445" y="725" />
               <mxPoint x="1445" y="90" />
-              <mxPoint x="730" y="90" />
+              <mxPoint x="680" y="90" />
+              <mxPoint x="680" y="115" />
             </Array>
           </mxGeometry>
         </mxCell>
@@ -200,7 +207,9 @@
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
               <mxPoint x="1110" y="260" />
-              <mxPoint x="390" y="260" />
+              <mxPoint x="430" y="260" />
+              <mxPoint x="430" y="320" />
+              <mxPoint x="391" y="320" />
             </Array>
           </mxGeometry>
         </mxCell>
@@ -221,7 +230,7 @@
         <mxCell id="e20" edge="1" parent="1" source="n-edurag" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=1;startArrow=classic;startFill=1;" target="n-registry" value="衛教問答 health_rag">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="690" y="985" />
+              <mxPoint x="670" y="985" />
               <mxPoint x="240" y="985" />
             </Array>
           </mxGeometry>
@@ -229,7 +238,7 @@
         <mxCell id="e21" edge="1" parent="1" source="n-edudoc" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0;exitY=0.5;entryX=1;entryY=0.5;" target="n-edurag" value="清洗·切塊·embeddings 索引">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e22" edge="1" parent="1" source="n-sched" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0;exitY=0.5;entryX=0;entryY=0.5;" target="n-agent" value="定時觸發（問候/提醒/整理）">
+        <mxCell id="e22" edge="1" parent="1" source="n-sched" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0;exitY=0.5;entryX=0;entryY=0.5;" target="n-agent" value="">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
               <mxPoint x="100" y="1097" />
@@ -237,16 +246,27 @@
             </Array>
           </mxGeometry>
         </mxCell>
+        <mxCell id="2uOSCt6s8hO4hmBjRM9g-3" connectable="0" parent="e22" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="定時觸發（問候/提醒/整理）" vertex="1">
+          <mxGeometry relative="1" x="-0.732" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
         <mxCell id="e23" edge="1" parent="1" source="n-sched" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n-jobs" value="到點執行">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e24" edge="1" parent="1" source="n-agent" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=classic;startFill=1;exitX=0;exitY=0.8;entryX=0.5;entryY=0;" target="n-recall" value="assemble 讀情境↔record_turn 寫本輪">
-          <mxGeometry relative="1" as="geometry">
+        <mxCell id="e24" edge="1" parent="1" source="n-agent" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=classic;startFill=1;exitX=0;exitY=0.8;entryX=0.5;entryY=0;" target="n-recall" value="">
+          <mxGeometry relative="1" x="0.0005" as="geometry">
+            <mxPoint as="offset" />
             <Array as="points">
-              <mxPoint x="90" y="755" />
-              <mxPoint x="90" y="1180" />
+              <mxPoint x="70" y="755" />
+              <mxPoint x="70" y="1180" />
               <mxPoint x="500" y="1180" />
             </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="2uOSCt6s8hO4hmBjRM9g-4" connectable="0" parent="e24" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="assemble 讀情境↔record_turn 寫本輪" vertex="1">
+          <mxGeometry relative="1" x="-0.0426" y="-1" as="geometry">
+            <mxPoint x="11" as="offset" />
           </mxGeometry>
         </mxCell>
         <mxCell id="e25" edge="1" parent="1" source="n-recall" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=classic;startFill=1;exitX=0;exitY=0.5;entryX=1;entryY=0.4;" target="n-stm" value="今日對話">
@@ -272,10 +292,10 @@
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="e29" edge="1" parent="1" source="n-audio" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=classic;startFill=1;exitX=0.27;exitY=1;entryX=0.5;entryY=0;" target="n-storage" value="音檔存取">
+        <mxCell id="e29" edge="1" parent="1" source="n-audio" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=classic;startFill=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitDx=0;exitDy=0;" target="n-storage" value="音檔存取">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="1029" y="1180" />
+              <mxPoint x="1105" y="1180" />
               <mxPoint x="1260" y="1180" />
             </Array>
           </mxGeometry>
