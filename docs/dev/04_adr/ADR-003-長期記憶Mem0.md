@@ -17,7 +17,8 @@
 
 **選擇**: Mem0 v1.1（LLM＝Gemini、向量庫＝Supabase pgvector），夜間 3:00 整批 consolidation。
 
-**理由**: 自建版已實測淘汰；Mem0 的 entity linking＋多訊號檢索優於自建。
+**理由**: 自建版已實測淘汰；Mem0 提供現成的「LLM 事實抽取＋去重＋ADD-only 儲存＋語意檢索」管線。
+（2026-07-08 查證修正：entity linking／BM25 多訊號檢索在本專案組態**未生效**——Supabase 後端無 keyword_search、spaCy 未安裝；reranker 未啟用。實際生效的是純語意單路檢索。詳見 `.claude/context/decisions/explore-2026-07-08-0930-mem0功能落差查證.md`；檢索增強取捨將於 07 模組循環登記決策。）
 
 ## 4. 後果
 
