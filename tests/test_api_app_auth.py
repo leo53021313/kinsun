@@ -175,6 +175,23 @@ def test_notifications_lists_guardian_items_recent_first():
     assert all("created_at" in i for i in items)
 
 
+def test_logout_revokes_token():
+    """✅ D-25 修訂（乙-3）：DELETE /sessions 撤銷當前 token（永久記住＋可主動登出）。"""
+    svc = _service()
+    client = _client(svc, notifications=FakeAppNotificationStore())
+    _, token = _guardian_with_token(svc)
+    auth = {"Authorization": f"Bearer {token}"}
+    assert client.get("/api/v1/notifications", headers=auth).status_code == 200
+    assert client.delete("/api/v1/sessions", headers=auth).status_code == 204
+    assert client.get("/api/v1/notifications", headers=auth).status_code == 401
+
+
+def test_logout_requires_valid_token():
+    assert _client().delete("/api/v1/sessions").status_code == 401
+    res = _client().delete("/api/v1/sessions", headers={"Authorization": "Bearer nope"})
+    assert res.status_code == 401
+
+
 def _throttled_client(max_attempts=2):
     return _client(rate_limiter=SlidingWindowRateLimiter(max_attempts, 300.0))
 

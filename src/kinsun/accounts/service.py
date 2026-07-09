@@ -283,6 +283,19 @@ class AccountService:
     def authenticate_token(self, token: str) -> ApiToken | None:
         return self._repo.get_api_token(hashlib.sha256(token.encode()).hexdigest())
 
+    def logout(self, token: str) -> None:
+        """撤銷單一 token（✅ D-25 修訂：token 永久記住＋可主動登出）。"""
+        self._repo.remove_api_token(hashlib.sha256(token.encode()).hexdigest())
+
+    def revoke_elder_device(self, elder_id: str) -> Invite:
+        """作廢長輩裝置並重發綁定碼（✅ D-25 修訂）：
+        撤銷該長輩全部 token＋拆 App 通道綁定（LINE 綁定不動），回新的長輩綁定碼。"""
+        self._repo.remove_api_tokens_for_principal(PrincipalType.ELDER, elder_id)
+        self._repo.remove_channel_bindings_for_principal(
+            Channel.APP, PrincipalType.ELDER, elder_id
+        )
+        return self.generate_invite(elder_id, InviteRole.ELDER)
+
     def app_external_id_of_elder(self, elder_id: str) -> str | None:
         """長輩的 App 通道帳號識別（無 App 綁定回 None；多裝置取排序第一筆）。"""
         for binding in self._repo.list_channel_bindings_for_principal(

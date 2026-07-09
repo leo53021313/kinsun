@@ -1,10 +1,11 @@
-"""登入會話資源：家屬登入（登出撤銷端點於乙-3 增補，D-25）。"""
+"""登入會話資源：家屬登入＋登出撤銷（✅ D-25 修訂：token 永久記住、可主動登出）。"""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from kinsun.accounts.models import PrincipalType
 from kinsun.accounts.service import AccountService, AppAccountError
 from kinsun.web.envelope import ok
 from kinsun.web.ratelimit import SlidingWindowRateLimiter, throttle_or_429
@@ -28,5 +29,14 @@ def create_sessions_router(
         except AppAccountError as exc:
             raise HTTPException(status_code=401, detail=exc.reason) from exc
         return ok({"guardian_id": guardian.guardian_id, "name": guardian.name, "token": token})
+
+    @router.delete("/sessions", status_code=204)
+    def logout(authorization: str = Header(default="")) -> None:
+        """登出＝撤銷當前 token（被盜或換機時的主動撤銷手段）。"""
+        token = authorization.removeprefix("Bearer ").strip()
+        auth = accounts.authenticate_token(token) if token else None
+        if auth is None or auth.principal_type is not PrincipalType.GUARDIAN:
+            raise HTTPException(status_code=401, detail="invalid_token")
+        accounts.logout(token)
 
     return router

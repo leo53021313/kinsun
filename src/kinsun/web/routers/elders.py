@@ -52,4 +52,16 @@ def create_elders_router(
         invite = accounts.generate_invite(elder_id, InviteRole.GUARDIAN)
         return ok({"invite_code": invite.code})
 
+    @router.delete("/elders/{elder_id}/device-bindings")
+    def revoke_device_bindings(
+        elder_id: str, auth: GuardianAuth = Depends(current_guardian)
+    ) -> dict:
+        """作廢長輩裝置重綁（✅ D-25 修訂）：撤銷舊裝置 token＋重發綁定碼。
+
+        回 200＋新綁定碼（非 204——重綁流程需要新碼，省一次額外請求）。
+        """
+        scope.assert_manages(auth, elder_id)
+        invite = accounts.revoke_elder_device(elder_id)
+        return ok({"invite_code": invite.code})
+
     return router

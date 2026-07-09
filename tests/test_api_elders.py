@@ -106,6 +106,42 @@ def test_app_token_full_guardian_flow():
     assert invite.status_code == 201
 
 
+def test_revoke_device_binding_invalidates_and_reissues():
+    """✅ D-25 修訂（乙-3）：家屬作廢長輩裝置——舊裝置 token 失效＋回新綁定碼可重綁。"""
+    from kinsun.accounts.models import ConsentBy
+
+    repo_svc = _accounts()
+    _, token = repo_svc.register_guardian_account("son@example.com", "correct-horse-8", "兒子")
+    client = _client(_FakeVerifier(boom=True), repo_svc)
+    auth = {"Authorization": f"Bearer {token}"}
+    created = client.post("/api/v1/elders", json={"name": "阿嬤"}, headers=auth)
+    elder_id = created.json()["data"]["elder_id"]
+    _, elder_token = repo_svc.bind_elder_device(
+        created.json()["data"]["invite_code"], consent_by=ConsentBy.PROXY
+    )
+    assert repo_svc.authenticate_token(elder_token) is not None
+    assert repo_svc.app_external_id_of_elder(elder_id) is not None
+
+    res = client.delete(f"/api/v1/elders/{elder_id}/device-bindings", headers=auth)
+    assert res.status_code == 200
+    new_code = res.json()["data"]["invite_code"]
+    # 舊裝置 token 與 App 綁定全數作廢；新碼可重新綁回同一位長輩。
+    assert repo_svc.authenticate_token(elder_token) is None
+    assert repo_svc.app_external_id_of_elder(elder_id) is None
+    elder, _ = repo_svc.bind_elder_device(new_code, consent_by=ConsentBy.PROXY)
+    assert elder.elder_id == elder_id
+
+
+def test_revoke_device_binding_rejects_unmanaged():
+    repo_svc = _accounts()
+    _, token = repo_svc.register_guardian_account("son@example.com", "correct-horse-8", "兒子")
+    client = _client(_FakeVerifier(boom=True), repo_svc)
+    res = client.delete(
+        "/api/v1/elders/ghost/device-bindings", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert res.status_code == 404
+
+
 def test_app_token_cannot_touch_others_elder():
     repo_svc = _accounts()  # 內含 U-son 的長輩（LIFF 家屬）
     _, token = repo_svc.register_guardian_account("other@example.com", "correct-horse-8", "路人")

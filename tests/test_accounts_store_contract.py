@@ -158,3 +158,40 @@ def test_api_token_roundtrip(store, ns):
     assert got.principal_type == PrincipalType.GUARDIAN
     assert got.principal_id == f"{ns}g1"
     assert store.get_api_token(f"{ns}nope") is None
+
+
+def test_remove_api_token_revokes_single(store, ns):
+    """✅ D-25 修訂（乙-3）：登出＝撤銷單一 token。"""
+    store.save_api_token(ApiToken(f"{ns}h1", PrincipalType.GUARDIAN, f"{ns}g1", 1000.0))
+    store.save_api_token(ApiToken(f"{ns}h2", PrincipalType.GUARDIAN, f"{ns}g1", 1000.0))
+    store.remove_api_token(f"{ns}h1")
+    assert store.get_api_token(f"{ns}h1") is None
+    assert store.get_api_token(f"{ns}h2") is not None
+
+
+def test_remove_api_tokens_for_principal_revokes_all(store, ns):
+    """✅ D-25 修訂（乙-3）：裝置作廢＝撤銷本人全部 token，不波及他人。"""
+    store.save_api_token(ApiToken(f"{ns}h1", PrincipalType.ELDER, f"{ns}e1", 1000.0))
+    store.save_api_token(ApiToken(f"{ns}h2", PrincipalType.ELDER, f"{ns}e1", 1000.0))
+    store.save_api_token(ApiToken(f"{ns}h3", PrincipalType.ELDER, f"{ns}e2", 1000.0))
+    store.remove_api_tokens_for_principal(PrincipalType.ELDER, f"{ns}e1")
+    assert store.get_api_token(f"{ns}h1") is None
+    assert store.get_api_token(f"{ns}h2") is None
+    assert store.get_api_token(f"{ns}h3") is not None
+
+
+def test_remove_channel_bindings_for_principal_scoped_by_channel(store, ns):
+    """✅ D-25 修訂（乙-3）：作廢只拆 App 通道綁定，LINE 綁定不動。"""
+    store.save_channel_binding(
+        ChannelBinding(Channel.APP, f"{ns}ext1", PrincipalType.ELDER, f"{ns}e1", 1000.0)
+    )
+    store.save_channel_binding(
+        ChannelBinding(Channel.LINE, f"{ns}U1", PrincipalType.ELDER, f"{ns}e1", 1000.0)
+    )
+    store.remove_channel_bindings_for_principal(Channel.APP, PrincipalType.ELDER, f"{ns}e1")
+    channels = {
+        b.channel
+        for b in store.list_channel_bindings_for_principal(PrincipalType.ELDER, f"{ns}e1")
+    }
+    assert Channel.APP not in channels
+    assert Channel.LINE in channels

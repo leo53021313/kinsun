@@ -56,6 +56,13 @@ class AccountStore(Protocol):
     def get_guardian_account_by_email(self, email: str) -> GuardianAccount | None: ...
     def save_api_token(self, token: ApiToken, *, tx: Executor | None = None) -> None: ...
     def get_api_token(self, token_hash: str) -> ApiToken | None: ...
+    def remove_api_token(self, token_hash: str) -> None: ...
+    def remove_api_tokens_for_principal(
+        self, principal_type: PrincipalType, principal_id: str
+    ) -> None: ...
+    def remove_channel_bindings_for_principal(
+        self, channel: Channel, principal_type: PrincipalType, principal_id: str
+    ) -> None: ...
     def transaction(self) -> object: ...
 
 
@@ -280,6 +287,26 @@ class PgAccountStore:
         h, ptype, pid, created = rows[0]
         return ApiToken(h, PrincipalType(ptype), pid, created)
 
+    def remove_api_token(self, token_hash: str) -> None:
+        self._db.execute("DELETE FROM api_tokens WHERE token_hash = %s", (token_hash,))
+
+    def remove_api_tokens_for_principal(
+        self, principal_type: PrincipalType, principal_id: str
+    ) -> None:
+        self._db.execute(
+            "DELETE FROM api_tokens WHERE principal_type = %s AND principal_id = %s",
+            (principal_type.value, principal_id),
+        )
+
+    def remove_channel_bindings_for_principal(
+        self, channel: Channel, principal_type: PrincipalType, principal_id: str
+    ) -> None:
+        self._db.execute(
+            "DELETE FROM channel_bindings "
+            "WHERE channel = %s AND principal_type = %s AND principal_id = %s",
+            (channel.value, principal_type.value, principal_id),
+        )
+
 
 class FakeAccountStore:
     """AccountStore 的記憶體替身（測試用，不碰 DB）。
@@ -393,3 +420,28 @@ class FakeAccountStore:
 
     def get_api_token(self, token_hash: str) -> ApiToken | None:
         return self.api_tokens.get(token_hash)
+
+    def remove_api_token(self, token_hash: str) -> None:
+        self.api_tokens.pop(token_hash, None)
+
+    def remove_api_tokens_for_principal(
+        self, principal_type: PrincipalType, principal_id: str
+    ) -> None:
+        self.api_tokens = {
+            h: t
+            for h, t in self.api_tokens.items()
+            if not (t.principal_type is principal_type and t.principal_id == principal_id)
+        }
+
+    def remove_channel_bindings_for_principal(
+        self, channel: Channel, principal_type: PrincipalType, principal_id: str
+    ) -> None:
+        self.channel_bindings = {
+            key: b
+            for key, b in self.channel_bindings.items()
+            if not (
+                b.channel is channel
+                and b.principal_type is principal_type
+                and b.principal_id == principal_id
+            )
+        }
