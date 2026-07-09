@@ -1,4 +1,4 @@
-"""App 認證三端點測試：註冊／登入／長輩裝置綁定。"""
+"""App 認證三端點測試：註冊／登入／長輩裝置綁定（含 per-IP 節流，✅ D-58）。"""
 
 from datetime import datetime, timedelta, timezone
 from itertools import count
@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from kinsun.accounts.models import InviteRole
 from kinsun.accounts.service import AccountService
 from kinsun.web.app_api import create_app_api_router
+from kinsun.web.ratelimit import SlidingWindowRateLimiter
 from tests.fakes import FakeAccountStore
 
 TPE = timezone(timedelta(hours=8))
@@ -22,9 +23,11 @@ def _service():
     )
 
 
-def _client(svc=None):
+def _client(svc=None, rate_limiter=None):
     app = FastAPI()
-    app.include_router(create_app_api_router(accounts=svc or _service()))
+    app.include_router(
+        create_app_api_router(accounts=svc or _service(), rate_limiter=rate_limiter)
+    )
     return TestClient(app)
 
 
@@ -95,3 +98,41 @@ def test_device_binding_success_and_errors():
     assert again.json()["detail"] == "used"
     # 查無此碼 404。
     assert client.post("/api/app/device-bindings", json={"code": "nope"}).status_code == 404
+
+
+def _throttled_client(max_attempts=2):
+    return _client(rate_limiter=SlidingWindowRateLimiter(max_attempts, 300.0))
+
+
+def test_login_throttled_per_ip_429():
+    client = _throttled_client(max_attempts=2)
+    payload = {"email": "son@example.com", "password": "wrong-password"}
+    assert client.post("/api/app/sessions", json=payload).status_code == 401
+    assert client.post("/api/app/sessions", json=payload).status_code == 401
+    res = client.post("/api/app/sessions", json=payload)
+    assert res.status_code == 429
+    assert res.json()["detail"] == "too_many_requests"
+
+
+def test_throttle_isolated_by_forwarded_ip():
+    """經 ngrok 轉發時以 X-Forwarded-For 第一段辨識來源：不同 IP 不互相影響。"""
+    client = _throttled_client(max_attempts=1)
+    payload = {"email": "son@example.com", "password": "wrong-password"}
+    a = {"X-Forwarded-For": "1.2.3.4"}
+    b = {"X-Forwarded-For": "5.6.7.8, 10.0.0.1"}
+    assert client.post("/api/app/sessions", json=payload, headers=a).status_code == 401
+    assert client.post("/api/app/sessions", json=payload, headers=a).status_code == 429
+    assert client.post("/api/app/sessions", json=payload, headers=b).status_code == 401
+
+
+def test_register_and_binding_throttled_separately():
+    """三端點各自計數：登入被擋不影響註冊；註冊與綁定也各有配額。"""
+    client = _throttled_client(max_attempts=1)
+    login = {"email": "a@example.com", "password": "wrong-password"}
+    client.post("/api/app/sessions", json=login)
+    assert client.post("/api/app/sessions", json=login).status_code == 429
+    reg = {"email": "a@example.com", "password": "correct-horse-8", "name": "兒子"}
+    assert client.post("/api/app/guardians", json=reg).status_code == 201
+    assert client.post("/api/app/guardians", json=reg).status_code == 429
+    assert client.post("/api/app/device-bindings", json={"code": "nope"}).status_code == 404
+    assert client.post("/api/app/device-bindings", json={"code": "nope"}).status_code == 429

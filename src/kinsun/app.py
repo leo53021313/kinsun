@@ -37,6 +37,7 @@ from kinsun.web.admin_api import create_admin_api_router
 from kinsun.web.api import create_api_router
 from kinsun.web.app_api import create_app_api_router
 from kinsun.web.auth import LineIdTokenVerifier
+from kinsun.web.ratelimit import SlidingWindowRateLimiter
 
 
 def build_app() -> FastAPI:
@@ -135,7 +136,15 @@ def build_app() -> FastAPI:
             clock=clock,
         )
     )
-    app.include_router(create_app_api_router(accounts=core.accounts))
+    app.include_router(
+        create_app_api_router(
+            accounts=core.accounts,
+            rate_limiter=SlidingWindowRateLimiter(
+                settings.auth_rate_limit_max_attempts,
+                settings.auth_rate_limit_window_seconds,
+            ),
+        )
+    )
     # App 對講機：JSON 回應固定帶文字（include_text 與 LINE 的訊息額度考量無關）。
     app.include_router(
         create_app_turns_router(
