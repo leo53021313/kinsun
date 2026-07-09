@@ -57,6 +57,7 @@ class Settings:
     invite_max_attempts: int
     database_url: str
     longterm_top_k: int
+    longterm_rerank_enabled: bool
     binding_session_ttl_minutes: int
     medication_morning_hour: int
     medication_noon_hour: int
@@ -129,6 +130,8 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         invite_max_attempts=int(env.get("INVITE_MAX_ATTEMPTS", "5")),
         database_url=_require(env, "DATABASE_URL"),
         longterm_top_k=int(env.get("LONGTERM_TOP_K", "5")),
+        # 記憶檢索重排（✅ D-40 丁-4）：LLM reranker，決議預設開；額度吃緊時可關。
+        longterm_rerank_enabled=_parse_bool(env.get("LONGTERM_RERANK_ENABLED", "true")),
         binding_session_ttl_minutes=int(env.get("BINDING_SESSION_TTL_MINUTES", "10")),
         medication_morning_hour=int(env.get("MEDICATION_MORNING_HOUR", "8")),
         medication_noon_hour=int(env.get("MEDICATION_NOON_HOUR", "12")),
