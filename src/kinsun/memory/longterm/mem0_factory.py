@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import MutableMapping
+from pathlib import Path
 
 from kinsun.config import Settings
 from kinsun.memory.longterm import provenance
@@ -36,9 +37,17 @@ def build_mem0_config(settings: Settings) -> dict:
                 "index_measure": "cosine_distance",
             },
         },
+        # 稽核檔固定進 repo 的 data/（✅ D-65 丙-13）：預設落 ~/.mem0 會隨執行機散落。
+        "history_db_path": str(_history_db_path()),
         "version": "v1.1",
         "custom_instructions": provenance.CUSTOM_FACT_EXTRACTION_PROMPT,
     }
+
+
+def _history_db_path() -> Path:
+    path = Path(__file__).resolve().parents[4] / "data" / "mem0" / "history.db"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def _disable_telemetry(environ: MutableMapping[str, str] | None = None) -> None:

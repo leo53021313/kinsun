@@ -44,3 +44,9 @@ def test_disable_telemetry_sets_env_only_if_absent():
     explicit = {"MEM0_TELEMETRY": "True"}
     _disable_telemetry(explicit)
     assert explicit["MEM0_TELEMETRY"] == "True"
+
+
+def test_config_pins_history_db_under_repo_data():
+    """✅ D-65（丙-13）：mem0 稽核檔固定進 repo 的 data/mem0/，不落執行機家目錄。"""
+    config = build_mem0_config(load_settings(_ENV))
+    assert config["history_db_path"].endswith("data/mem0/history.db")

@@ -249,3 +249,6 @@ frontend/dist-admin/
 
 # 資料庫備份（內含個資，不入庫）
 data/backups/
+
+# mem0 稽核檔（本機 SQLite，D-65 固定路徑）
+data/mem0/

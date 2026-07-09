@@ -139,6 +139,11 @@ def build_app() -> FastAPI:
     verifier = LineIdTokenVerifier(settings.liff_channel_id, settings.liff_timeout_seconds)
     install_error_envelope(app)  # HTTPException → 統一信封（✅ D-23 乙-1）
     install_security_headers(app)  # 基本安全標頭＋CSP（✅ D-57 丙-9）
+
+    @app.get("/healthz")  # 監控探針（✅ D-67 丙-13）；慣例形狀，信封豁免（06 §2.4）
+    def healthz() -> dict:
+        return {"status": "ok"}
+
     # prefix 由此統一指定（✅ D-28 乙-4）；/api/v1 為 D-27 版本前綴。
     app.include_router(
         create_guardian_face_router(
