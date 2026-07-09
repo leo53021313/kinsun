@@ -16,6 +16,12 @@ from kinsun.observability.models import (
     Trace,
 )
 from kinsun.observability.store import TraceStore
+from kinsun.safety.events import RiskEventStore
+
+# 分級器故障告警（✅ D-31＋D-66 admin 半邊）：近 60 分鐘 fail-safe 留痕事件達門檻即回告警。
+# 門檻與視窗暫為常數；隨丙-6（危急門檻 env 化）一併調整。
+FAILSAFE_ALERT_WINDOW_MINUTES = 60
+FAILSAFE_ALERT_THRESHOLD = 3
 
 
 def create_admin_api_router(
@@ -23,6 +29,7 @@ def create_admin_api_router(
     admin_api_key: str,
     traces: TraceStore,
     clock: Callable[[], datetime],
+    risk_events: RiskEventStore | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/admin")
 
@@ -36,6 +43,21 @@ def create_admin_api_router(
         now = clock()
         return now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
 
+    def _alerts(now: datetime) -> list[dict]:
+        if risk_events is None:
+            return []
+        cutoff = (now - timedelta(minutes=FAILSAFE_ALERT_WINDOW_MINUTES)).timestamp()
+        n = risk_events.count_failsafe_since(cutoff)
+        if n < FAILSAFE_ALERT_THRESHOLD:
+            return []
+        return [
+            {
+                "kind": "risk_classifier_failure",
+                "count": n,
+                "window_minutes": FAILSAFE_ALERT_WINDOW_MINUTES,
+            }
+        ]
+
     @router.get("/overview", dependencies=[Depends(require_admin)])
     def overview() -> dict:
         now = clock()
@@ -43,7 +65,7 @@ def create_admin_api_router(
             today_start=_today_start(),
             hourly_start=(now - timedelta(hours=24)).timestamp(),
         )
-        return _overview_json(stats, generated_at=now.timestamp())
+        return {**_overview_json(stats, generated_at=now.timestamp()), "alerts": _alerts(now)}
 
     @router.get("/elders", dependencies=[Depends(require_admin)])
     def list_elders() -> dict:

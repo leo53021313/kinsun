@@ -134,6 +134,7 @@ def build_app() -> FastAPI:
             admin_api_key=settings.admin_api_key,
             traces=core.traces,
             clock=clock,
+            risk_events=risk_events,
         )
     )
     app.include_router(

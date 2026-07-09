@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from kinsun.safety.classifier import RiskClassifier
 from kinsun.safety.keywords import classify_keywords
-from kinsun.safety.tiers import RiskAssessment, RiskTier
+from kinsun.safety.tiers import FAILSAFE_EVENT_REASON, RiskAssessment, RiskTier
 
 
 class RiskDetector:
@@ -33,4 +33,8 @@ class RiskDetector:
             final = RiskTier.L2
         if final == RiskTier.L2 and llm.confidence < self._mid and kw_tier < RiskTier.L2:
             final = RiskTier.L1
+        # ✅ D-31（甲-5）fail-safe：分級器故障（例外或回傳無法解析）且句子非空時，
+        # 不再靜默 L0——保守記 L1 供留痕（pipeline 落庫不通知）。關鍵詞命中者不受影響。
+        if "llm:error" in llm.signals and text.strip() and final < RiskTier.L1:
+            return RiskAssessment(RiskTier.L1, 0.0, FAILSAFE_EVENT_REASON, signals)
         return RiskAssessment(final, llm.confidence, llm.reason, signals)

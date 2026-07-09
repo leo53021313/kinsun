@@ -65,6 +65,12 @@ export function OverviewPage() {
     <section>
       <h2>總覽儀表板</h2>
       {disconnected && <p className="error-banner">連線中斷，重試中…</p>}
+      {(overview.alerts ?? []).map((a) => (
+        <p key={a.kind} className="error-banner">
+          ⚠ 危急分級器最近 {a.window_minutes} 分鐘故障 {a.count} 次——AI
+          分級可能失效、只剩關鍵詞守門，請排查 Gemini 連線（失敗句已保守記 L1 留痕）。
+        </p>
+      ))}
       <div className="stat-grid">
         <div className="card">
           <div>今日訊息量</div>

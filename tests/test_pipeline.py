@@ -3,7 +3,7 @@ import pytest
 from kinsun.agent import CareAgent
 from kinsun.llm import LLMError, Message
 from kinsun.pipeline import VoicePipeline
-from kinsun.safety.tiers import RiskAssessment, RiskTier
+from kinsun.safety.tiers import FAILSAFE_EVENT_REASON, RiskAssessment, RiskTier
 from kinsun.speech.asr import MockAsrClient
 from kinsun.speech.tts import TextBubbleTts, TTSError, TtsResult
 from tests.fakes import FakeRiskEventStore, FakeTraceStore
@@ -271,3 +271,33 @@ def test_process_text_notifies_and_records_on_l3():
     )
     assert notifier.calls == [("u1", RiskTier.L3)]
     assert events.recorded_trace_ids == ["t9"]
+
+
+class StubFailsafeDetector:
+    """模擬分級器故障的保守留痕輸出（✅ D-31）。"""
+
+    def assess(self, text: str) -> RiskAssessment:
+        return RiskAssessment(RiskTier.L1, 0.0, FAILSAFE_EVENT_REASON, ["llm:error"])
+
+
+def test_failsafe_l1_records_without_notifying():
+    """✅ D-31（甲-5）：fail-safe L1 要落庫留痕，但不通知家屬。"""
+    notifier = SpyNotifier()
+    events = FakeRiskEventStore()
+    _text_pipeline(StubFailsafeDetector(), notifier, events).process_text(
+        "今天天氣真好", elder_id="u1", trace_id="t1"
+    )
+    assert notifier.calls == []
+    assert len(events.recorded) == 1
+    assert events.recorded[0][1].reason == FAILSAFE_EVENT_REASON
+
+
+def test_plain_l1_not_recorded():
+    """一般 L1（非 fail-safe）維持不落庫、不通知。"""
+    notifier = SpyNotifier()
+    events = FakeRiskEventStore()
+    _text_pipeline(StubDetector(RiskTier.L1), notifier, events).process_text(
+        "最近睡不好", elder_id="u1"
+    )
+    assert notifier.calls == []
+    assert events.recorded == []

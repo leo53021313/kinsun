@@ -38,6 +38,8 @@ export type StageStats = {
 
 export type HourlyCount = { hour_start: number; turn_count: number };
 
+export type OverviewAlert = { kind: string; count: number; window_minutes: number };
+
 export type Overview = {
   generated_at: number;
   turn_count: number;
@@ -47,6 +49,7 @@ export type Overview = {
   llm_output_tokens: number;
   stages: StageStats[];
   hourly_turns: HourlyCount[];
+  alerts: OverviewAlert[];
 };
 
 export type FeedMessage = {

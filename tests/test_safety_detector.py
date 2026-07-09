@@ -1,5 +1,5 @@
 from kinsun.safety.detector import RiskDetector
-from kinsun.safety.tiers import RiskAssessment, RiskTier
+from kinsun.safety.tiers import FAILSAFE_EVENT_REASON, RiskAssessment, RiskTier
 
 
 class FakeClassifier:
@@ -53,4 +53,24 @@ class _BoomClassifier:
 def test_assess_never_raises_on_classifier_error():
     det = RiskDetector(_BoomClassifier())
     assert det.assess("救命").tier == RiskTier.L3
-    assert det.assess("今天天氣真好").tier == RiskTier.L0
+
+
+def test_classifier_error_nonempty_text_failsafe_l1():
+    """✅ D-31（甲-5）：分級器故障＋非空句 → 保守記 L1 留痕（不再靜默 L0）。"""
+    det = RiskDetector(_BoomClassifier())
+    got = det.assess("今天天氣真好")
+    assert got.tier == RiskTier.L1
+    assert got.reason == FAILSAFE_EVENT_REASON
+    assert "llm:error" in got.signals
+
+
+def test_classifier_error_blank_text_stays_l0():
+    det = RiskDetector(_BoomClassifier())
+    assert det.assess("   ").tier == RiskTier.L0
+
+
+def test_classifier_error_symptom_keyword_keeps_l2():
+    """故障期間關鍵詞仍守門：症狀詞照常 L2（走通知路徑，不降級成留痕）。"""
+    det = RiskDetector(_BoomClassifier())
+    got = det.assess("我一直痛")
+    assert got.tier == RiskTier.L2

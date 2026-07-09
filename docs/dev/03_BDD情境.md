@@ -101,8 +101,8 @@ Feature: 危急偵測分級與通知
     Then 家屬開啟 App 應能看到該警報
     # 真推播於階段 5（D-08）後補：不開 App 也能收到
 
-  @to-be @sad-path
-  Scenario: LLM 分級器故障時的安全網（✅ D-31，甲-5）
+  @as-is @sad-path
+  Scenario: LLM 分級器故障時的安全網（✅ D-31，甲-5a 已完成 2026-07-09）
     Given 危急分級 LLM 服務故障
     When 阿蘭說出不含關鍵詞的非空語句
     Then 該句應保守記為 L1 留痕（不通知家屬、事後可回查）

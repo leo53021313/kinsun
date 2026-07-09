@@ -80,11 +80,14 @@ class VoicePipeline:
         assessment = self._detector.assess(user_text)
         # 危急通知須獨立於回覆生成：先落庫＋通知家屬，才產生回覆。
         # 否則 agent 生成回覆時若丟例外，會讓已偵測到的危急漏通知。
-        if assessment.tier >= RiskTier.L2:
+        # fail-safe L1（分級器故障保守留痕，✅ D-31）只落庫、不通知家屬。
+        is_failsafe = assessment.tier == RiskTier.L1 and "llm:error" in assessment.signals
+        if assessment.tier >= RiskTier.L2 or is_failsafe:
             try:
                 self._risk_events.record(elder_id, assessment, trace_id=trace_id or None)
             except Exception:  # noqa: BLE001 - 落庫失敗不可中斷對話
                 logger.warning("危急事件落庫失敗")
+        if assessment.tier >= RiskTier.L2:
             self._notifier.notify(elder_id, assessment)
         reply_text = self._generate(
             elder_id, user_text, line_user_id=line_user_id, trace_id=trace_id
