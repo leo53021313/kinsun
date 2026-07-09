@@ -1,0 +1,27 @@
+/**
+ * 三端共用用語字典（⏳ D-46，乙-5）：同一個概念三端同一個詞。
+ * 終值經會-9 擱置——先沿用 App 現值；改版只動這裡。
+ * 危急等級（D-72 改三級後 L3 將移除，屆時同步本表與後端）。
+ */
+
+export const TIER_LABELS: Record<number, string> = {
+  0: "一般",
+  1: "關注",
+  2: "需留意",
+  3: "危急",
+};
+
+export function tierLabel(tier: number): string {
+  return TIER_LABELS[tier] ?? `L${tier}`;
+}
+
+export const SLOTS = [
+  { value: "morning", label: "早上" },
+  { value: "noon", label: "中午" },
+  { value: "evening", label: "晚上" },
+  { value: "bedtime", label: "睡前" },
+] as const;
+
+export function slotLabel(value: string): string {
+  return SLOTS.find((s) => s.value === value)?.label ?? value;
+}

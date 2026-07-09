@@ -3,7 +3,7 @@ import { useCallback, useState } from "react";
 import { Alert, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { Button, EmptyHint, ErrorText, Field, Section } from "@/components/ui";
-import { createElder, listElders, listNotifications, type Elder } from "@/lib/api";
+import { createElder, listElders, listNotifications, logoutGuardian, type Elder } from "@/lib/api";
 import { clearSession, loadSession } from "@/lib/auth";
 import { loadSeenAt } from "@/lib/notificationsSeen";
 import { colors, spacing } from "@/lib/theme";
@@ -84,6 +84,8 @@ export default function GuardianHome() {
         text: "登出",
         style: "destructive",
         onPress: async () => {
+          // 先撤銷伺服器端 token（✅ D-25 修訂）；離線也不擋本機登出。
+          await logoutGuardian(token).catch(() => undefined);
           await clearSession();
           router.replace("/role");
         },

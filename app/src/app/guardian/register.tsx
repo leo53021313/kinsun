@@ -27,7 +27,7 @@ export default function GuardianRegister() {
       await saveSession({ role: "guardian", token: session.token, display_name: session.name });
       router.replace("/guardian/home");
     } catch (exc) {
-      if (exc instanceof ApiError && exc.detail === "email_taken") {
+      if (exc instanceof ApiError && exc.code === "email_taken") {
         setError("這個 Email 已經註冊過了，請直接登入。");
       } else {
         setError(exc instanceof Error ? exc.message : "連線失敗，請稍後再試。");

@@ -8,9 +8,9 @@ import { saveSession } from "@/lib/auth";
 import { colors, elder, spacing } from "@/lib/theme";
 
 const BIND_ERRORS: Record<string, string> = {
-  not_found: "找不到這組號碼，請跟家人再確認一次。",
-  used: "這組號碼已經用過了，請家人重新產生一組。",
-  expired: "這組號碼過期了，請家人重新產生一組。",
+  invite_not_found: "找不到這組號碼，請跟家人再確認一次。",
+  invite_used: "這組號碼已經用過了，請家人重新產生一組。",
+  invite_expired: "這組號碼過期了，請家人重新產生一組。",
   too_many_attempts: "試太多次了，請家人重新產生一組。",
 };
 
@@ -29,8 +29,8 @@ export default function ElderBind() {
       await saveSession({ role: "elder", token: session.token, display_name: session.name });
       router.replace("/elder/talk");
     } catch (exc) {
-      if (exc instanceof ApiError && BIND_ERRORS[exc.detail]) {
-        setError(BIND_ERRORS[exc.detail]);
+      if (exc instanceof ApiError && BIND_ERRORS[exc.code]) {
+        setError(BIND_ERRORS[exc.code]);
       } else {
         setError("連不上金孫，請稍後再試一次。");
       }

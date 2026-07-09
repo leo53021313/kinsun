@@ -7,13 +7,7 @@ import { type AppNotification, listNotifications } from "@/lib/api";
 import { loadSession } from "@/lib/auth";
 import { saveSeenAt } from "@/lib/notificationsSeen";
 import { colors, spacing } from "@/lib/theme";
-
-function formatTime(epochSeconds: number): string {
-  const d = new Date(epochSeconds * 1000);
-  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(
-    d.getMinutes(),
-  ).padStart(2, "0")}`;
-}
+import { formatTime } from "kinsun-shared/format";
 
 /** 家屬通知列表（✅ D-12）：警報／提醒／關懷訊息，最近先；開啟即更新已讀水位。 */
 export default function GuardianNotifications() {

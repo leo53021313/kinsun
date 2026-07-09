@@ -13,6 +13,8 @@ import {
   type Medication,
 } from "@/lib/api";
 import { loadSession } from "@/lib/auth";
+import { formatTime } from "kinsun-shared/format";
+import { tierLabel } from "kinsun-shared/terms";
 import { colors, spacing } from "@/lib/theme";
 
 const SLOT_LABELS: Record<string, string> = {
@@ -21,15 +23,6 @@ const SLOT_LABELS: Record<string, string> = {
   evening: "晚上",
   bedtime: "睡前",
 };
-
-const TIER_LABELS: Record<number, string> = { 2: "需留意", 3: "危急" };
-
-function formatTime(epochSeconds: number): string {
-  const d = new Date(epochSeconds * 1000);
-  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(
-    d.getMinutes(),
-  ).padStart(2, "0")}`;
-}
 
 /** 長輩詳情：用藥／回診／健康報告／家屬邀請碼，單頁分區塊。 */
 export default function ElderDetail() {
@@ -99,7 +92,7 @@ export default function ElderDetail() {
             ) : (
               report.risk_events.map((e, i) => (
                 <Text key={`risk-${i}`} style={styles.risk}>
-                  {formatTime(e.created_at)}｜{TIER_LABELS[e.tier] ?? `L${e.tier}`}｜{e.reason}
+                  {formatTime(e.created_at)}｜{tierLabel(e.tier)}｜{e.reason}
                 </Text>
               ))
             )}
