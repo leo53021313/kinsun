@@ -96,6 +96,17 @@ def test_list_feed_merges_sources_desc_and_respects_after_limit():
     assert feed[1].elder_id == "e1"
 
 
+def test_list_feed_before_cursor_pages_history():
+    """✅ D-29（乙-6）：before 游標回翻歷史——只取更舊的訊息、仍最近先。"""
+    store = FakeTraceStore()
+    store.seed_elder("e1", "阿公")
+    store.seed_turn("e1", "user", "早安", 10.0)
+    store.seed_turn("e1", "assistant", "阿公早", 20.0)
+    store.seed_reminder("e1", "medication", "早上用藥提醒", 30.0)
+    feed = store.list_feed(after=0.0, before=30.0, limit=10)
+    assert [i.created_at for i in feed] == [20.0, 10.0]
+
+
 def test_list_timeline_includes_voice_cards_in_time_order():
     store = FakeTraceStore()
     store.seed_elder("e1", "阿公")

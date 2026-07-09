@@ -100,7 +100,9 @@ class TraceStore(Protocol):
         audio_url: str,
     ) -> None: ...
     def get_trace(self, trace_id: str) -> Trace | None: ...
-    def list_feed(self, *, after: float, limit: int) -> list[FeedItem]: ...
+    def list_feed(
+        self, *, after: float, before: float | None = None, limit: int
+    ) -> list[FeedItem]: ...
     def list_timeline_for_elder(
         self,
         *,
@@ -330,24 +332,32 @@ class PgTraceStore:
             elder_name=name_row[0] if name_row else "",
         )
 
-    def list_feed(self, *, after: float, limit: int) -> list[FeedItem]:
+    def list_feed(
+        self, *, after: float, before: float | None = None, limit: int
+    ) -> list[FeedItem]:
+        # before（✅ D-29 回翻歷史）為選配上界：created_at < before；游標值＝epoch 秒。
+        def cond(alias: str) -> str:
+            base = f"{alias}.created_at > %s"
+            return base + (f" AND {alias}.created_at < %s" if before is not None else "")
+
+        one = (after,) if before is None else (after, before)
         rows = self._db.query(
             "SELECT 'turn' AS kind, COALESCE(t.elder_id, ''), COALESCE(e.name, ''), t.role, "
             "t.content, NULL::integer AS tier, NULL::text AS trace_id, t.created_at "
             "FROM turns t LEFT JOIN elders e ON e.elder_id = t.elder_id "
-            "WHERE t.created_at > %s "
+            f"WHERE {cond('t')} "
             "UNION ALL "
             "SELECT 'reminder', r.elder_id, COALESCE(e.name, ''), '', "
             "r.content, NULL, NULL, r.created_at "
             "FROM reminder_logs r LEFT JOIN elders e ON e.elder_id = r.elder_id "
-            "WHERE r.created_at > %s "
+            f"WHERE {cond('r')} "
             "UNION ALL "
             "SELECT 'risk', COALESCE(k.elder_id, ''), COALESCE(e.name, ''), '', k.reason, "
             "k.tier, k.trace_id, k.created_at "
             "FROM risk_events k LEFT JOIN elders e ON e.elder_id = k.elder_id "
-            "WHERE k.created_at > %s "
+            f"WHERE {cond('k')} "
             "ORDER BY created_at DESC LIMIT %s",
-            (after, after, after, limit),
+            (*one, *one, *one, limit),
         )
         return [FeedItem(*r) for r in rows]
 
@@ -673,7 +683,9 @@ class FakeTraceStore:
             elder_name,
         )
 
-    def list_feed(self, *, after: float, limit: int) -> list[FeedItem]:
+    def list_feed(
+        self, *, after: float, before: float | None = None, limit: int
+    ) -> list[FeedItem]:
         items: list[FeedItem] = []
         for elder_id, role, content, ts in self.turns:
             if ts > after:
@@ -717,6 +729,8 @@ class FakeTraceStore:
                         ts,
                     )
                 )
+        if before is not None:
+            items = [i for i in items if i.created_at < before]
         items.sort(key=lambda i: i.created_at, reverse=True)
         return items[:limit]
 

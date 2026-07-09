@@ -123,6 +123,37 @@ def test_messages_limit_validation():
     assert res.status_code == 422
 
 
+def test_messages_before_cursor_and_meta():
+    """✅ D-29（乙-6）：before 回翻歷史＋信封 meta（limit／before／after／has_more）。"""
+    traces = FakeTraceStore()
+    traces.seed_elder("e1", "阿公")
+    traces.seed_turn("e1", "user", "一", TODAY_TS)
+    traces.seed_turn("e1", "user", "二", TODAY_TS + 10)
+    traces.seed_turn("e1", "user", "三", TODAY_TS + 20)
+    res = _client(traces).get(
+        "/api/v1/admin/messages",
+        params={"before": TODAY_TS + 20, "limit": 1},
+        headers=_auth(),
+    )
+    body = res.json()
+    assert [m["content"] for m in body["data"]] == ["二"]
+    assert body["meta"] == {
+        "limit": 1,
+        "before": TODAY_TS + 20,
+        "after": None,
+        "has_more": True,
+    }
+    # 回翻到底：has_more=False。
+    res = _client(traces).get(
+        "/api/v1/admin/messages",
+        params={"before": TODAY_TS + 5, "limit": 10},
+        headers=_auth(),
+    )
+    body = res.json()
+    assert [m["content"] for m in body["data"]] == ["一"]
+    assert body["meta"]["has_more"] is False
+
+
 def test_timeline_for_elder():
     traces = FakeTraceStore()
     traces.seed_elder("e1", "阿公")

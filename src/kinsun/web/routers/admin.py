@@ -84,9 +84,22 @@ def create_admin_router(
     @router.get("/messages", dependencies=[Depends(require_admin)])
     def list_messages(
         after: float = Query(default=0.0, ge=0.0),
+        before: float | None = Query(default=None, ge=0.0),
         limit: int = Query(default=100, ge=1, le=500),
     ) -> dict:
-        return ok([_feed_json(m) for m in traces.list_feed(after=after, limit=limit)])
+        """游標分頁（✅ D-29 乙-6）：after 取更新、before 回翻歷史；游標值＝created_at。"""
+        items = traces.list_feed(after=after, before=before, limit=limit + 1)
+        has_more = len(items) > limit
+        items = items[:limit]
+        return ok(
+            [_feed_json(m) for m in items],
+            meta={
+                "limit": limit,
+                "before": before,
+                "after": after or None,
+                "has_more": has_more,
+            },
+        )
 
     @router.get("/elders/{elder_id}/timeline", dependencies=[Depends(require_admin)])
     def elder_timeline(elder_id: str, date: str = Query(default="")) -> dict:

@@ -52,6 +52,8 @@ def test_feed_overview_and_purge():
     stats = store.get_overview_stats(today_start=0.0, hourly_start=0.0)
     assert any(s.stage == "asr" and s.call_count >= 1 for s in stats.stages)
     assert isinstance(store.list_feed(after=0.0, limit=5), list)
+    # before 游標（✅ D-29 乙-6）：動態 WHERE 條件需在真 Postgres 上驗語法。
+    assert isinstance(store.list_feed(after=0.0, before=9e12, limit=5), list)
     assert isinstance(store.list_elders_with_last_active(), list)
     # 清掉本測試寫入的資料（cutoff 用未來時間即可全清觀測表）
     store.purge_older_than(datetime.now(ZoneInfo("Asia/Taipei")).timestamp() + 1)
