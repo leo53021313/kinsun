@@ -43,12 +43,22 @@ export function clearAdminKey(): void {
   localStorage.removeItem(KEY_STORAGE);
 }
 
+// 401 通知（✅ D-52 丁-7）：金鑰失效時讓 App 殼層切回輸入頁，不必手動重整。
+let onUnauthorized: (() => void) | null = null;
+
+export function setOnUnauthorized(callback: (() => void) | null): void {
+  onUnauthorized = callback;
+}
+
 async function apiFetch<T>(path: string): Promise<{ data: T; meta: Record<string, unknown> | null }> {
   const headers = new Headers();
   const key = getAdminKey();
   if (key) headers.set("X-Admin-Key", key);
   const res = await fetch(path, { headers });
-  if (res.status === 401) clearAdminKey();
+  if (res.status === 401) {
+    clearAdminKey();
+    onUnauthorized?.();
+  }
   let body: Envelope<T>;
   try {
     body = (await res.json()) as Envelope<T>;
