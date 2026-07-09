@@ -431,8 +431,9 @@ class PgTraceStore:
         today_start: float,
         hourly_start: float,
     ) -> OverviewStats:
+        # 活躍長輩以 elder_id 計（✅ D-34 丙-4）：line_user_id 已退役恆 NULL，舊查詢恆 0。
         turn_row = self._db.query_one(
-            "SELECT COUNT(*), COUNT(DISTINCT line_user_id) FROM turns WHERE created_at >= %s",
+            "SELECT COUNT(*), COUNT(DISTINCT elder_id) FROM turns WHERE created_at >= %s",
             (today_start,),
         )
         risk_row = self._db.query_one(
