@@ -40,7 +40,13 @@
           "microphonePermission": "金孫需要麥克風，才能聽您說話。"
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "金孫需要相機，才能幫您掃描家人給的綁定圖。"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

@@ -1,6 +1,8 @@
+import * as Clipboard from "expo-clipboard";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import { Alert, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import QRCode from "react-native-qrcode-svg";
 
 import { Button, EmptyHint, ErrorText, Field, Section } from "@/components/ui";
 import { createElder, listElders, listNotifications, logoutGuardian, type Elder } from "@/lib/api";
@@ -132,8 +134,22 @@ export default function GuardianHome() {
               <Button label="建立長輩檔案" onPress={addElder} busy={busy} />
               {inviteCode ? (
                 <View style={styles.invite}>
-                  <Text style={styles.inviteHint}>長輩綁定碼（在長輩手機輸入一次即可）：</Text>
-                  <Text style={styles.inviteCode}>{inviteCode}</Text>
+                  <Text style={styles.inviteHint}>長輩綁定碼（在長輩手機輸入或掃描一次即可）：</Text>
+                  <Text style={styles.inviteCode} selectable>
+                    {inviteCode}
+                  </Text>
+                  {/* QR 掃碼綁定（✅ D-54 丁-3）：長輩端「掃描家人給的 QR」免打字。 */}
+                  <View style={styles.qrBox}>
+                    <QRCode value={inviteCode} size={168} />
+                  </View>
+                  <Button
+                    label="複製綁定碼"
+                    variant="outline"
+                    onPress={async () => {
+                      await Clipboard.setStringAsync(inviteCode);
+                      Alert.alert("已複製", "綁定碼已複製，可貼給家人或長輩。");
+                    }}
+                  />
                 </View>
               ) : null}
               <ErrorText message={error} />
@@ -191,8 +207,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
     borderRadius: 12,
     padding: spacing.m,
-    gap: spacing.xs,
+    gap: spacing.s,
   },
+  qrBox: { alignSelf: "center", backgroundColor: "#FFFFFF", padding: spacing.m, borderRadius: 12 },
   inviteHint: { fontSize: 14, color: colors.textSoft },
   inviteCode: { fontSize: 26, fontWeight: "800", color: colors.primary, letterSpacing: 1 },
   elderRow: {
