@@ -39,6 +39,8 @@ TTS_PROMPT_WAV = os.environ.get("TTS_PROMPT_WAV", "")
 TTS_PROMPT_TEXT = os.environ.get("TTS_PROMPT_TEXT", "")
 TTS_MAX_CONCURRENCY = int(os.environ.get("TTS_MAX_CONCURRENCY", "1"))
 TTS_MAX_QUEUE = int(os.environ.get("TTS_MAX_QUEUE", "8"))
+# 合成文字長度上限（✅ D-26 乙-7）：缺 text 原本會靜默合成空音，改 400。
+TTS_MAX_TEXT_CHARS = int(os.environ.get("TTS_MAX_TEXT_CHARS", "1000"))
 TTS_PRELOAD = os.environ.get("TTS_PRELOAD", "0").strip().lower() not in {"0", "false", "no", ""}
 
 # zero-shot 逐字稿的 instruct 前綴（見模組 docstring 的 DGX 鎖定說明）。
@@ -145,12 +147,18 @@ async def healthz() -> dict:
 @app.post("/synthesize")
 async def synthesize(payload: dict) -> Response:
     global _inflight
+    # 基本請求驗證（✅ D-26 乙-7）：缺 text 400（原本靜默合成空音）、過長 413。
+    text = str(payload.get("text", "")).strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="missing_text")
+    if len(text) > TTS_MAX_TEXT_CHARS:
+        raise HTTPException(status_code=413, detail="text_too_long")
     if _inflight >= TTS_MAX_CONCURRENCY + TTS_MAX_QUEUE:
-        raise HTTPException(status_code=503, detail="TTS 過載，請稍後再試")
+        raise HTTPException(status_code=503, detail="overloaded")
     _inflight += 1
     try:
         async with _sem:
-            audio, duration_ms = await run_in_threadpool(_synthesize, payload.get("text", ""))
+            audio, duration_ms = await run_in_threadpool(_synthesize, text)
     finally:
         _inflight -= 1
     return Response(

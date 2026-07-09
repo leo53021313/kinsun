@@ -164,6 +164,7 @@ def build_app() -> FastAPI:
             voice=VoiceReplyDelivery(publisher, include_text=True),
             traces=core.traces,
             inbound_audio=inbound_audio,
+            max_audio_bytes=settings.audio_max_upload_bytes,
         ),
         prefix="/api/v1",
     )

@@ -75,6 +75,7 @@ class Settings:
     audio_retention_days: int
     audio_upload_timeout_seconds: float
     audio_signed_url_expires_seconds: int
+    audio_max_upload_bytes: int
     auth_rate_limit_max_attempts: int
     auth_rate_limit_window_seconds: float
     asr_debug_show_transcript: bool
@@ -138,6 +139,8 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         audio_retention_days=int(env.get("AUDIO_RETENTION_DAYS", "2")),
         audio_upload_timeout_seconds=float(env.get("AUDIO_UPLOAD_TIMEOUT_SECONDS", "10")),
         audio_signed_url_expires_seconds=int(env.get("AUDIO_SIGNED_URL_EXPIRES_SECONDS", "86400")),
+        # 對講機單回合音檔上限（✅ D-26 env 化，原 10MB 寫死）。
+        audio_max_upload_bytes=int(env.get("AUDIO_MAX_UPLOAD_BYTES", "10485760")),
         auth_rate_limit_max_attempts=int(env.get("AUTH_RATE_LIMIT_MAX_ATTEMPTS", "10")),
         auth_rate_limit_window_seconds=float(env.get("AUTH_RATE_LIMIT_WINDOW_SECONDS", "300")),
         asr_debug_show_transcript=_parse_bool(env.get("ASR_DEBUG_SHOW_TRANSCRIPT", "false")),

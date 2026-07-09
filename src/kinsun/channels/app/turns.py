@@ -23,7 +23,7 @@ from kinsun.web.envelope import ok
 
 logger = logging.getLogger("kinsun.channels.app")
 
-_MAX_AUDIO_BYTES = 10 * 1024 * 1024  # 對講機單回合上限 10MB
+_DEFAULT_MAX_AUDIO_BYTES = 10 * 1024 * 1024  # 對講機單回合上限預設 10MB（✅ D-26 env 可調）
 
 
 class _NullBinding:
@@ -60,6 +60,7 @@ def create_app_turns_router(
     traces=None,
     inbound_audio=None,
     new_id: Callable[[], str] | None = None,
+    max_audio_bytes: int = _DEFAULT_MAX_AUDIO_BYTES,
 ) -> APIRouter:
     router = APIRouter(tags=["turns"])
     make_id = new_id or (lambda: uuid.uuid4().hex)
@@ -87,7 +88,7 @@ def create_app_turns_router(
         if external_id is None or gate.resolve_elder(Channel.APP, external_id) is None:
             raise HTTPException(status_code=403, detail="consent_revoked")
         audio = await request.body()
-        if len(audio) > _MAX_AUDIO_BYTES:
+        if len(audio) > max_audio_bytes:
             raise HTTPException(status_code=413, detail="audio_too_large")
         collector = _TurnCollector()
         msg = InboundMessage(

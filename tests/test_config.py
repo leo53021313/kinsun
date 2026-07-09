@@ -48,6 +48,7 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.audio_bucket == "tts-audio"
     assert settings.audio_retention_days == 2  # 預設 2 天清理；0＝不清理開關保留
     assert settings.audio_upload_timeout_seconds == 10
+    assert settings.audio_max_upload_bytes == 10 * 1024 * 1024
     assert settings.asr_debug_show_transcript is False
     assert settings.line_text_input_enabled is True
     assert settings.admin_api_key == ""
