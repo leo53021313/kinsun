@@ -36,15 +36,15 @@ def create_medications_router(
 
     def assert_medication_under_elder(elder_id: str, medication_id: str) -> None:
         if medication_id not in {m.medication_id for m in medications.list_for_elder(elder_id)}:
-            raise HTTPException(status_code=404, detail="medication not found")
+            raise HTTPException(status_code=404, detail="medication_not_found")
 
     def parse_slots(raw: list[str]) -> tuple[MedicationSlot, ...]:
         try:
             chosen = {MedicationSlot(s) for s in raw}
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail="invalid slot") from exc
+            raise HTTPException(status_code=400, detail="invalid_slot") from exc
         if not chosen:
-            raise HTTPException(status_code=400, detail="slots required")
+            raise HTTPException(status_code=400, detail="slots_required")
         return tuple(s for s in SLOT_ORDER if s in chosen)
 
     @router.get("/elders/{elder_id}/medications")
@@ -59,7 +59,7 @@ def create_medications_router(
         scope.assert_manages(auth, elder_id)
         name = body.name.strip()
         if not name:
-            raise HTTPException(status_code=400, detail="name required")
+            raise HTTPException(status_code=400, detail="name_required")
         slots = parse_slots(body.slots)
         return ok(_medication_json(medications.save(elder_id, name, slots)))
 
@@ -74,7 +74,7 @@ def create_medications_router(
         assert_medication_under_elder(elder_id, medication_id)
         name = body.name.strip()
         if not name:
-            raise HTTPException(status_code=400, detail="name required")
+            raise HTTPException(status_code=400, detail="name_required")
         slots = parse_slots(body.slots)
         return ok(_medication_json(medications.update(medication_id, elder_id, name, slots)))
 

@@ -28,16 +28,16 @@ def build_current_guardian(
     def current_guardian(authorization: str = Header(default="")) -> GuardianAuth:
         scheme, _, token = authorization.partition(" ")
         if scheme.lower() != "bearer" or not token:
-            raise HTTPException(status_code=401, detail="missing bearer token")
+            raise HTTPException(status_code=401, detail="missing_token")
         api_token = accounts.authenticate_token(token)
         if api_token is not None:
             if api_token.principal_type is not PrincipalType.GUARDIAN:
-                raise HTTPException(status_code=401, detail="invalid token")
+                raise HTTPException(status_code=401, detail="invalid_token")
             return GuardianAuth(api_token.principal_id, None)
         try:
             return GuardianAuth(None, verifier.verify(token))
         except AuthError as exc:
-            raise HTTPException(status_code=401, detail="invalid token") from exc
+            raise HTTPException(status_code=401, detail="invalid_token") from exc
 
     return current_guardian
 
@@ -68,4 +68,4 @@ class GuardianScope:
 
     def assert_manages(self, auth: GuardianAuth, elder_id: str) -> None:
         if elder_id not in {e.elder_id for e in self.elders_of(auth)}:
-            raise HTTPException(status_code=404, detail="elder not found")
+            raise HTTPException(status_code=404, detail="elder_not_found")

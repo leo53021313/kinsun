@@ -36,7 +36,7 @@ def create_elders_router(
     def create_elder(body: CreateElderIn, auth: GuardianAuth = Depends(current_guardian)) -> dict:
         name = body.name.strip()
         if not name:
-            raise HTTPException(status_code=400, detail="name required")
+            raise HTTPException(status_code=400, detail="name_required")
         if auth.guardian_id is not None:
             elder = accounts.create_elder_for_guardian(auth.guardian_id, name)
         else:

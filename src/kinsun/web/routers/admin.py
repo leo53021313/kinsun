@@ -36,9 +36,9 @@ def create_admin_router(
 
     def require_admin(x_admin_key: str = Header(default="", alias="X-Admin-Key")) -> None:
         if not admin_api_key:
-            raise HTTPException(status_code=503, detail="admin api disabled")
+            raise HTTPException(status_code=503, detail="admin_disabled")
         if not hmac.compare_digest(x_admin_key.encode(), admin_api_key.encode()):
-            raise HTTPException(status_code=401, detail="invalid admin key")
+            raise HTTPException(status_code=401, detail="invalid_admin_key")
 
     def _today_start() -> float:
         now = clock()
@@ -78,7 +78,7 @@ def create_admin_router(
             None,
         )
         if elder is None:
-            raise HTTPException(status_code=404, detail="elder not found")
+            raise HTTPException(status_code=404, detail="elder_not_found")
         return elder
 
     @router.get("/messages", dependencies=[Depends(require_admin)])
@@ -95,7 +95,7 @@ def create_admin_router(
             try:
                 day = datetime.strptime(date, "%Y-%m-%d").date()
             except ValueError as exc:
-                raise HTTPException(status_code=400, detail="invalid date") from exc
+                raise HTTPException(status_code=400, detail="invalid_date") from exc
         else:
             day = clock().date()
         # 台灣無日光節約時間，一天固定 86400 秒。
@@ -116,7 +116,7 @@ def create_admin_router(
     def trace_detail(trace_id: str) -> dict:
         trace = traces.get_trace(trace_id)
         if trace is None:
-            raise HTTPException(status_code=404, detail="trace not found")
+            raise HTTPException(status_code=404, detail="trace_not_found")
         return ok(_trace_json(trace))
 
     return router

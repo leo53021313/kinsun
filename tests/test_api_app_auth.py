@@ -60,12 +60,26 @@ def test_register_duplicate_email_409():
     assert res.json()["error"]["code"] == "email_taken"
 
 
-def test_register_short_password_422():
+def test_register_short_password_422_validation_envelope():
+    """✅ D-24（乙-2）：pydantic 驗證錯誤統一改寫為信封＋meta.fields 明細。"""
     res = _client().post(
         "/api/v1/guardians",
         json={"email": "son@example.com", "password": "short", "name": "兒子"},
     )
     assert res.status_code == 422
+    body = res.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "validation_error"
+    assert body["error"]["message"]
+    assert body["meta"]["fields"][0]["field"].endswith("password")
+
+
+def test_error_message_is_human_readable():
+    """✅ D-24（乙-2）：error.message 為繁中人話，UI 可直接顯示。"""
+    res = _client().post(
+        "/api/v1/sessions", json={"email": "no@example.com", "password": "wrong-password"}
+    )
+    assert res.json()["error"]["message"] == "帳號或密碼不正確"
 
 
 def test_login_success_and_failure():
@@ -101,7 +115,7 @@ def test_device_binding_success_and_errors():
     # 一次性：再用同碼 409 used。
     again = client.post("/api/v1/device-bindings", json={"code": invite.code})
     assert again.status_code == 409
-    assert again.json()["error"]["code"] == "used"
+    assert again.json()["error"]["code"] == "invite_used"
     # 查無此碼 404。
     assert client.post("/api/v1/device-bindings", json={"code": "nope"}).status_code == 404
 

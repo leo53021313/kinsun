@@ -13,8 +13,13 @@ from kinsun.accounts.service import AccountService, InviteError
 from kinsun.web.envelope import ok
 from kinsun.web.ratelimit import SlidingWindowRateLimiter, throttle_or_429
 
-# InviteError reason → HTTP 狀態碼：查無是 404，其餘皆屬「碼已不可用」的衝突。
-_INVITE_STATUS = {"not_found": 404, "used": 409, "expired": 409, "too_many_attempts": 409}
+# 邀請碼錯誤 → (HTTP, 標準錯誤碼)：查無 404，其餘為「碼已不可用」的衝突（✅ D-24）。
+_INVITE_STATUS = {
+    "not_found": (404, "invite_not_found"),
+    "used": (409, "invite_used"),
+    "expired": (409, "invite_expired"),
+    "too_many_attempts": (409, "too_many_attempts"),
+}
 
 
 class DeviceBindingIn(BaseModel):
@@ -33,9 +38,8 @@ def create_device_bindings_router(
             # App 端綁定碼由家屬產生、多半由家屬替長輩操作 → 同意主體記 PROXY。
             elder, token = accounts.bind_elder_device(body.code, consent_by=ConsentBy.PROXY)
         except InviteError as exc:
-            raise HTTPException(
-                status_code=_INVITE_STATUS.get(exc.reason, 409), detail=exc.reason
-            ) from exc
+            status, code = _INVITE_STATUS.get(exc.reason, (409, exc.reason))
+            raise HTTPException(status_code=status, detail=code) from exc
         return ok({"elder_id": elder.elder_id, "name": elder.name, "token": token})
 
     return router

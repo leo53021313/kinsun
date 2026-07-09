@@ -33,15 +33,15 @@ def create_appointments_router(
 
     def assert_appointment_under_elder(elder_id: str, appointment_id: str) -> None:
         if appointment_id not in {a.appointment_id for a in appointments.list_for_elder(elder_id)}:
-            raise HTTPException(status_code=404, detail="appointment not found")
+            raise HTTPException(status_code=404, detail="appointment_not_found")
 
     def parse_appt_date(raw: str) -> str:
         try:
             parsed = datetime.strptime(raw.strip(), "%Y-%m-%d").date()
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail="invalid date") from exc
+            raise HTTPException(status_code=400, detail="invalid_date") from exc
         if parsed < clock().date():
-            raise HTTPException(status_code=400, detail="date in past")
+            raise HTTPException(status_code=400, detail="date_in_past")
         return parsed.isoformat()
 
     @router.get("/elders/{elder_id}/appointments")
@@ -56,7 +56,7 @@ def create_appointments_router(
         scope.assert_manages(auth, elder_id)
         label = body.label.strip()
         if not label:
-            raise HTTPException(status_code=400, detail="label required")
+            raise HTTPException(status_code=400, detail="label_required")
         date = parse_appt_date(body.date)
         return ok(_appointment_json(appointments.save(elder_id, date, label)))
 
@@ -71,7 +71,7 @@ def create_appointments_router(
         assert_appointment_under_elder(elder_id, appointment_id)
         label = body.label.strip()
         if not label:
-            raise HTTPException(status_code=400, detail="label required")
+            raise HTTPException(status_code=400, detail="label_required")
         date = parse_appt_date(body.date)
         return ok(_appointment_json(appointments.update(appointment_id, elder_id, date, label)))
 
