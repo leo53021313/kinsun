@@ -131,6 +131,16 @@ REMINDER_LOGS_DDL = (
     "ON reminder_logs (elder_id, created_at);"
 )
 
+# 危急通知送達紀錄（✅ D-36，丙-7）：每位家屬成功／失敗獨立留痕。
+RISK_NOTIFICATION_LOGS_DDL = (
+    "CREATE TABLE IF NOT EXISTS risk_notification_logs ("
+    "risk_notification_log_id TEXT PRIMARY KEY, elder_id TEXT NOT NULL, "
+    "guardian_id TEXT NOT NULL, tier INTEGER NOT NULL, delivered BOOLEAN NOT NULL, "
+    "created_at DOUBLE PRECISION NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS idx_risk_notification_logs_elder_created "
+    "ON risk_notification_logs (elder_id, created_at);"
+)
+
 # App 內通知（✅ D-12，甲-6）：App 出站 adapter 落地訊息，登入後拉取。
 APP_NOTIFICATIONS_DDL = (
     "CREATE TABLE IF NOT EXISTS app_notifications ("
@@ -237,6 +247,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(RAG_DDL)
         conn.execute(RISK_EVENTS_DDL)
         conn.execute(REMINDER_LOGS_DDL)
+        conn.execute(RISK_NOTIFICATION_LOGS_DDL)
         conn.execute(APP_NOTIFICATIONS_DDL)
         conn.execute(CONVERSATION_SUMMARIES_DDL)
         conn.execute(OBSERVABILITY_DDL)

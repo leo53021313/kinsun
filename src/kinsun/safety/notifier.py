@@ -51,12 +51,35 @@ def _format_alert(assessment: RiskAssessment) -> str:
     return text
 
 
+class DeliveryLog(Protocol):
+    """送達留痕插座（✅ D-36）：每位家屬成功／失敗各記一筆。"""
+
+    def record(
+        self, elder_id: str, guardian_id: str, tier: RiskTier, *, delivered: bool
+    ) -> None: ...
+
+
 class GuardianNotifier:
     """危急時依升級順序、經綁定通道推播給所有家屬。任何失敗只記錄、不中斷對話。"""
 
-    def __init__(self, directory: GuardianDirectory, router: TextSender) -> None:
+    def __init__(
+        self,
+        directory: GuardianDirectory,
+        router: TextSender,
+        *,
+        deliveries: DeliveryLog | None = None,
+    ) -> None:
         self._directory = directory
         self._router = router
+        self._deliveries = deliveries
+
+    def _record_delivery(self, elder_id: str, guardian_id: str, tier, *, delivered: bool) -> None:
+        if self._deliveries is None:
+            return
+        try:
+            self._deliveries.record(elder_id, guardian_id, tier, delivered=delivered)
+        except Exception:  # noqa: BLE001 - 留痕失敗不可反噬通知
+            logger.warning("送達紀錄寫入失敗 elder=%s guardian=%s", elder_id, guardian_id)
 
     def notify(self, elder_id: str, assessment: RiskAssessment) -> None:
         try:
@@ -72,8 +95,13 @@ class GuardianNotifier:
             text = _format_alert(assessment)
             sent = 0
             for guardian_id in targets:
-                if self._router.send_text(PrincipalType.GUARDIAN, guardian_id, text) > 0:
+                delivered = self._router.send_text(PrincipalType.GUARDIAN, guardian_id, text) > 0
+                if delivered:
                     sent += 1
+                # 送達與否獨立留痕（✅ D-36）：「家屬當時有沒有收到」查得到。
+                self._record_delivery(
+                    elder_id, guardian_id, assessment.tier, delivered=delivered
+                )
             logger.warning(
                 "已通知家屬 elder=%s tier=%s 成功=%d/%d",
                 elder_id,

@@ -28,6 +28,7 @@ from kinsun.config import load_dotenv, load_settings
 from kinsun.medications.flow import MedicationMenu
 from kinsun.pipeline import VoicePipeline
 from kinsun.safety.classifier import LlmRiskClassifier
+from kinsun.safety.deliveries import PgRiskNotificationLogStore
 from kinsun.safety.detector import RiskDetector
 from kinsun.safety.events import PgRiskEventStore
 from kinsun.safety.notifier import GuardianNotifier
@@ -77,7 +78,13 @@ def build_app() -> FastAPI:
             high=settings.safety_confidence_high,
             mid=settings.safety_confidence_mid,
         ),
-        notifier=GuardianNotifier(core.accounts, core.router),
+        notifier=GuardianNotifier(
+            core.accounts,
+            core.router,
+            deliveries=PgRiskNotificationLogStore(
+                db, clock=clock, new_id=lambda: uuid.uuid4().hex
+            ),
+        ),
         risk_events=risk_events,
         traces=core.traces,
         model_name=settings.gemini_model,
