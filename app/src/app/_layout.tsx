@@ -1,8 +1,17 @@
 import { Stack } from "expo-router";
 
+import { SessionProvider } from "@/lib/SessionProvider";
 import { colors } from "@/lib/theme";
 
 export default function RootLayout() {
+  return (
+    <SessionProvider>
+      <RootStack />
+    </SessionProvider>
+  );
+}
+
+function RootStack() {
   return (
     <Stack
       screenOptions={{

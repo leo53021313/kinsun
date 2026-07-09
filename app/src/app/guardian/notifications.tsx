@@ -4,26 +4,30 @@ import { FlatList, StyleSheet, Text, View } from "react-native";
 
 import { EmptyHint, ErrorText } from "@/components/ui";
 import { type AppNotification, listNotifications } from "@/lib/api";
-import { loadSession } from "@/lib/auth";
 import { saveSeenAt } from "@/lib/notificationsSeen";
+import { useSession } from "@/lib/SessionProvider";
 import { colors, spacing } from "@/lib/theme";
 import { formatTime } from "kinsun-shared/format";
 
 /** 家屬通知列表（✅ D-12）：警報／提醒／關懷訊息，最近先；開啟即更新已讀水位。 */
 export default function GuardianNotifications() {
   const router = useRouter();
+  const { loading: sessionLoading, session } = useSession();
   const [items, setItems] = useState<AppNotification[]>([]);
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
+      if (sessionLoading) {
+        return;
+      }
+      if (!session || session.role !== "guardian") {
+        router.replace("/role");
+        return;
+      }
       let alive = true;
-      loadSession().then(async (session) => {
-        if (!session || session.role !== "guardian") {
-          router.replace("/role");
-          return;
-        }
+      (async () => {
         try {
           const list = await listNotifications(session.token);
           if (alive) {
@@ -39,11 +43,11 @@ export default function GuardianNotifications() {
             setLoaded(true);
           }
         }
-      });
+      })();
       return () => {
         alive = false;
       };
-    }, [router]),
+    }, [router, sessionLoading, session]),
   );
 
   return (

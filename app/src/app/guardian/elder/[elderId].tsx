@@ -12,7 +12,7 @@ import {
   type HealthReport,
   type Medication,
 } from "@/lib/api";
-import { loadSession } from "@/lib/auth";
+import { useSession } from "@/lib/SessionProvider";
 import { formatTime } from "kinsun-shared/format";
 import { tierLabel } from "kinsun-shared/terms";
 import { colors, spacing } from "@/lib/theme";
@@ -33,15 +33,15 @@ export default function ElderDetail() {
   const [inviteCode, setInviteCode] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [token, setToken] = useState("");
+  const { session } = useSession();
+  const token = session?.token ?? "";
 
   useEffect(() => {
+    if (!session || !elderId) {
+      return;
+    }
     let alive = true;
-    loadSession().then(async (session) => {
-      if (!session || !elderId) {
-        return;
-      }
-      setToken(session.token);
+    (async () => {
       try {
         const [meds, appts, hr] = await Promise.all([
           listMedications(elderId, session.token),
@@ -58,11 +58,11 @@ export default function ElderDetail() {
           setError(exc instanceof Error ? exc.message : "載入失敗");
         }
       }
-    });
+    })();
     return () => {
       alive = false;
     };
-  }, [elderId]);
+  }, [elderId, session]);
 
   async function makeInvite() {
     if (!elderId) {

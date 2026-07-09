@@ -4,14 +4,15 @@ import { Alert, FlatList, Pressable, StyleSheet, Text, View } from "react-native
 
 import { Button, EmptyHint, ErrorText, Field, Section } from "@/components/ui";
 import { createElder, listElders, listNotifications, logoutGuardian, type Elder } from "@/lib/api";
-import { clearSession, loadSession } from "@/lib/auth";
 import { loadSeenAt } from "@/lib/notificationsSeen";
+import { useSession } from "@/lib/SessionProvider";
 import { colors, spacing } from "@/lib/theme";
 
 /** 家屬首頁：長輩列表＋新增長輩（成功即顯示長輩綁定碼）。 */
 export default function GuardianHome() {
   const router = useRouter();
-  const [token, setToken] = useState("");
+  const { loading, session, signOut } = useSession();
+  const token = session?.token ?? "";
   const [elders, setElders] = useState<Elder[]>([]);
   const [newName, setNewName] = useState("");
   const [inviteCode, setInviteCode] = useState("");
@@ -21,13 +22,15 @@ export default function GuardianHome() {
 
   useFocusEffect(
     useCallback(() => {
+      if (loading) {
+        return;
+      }
+      if (!session || session.role !== "guardian") {
+        router.replace("/role");
+        return;
+      }
       let alive = true;
-      loadSession().then(async (session) => {
-        if (!session || session.role !== "guardian") {
-          router.replace("/role");
-          return;
-        }
-        setToken(session.token);
+      (async () => {
         try {
           const list = await listElders(session.token);
           if (alive) {
@@ -50,11 +53,11 @@ export default function GuardianHome() {
         } catch {
           // 通知載入失敗時 badge 保持 0，主功能不受影響。
         }
-      });
+      })();
       return () => {
         alive = false;
       };
-    }, [router]),
+    }, [router, loading, session]),
   );
 
   async function addElder() {
@@ -86,7 +89,7 @@ export default function GuardianHome() {
         onPress: async () => {
           // 先撤銷伺服器端 token（✅ D-25 修訂）；離線也不擋本機登出。
           await logoutGuardian(token).catch(() => undefined);
-          await clearSession();
+          await signOut();
           router.replace("/role");
         },
       },

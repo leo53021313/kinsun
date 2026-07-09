@@ -4,7 +4,7 @@ import { StyleSheet, Text, TextInput, View } from "react-native";
 
 import { Button } from "@/components/ui";
 import { ApiError, bindElderDevice } from "@/lib/api";
-import { saveSession } from "@/lib/auth";
+import { useSession } from "@/lib/SessionProvider";
 import { colors, elder, spacing } from "@/lib/theme";
 
 const BIND_ERRORS: Record<string, string> = {
@@ -17,6 +17,7 @@ const BIND_ERRORS: Record<string, string> = {
 /** 長輩綁定：輸入家人給的綁定碼，一次就好，之後永久登入。 */
 export default function ElderBind() {
   const router = useRouter();
+  const { signIn } = useSession();
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -26,7 +27,7 @@ export default function ElderBind() {
     setBusy(true);
     try {
       const session = await bindElderDevice(code.trim());
-      await saveSession({ role: "elder", token: session.token, display_name: session.name });
+      await signIn({ role: "elder", token: session.token, display_name: session.name });
       router.replace("/elder/talk");
     } catch (exc) {
       if (exc instanceof ApiError && BIND_ERRORS[exc.code]) {

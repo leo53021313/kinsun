@@ -12,7 +12,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AvatarPlaceholder, type AvatarState } from "@/components/AvatarPlaceholder";
 import { ApiError, postTurn } from "@/lib/api";
-import { clearSession, loadSession } from "@/lib/auth";
+import { useSession } from "@/lib/SessionProvider";
 import { colors, elder, spacing } from "@/lib/theme";
 
 const IDLE_HINT = "按住下面的大按鈕，跟金孫說話";
@@ -28,14 +28,18 @@ export default function ElderTalk() {
   const [replyText, setReplyText] = useState(IDLE_HINT);
   const [micReady, setMicReady] = useState(false);
 
+  const { loading: sessionLoading, session, signOut } = useSession();
+
   useEffect(() => {
+    if (sessionLoading) {
+      return;
+    }
+    if (!session || session.role !== "elder") {
+      router.replace("/role");
+      return;
+    }
     let alive = true;
     (async () => {
-      const session = await loadSession();
-      if (!session || session.role !== "elder") {
-        router.replace("/role");
-        return;
-      }
       if (alive) {
         setToken(session.token);
       }
@@ -51,7 +55,7 @@ export default function ElderTalk() {
     return () => {
       alive = false;
     };
-  }, [router]);
+  }, [router, sessionLoading, session]);
 
   async function startRecording() {
     if (!micReady || avatar === "thinking") {
@@ -93,7 +97,7 @@ export default function ElderTalk() {
     } catch (exc) {
       if (exc instanceof ApiError && exc.status === 403) {
         setReplyText("這台手機的綁定失效了，請家人重新給您一組號碼。");
-        await clearSession();
+        await signOut();
       } else {
         setReplyText(FALLBACK_TEXT);
       }

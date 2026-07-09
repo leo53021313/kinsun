@@ -4,11 +4,12 @@ import { KeyboardAvoidingView, Platform, StyleSheet, View } from "react-native";
 
 import { Button, ErrorText, Field } from "@/components/ui";
 import { ApiError, registerGuardian } from "@/lib/api";
-import { saveSession } from "@/lib/auth";
+import { useSession } from "@/lib/SessionProvider";
 import { colors, spacing } from "@/lib/theme";
 
 export default function GuardianRegister() {
   const router = useRouter();
+  const { signIn } = useSession();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -24,7 +25,7 @@ export default function GuardianRegister() {
     setBusy(true);
     try {
       const session = await registerGuardian(email, password, name.trim());
-      await saveSession({ role: "guardian", token: session.token, display_name: session.name });
+      await signIn({ role: "guardian", token: session.token, display_name: session.name });
       router.replace("/guardian/home");
     } catch (exc) {
       if (exc instanceof ApiError && exc.code === "email_taken") {
