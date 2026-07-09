@@ -11,7 +11,8 @@ from kinsun.web.ratelimit import SlidingWindowRateLimiter, throttle_or_429
 
 
 class RegisterIn(BaseModel):
-    email: str = Field(min_length=3, max_length=254)
+    # email 基本格式（✅ D-61 丙-11）：不引入 email-validator 依賴，擋明顯錯誤即可。
+    email: str = Field(min_length=3, max_length=254, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     password: str = Field(min_length=8, max_length=128)
     name: str = Field(min_length=1, max_length=50)
 

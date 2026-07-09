@@ -87,6 +87,10 @@ def create_app_turns_router(
         external_id = accounts.app_external_id_of_elder(elder_id)
         if external_id is None or gate.resolve_elder(Channel.APP, external_id) is None:
             raise HTTPException(status_code=403, detail="consent_revoked")
+        # content-type 驗證（✅ D-61 丙-11）：只收音訊，擋誤傳的 JSON／文字。
+        content_type = request.headers.get("content-type", "")
+        if not content_type.startswith("audio/"):
+            raise HTTPException(status_code=415, detail="unsupported_media_type")
         audio = await request.body()
         if len(audio) > max_audio_bytes:
             raise HTTPException(status_code=413, detail="audio_too_large")

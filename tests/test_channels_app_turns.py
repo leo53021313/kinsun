@@ -162,6 +162,20 @@ def test_turn_blocked_after_consent_revoked():
     assert res.json()["error"]["code"] == "consent_revoked"
 
 
+def test_turn_rejects_non_audio_content_type():
+    """✅ D-61（丙-11）：對講機只收音訊 content-type，誤傳回 415。"""
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    client = _client(svc)
+    res = client.post(
+        "/api/v1/turns",
+        content=b"{}",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+    )
+    assert res.status_code == 415
+    assert res.json()["error"]["code"] == "unsupported_media_type"
+
+
 def test_turn_rejects_oversized_audio():
     svc = _service()
     _, token = _bound_elder_token(svc)

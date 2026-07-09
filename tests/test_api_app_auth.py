@@ -192,6 +192,33 @@ def test_logout_requires_valid_token():
     assert res.status_code == 401
 
 
+def test_login_unknown_email_still_runs_password_verify(monkeypatch):
+    """✅ D-60（丙-11）：查無帳號也跑一次假雜湊驗證，補平計時信號。"""
+    import kinsun.accounts.service as service_module
+
+    calls = []
+    monkeypatch.setattr(
+        service_module, "verify_password", lambda pw, stored: calls.append(stored) or False
+    )
+    svc = _service()
+    client = _client(svc)
+    res = client.post(
+        "/api/v1/sessions", json={"email": "no@example.com", "password": "whatever-8"}
+    )
+    assert res.status_code == 401
+    assert len(calls) == 1  # 不存在的帳號也有一次驗證運算
+
+
+def test_register_rejects_malformed_email():
+    """✅ D-61（丙-11）：email 基本格式驗證（422 validation_error）。"""
+    res = _client().post(
+        "/api/v1/guardians",
+        json={"email": "not-an-email", "password": "correct-horse-8", "name": "兒子"},
+    )
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+
+
 def _throttled_client(max_attempts=2):
     return _client(rate_limiter=SlidingWindowRateLimiter(max_attempts, 300.0))
 

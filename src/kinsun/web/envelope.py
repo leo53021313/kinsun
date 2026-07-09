@@ -40,6 +40,7 @@ ERROR_MESSAGES: dict[str, str] = {
     "date_in_past": "日期不可早於今天",
     "validation_error": "輸入資料格式不正確",
     "audio_too_large": "音檔太大，請縮短錄音再試一次",
+    "unsupported_media_type": "上傳格式不正確，請使用語音錄音",
     "admin_disabled": "服務未開放",
     "overloaded": "服務忙碌中，請稍後再試",
 }

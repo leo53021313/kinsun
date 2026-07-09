@@ -29,6 +29,10 @@ from kinsun.accounts.store import AccountStore
 
 CONSENT_VERSION = "1.0"
 
+# 登入時間差防護（✅ D-60 丙-11）：帳號不存在時仍對此假雜湊跑一次驗證，
+# 讓「查無帳號」與「密碼錯誤」耗時相近，降低帳號枚舉的計時信號。
+_TIMING_DUMMY_HASH = hash_password("kinsun-timing-dummy")
+
 
 class InviteError(Exception):
     def __init__(self, reason: str) -> None:
@@ -240,7 +244,10 @@ class AccountService:
     def login_guardian(self, email: str, password: str) -> tuple[Guardian, str]:
         """家屬登入：查無帳號或密碼錯一律 invalid_credentials（不洩漏帳號存在性）。"""
         account = self._repo.get_guardian_account_by_email(email.strip().lower())
-        if account is None or not verify_password(password, account.password_hash):
+        if account is None:
+            verify_password(password, _TIMING_DUMMY_HASH)  # 補時間差（✅ D-60）
+            raise AppAccountError("invalid_credentials")
+        if not verify_password(password, account.password_hash):
             raise AppAccountError("invalid_credentials")
         guardian = self._repo.get_guardian(account.guardian_id)
         if guardian is None:
