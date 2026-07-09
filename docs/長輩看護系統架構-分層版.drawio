@@ -103,7 +103,7 @@
         <mxCell id="n-jobs" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;排程任務（各領域 jobs.py）&lt;/b&gt;&lt;div&gt;用藥提醒·回診提醒·定時問候·久未互動關懷&lt;/div&gt;&lt;div&gt;健康摘要報告·夜間記憶整理·音檔/監控清理　→ 經 channels 出站&lt;/div&gt;" vertex="1">
           <mxGeometry height="75" width="460" x="640" y="1060" as="geometry" />
         </mxCell>
-        <mxCell id="gf" parent="1" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;strokeColor=#9673a6;fillColor=none;verticalAlign=top;align=left;fontColor=#9673a6;fontStyle=1;fontSize=11;spacingLeft=8;spacingTop=4;" value="資料治理（隱私/安全/合規）：身分驗證 · 知情同意 · 週備份＝排定中（WBS 甲-1） · 私有音檔＝排定中（WBS 甲-2）" vertex="1">
+        <mxCell id="gf" parent="1" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;strokeColor=#9673a6;fillColor=none;verticalAlign=top;align=left;fontColor=#9673a6;fontStyle=1;fontSize=11;spacingLeft=8;spacingTop=4;" value="資料治理（隱私/安全/合規）：身分驗證 · 知情同意 · 手動備份腳本 ✅（甲-1 輕量版） · 私有音檔＝排定中（WBS 甲-2）" vertex="1">
           <mxGeometry height="200" width="1270" x="130" y="1205" as="geometry" />
         </mxCell>
         <mxCell id="n-stm" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="&lt;b&gt;短期記憶（memory/shortterm）&lt;/b&gt;&lt;div&gt;今日對話上下文&lt;/div&gt;&lt;div&gt;Postgres 持久化&lt;/div&gt;" vertex="1">

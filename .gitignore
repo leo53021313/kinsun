@@ -246,3 +246,6 @@ frontend/dist-admin/
 # Expo App 原始碼目錄不是 Python 打包產物（lib/ 型樣的例外）
 !app/src/lib/
 .gstack/
+
+# 資料庫備份（內含個資，不入庫）
+data/backups/
