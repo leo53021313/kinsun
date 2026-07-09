@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from kinsun.appointments.service import AppointmentService
+from kinsun.web.envelope import ok
 from kinsun.web.routers.deps import GuardianAuth, GuardianScope
 
 
@@ -46,9 +47,7 @@ def create_appointments_router(
     @router.get("/elders/{elder_id}/appointments")
     def list_appointments(elder_id: str, auth: GuardianAuth = Depends(current_guardian)) -> dict:
         scope.assert_manages(auth, elder_id)
-        return {
-            "appointments": [_appointment_json(a) for a in appointments.list_for_elder(elder_id)]
-        }
+        return ok([_appointment_json(a) for a in appointments.list_for_elder(elder_id)])
 
     @router.post("/elders/{elder_id}/appointments", status_code=201)
     def create_appointment(
@@ -59,7 +58,7 @@ def create_appointments_router(
         if not label:
             raise HTTPException(status_code=400, detail="label required")
         date = parse_appt_date(body.date)
-        return _appointment_json(appointments.save(elder_id, date, label))
+        return ok(_appointment_json(appointments.save(elder_id, date, label)))
 
     @router.put("/elders/{elder_id}/appointments/{appointment_id}")
     def update_appointment(
@@ -74,7 +73,7 @@ def create_appointments_router(
         if not label:
             raise HTTPException(status_code=400, detail="label required")
         date = parse_appt_date(body.date)
-        return _appointment_json(appointments.update(appointment_id, elder_id, date, label))
+        return ok(_appointment_json(appointments.update(appointment_id, elder_id, date, label)))
 
     @router.delete("/elders/{elder_id}/appointments/{appointment_id}", status_code=204)
     def delete_appointment(

@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from kinsun.accounts.service import AccountService, AppAccountError
+from kinsun.web.envelope import ok
 from kinsun.web.ratelimit import SlidingWindowRateLimiter, throttle_or_429
 
 
@@ -29,6 +30,6 @@ def create_guardians_router(
             )
         except AppAccountError as exc:
             raise HTTPException(status_code=409, detail=exc.reason) from exc
-        return {"guardian_id": guardian.guardian_id, "name": guardian.name, "token": token}
+        return ok({"guardian_id": guardian.guardian_id, "name": guardian.name, "token": token})
 
     return router

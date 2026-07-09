@@ -17,6 +17,7 @@ from kinsun.pipeline import VoicePipeline
 from kinsun.safety.detector import RiskDetector
 from kinsun.speech.asr import MockAsrClient
 from kinsun.speech.tts import TextBubbleTts, TtsResult
+from kinsun.web.envelope import install_error_envelope
 from tests.fakes import FakeAccountStore, FakeRiskEventStore, FakeTraceStore
 
 TPE = timezone(timedelta(hours=8))
@@ -88,6 +89,7 @@ def _client(svc, *, tts=None, publisher=None, traces=None):
     )
     voice = VoiceReplyDelivery(publisher, include_text=True)
     app = FastAPI()
+    install_error_envelope(app)
     app.include_router(
         create_app_turns_router(
             accounts=svc,
@@ -96,14 +98,15 @@ def _client(svc, *, tts=None, publisher=None, traces=None):
             voice=voice,
             traces=traces,
             new_id=lambda: "trace-1",
-        )
+        ),
+        prefix="/api/v1",
     )
     return TestClient(app)
 
 
 def _post_audio(client, token, body=b"\x00fake-audio"):
     return client.post(
-        "/api/app/turns",
+        "/api/v1/turns",
         content=body,
         headers={"Authorization": f"Bearer {token}", "Content-Type": "audio/m4a"},
     )
@@ -114,7 +117,7 @@ def test_turn_replies_text_and_voice():
     _, token = _bound_elder_token(svc)
     res = _post_audio(_client(svc, tts=_VoiceTts(), publisher=_FakePublisher()), token)
     assert res.status_code == 201
-    body = res.json()
+    body = res.json()["data"]
     assert body["text"] == "你說的是：阿公早安"
     assert body["audio_url"] == "https://cdn.example/reply.m4a"
     assert body["duration_ms"] == 1200
@@ -125,7 +128,7 @@ def test_turn_degrades_to_text_without_audio():
     _, token = _bound_elder_token(svc)
     res = _post_audio(_client(svc), token)  # TextBubbleTts：無音檔
     assert res.status_code == 201
-    body = res.json()
+    body = res.json()["data"]
     assert body["text"] == "你說的是：阿公早安"
     assert body["audio_url"] == ""
 
@@ -156,7 +159,7 @@ def test_turn_blocked_after_consent_revoked():
     svc.revoke_consent(elder.elder_id)
     res = _post_audio(_client(svc), token)
     assert res.status_code == 403
-    assert res.json()["detail"] == "consent_revoked"
+    assert res.json()["error"]["code"] == "consent_revoked"
 
 
 def test_turn_rejects_oversized_audio():

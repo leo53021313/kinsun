@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends
 
 from kinsun.accounts.service import AccountService
 from kinsun.notifications.store import AppNotificationStore
+from kinsun.web.envelope import ok
 
 
 def create_notifications_router(
@@ -22,13 +23,9 @@ def create_notifications_router(
     def list_app_notifications(guardian_id: str = Depends(current_app_guardian)) -> dict:
         """最近先；未讀判斷由 App 端以本機時間戳處理。"""
         if notifications is None:
-            return {"notifications": []}
+            return ok([])
         external_ids = accounts.app_external_ids_of_guardian(guardian_id)
         items = notifications.list_for_external_ids(external_ids) if external_ids else []
-        return {
-            "notifications": [
-                {"content": n.content, "created_at": n.created_at} for n in items
-            ]
-        }
+        return ok([{"content": n.content, "created_at": n.created_at} for n in items])
 
     return router

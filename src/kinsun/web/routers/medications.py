@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from kinsun.medications.models import SLOT_ORDER, MedicationSlot
 from kinsun.medications.service import MedicationService
+from kinsun.web.envelope import ok
 from kinsun.web.routers.deps import GuardianAuth, GuardianScope
 
 
@@ -49,7 +50,7 @@ def create_medications_router(
     @router.get("/elders/{elder_id}/medications")
     def list_medications(elder_id: str, auth: GuardianAuth = Depends(current_guardian)) -> dict:
         scope.assert_manages(auth, elder_id)
-        return {"medications": [_medication_json(m) for m in medications.list_for_elder(elder_id)]}
+        return ok([_medication_json(m) for m in medications.list_for_elder(elder_id)])
 
     @router.post("/elders/{elder_id}/medications", status_code=201)
     def create_medication(
@@ -60,7 +61,7 @@ def create_medications_router(
         if not name:
             raise HTTPException(status_code=400, detail="name required")
         slots = parse_slots(body.slots)
-        return _medication_json(medications.save(elder_id, name, slots))
+        return ok(_medication_json(medications.save(elder_id, name, slots)))
 
     @router.put("/elders/{elder_id}/medications/{medication_id}")
     def update_medication(
@@ -75,7 +76,7 @@ def create_medications_router(
         if not name:
             raise HTTPException(status_code=400, detail="name required")
         slots = parse_slots(body.slots)
-        return _medication_json(medications.update(medication_id, elder_id, name, slots))
+        return ok(_medication_json(medications.update(medication_id, elder_id, name, slots)))
 
     @router.delete("/elders/{elder_id}/medications/{medication_id}", status_code=204)
     def delete_medication(

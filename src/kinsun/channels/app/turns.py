@@ -1,4 +1,6 @@
-"""App 對講機通道：POST /api/app/turns——上傳錄音，同一回應回傳文字＋回覆音檔 URL。
+"""App 對講機通道：POST /turns——上傳錄音，同一回應回傳文字＋回覆音檔 URL。
+
+prefix 由組裝處統一指定（✅ D-28）。
 
 與 channels/line/ 平行的第二通道 adapter：HTTP 請求正規化成
 InboundMessage(Channel.APP, …) 進既有 dispatch——閘門（同意複核）、危急偵測、
@@ -17,6 +19,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from kinsun.accounts.models import Channel, PrincipalType
 from kinsun.accounts.service import AccountService
 from kinsun.channels.inbound import InboundMessage, dispatch
+from kinsun.web.envelope import ok
 
 logger = logging.getLogger("kinsun.channels.app")
 
@@ -58,7 +61,7 @@ def create_app_turns_router(
     inbound_audio=None,
     new_id: Callable[[], str] | None = None,
 ) -> APIRouter:
-    router = APIRouter(prefix="/api/app")
+    router = APIRouter(tags=["turns"])
     make_id = new_id or (lambda: uuid.uuid4().hex)
 
     def current_elder(authorization: str = Header(default="")) -> str:
@@ -106,10 +109,10 @@ def create_app_turns_router(
             voice=voice,
             traces=traces,
         )
-        return {
+        return ok({
             "text": collector.text,
             "audio_url": collector.audio_url,
             "duration_ms": collector.duration_ms,
-        }
+        })
 
     return router

@@ -34,6 +34,7 @@ from kinsun.safety.notifier import GuardianNotifier
 from kinsun.speech.asr import build_asr_client
 from kinsun.speech.tts import build_tts_client
 from kinsun.web.auth import LineIdTokenVerifier
+from kinsun.web.envelope import install_error_envelope
 from kinsun.web.ratelimit import SlidingWindowRateLimiter
 from kinsun.web.routers import (
     create_admin_router,
@@ -120,7 +121,8 @@ def build_app() -> FastAPI:
         on_shutdown=db.close,
     )
     verifier = LineIdTokenVerifier(settings.liff_channel_id, settings.liff_timeout_seconds)
-    # prefix 由此統一指定（✅ D-28 乙-4）；乙-1 換 /api/v1 時只動這三行。
+    install_error_envelope(app)  # HTTPException → 統一信封（✅ D-23 乙-1）
+    # prefix 由此統一指定（✅ D-28 乙-4）；/api/v1 為 D-27 版本前綴。
     app.include_router(
         create_guardian_face_router(
             verifier=verifier,
@@ -131,7 +133,7 @@ def build_app() -> FastAPI:
             risk_events=risk_events,
             reminder_logs=core.reminder_logs,
         ),
-        prefix="/api",
+        prefix="/api/v1",
     )
     app.include_router(
         create_admin_router(
@@ -140,7 +142,7 @@ def build_app() -> FastAPI:
             clock=clock,
             risk_events=risk_events,
         ),
-        prefix="/api/admin",
+        prefix="/api/v1/admin",
     )
     app.include_router(
         create_app_auth_router(
@@ -151,7 +153,7 @@ def build_app() -> FastAPI:
             ),
             notifications=core.notifications,
         ),
-        prefix="/api/app",
+        prefix="/api/v1",
     )
     # App 對講機：JSON 回應固定帶文字（include_text 與 LINE 的訊息額度考量無關）。
     app.include_router(
@@ -162,7 +164,8 @@ def build_app() -> FastAPI:
             voice=VoiceReplyDelivery(publisher, include_text=True),
             traces=core.traces,
             inbound_audio=inbound_audio,
-        )
+        ),
+        prefix="/api/v1",
     )
     dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     if dist.is_dir():

@@ -67,7 +67,7 @@ def _client(line_user_id, *, risks, reminders, bind_elder=True):
             risk_events=_RiskEvents(risks),
             reminder_logs=_Reminders(reminders),
         ),
-        prefix="/api",
+        prefix="/api/v1",
     )
     return TestClient(app), elder.elder_id
 
@@ -86,9 +86,9 @@ def test_health_report_recent_only():
         ReminderLog("m0", "e", "appointment", "舊提醒", OLD),
     ]
     client, elder_id = _client("U-son", risks=risks, reminders=reminders)
-    res = client.get(f"/api/elders/{elder_id}/health-report", headers=_auth())
+    res = client.get(f"/api/v1/elders/{elder_id}/health-report", headers=_auth())
     assert res.status_code == 200
-    body = res.json()
+    body = res.json()["data"]
     assert [e["reason"] for e in body["risk_events"]] == ["昏倒"]
     assert body["risk_events"][0]["tier"] == 3
     assert [r["content"] for r in body["reminders"]] == ["早上用藥：A"]
@@ -96,19 +96,20 @@ def test_health_report_recent_only():
 
 def test_health_report_rejects_unmanaged():
     client, elder_id = _client("U-stranger", risks=[], reminders=[])
-    assert client.get(f"/api/elders/{elder_id}/health-report", headers=_auth()).status_code == 404
+    res = client.get(f"/api/v1/elders/{elder_id}/health-report", headers=_auth())
+    assert res.status_code == 404
 
 
 def test_health_report_requires_token():
     client, elder_id = _client("U-son", risks=[], reminders=[])
-    assert client.get(f"/api/elders/{elder_id}/health-report").status_code == 401
+    assert client.get(f"/api/v1/elders/{elder_id}/health-report").status_code == 401
 
 
 def test_health_report_unbound_elder_still_reports():
     # 會話主鍵通道中立後，報告以 elder_id 直查，長輩未綁 LINE 不影響內容。
     reminders = [ReminderLog("m1", "e", "medication", "早上用藥：A", RECENT)]
     client, elder_id = _client("U-son", risks=[], reminders=reminders, bind_elder=False)
-    res = client.get(f"/api/elders/{elder_id}/health-report", headers=_auth())
+    res = client.get(f"/api/v1/elders/{elder_id}/health-report", headers=_auth())
     assert res.status_code == 200
-    assert res.json()["risk_events"] == []
-    assert [r["content"] for r in res.json()["reminders"]] == ["早上用藥：A"]
+    assert res.json()["data"]["risk_events"] == []
+    assert [r["content"] for r in res.json()["data"]["reminders"]] == ["早上用藥：A"]

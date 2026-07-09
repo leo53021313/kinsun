@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends
 from kinsun.reports.health import build_health_report
 from kinsun.reports.reminders import ReminderLogStore
 from kinsun.safety.events import RiskEventStore
+from kinsun.web.envelope import ok
 from kinsun.web.routers.deps import GuardianAuth, GuardianScope
 
 
@@ -32,7 +33,7 @@ def create_reports_router(
             reminder_logs=reminder_logs,
             now=clock(),
         )
-        return {
+        return ok({
             "risk_events": [
                 {"tier": int(e.tier), "reason": e.reason, "created_at": e.created_at}
                 for e in report.risks
@@ -41,6 +42,6 @@ def create_reports_router(
                 {"kind": r.kind, "content": r.content, "created_at": r.created_at}
                 for r in report.reminders
             ],
-        }
+        })
 
     return router

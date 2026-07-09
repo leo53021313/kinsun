@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from kinsun.accounts.models import ConsentBy
 from kinsun.accounts.service import AccountService, InviteError
+from kinsun.web.envelope import ok
 from kinsun.web.ratelimit import SlidingWindowRateLimiter, throttle_or_429
 
 # InviteError reason → HTTP 狀態碼：查無是 404，其餘皆屬「碼已不可用」的衝突。
@@ -35,6 +36,6 @@ def create_device_bindings_router(
             raise HTTPException(
                 status_code=_INVITE_STATUS.get(exc.reason, 409), detail=exc.reason
             ) from exc
-        return {"elder_id": elder.elder_id, "name": elder.name, "token": token}
+        return ok({"elder_id": elder.elder_id, "name": elder.name, "token": token})
 
     return router

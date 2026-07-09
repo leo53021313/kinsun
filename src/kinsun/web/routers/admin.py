@@ -17,6 +17,7 @@ from kinsun.observability.models import (
 )
 from kinsun.observability.store import TraceStore
 from kinsun.safety.events import RiskEventStore
+from kinsun.web.envelope import ok
 
 # 分級器故障告警（✅ D-31＋D-66 admin 半邊）：近 60 分鐘 fail-safe 留痕事件達門檻即回告警。
 # 門檻與視窗暫為常數；隨丙-6（危急門檻 env 化）一併調整。
@@ -65,11 +66,11 @@ def create_admin_router(
             today_start=_today_start(),
             hourly_start=(now - timedelta(hours=24)).timestamp(),
         )
-        return {**_overview_json(stats, generated_at=now.timestamp()), "alerts": _alerts(now)}
+        return ok({**_overview_json(stats, generated_at=now.timestamp()), "alerts": _alerts(now)})
 
     @router.get("/elders", dependencies=[Depends(require_admin)])
     def list_elders() -> dict:
-        return {"elders": [_elder_json(e) for e in traces.list_elders_with_last_active()]}
+        return ok([_elder_json(e) for e in traces.list_elders_with_last_active()])
 
     def _find_elder(elder_id: str) -> ElderActivity:
         elder = next(
@@ -85,7 +86,7 @@ def create_admin_router(
         after: float = Query(default=0.0, ge=0.0),
         limit: int = Query(default=100, ge=1, le=500),
     ) -> dict:
-        return {"messages": [_feed_json(m) for m in traces.list_feed(after=after, limit=limit)]}
+        return ok([_feed_json(m) for m in traces.list_feed(after=after, limit=limit)])
 
     @router.get("/elders/{elder_id}/timeline", dependencies=[Depends(require_admin)])
     def elder_timeline(elder_id: str, date: str = Query(default="")) -> dict:
@@ -104,19 +105,19 @@ def create_admin_router(
             start=start,
             end=start + 86400.0,
         )
-        return {
+        return ok({
             "elder_id": elder.elder_id,
             "name": elder.name,
             "date": day.isoformat(),
             "items": [_timeline_json(i) for i in items],
-        }
+        })
 
     @router.get("/traces/{trace_id}", dependencies=[Depends(require_admin)])
     def trace_detail(trace_id: str) -> dict:
         trace = traces.get_trace(trace_id)
         if trace is None:
             raise HTTPException(status_code=404, detail="trace not found")
-        return _trace_json(trace)
+        return ok(_trace_json(trace))
 
     return router
 
