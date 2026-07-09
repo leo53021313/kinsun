@@ -72,7 +72,11 @@ def build_app() -> FastAPI:
         asr=build_asr_client(settings),
         agent=core.agent,
         tts=build_tts_client(settings),
-        detector=RiskDetector(LlmRiskClassifier(core.gemini)),
+        detector=RiskDetector(
+            LlmRiskClassifier(core.gemini),
+            high=settings.safety_confidence_high,
+            mid=settings.safety_confidence_mid,
+        ),
         notifier=GuardianNotifier(core.accounts, core.router),
         risk_events=risk_events,
         traces=core.traces,
