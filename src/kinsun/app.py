@@ -33,11 +33,13 @@ from kinsun.safety.events import PgRiskEventStore
 from kinsun.safety.notifier import GuardianNotifier
 from kinsun.speech.asr import build_asr_client
 from kinsun.speech.tts import build_tts_client
-from kinsun.web.admin_api import create_admin_api_router
-from kinsun.web.api import create_api_router
-from kinsun.web.app_api import create_app_api_router
 from kinsun.web.auth import LineIdTokenVerifier
 from kinsun.web.ratelimit import SlidingWindowRateLimiter
+from kinsun.web.routers import (
+    create_admin_router,
+    create_app_auth_router,
+    create_guardian_face_router,
+)
 
 
 def build_app() -> FastAPI:
@@ -118,8 +120,9 @@ def build_app() -> FastAPI:
         on_shutdown=db.close,
     )
     verifier = LineIdTokenVerifier(settings.liff_channel_id, settings.liff_timeout_seconds)
+    # prefix 由此統一指定（✅ D-28 乙-4）；乙-1 換 /api/v1 時只動這三行。
     app.include_router(
-        create_api_router(
+        create_guardian_face_router(
             verifier=verifier,
             accounts=core.accounts,
             medications=core.medications,
@@ -127,25 +130,28 @@ def build_app() -> FastAPI:
             clock=clock,
             risk_events=risk_events,
             reminder_logs=core.reminder_logs,
-        )
+        ),
+        prefix="/api",
     )
     app.include_router(
-        create_admin_api_router(
+        create_admin_router(
             admin_api_key=settings.admin_api_key,
             traces=core.traces,
             clock=clock,
             risk_events=risk_events,
-        )
+        ),
+        prefix="/api/admin",
     )
     app.include_router(
-        create_app_api_router(
+        create_app_auth_router(
             accounts=core.accounts,
             rate_limiter=SlidingWindowRateLimiter(
                 settings.auth_rate_limit_max_attempts,
                 settings.auth_rate_limit_window_seconds,
             ),
             notifications=core.notifications,
-        )
+        ),
+        prefix="/api/app",
     )
     # App 對講機：JSON 回應固定帶文字（include_text 與 LINE 的訊息額度考量無關）。
     app.include_router(

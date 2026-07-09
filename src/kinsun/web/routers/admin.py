@@ -1,4 +1,4 @@
-"""開發團隊觀測後台 REST API（唯讀）：共用金鑰驗證，供 /admin 前端查詢。"""
+"""觀測後台資源（唯讀）：共用金鑰驗證，供 /admin 前端查詢。"""
 
 from __future__ import annotations
 
@@ -24,14 +24,14 @@ FAILSAFE_ALERT_WINDOW_MINUTES = 60
 FAILSAFE_ALERT_THRESHOLD = 3
 
 
-def create_admin_api_router(
+def create_admin_router(
     *,
     admin_api_key: str,
     traces: TraceStore,
     clock: Callable[[], datetime],
     risk_events: RiskEventStore | None = None,
 ) -> APIRouter:
-    router = APIRouter(prefix="/api/admin")
+    router = APIRouter(tags=["admin"])
 
     def require_admin(x_admin_key: str = Header(default="", alias="X-Admin-Key")) -> None:
         if not admin_api_key:

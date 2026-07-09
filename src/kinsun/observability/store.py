@@ -1,6 +1,6 @@
 """觀測資料持久化：各階段專表的 append-only 記錄與後台查詢。
 
-record_* 為 append-only 寫入；查詢供 web/admin_api 使用。
+record_* 為 append-only 寫入；查詢供 web/routers/admin 使用。
 呼叫端埋點一律以 safe_record 包裹——觀測失敗絕不中斷對話。
 """
 

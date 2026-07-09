@@ -11,7 +11,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 
 
 class SlidingWindowRateLimiter:
@@ -48,3 +48,9 @@ def client_ip(request: Request) -> str:
     if forwarded:
         return forwarded.split(",")[0].strip()
     return request.client.host if request.client else "unknown"
+
+
+def throttle_or_429(limiter: SlidingWindowRateLimiter, scope: str, request: Request) -> None:
+    """認證端點共用節流守門（✅ D-58）：scope 區分端點、各自計數，超限回 429。"""
+    if not limiter.hit(f"{scope}:{client_ip(request)}"):
+        raise HTTPException(status_code=429, detail="too_many_requests")

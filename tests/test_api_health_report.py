@@ -10,7 +10,7 @@ from kinsun.medications.service import MedicationService
 from kinsun.reports.reminders import ReminderLog
 from kinsun.safety.events import RiskEvent
 from kinsun.safety.tiers import RiskTier
-from kinsun.web.api import create_api_router
+from kinsun.web.routers import create_guardian_face_router
 from tests.fakes import FakeAccountStore, FakeAppointmentStore, FakeMedicationStore
 
 TPE = timezone(timedelta(hours=8))
@@ -58,7 +58,7 @@ def _client(line_user_id, *, risks, reminders, bind_elder=True):
         )
     app = FastAPI()
     app.include_router(
-        create_api_router(
+        create_guardian_face_router(
             verifier=_FakeVerifier(line_user_id),
             accounts=accounts,
             medications=MedicationService(FakeMedicationStore()),
@@ -66,7 +66,8 @@ def _client(line_user_id, *, risks, reminders, bind_elder=True):
             clock=lambda: NOW,
             risk_events=_RiskEvents(risks),
             reminder_logs=_Reminders(reminders),
-        )
+        ),
+        prefix="/api",
     )
     return TestClient(app), elder.elder_id
 

@@ -8,8 +8,8 @@ from kinsun.accounts.models import InviteRole
 from kinsun.accounts.service import AccountService
 from kinsun.appointments.service import AppointmentService
 from kinsun.medications.service import MedicationService
-from kinsun.web.api import create_api_router
 from kinsun.web.auth import AuthError
+from kinsun.web.routers import create_guardian_face_router
 from tests.fakes import (
     FakeAccountStore,
     FakeAppointmentStore,
@@ -42,7 +42,7 @@ def _setup(line_user_id="U-son"):
     )
     app = FastAPI()
     app.include_router(
-        create_api_router(
+        create_guardian_face_router(
             verifier=_FakeVerifier(line_user_id),
             accounts=accounts,
             medications=MedicationService(FakeMedicationStore()),
@@ -50,7 +50,8 @@ def _setup(line_user_id="U-son"):
             clock=lambda: NOW,
             risk_events=FakeRiskEventStore(),
             reminder_logs=FakeReminderLogStore(),
-        )
+        ),
+        prefix="/api",
     )
     return TestClient(app), accounts
 

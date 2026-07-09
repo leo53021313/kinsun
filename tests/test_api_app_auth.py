@@ -9,8 +9,8 @@ from fastapi.testclient import TestClient
 from kinsun.accounts.models import Channel, InviteRole
 from kinsun.accounts.service import AccountService
 from kinsun.notifications.store import FakeAppNotificationStore
-from kinsun.web.app_api import create_app_api_router
 from kinsun.web.ratelimit import SlidingWindowRateLimiter
+from kinsun.web.routers import create_app_auth_router
 from tests.fakes import FakeAccountStore
 
 TPE = timezone(timedelta(hours=8))
@@ -27,9 +27,10 @@ def _service():
 def _client(svc=None, rate_limiter=None, notifications=None):
     app = FastAPI()
     app.include_router(
-        create_app_api_router(
+        create_app_auth_router(
             accounts=svc or _service(), rate_limiter=rate_limiter, notifications=notifications
-        )
+        ),
+        prefix="/api/app",
     )
     return TestClient(app)
 

@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from kinsun.web.admin_api import create_admin_api_router
+from kinsun.web.routers import create_admin_router
 from tests.fakes import FakeTraceStore
 
 TPE = timezone(timedelta(hours=8))
@@ -26,12 +26,13 @@ class _StubRiskEvents:
 def _client(traces=None, *, admin_api_key="secret", risk_events=None):
     app = FastAPI()
     app.include_router(
-        create_admin_api_router(
+        create_admin_router(
             admin_api_key=admin_api_key,
             traces=traces or FakeTraceStore(),
             clock=lambda: NOW,
             risk_events=risk_events,
-        )
+        ),
+        prefix="/api/admin",
     )
     return TestClient(app)
 
