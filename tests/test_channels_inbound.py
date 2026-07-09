@@ -96,13 +96,29 @@ def test_text_routes_to_binding():
     assert r.sent == ["已建立"]
 
 
-def test_text_none_falls_back_to_prompt():
+def test_text_default_runs_pipeline():
+    """✅ D-11（甲-4）：文字輸入預設走完整對話管線。"""
+    r = _Replies()
+    pipe = _Pipeline(text="回覆")
+    dispatch(
+        _msg("text", text="閒聊", reply=r),
+        pipeline=pipe,
+        binding=_Binding(None),
+        gate=_Gate(True),
+    )
+    assert pipe.text_calls == [("閒聊", "e-1")]
+    assert r.sent == ["回覆"]
+
+
+def test_text_flag_off_falls_back_to_prompt():
+    """關閉旗標＝維運逃生口：回到只收語音的提示。"""
     r = _Replies()
     dispatch(
         _msg("text", text="閒聊", reply=r),
         pipeline=_Pipeline(),
         binding=_Binding(None),
         gate=_Gate(True),
+        text_input_enabled=False,
     )
     assert r.sent == [NON_AUDIO_PROMPT]
 

@@ -68,7 +68,7 @@ class VoicePipeline:
     def process_text(
         self, text: str, *, elder_id: str, line_user_id: str = "", trace_id: str = ""
     ) -> TtsResult:
-        """文字輸入路徑（Debug）：跳過 ASR，直接以輸入文字進入對話核心。"""
+        """文字輸入路徑（✅ D-11 正式）：跳過 ASR，其餘與語音同管線（危急偵測＋回覆＋記憶）。"""
         return self._process_transcribed(
             text, elder_id=elder_id, line_user_id=line_user_id, trace_id=trace_id
         )

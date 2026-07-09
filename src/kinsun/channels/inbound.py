@@ -92,7 +92,7 @@ def dispatch(
     gate,
     voice=None,
     traces: TraceStore | None = None,
-    text_input_enabled: bool = False,
+    text_input_enabled: bool = True,
     timer: Callable[[], float] = time.monotonic,
 ) -> None:
     if msg.kind == "text":
@@ -100,7 +100,8 @@ def dispatch(
         if reply is not None:
             msg.reply(reply)
             return
-        # 非綁定自由文字：旗標關維持只收語音；旗標開才轉進對話管線（Debug）。
+        # 非綁定自由文字走完整對話管線（危急偵測＋回覆＋記憶，✅ D-11 與語音同等對待）；
+        # 旗標關為維運逃生口，回到只收語音提示。
         if not text_input_enabled:
             msg.reply(NON_AUDIO_PROMPT)
             return

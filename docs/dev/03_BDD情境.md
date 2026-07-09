@@ -36,8 +36,8 @@ Feature: 長輩與金孫對話
     Then 系統應回覆 413
     # 10MB 上限為現況值，後續 06 API 循環複核
 
-  @to-be @happy-path
-  Scenario: 打字與語音同等對待（✅ D-11）
+  @as-is @happy-path
+  Scenario: 打字與語音同等對待（✅ D-11，甲-4 已完成 2026-07-09）
     When 阿蘭打字「最近都睡不好」
     Then 金孫應該像語音一樣回覆她
     And 這段文字應經過危急偵測
@@ -88,8 +88,8 @@ Feature: 危急偵測分級與通知
     Then 不應即時通知家屬
     And 當日的每日摘要應提及此小訊號
 
-  @to-be
-  Scenario: 打字求救進安全網（✅ D-11）
+  @as-is
+  Scenario: 打字求救進安全網（✅ D-11，甲-4 已完成 2026-07-09）
     When 阿蘭打字「我想不開」
     Then 應與語音同等分級並記錄危急事件
     And 家屬應照常收到通知

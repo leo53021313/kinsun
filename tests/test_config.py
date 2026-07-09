@@ -49,7 +49,7 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.audio_retention_days == 2
     assert settings.audio_upload_timeout_seconds == 10
     assert settings.asr_debug_show_transcript is False
-    assert settings.line_text_input_enabled is False
+    assert settings.line_text_input_enabled is True
     assert settings.admin_api_key == ""
     assert settings.admin_retention_days == 14
 
@@ -132,8 +132,9 @@ def test_load_settings_asr_debug_show_transcript_true():
     assert s.asr_debug_show_transcript is True
 
 
-def test_load_settings_line_text_input_default_false():
-    assert load_settings(BASE_ENV).line_text_input_enabled is False
+def test_load_settings_line_text_input_default_true():
+    """✅ D-11（甲-4）：文字輸入為正式功能，預設開。"""
+    assert load_settings(BASE_ENV).line_text_input_enabled is True
 
 
 def test_load_settings_line_text_input_enabled_values():

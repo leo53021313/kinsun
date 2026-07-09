@@ -140,7 +140,8 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         auth_rate_limit_max_attempts=int(env.get("AUTH_RATE_LIMIT_MAX_ATTEMPTS", "10")),
         auth_rate_limit_window_seconds=float(env.get("AUTH_RATE_LIMIT_WINDOW_SECONDS", "300")),
         asr_debug_show_transcript=_parse_bool(env.get("ASR_DEBUG_SHOW_TRANSCRIPT", "false")),
-        line_text_input_enabled=_parse_bool(env.get("LINE_TEXT_INPUT_ENABLED", "false")),
+        # ✅ D-11（甲-4）：文字輸入為正式功能（與語音同等對待），預設開；關閉為維運逃生口。
+        line_text_input_enabled=_parse_bool(env.get("LINE_TEXT_INPUT_ENABLED", "true")),
         admin_api_key=env.get("ADMIN_API_KEY", ""),
         admin_retention_days=int(env.get("ADMIN_RETENTION_DAYS", "14")),
     )
