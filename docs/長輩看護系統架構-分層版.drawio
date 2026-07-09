@@ -67,7 +67,7 @@
         <mxCell id="n-tts" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;TTS 文字轉語音&lt;/b&gt;&lt;div&gt;DGX 自架（services/tts）·CosyVoice 3（國語）&lt;/div&gt;&lt;div&gt;台語版另專案微調中（CosyVoice 3 vs VoxCPM2）&lt;/div&gt;" vertex="1">
           <mxGeometry height="80" width="300" x="560" y="510" as="geometry" />
         </mxCell>
-        <mxCell id="n-audio" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;音檔託管（audio/）&lt;/b&gt;&lt;div&gt;上傳 Supabase Storage·現況公開 bucket&lt;/div&gt;&lt;div&gt;→ 私有＋短效簽章 URL（WBS 甲-2）&lt;/div&gt;" vertex="1">
+        <mxCell id="n-audio" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;音檔託管（audio/）&lt;/b&gt;&lt;div&gt;上傳 Supabase Storage·私有 bucket ✅&lt;/div&gt;&lt;div&gt;短效簽章 URL（效期預設 1 天，甲-2 完成）&lt;/div&gt;" vertex="1">
           <mxGeometry height="80" width="330" x="940" y="510" as="geometry" />
         </mxCell>
         <mxCell id="n-agent" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;CareAgent（agent.py 樞紐）&lt;/b&gt;&lt;div&gt;①recall 讀情境 ②組 prompt ③呼叫 LLM&lt;/div&gt;&lt;div&gt;④寫短期記憶 ⑤送危急分級&lt;/div&gt;" vertex="1">
@@ -103,7 +103,7 @@
         <mxCell id="n-jobs" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;排程任務（各領域 jobs.py）&lt;/b&gt;&lt;div&gt;用藥提醒·回診提醒·定時問候·久未互動關懷&lt;/div&gt;&lt;div&gt;健康摘要報告·夜間記憶整理·音檔/監控清理　→ 經 channels 出站&lt;/div&gt;" vertex="1">
           <mxGeometry height="75" width="460" x="640" y="1060" as="geometry" />
         </mxCell>
-        <mxCell id="gf" parent="1" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;strokeColor=#9673a6;fillColor=none;verticalAlign=top;align=left;fontColor=#9673a6;fontStyle=1;fontSize=11;spacingLeft=8;spacingTop=4;" value="資料治理（隱私/安全/合規）：身分驗證 · 知情同意 · 手動備份腳本 ✅（甲-1 輕量版） · 私有音檔＝排定中（WBS 甲-2）" vertex="1">
+        <mxCell id="gf" parent="1" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;strokeColor=#9673a6;fillColor=none;verticalAlign=top;align=left;fontColor=#9673a6;fontStyle=1;fontSize=11;spacingLeft=8;spacingTop=4;" value="資料治理（隱私/安全/合規）：身分驗證 · 知情同意 · 手動備份腳本 ✅（甲-1 輕量版） · 私有音檔＋簽章 URL ✅（甲-2）" vertex="1">
           <mxGeometry height="200" width="1270" x="130" y="1205" as="geometry" />
         </mxCell>
         <mxCell id="n-stm" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="&lt;b&gt;短期記憶（memory/shortterm）&lt;/b&gt;&lt;div&gt;今日對話上下文&lt;/div&gt;&lt;div&gt;Postgres 持久化&lt;/div&gt;" vertex="1">

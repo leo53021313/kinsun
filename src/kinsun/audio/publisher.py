@@ -1,8 +1,9 @@
-"""音檔發佈：把 TTS 音檔上傳 Supabase Storage 公開 bucket，回公開 URL。
+"""音檔發佈：把音檔上傳 Supabase Storage 私有 bucket，回短效簽章 URL（✅ D-55）。
 
 標準庫 urllib（不加 supabase SDK）；service key 走環境變數。
 路徑帶日期資料夾 {prefix}/{yyyymmdd}/（prefix 預設 tts，進站音檔用 inbound），
-清理只刪過期資料夾。
+清理只刪過期資料夾。簽章效期由 AUDIO_SIGNED_URL_EXPIRES_SECONDS 控制，
+上限受 AUDIO_RETENTION_DAYS 檔案壽命約束（檔案刪了連結自然失效）。
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ class SupabaseAudioPublisher:
         new_id: Callable[[], str],
         prefix: str = "tts",
         transport: Transport | None = None,
+        signed_url_expires_seconds: int = 86400,
     ) -> None:
         self._base = base_url.rstrip("/")
         self._key = service_key
@@ -47,6 +49,7 @@ class SupabaseAudioPublisher:
         self._new_id = new_id
         self._prefix = prefix.strip("/")
         self._transport = transport or UrllibTransport()
+        self._signed_url_expires_seconds = signed_url_expires_seconds
 
     def _object_path(self, name: str) -> str:
         return f"{self._prefix}/{self._clock().strftime('%Y%m%d')}/{name}"
@@ -64,7 +67,29 @@ class SupabaseAudioPublisher:
             )
         except TransportError as exc:
             raise AudioPublishError(f"音檔上傳失敗：{exc}") from exc
-        return f"{self._base}/storage/v1/object/public/{self._bucket}/{path}"
+        return self._create_signed_url(path)
+
+    def _create_signed_url(self, path: str) -> str:
+        sign_url = f"{self._base}/storage/v1/object/sign/{self._bucket}/{path}"
+        body = json.dumps({"expiresIn": self._signed_url_expires_seconds}).encode("utf-8")
+        try:
+            response = self._transport.request(
+                "POST",
+                sign_url,
+                data=body,
+                headers={
+                    "Authorization": f"Bearer {self._key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=self._timeout,
+            )
+            payload = read_json(response)
+        except TransportError as exc:
+            raise AudioPublishError(f"音檔簽章失敗：{exc}") from exc
+        signed_path = payload.get("signedURL") if isinstance(payload, dict) else None
+        if not signed_path:
+            raise AudioPublishError(f"音檔簽章回應缺 signedURL：{payload!r}")
+        return f"{self._base}/storage/v1{signed_path}"
 
     def cleanup(self, *, retention_days: int) -> None:
         cutoff = (self._clock() - timedelta(days=retention_days)).strftime("%Y%m%d")
@@ -150,4 +175,5 @@ def build_audio_publisher(
         clock=clock,
         new_id=new_id,
         prefix=prefix,
+        signed_url_expires_seconds=settings.audio_signed_url_expires_seconds,
     )

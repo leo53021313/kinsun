@@ -74,6 +74,7 @@ class Settings:
     audio_bucket: str
     audio_retention_days: int
     audio_upload_timeout_seconds: float
+    audio_signed_url_expires_seconds: int
     asr_debug_show_transcript: bool
     line_text_input_enabled: bool
     admin_api_key: str
@@ -133,6 +134,7 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         audio_bucket=env.get("AUDIO_BUCKET", "tts-audio"),
         audio_retention_days=int(env.get("AUDIO_RETENTION_DAYS", "2")),
         audio_upload_timeout_seconds=float(env.get("AUDIO_UPLOAD_TIMEOUT_SECONDS", "10")),
+        audio_signed_url_expires_seconds=int(env.get("AUDIO_SIGNED_URL_EXPIRES_SECONDS", "86400")),
         asr_debug_show_transcript=_parse_bool(env.get("ASR_DEBUG_SHOW_TRANSCRIPT", "false")),
         line_text_input_enabled=_parse_bool(env.get("LINE_TEXT_INPUT_ENABLED", "false")),
         admin_api_key=env.get("ADMIN_API_KEY", ""),
