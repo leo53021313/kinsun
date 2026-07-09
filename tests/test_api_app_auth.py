@@ -6,8 +6,9 @@ from itertools import count
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from kinsun.accounts.models import InviteRole
+from kinsun.accounts.models import Channel, InviteRole
 from kinsun.accounts.service import AccountService
+from kinsun.notifications.store import FakeAppNotificationStore
 from kinsun.web.app_api import create_app_api_router
 from kinsun.web.ratelimit import SlidingWindowRateLimiter
 from tests.fakes import FakeAccountStore
@@ -23,10 +24,12 @@ def _service():
     )
 
 
-def _client(svc=None, rate_limiter=None):
+def _client(svc=None, rate_limiter=None, notifications=None):
     app = FastAPI()
     app.include_router(
-        create_app_api_router(accounts=svc or _service(), rate_limiter=rate_limiter)
+        create_app_api_router(
+            accounts=svc or _service(), rate_limiter=rate_limiter, notifications=notifications
+        )
     )
     return TestClient(app)
 
@@ -98,6 +101,61 @@ def test_device_binding_success_and_errors():
     assert again.json()["detail"] == "used"
     # 查無此碼 404。
     assert client.post("/api/app/device-bindings", json={"code": "nope"}).status_code == 404
+
+
+def test_register_creates_app_channel_binding():
+    """✅ D-12（甲-6）：App 註冊的家屬要有 App 通道綁定，出站路由才觸達得到。"""
+    svc = _service()
+    guardian, _token = svc.register_guardian_account("son@example.com", "correct-horse-8", "兒子")
+    assert svc.app_external_ids_of_guardian(guardian.guardian_id)
+
+
+def test_login_backfills_missing_app_binding():
+    """存量帳號（D-12 前註冊、無 App 綁定）登入時自動回填綁定。"""
+    svc = _service()
+    guardian, _ = svc.register_guardian_account("son@example.com", "correct-horse-8", "兒子")
+    # 模擬存量狀態：移除 App 綁定。
+    store = svc._repo  # noqa: SLF001 - 測試需操作替身內部狀態
+    for key in [k for k, b in store.channel_bindings.items() if b.channel is Channel.APP]:
+        del store.channel_bindings[key]
+    assert svc.app_external_ids_of_guardian(guardian.guardian_id) == []
+    svc.login_guardian("son@example.com", "correct-horse-8")
+    assert svc.app_external_ids_of_guardian(guardian.guardian_id)
+
+
+def _guardian_with_token(svc):
+    client = _client(svc)
+    res = client.post(
+        "/api/app/guardians",
+        json={"email": "son@example.com", "password": "correct-horse-8", "name": "兒子"},
+    )
+    return res.json()["guardian_id"], res.json()["token"]
+
+
+def test_notifications_requires_token():
+    res = _client(notifications=FakeAppNotificationStore()).get("/api/app/notifications")
+    assert res.status_code == 401
+
+
+def test_notifications_lists_guardian_items_recent_first():
+    """✅ D-12（甲-6）：出站訊息落通知後，家屬憑 token 拉取自己的列表。"""
+    svc = _service()
+    notifications = FakeAppNotificationStore()
+    client = _client(svc, notifications=notifications)
+    res = client.post(
+        "/api/app/guardians",
+        json={"email": "son@example.com", "password": "correct-horse-8", "name": "兒子"},
+    )
+    guardian_id, token = res.json()["guardian_id"], res.json()["token"]
+    ext = svc.app_external_ids_of_guardian(guardian_id)[0]
+    notifications.record(ext, "第一則")
+    notifications.record(ext, "阿蘭提到跌倒，請留意")
+    notifications.record("別人的外部識別", "不該看到")
+    res = client.get("/api/app/notifications", headers={"Authorization": f"Bearer {token}"})
+    assert res.status_code == 200
+    items = res.json()["notifications"]
+    assert [i["content"] for i in items] == ["阿蘭提到跌倒，請留意", "第一則"]
+    assert all("created_at" in i for i in items)
 
 
 def _throttled_client(max_attempts=2):

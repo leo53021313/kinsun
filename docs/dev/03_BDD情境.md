@@ -94,11 +94,11 @@ Feature: 危急偵測分級與通知
     Then 應與語音同等分級並記錄危急事件
     And 家屬應照常收到通知
 
-  @to-be
-  Scenario: 純 App 家屬收到警報（✅ D-12）
+  @as-is
+  Scenario: 純 App 家屬收到警報（✅ D-12，甲-6 已完成 2026-07-09）
     Given 家屬只使用 App、未綁定 LINE
     When 阿蘭觸發 L2 以上危急事件
-    Then 家屬開啟 App 應能看到該警報
+    Then 家屬開啟 App 應能在通知頁看到該警報
     # 真推播於階段 5（D-08）後補：不開 App 也能收到
 
   @as-is @sad-path

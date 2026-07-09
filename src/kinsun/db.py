@@ -131,6 +131,15 @@ REMINDER_LOGS_DDL = (
     "ON reminder_logs (elder_id, created_at);"
 )
 
+# App 內通知（✅ D-12，甲-6）：App 出站 adapter 落地訊息，登入後拉取。
+APP_NOTIFICATIONS_DDL = (
+    "CREATE TABLE IF NOT EXISTS app_notifications ("
+    "app_notification_id TEXT PRIMARY KEY, external_id TEXT NOT NULL, "
+    "content TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS idx_app_notifications_external_created "
+    "ON app_notifications (external_id, created_at);"
+)
+
 CONVERSATION_SUMMARIES_DDL = (
     "CREATE TABLE IF NOT EXISTS conversation_summaries ("
     "elder_id TEXT, line_user_id TEXT, date TEXT NOT NULL, "
@@ -228,6 +237,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(RAG_DDL)
         conn.execute(RISK_EVENTS_DDL)
         conn.execute(REMINDER_LOGS_DDL)
+        conn.execute(APP_NOTIFICATIONS_DDL)
         conn.execute(CONVERSATION_SUMMARIES_DDL)
         conn.execute(OBSERVABILITY_DDL)
         conn.execute(RISK_EVENTS_TRACE_MIGRATION_DDL)

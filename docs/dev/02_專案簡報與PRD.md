@@ -58,7 +58,7 @@
 | ID | 描述 | 允收標準 | as-is | BDD 連結 |
 | :--- | :--- | :--- | :--- | :--- |
 | US-B1 | As a 家屬, I want to 長輩狀況危急時立刻被通知, so that 能及時介入。 | 1. L2（明確警訊，三級制頂級——D-72）通知所有家屬 2. 重複提及重複通知、無冷靜期（✅ D-10） 3. L1 小訊號不即時通知，進每日摘要 | ✅ 齊發全家屬、無冷卻（`safety/notifier.py:55`）＝決議維持；分級改三級待己-4 施工 | `safety.feature` |
-| US-B2 | As a 家屬, I want to 在 App 內收到警報與提醒, so that 不必依賴 LINE。 | 1. App 內可見警報／提醒列表 2. 真推播於階段 5 補上 | ❌ 出站只有 LINE adapter（`composition.py:157`）——✅ D-12 拍板補 App 出站 | `safety.feature` |
+| US-B2 | As a 家屬, I want to 在 App 內收到警報與提醒, so that 不必依賴 LINE。 | 1. App 內可見警報／提醒列表 2. 真推播於階段 5 補上 | ✅ 已完成（甲-6，2026-07-09）：App 出站 adapter＋通知頁＋未讀 badge | `safety.feature` |
 | US-B3 | As a 長輩, I want to 金孫每天主動關心我, so that 不會整天沒人說話。 | 1. 每日問候 2. 失聯 N 天主動關心 | ✅ 8:00 問候／10:00 失聯關心（`proactive/jobs.py`）；純 App 用戶收不到（同 D-12） | `proactive.feature` |
 
 ### Epic C：用藥與回診

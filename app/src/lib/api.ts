@@ -11,6 +11,7 @@ export type HealthReport = {
   risk_events: { tier: number; reason: string; created_at: number }[];
   reminders: { kind: string; content: string; created_at: number }[];
 };
+export type AppNotification = { content: string; created_at: number };
 export type GuardianSession = { guardian_id: string; name: string; token: string };
 export type ElderSession = { elder_id: string; name: string; token: string };
 export type TurnReply = { text: string; audio_url: string; duration_ms: number | null };
@@ -83,6 +84,15 @@ export function bindElderDevice(code: string): Promise<ElderSession> {
     method: "POST",
     body: JSON.stringify({ code }),
   });
+}
+
+// --- 家屬端：App 內通知（✅ D-12） ---
+
+export async function listNotifications(token: string): Promise<AppNotification[]> {
+  const body = await request<{ notifications: AppNotification[] }>("/api/app/notifications", {
+    token,
+  });
+  return body.notifications;
 }
 
 // --- 長輩端：對講機回合 ---

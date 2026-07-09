@@ -7,11 +7,12 @@ route handler 只轉譯 HTTP ↔ 服務層；帳號規則（雜湊、token、綁
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from kinsun.accounts.models import ConsentBy, PrincipalType
 from kinsun.accounts.service import AccountService, AppAccountError, InviteError
+from kinsun.notifications.store import AppNotificationStore
 from kinsun.web.ratelimit import SlidingWindowRateLimiter, client_ip
 
 # InviteError reason → HTTP 狀態碼：查無是 404，其餘皆屬「碼已不可用」的衝突。
@@ -37,6 +38,7 @@ def create_app_api_router(
     *,
     accounts: AccountService,
     rate_limiter: SlidingWindowRateLimiter | None = None,
+    notifications: AppNotificationStore | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/app")
     limiter = rate_limiter or SlidingWindowRateLimiter(10, 300.0)
@@ -75,6 +77,19 @@ def create_app_api_router(
         except AppAccountError as exc:
             raise HTTPException(status_code=401, detail=exc.reason) from exc
         return {"guardian_id": guardian.guardian_id, "name": guardian.name, "token": token}
+
+    @router.get("/notifications")
+    def list_app_notifications(guardian_id: str = Depends(current_app_guardian)) -> dict:
+        """家屬 App 內通知列表（✅ D-12，甲-6）：最近先；未讀判斷由 App 端以本機時間戳處理。"""
+        if notifications is None:
+            return {"notifications": []}
+        external_ids = accounts.app_external_ids_of_guardian(guardian_id)
+        items = notifications.list_for_external_ids(external_ids) if external_ids else []
+        return {
+            "notifications": [
+                {"content": n.content, "created_at": n.created_at} for n in items
+            ]
+        }
 
     @router.post("/device-bindings", status_code=201)
     def create_device_binding(body: DeviceBindingIn, request: Request) -> dict:

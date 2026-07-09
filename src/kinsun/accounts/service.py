@@ -223,6 +223,17 @@ class AccountService:
                 ),
                 tx=tx,
             )
+            # App 通道綁定（✅ D-12，甲-6）：讓出站路由（危急通知等）能觸達 App 家屬。
+            self._repo.save_channel_binding(
+                ChannelBinding(
+                    Channel.APP,
+                    self._new_id(),
+                    PrincipalType.GUARDIAN,
+                    guardian.guardian_id,
+                    self._clock().timestamp(),
+                ),
+                tx=tx,
+            )
             token = self._issue_token(PrincipalType.GUARDIAN, guardian.guardian_id, tx=tx)
         return guardian, token
 
@@ -234,7 +245,32 @@ class AccountService:
         guardian = self._repo.get_guardian(account.guardian_id)
         if guardian is None:
             raise AppAccountError("invalid_credentials")
+        self._ensure_guardian_app_binding(guardian.guardian_id)
         return guardian, self._issue_token(PrincipalType.GUARDIAN, guardian.guardian_id)
+
+    def _ensure_guardian_app_binding(self, guardian_id: str) -> None:
+        """存量帳號回填：D-12 之前註冊的家屬沒有 App 通道綁定，登入時補上。"""
+        if self.app_external_ids_of_guardian(guardian_id):
+            return
+        self._repo.save_channel_binding(
+            ChannelBinding(
+                Channel.APP,
+                self._new_id(),
+                PrincipalType.GUARDIAN,
+                guardian_id,
+                self._clock().timestamp(),
+            ),
+        )
+
+    def app_external_ids_of_guardian(self, guardian_id: str) -> list[str]:
+        """家屬的全部 App 通道帳號識別（App 內通知查詢用）。"""
+        return [
+            b.external_id
+            for b in self._repo.list_channel_bindings_for_principal(
+                PrincipalType.GUARDIAN, guardian_id
+            )
+            if b.channel is Channel.APP
+        ]
 
     def bind_elder_device(self, code: str, *, consent_by: ConsentBy) -> tuple[Elder, str]:
         """長輩裝置綁定：綁定碼換 App 通道綁定＋裝置 token。InviteError 原樣上拋。"""

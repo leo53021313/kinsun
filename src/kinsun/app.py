@@ -144,6 +144,7 @@ def build_app() -> FastAPI:
                 settings.auth_rate_limit_max_attempts,
                 settings.auth_rate_limit_window_seconds,
             ),
+            notifications=core.notifications,
         )
     )
     # App 對講機：JSON 回應固定帶文字（include_text 與 LINE 的訊息額度考量無關）。
