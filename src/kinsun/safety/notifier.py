@@ -6,7 +6,6 @@ import logging
 from typing import Protocol
 
 from kinsun.accounts.models import ElderGuardian, PrincipalType
-from kinsun.channels.router import ChannelRouter
 from kinsun.safety.tiers import RiskAssessment, RiskTier
 
 logger = logging.getLogger("kinsun.safety")
@@ -14,6 +13,13 @@ logger = logging.getLogger("kinsun.safety")
 
 class Notifier(Protocol):
     def notify(self, elder_id: str, assessment: RiskAssessment) -> None: ...
+
+
+class TextSender(Protocol):
+    """「可送文字」插座（✅ D-18）：safety 核心只依賴此抽象，
+    不 import 邊緣層的 channels.router——組裝處把 ChannelRouter 插進來。"""
+
+    def send_text(self, principal_type: PrincipalType, principal_id: str, text: str) -> int: ...
 
 
 class LogNotifier:
@@ -48,7 +54,7 @@ def _format_alert(assessment: RiskAssessment) -> str:
 class GuardianNotifier:
     """危急時依升級順序、經綁定通道推播給所有家屬。任何失敗只記錄、不中斷對話。"""
 
-    def __init__(self, directory: GuardianDirectory, router: ChannelRouter) -> None:
+    def __init__(self, directory: GuardianDirectory, router: TextSender) -> None:
         self._directory = directory
         self._router = router
 
