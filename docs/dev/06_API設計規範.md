@@ -124,7 +124,7 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | :--- | :--- | :--- |
 | `POST /api/app/guardians` | `POST /api/v1/guardians` | 家屬註冊 |
 | `POST /api/app/sessions` | `POST /api/v1/sessions` | 登入 |
-| `POST /api/app/device-bindings` | `POST /api/v1/device-bindings` | 長輩裝置綁定（PROXY 同意留痕）　⚠ D-71 長輩帳密確認後本區增長輩註冊／登入端點 |
+| `POST /api/app/device-bindings` | `POST /api/v1/device-bindings` | 長輩裝置綁定（PROXY 同意留痕）　✅ D-71：本區將增長輩帳密註冊／登入端點（家屬代辦建帳、長輩機登入一次；端點形狀於己-6 設計） |
 | `POST /api/app/turns` | `POST /api/v1/turns` | 對講機回合（raw body 音檔；上限 env 化 D-26） |
 | `current_app_guardian` 屬性 | **刪除** | 死碼（D-28） |
 
@@ -147,8 +147,8 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 // Medication：{ "medication_id": "uuid", "name": "string", "slots": ["morning|noon|evening|bedtime"] }
 // Appointment：{ "appointment_id": "uuid", "date": "YYYY-MM-DD", "label": "string" }
 // Turn 回應 data：{ "text": "string", "audio_url": "string|null", "duration_ms": 1234 }
-// 認證回應 data：{ "guardian_id|elder_id": "uuid", "name": "string", "token": "string(僅此一次)",
-//                  "expires_at": 1720000000.0 }   // 家屬限定，D-25 新增
+// 認證回應 data：{ "guardian_id|elder_id": "uuid", "name": "string", "token": "string(僅此一次)" }
+//                  // D-25 2026-07-09 修訂：token 一律永久有效（登入一次永久記住），expires_at 取消
 // 健康報告 data：{ "risk_events": [{"tier": 2, "reason": "...", "created_at": 0.0}],
 //                  "reminders": [{"kind": "...", "content": "...", "created_at": 0.0}] }  // ✅ D-09 維持＋另開每日摘要端點（己-3）；tier 上限隨 D-72 改三級
 ```
