@@ -98,7 +98,11 @@ def build_app() -> FastAPI:
         session_ttl_seconds=settings.binding_session_ttl_minutes * 60,
         on_guardian_bound=on_guardian_bound,
     )
-    gate = ConsentGate(core.accounts) if settings.binding_gate_enabled else AllowAllGate()
+    gate = (
+        ConsentGate(core.accounts)
+        if settings.binding_gate_enabled
+        else AllowAllGate(core.accounts)  # 旁路模式也解析 elder_id（✅ D-19）
+    )
     publisher = (
         build_audio_publisher(settings, clock=clock, new_id=lambda: uuid.uuid4().hex)
         if settings.tts_backend == "dgx"

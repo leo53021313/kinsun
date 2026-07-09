@@ -305,6 +305,13 @@ class AccountService:
                 return binding.external_id
         return None
 
+    def bound_elder_id(self, channel: Channel, external_id: str) -> str | None:
+        """查綁定不查同意（✅ D-19，AllowAllGate 旁路用）：綁的是長輩才回 elder_id。"""
+        binding = self._repo.get_channel_binding(channel, external_id)
+        if binding is None or binding.principal_type is not PrincipalType.ELDER:
+            return None
+        return binding.principal_id
+
     def consented_elder_id(self, channel: Channel, external_id: str) -> str | None:
         """解析「已同意的長輩」：該通道帳號綁的是長輩且同意有效才回 elder_id，否則 None。"""
         binding = self._repo.get_channel_binding(channel, external_id)
