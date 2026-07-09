@@ -136,7 +136,8 @@ def build_scheduler(
             record=reminder_logs.record,
         )
     )
-    if settings.tts_backend == "dgx":
+    # 音檔清理僅在 AUDIO_RETENTION_DAYS>0 時註冊（0＝音檔本體不刪，2026-07-09 修訂）。
+    if settings.tts_backend == "dgx" and settings.audio_retention_days > 0:
         publisher = build_audio_publisher(settings, clock=clock, new_id=lambda: uuid.uuid4().hex)
         jobs.append(
             build_audio_cleanup_job(
@@ -152,8 +153,9 @@ def build_scheduler(
             hour=settings.longterm_consolidation_hour,
         )
     )
-    # 進站音檔與 TTS 音檔同樣走過期清理；有 Supabase 憑證即啟用。
-    if settings.supabase_url and settings.supabase_service_key:
+    # 進站音檔與 TTS 音檔同樣走過期清理；有 Supabase 憑證且 retention>0 才啟用。
+    has_storage = bool(settings.supabase_url and settings.supabase_service_key)
+    if has_storage and settings.audio_retention_days > 0:
         inbound_audio = build_audio_publisher(
             settings, clock=clock, new_id=lambda: uuid.uuid4().hex, prefix="inbound"
         )

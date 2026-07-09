@@ -108,6 +108,13 @@ def test_cleanup_deletes_expired_date_folders():
     assert not any("20260702" in p for p in all_paths)
 
 
+def test_cleanup_disabled_when_retention_nonpositive():
+    """retention_days<=0＝不清理（2026-07-09 修訂：音檔本體先不刪）——不得發出任何請求。"""
+    transport = FakeTransport()
+    _publisher(transport).cleanup(retention_days=0)
+    assert transport.calls == []
+
+
 def test_build_requires_supabase_config():
     class _S:
         supabase_url = ""

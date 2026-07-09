@@ -1,9 +1,9 @@
 """音檔發佈：把音檔上傳 Supabase Storage 私有 bucket，回短效簽章 URL（✅ D-55）。
 
 標準庫 urllib（不加 supabase SDK）；service key 走環境變數。
-路徑帶日期資料夾 {prefix}/{yyyymmdd}/（prefix 預設 tts，進站音檔用 inbound），
-清理只刪過期資料夾。簽章效期由 AUDIO_SIGNED_URL_EXPIRES_SECONDS 控制，
-上限受 AUDIO_RETENTION_DAYS 檔案壽命約束（檔案刪了連結自然失效）。
+路徑帶日期資料夾 {prefix}/{yyyymmdd}/（prefix 預設 tts，進站音檔用 inbound）。
+簽章效期由 AUDIO_SIGNED_URL_EXPIRES_SECONDS 控制；檔案本體預設不清理
+（AUDIO_RETENTION_DAYS=0，2026-07-09 修訂），設 >0 才啟用過期資料夾清理。
 """
 
 from __future__ import annotations
@@ -92,6 +92,8 @@ class SupabaseAudioPublisher:
         return f"{self._base}/storage/v1{signed_path}"
 
     def cleanup(self, *, retention_days: int) -> None:
+        if retention_days <= 0:  # 0＝不清理（保留全部音檔本體）
+            return
         cutoff = (self._clock() - timedelta(days=retention_days)).strftime("%Y%m%d")
         for folder in self._list_date_folders():
             if folder <= cutoff:

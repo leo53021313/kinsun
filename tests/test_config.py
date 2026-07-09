@@ -46,7 +46,7 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.supabase_url == ""
     assert settings.supabase_service_key == ""
     assert settings.audio_bucket == "tts-audio"
-    assert settings.audio_retention_days == 2
+    assert settings.audio_retention_days == 0  # 0＝不清理（2026-07-09 修訂：音檔先不刪）
     assert settings.audio_upload_timeout_seconds == 10
     assert settings.asr_debug_show_transcript is False
     assert settings.line_text_input_enabled is True
