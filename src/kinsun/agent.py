@@ -77,5 +77,9 @@ class CareAgent:
         system_prompt, history = self._envelope(elder_id, intent)
         directive = Message("user", _PROACTIVE_DIRECTIVE.format(intent=intent))
         reply = self._llm.generate(system_prompt=system_prompt, messages=[*history, directive])
-        self._session.record_turn(elder_id, Message("assistant", reply))
+        # 留存的記憶帶主動關懷標記（✅ D-39 丙-8）：隔日 recall 看得懂這輪是系統
+        # 主動開場，不是長輩憑空收到回覆；送給長輩的 reply 本身不帶標記。
+        self._session.record_turn(
+            elder_id, Message("assistant", f"【主動關懷｜{intent}】{reply}")
+        )
         return reply
