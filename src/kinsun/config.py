@@ -134,8 +134,8 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         supabase_url=env.get("SUPABASE_URL", ""),
         supabase_service_key=env.get("SUPABASE_SERVICE_KEY", ""),
         audio_bucket=env.get("AUDIO_BUCKET", "tts-audio"),
-        # 0＝不清理（2026-07-09 修訂：音檔本體先不刪，只讓簽章連結過期）；>0 才啟用過期清理。
-        audio_retention_days=int(env.get("AUDIO_RETENTION_DAYS", "0")),
+        # 音檔本體保留天數；0＝不清理（開關保留）。2026-07-09 定案：維持 2 天清理。
+        audio_retention_days=int(env.get("AUDIO_RETENTION_DAYS", "2")),
         audio_upload_timeout_seconds=float(env.get("AUDIO_UPLOAD_TIMEOUT_SECONDS", "10")),
         audio_signed_url_expires_seconds=int(env.get("AUDIO_SIGNED_URL_EXPIRES_SECONDS", "86400")),
         auth_rate_limit_max_attempts=int(env.get("AUTH_RATE_LIMIT_MAX_ATTEMPTS", "10")),
