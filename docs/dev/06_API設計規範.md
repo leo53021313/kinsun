@@ -114,7 +114,7 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | `POST /api/elders/{elder_id}/guardian-invites` | `POST /api/v1/elders/{elder_id}/guardian-invites` | 產家屬邀請碼 |
 | `GET|POST /api/elders/{elder_id}/medications`、`PUT|DELETE .../{medication_id}` | 同路徑掛 `/api/v1/` | 用藥 CRUD |
 | `GET|POST /api/elders/{elder_id}/appointments`、`PUT|DELETE .../{appointment_id}` | 同路徑掛 `/api/v1/` | 回診 CRUD |
-| `GET /api/elders/{elder_id}/health-report` | `GET /api/v1/elders/{elder_id}/health-report` | 聚合單數（規範允許）；內容範圍 ⚠ D-09 會議 |
+| `GET /api/elders/{elder_id}/health-report` | `GET /api/v1/elders/{elder_id}/health-report` | 聚合單數（規範允許）；✅ D-09：另新增每日摘要端點（己-3，如 `GET /api/v1/elders/{elder_id}/daily-summaries`） |
 | — | `DELETE /api/v1/sessions` | **新增**：登出（D-25） |
 | — | `DELETE /api/v1/elders/{elder_id}/device-bindings` | **新增**：作廢長輩裝置重綁（D-25） |
 
@@ -124,7 +124,7 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | :--- | :--- | :--- |
 | `POST /api/app/guardians` | `POST /api/v1/guardians` | 家屬註冊 |
 | `POST /api/app/sessions` | `POST /api/v1/sessions` | 登入 |
-| `POST /api/app/device-bindings` | `POST /api/v1/device-bindings` | 長輩裝置綁定（PROXY 同意留痕） |
+| `POST /api/app/device-bindings` | `POST /api/v1/device-bindings` | 長輩裝置綁定（PROXY 同意留痕）　⚠ D-71 長輩帳密確認後本區增長輩註冊／登入端點 |
 | `POST /api/app/turns` | `POST /api/v1/turns` | 對講機回合（raw body 音檔；上限 env 化 D-26） |
 | `current_app_guardian` 屬性 | **刪除** | 死碼（D-28） |
 
@@ -150,7 +150,7 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 // 認證回應 data：{ "guardian_id|elder_id": "uuid", "name": "string", "token": "string(僅此一次)",
 //                  "expires_at": 1720000000.0 }   // 家屬限定，D-25 新增
 // 健康報告 data：{ "risk_events": [{"tier": 2, "reason": "...", "created_at": 0.0}],
-//                  "reminders": [{"kind": "...", "content": "...", "created_at": 0.0}] }  // 範圍 ⚠ D-09
+//                  "reminders": [{"kind": "...", "content": "...", "created_at": 0.0}] }  // ✅ D-09 維持＋另開每日摘要端點（己-3）；tier 上限隨 D-72 改三級
 ```
 
 ---
