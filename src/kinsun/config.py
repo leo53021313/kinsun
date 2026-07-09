@@ -40,6 +40,7 @@ class Settings:
     gemini_model: str
     asr_backend: str
     asr_endpoint: str
+    asr_api_key: str
     asr_timeout_seconds: float
     gemini_timeout_seconds: float
     memory_max_turns: int
@@ -67,6 +68,7 @@ class Settings:
     binding_gate_enabled: bool
     tts_backend: str
     tts_endpoint: str
+    tts_api_key: str
     tts_timeout_seconds: float
     tts_reply_text: bool
     supabase_url: str
@@ -105,6 +107,7 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         gemini_model=env.get("GEMINI_MODEL", "gemini-3.1-flash-lite"),
         asr_backend=env.get("ASR_BACKEND", "mock"),
         asr_endpoint=env.get("ASR_ENDPOINT", ""),
+        asr_api_key=env.get("ASR_API_KEY", ""),
         asr_timeout_seconds=float(env.get("ASR_TIMEOUT_SECONDS", "15")),
         gemini_timeout_seconds=float(env.get("GEMINI_TIMEOUT_SECONDS", "30")),
         memory_max_turns=int(env.get("MEMORY_MAX_TURNS", "200")),
@@ -132,6 +135,7 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         binding_gate_enabled=_parse_bool(env.get("BINDING_GATE_ENABLED", "true")),
         tts_backend=env.get("TTS_BACKEND", "bubble"),
         tts_endpoint=env.get("TTS_ENDPOINT", ""),
+        tts_api_key=env.get("TTS_API_KEY", ""),
         tts_timeout_seconds=float(env.get("TTS_TIMEOUT_SECONDS", "30")),
         tts_reply_text=_parse_bool(env.get("TTS_REPLY_TEXT", "true")),
         supabase_url=env.get("SUPABASE_URL", ""),

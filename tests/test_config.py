@@ -51,6 +51,8 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.audio_max_upload_bytes == 10 * 1024 * 1024
     assert settings.safety_confidence_high == 0.7
     assert settings.safety_confidence_mid == 0.4
+    assert settings.asr_api_key == ""
+    assert settings.tts_api_key == ""
     assert settings.asr_debug_show_transcript is False
     assert settings.line_text_input_enabled is True
     assert settings.admin_api_key == ""
