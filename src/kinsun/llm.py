@@ -174,3 +174,10 @@ class GeminiClient:
         if not text:
             raise LLMError("Gemini 回應為空")
         return ToolTurn(text=text, tool_calls=[])
+
+
+def build_gemini_for(settings, model: str) -> GeminiClient:
+    """按用途建 Gemini client（✅ D-16 丁-5）：模型同主設定時呼叫端應直接共用主 client。"""
+    return GeminiClient(
+        api_key=settings.gemini_api_key, model=model, timeout=settings.gemini_timeout_seconds
+    )

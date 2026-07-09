@@ -38,6 +38,8 @@ class Settings:
     line_channel_access_token: str
     gemini_api_key: str
     gemini_model: str
+    gemini_model_safety: str
+    gemini_model_summary: str
     asr_backend: str
     asr_endpoint: str
     asr_api_key: str
@@ -105,6 +107,11 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         line_channel_access_token=_require(env, "LINE_CHANNEL_ACCESS_TOKEN"),
         gemini_api_key=_require(env, "GEMINI_API_KEY"),
         gemini_model=env.get("GEMINI_MODEL", "gemini-3.1-flash-lite"),
+        # 按用途配模型（✅ D-16 丁-5）：未設＝沿用 GEMINI_MODEL；升級時危急分級優先換強模型。
+        gemini_model_safety=env.get("GEMINI_MODEL_SAFETY", "")
+        or env.get("GEMINI_MODEL", "gemini-3.1-flash-lite"),
+        gemini_model_summary=env.get("GEMINI_MODEL_SUMMARY", "")
+        or env.get("GEMINI_MODEL", "gemini-3.1-flash-lite"),
         asr_backend=env.get("ASR_BACKEND", "mock"),
         asr_endpoint=env.get("ASR_ENDPOINT", ""),
         asr_api_key=env.get("ASR_API_KEY", ""),

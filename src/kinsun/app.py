@@ -25,6 +25,7 @@ from kinsun.channels.inbound import VoiceReplyDelivery
 from kinsun.channels.line.webhook import create_app
 from kinsun.composition import assemble_core, build_externals
 from kinsun.config import load_dotenv, load_settings
+from kinsun.llm import build_gemini_for
 from kinsun.medications.flow import MedicationMenu
 from kinsun.pipeline import VoicePipeline
 from kinsun.safety.classifier import LlmRiskClassifier
@@ -70,12 +71,18 @@ def build_app() -> FastAPI:
         if settings.supabase_url and settings.supabase_service_key
         else None
     )
+    # 危急分級按用途配模型（✅ D-16 丁-5）：與主模型相同時共用連線。
+    safety_llm = (
+        core.gemini
+        if settings.gemini_model_safety == settings.gemini_model
+        else build_gemini_for(settings, settings.gemini_model_safety)
+    )
     pipeline = VoicePipeline(
         asr=build_asr_client(settings),
         agent=core.agent,
         tts=build_tts_client(settings),
         detector=RiskDetector(
-            LlmRiskClassifier(core.gemini),
+            LlmRiskClassifier(safety_llm),
             high=settings.safety_confidence_high,
             mid=settings.safety_confidence_mid,
         ),

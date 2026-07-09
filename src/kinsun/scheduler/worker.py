@@ -19,6 +19,7 @@ from kinsun.audio.publisher import build_audio_publisher
 from kinsun.composition import assemble_core, build_externals
 from kinsun.config import Settings, load_dotenv, load_settings
 from kinsun.db import Database
+from kinsun.llm import build_gemini_for
 from kinsun.medications.jobs import build_medication_slot_job
 from kinsun.medications.models import MedicationSlot
 from kinsun.memory.longterm.consolidation import run_consolidation
@@ -47,7 +48,12 @@ def build_scheduler(
     db = core.db
     memory = core.memory
     long_term = core.long_term
-    gemini = core.gemini
+    # 摘要按用途配模型（✅ D-16 丁-5）：與主模型相同時共用連線。
+    gemini = (
+        core.gemini
+        if settings.gemini_model_summary == settings.gemini_model
+        else build_gemini_for(settings, settings.gemini_model_summary)
+    )
     accounts = core.accounts
     med_store = core.med_store
     appt_store = core.appt_store
