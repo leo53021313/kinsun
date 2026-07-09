@@ -78,7 +78,7 @@
   * `Settings` 欄位名＝環境變數鍵的小寫，100% 一一對應、不設別名，如 `gemini_timeout_seconds` 對應 `GEMINI_TIMEOUT_SECONDS`。
   * 鍵一律掛子系統前綴：`GEMINI_`、`LONGTERM_`、`PROACTIVE_`、`SCHEDULER_`、`ASR_`、`TTS_`、`AUDIO_`、`SUPABASE_`（專案層憑證）、`LIFF_`、`LINE_`。
   * `KINSUN_` 前綴保留給測試／CI 旗標，如 `KINSUN_IT`，不用於應用設定。
-  * `NGROK_*` 等部署層鍵不經 `config.py`；DGX 服務端（`services/asr`、`services/tts`）環境變數獨立管理，見各自 README。
+  * `NGROK_*` 等部署層鍵不經 `config.py`；`RAG_CRAWLER_*`／`RAG_EMBEDDING_*` 由 ingest CLI 直讀（✅ D-70）；DGX 服務端（`services/asr`、`services/tts`）環境變數獨立管理，見各自 README。
   * 程式讀取的每個鍵都必須列在 `.env.example`，並附預設值與一行中文註解。
 * API 與 DB：
   * API 路徑用複數名詞＋kebab-case，如 `/guardian-invites`；聚合計算結果端點可用單數，如 `/health-report`。
