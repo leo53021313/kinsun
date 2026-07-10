@@ -66,7 +66,7 @@
 
 | # | 工項 | 依據 | 規模 |
 | :--- | :--- | :--- | :---: |
-| 戊-1 | CI：PR 自動跑 pytest＋ruff＋tsc（＋pip/npm audit） | A-6 | M |
+| 戊-1 | ✅ 完成（2026-07-10）：CI 五 job——pytest＋ruff／Pg 合約測試（pgvector service container）／frontend tsc＋建置／app tsc／pip＋npm audit（警示不擋門） | A-6 | M |
 | 戊-2 | KPI 量測基建：token 用量落庫＋往返延遲統計匯出 | D-05（A-7、G-6） | M |
 | 戊-3 | 覆蓋補強：worker 接線／app.py／rag 支援模組 | M-8 | M |
 | 戊-4 | 危急偵測標注測試集＋P/R 量測（KPI 用） | D-05 | M |
