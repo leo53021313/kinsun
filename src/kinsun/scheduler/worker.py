@@ -32,6 +32,7 @@ from kinsun.proactive.jobs import (
 )
 from kinsun.reports.reminders import safe_record
 from kinsun.reports.summaries import PgConversationSummaryStore, summarize_day
+from kinsun.safety.events import PgRiskEventStore
 from kinsun.scheduler.jobs import build_audio_cleanup_job, build_consolidation_job
 from kinsun.scheduler.scheduler import Scheduler
 from kinsun.scheduler.state import PgScheduleStateStore
@@ -62,6 +63,8 @@ def build_scheduler(
     router = core.router
     traces = core.traces
     summaries = PgConversationSummaryStore(db, clock=clock)
+    # 摘要納 L1 小訊號（✅ D-10 己-5）：worker 自組 risk_events 讀取端。
+    risk_events = PgRiskEventStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex)
 
     def run_one(elder_id: str) -> None:
         run_consolidation(elder_id, short_term=memory, long_term=long_term)
@@ -72,6 +75,7 @@ def build_scheduler(
                 summarizer=gemini,
                 summaries=summaries,
                 clock=clock,
+                risk_events=risk_events,
             )
         except Exception:  # noqa: BLE001 - 摘要失敗不影響整理與其他長輩
             logger.warning("對話摘要失敗 elder=%s", elder_id)

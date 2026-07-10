@@ -184,15 +184,20 @@ def test_same_summary_model_reuses_main_client(monkeypatch):
 
 def test_consolidation_job_consolidates_then_summarizes(monkeypatch):
     consolidated: list[str] = []
-    summarized: list[str] = []
+    summarized: list[tuple[str, bool]] = []
     monkeypatch.setattr(
         worker, "run_consolidation", lambda elder_id, **kw: consolidated.append(elder_id)
     )
-    monkeypatch.setattr(worker, "summarize_day", lambda elder_id, **kw: summarized.append(elder_id))
+    monkeypatch.setattr(
+        worker,
+        "summarize_day",
+        lambda elder_id, **kw: summarized.append((elder_id, kw.get("risk_events") is not None)),
+    )
     scheduler, _core = _build(monkeypatch, _settings(), elders=["e1", "e2"])
     _job(scheduler, "daily-consolidation").run()
     assert consolidated == ["e1", "e2"]
-    assert summarized == ["e1", "e2"]
+    # 摘要納 L1（✅ D-10 己-5）：risk_events 讀取端有接上。
+    assert summarized == [("e1", True), ("e2", True)]
 
 
 def test_summary_failure_does_not_block_consolidation(monkeypatch):
