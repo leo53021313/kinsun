@@ -4,7 +4,12 @@ import { type Overview, getOverview } from "../api";
 import { formatLatency, formatTime } from "../format";
 import { usePolling } from "../usePolling";
 
-const STAGE_LABEL: Record<string, string> = { asr: "ASR", llm: "LLM", tts: "TTS" };
+const STAGE_LABEL: Record<string, string> = {
+  asr: "ASR",
+  llm: "LLM",
+  tts: "TTS",
+  round_trip: "往返（端到端）",
+};
 
 function HourlyChart({ data }: { data: Overview["hourly_turns"] }) {
   const width = 720;
@@ -100,6 +105,7 @@ export function OverviewPage() {
               <th>次數</th>
               <th>錯誤</th>
               <th>平均延遲</th>
+              <th>p50 延遲</th>
               <th>p95 延遲</th>
             </tr>
           </thead>
@@ -110,6 +116,7 @@ export function OverviewPage() {
                 <td>{s.call_count}</td>
                 <td>{s.error_count}</td>
                 <td>{formatLatency(Math.round(s.avg_latency_ms))}</td>
+                <td>{formatLatency(Math.round(s.p50_latency_ms))}</td>
                 <td>{formatLatency(Math.round(s.p95_latency_ms))}</td>
               </tr>
             ))}

@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 
 from kinsun.agent import CareAgent
+from kinsun.llm import LLMUsage, collect_llm_usage
 from kinsun.observability.store import TraceStore, safe_record
 from kinsun.safety.detector import RiskDetector
 from kinsun.safety.events import RiskEventStore
@@ -146,9 +147,11 @@ class VoicePipeline:
         return text
 
     def _generate(self, elder_id: str, user_text: str, *, line_user_id: str, trace_id: str) -> str:
-        # 現階段每輪記一筆（涵蓋整個 agent 含工具迴圈）；token 由 Gemini usage
-        # 尚未透出，先記 NULL——見規格「未來工作」。
+        # 每輪記一筆（涵蓋整個 agent 含工具迴圈）；token 用量由收集器彙總本輪
+        # 所有 Gemini 呼叫（✅ D-05 戊-2）。零申報（假 LLM／無 usage_metadata）
+        # 記 NULL＝「未量測」，與量測到 0 區隔。
         reply = ""
+        usage = LLMUsage()
         with self._span(
             lambda traces, status, latency_ms, error_message: traces.record_llm_call(
                 trace_id=trace_id,
@@ -156,13 +159,14 @@ class VoicePipeline:
                 status=status,
                 latency_ms=latency_ms,
                 model_name=self._model_name,
-                input_tokens=None,
-                output_tokens=None,
+                input_tokens=usage.input_tokens or None,
+                output_tokens=usage.output_tokens or None,
                 content=reply,
                 error_message=error_message,
             )
         ):
-            reply = self._agent.handle(elder_id, user_text)
+            with collect_llm_usage(usage):
+                reply = self._agent.handle(elder_id, user_text)
         return reply
 
     def _synthesize(self, reply_text: str, *, line_user_id: str, trace_id: str) -> TtsResult:

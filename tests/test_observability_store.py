@@ -187,7 +187,39 @@ def test_overview_stats_counts_and_stage_errors():
     asr = next(s for s in stats.stages if s.stage == "asr")
     assert (asr.call_count, asr.error_count) == (2, 1)
     assert asr.avg_latency_ms == 200.0
+    assert asr.p50_latency_ms == 100.0  # nearest-rank：⌈0.5×2⌉＝第 1 筆
     assert sum(h.turn_count for h in stats.hourly_turns) == 3
+
+
+def test_overview_stats_round_trip_stage_p50_p95():
+    """✅ D-05（戊-2）：語音往返延遲 P50／P95——round_trip_ms 為 NULL（未量測）不計。"""
+    store = FakeTraceStore()
+    store.now = 100.0
+    for ms in (700, 900, 1400):
+        store.record_reply(
+            trace_id="t",
+            line_user_id="U1",
+            kind="voice",
+            status="ok",
+            latency_ms=100,
+            round_trip_ms=ms,
+            audio_url="",
+        )
+    store.record_reply(
+        trace_id="t",
+        line_user_id="U1",
+        kind="text",
+        status="ok",
+        latency_ms=5,
+        round_trip_ms=None,
+        audio_url="",
+    )
+    stats = store.get_overview_stats(today_start=50.0, hourly_start=50.0)
+    round_trip = next(s for s in stats.stages if s.stage == "round_trip")
+    assert round_trip.call_count == 3
+    assert round_trip.avg_latency_ms == 1000.0
+    assert round_trip.p50_latency_ms == 900.0
+    assert round_trip.p95_latency_ms == 1400.0
 
 
 def test_purge_only_removes_old_observability_rows():

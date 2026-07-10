@@ -1,7 +1,7 @@
 import pytest
 
 from kinsun.agent import CareAgent
-from kinsun.llm import LLMError, Message
+from kinsun.llm import LLMError, Message, report_llm_usage
 from kinsun.pipeline import VoicePipeline
 from kinsun.safety.tiers import FAILSAFE_EVENT_REASON, RiskAssessment, RiskTier
 from kinsun.speech.asr import MockAsrClient
@@ -301,3 +301,28 @@ def test_plain_l1_not_recorded():
     )
     assert notifier.calls == []
     assert events.recorded == []
+
+
+class _UsageReportingLLM:
+    """回覆時申報 token 用量（✅ D-05 戊-2）：模擬 GeminiClient 透出 usage_metadata。"""
+
+    def generate(self, *, system_prompt: str, messages: list[Message]) -> str:
+        report_llm_usage(120, 40)
+        return "有記帳的回覆"
+
+
+def test_pipeline_records_llm_token_usage():
+    traces = FakeTraceStore()
+    _traced_pipeline(traces, llm=_UsageReportingLLM()).process(
+        b"\x00", elder_id="u1", trace_id="t1"
+    )
+    assert traces.llm_calls[0].input_tokens == 120
+    assert traces.llm_calls[0].output_tokens == 40
+
+
+def test_pipeline_records_null_tokens_when_llm_reports_no_usage():
+    # 零申報（假 LLM／舊 SDK 無 usage_metadata）記 NULL＝「未量測」，與量測到 0 區隔。
+    traces = FakeTraceStore()
+    _traced_pipeline(traces).process(b"\x00", elder_id="u1", trace_id="t1")
+    assert traces.llm_calls[0].input_tokens is None
+    assert traces.llm_calls[0].output_tokens is None

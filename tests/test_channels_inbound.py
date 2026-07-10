@@ -383,3 +383,35 @@ def test_dispatch_without_trace_id_records_nothing():
         traces=traces,
     )
     assert traces.replies == []  # 無 trace_id（非觀測路徑）不記
+
+
+def test_dispatch_records_round_trip_from_received_at():
+    """✅ D-05（戊-2）：received_at（通道收件時刻）→ 回覆送達的端到端往返延遲落庫。"""
+    traces = FakeTraceStore()
+    r = _Replies()
+    msg = InboundMessage(Channel.LINE, "U-1", "audio", "", b"xy", r, trace_id="t3", received_at=0.5)
+    dispatch(
+        msg,
+        pipeline=_VoicePipeline(TtsResult(text="回覆")),
+        binding=_Binding(None),
+        gate=_Gate(True),
+        traces=traces,
+        timer=iter([1.0, 1.25]).__next__,
+    )
+    assert traces.replies[0].latency_ms == 250  # 發送段：1.0 → 1.25
+    assert traces.replies[0].round_trip_ms == 750  # 端到端：0.5 → 1.25
+
+
+def test_dispatch_round_trip_null_when_received_at_unknown():
+    traces = FakeTraceStore()
+    r = _Replies()
+    msg = InboundMessage(Channel.LINE, "U-1", "audio", "", b"xy", r, trace_id="t4")
+    dispatch(
+        msg,
+        pipeline=_VoicePipeline(TtsResult(text="回覆")),
+        binding=_Binding(None),
+        gate=_Gate(True),
+        traces=traces,
+        timer=iter([0.0, 0.1]).__next__,
+    )
+    assert traces.replies[0].round_trip_ms is None

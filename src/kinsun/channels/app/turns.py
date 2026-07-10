@@ -11,6 +11,7 @@ InboundMessage(Channel.APP, …) 進既有 dispatch——閘門（同意複核�
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from collections.abc import Callable
 
@@ -83,6 +84,9 @@ def create_app_turns_router(
 
     @router.post("/turns", status_code=201)
     async def create_turn(request: Request, elder_id: str = Depends(current_elder)) -> dict:
+        # 往返延遲起點（✅ D-05 戊-2）：請求進入處理的時刻，與 dispatch 的預設
+        # timer（time.monotonic）同源；涵蓋收音檔、進站上傳與整段管線。
+        received_at = time.monotonic()
         # token 不代表同意：撤回或綁定消失即擋（閘門以 (channel, external_id) 複核）。
         external_id = accounts.app_external_id_of_elder(elder_id)
         if external_id is None or gate.resolve_elder(Channel.APP, external_id) is None:
@@ -105,6 +109,7 @@ def create_app_turns_router(
             collector.reply_voice,
             trace_id=make_id(),
             audio_url=_publish_inbound(audio),
+            received_at=received_at,
         )
         dispatch(
             msg,

@@ -47,8 +47,35 @@ def test_feed_overview_and_purge(pg_database):
         source_audio_url="",
         error_message="",
     )
+    # 往返延遲統計（✅ D-05 戊-2）：percentile_cont 的 p50／p95 在真 Postgres 上驗語法與插值。
+    for round_trip_ms in (700, 900, 1400):
+        store.record_reply(
+            trace_id=trace_id,
+            line_user_id=line_user_id,
+            kind="voice",
+            status="ok",
+            latency_ms=100,
+            round_trip_ms=round_trip_ms,
+            audio_url="",
+        )
+    store.record_reply(
+        trace_id=trace_id,
+        line_user_id=line_user_id,
+        kind="text",
+        status="ok",
+        latency_ms=5,
+        round_trip_ms=None,
+        audio_url="",
+    )
     stats = store.get_overview_stats(today_start=0.0, hourly_start=0.0)
     assert any(s.stage == "asr" and s.call_count >= 1 for s in stats.stages)
+    # 只看最近 60 秒視窗，隔離同庫其他測試（如合約測試）寫入的 replies。
+    recent_ts = datetime.now(ZoneInfo("Asia/Taipei")).timestamp() - 60
+    recent = store.get_overview_stats(today_start=recent_ts, hourly_start=recent_ts)
+    round_trip = next(s for s in recent.stages if s.stage == "round_trip")
+    assert round_trip.call_count == 3  # round_trip_ms 為 NULL（未量測）者不計
+    assert round_trip.p50_latency_ms == 900.0
+    assert round_trip.p95_latency_ms == 1350.0  # percentile_cont 線性插值：900＋0.9×500
     # 活躍長輩數以 elder_id 計（✅ D-34 丙-4）：line_user_id 已退役恆 NULL，舊查詢在真庫恆 0。
     now_ts = datetime.now(ZoneInfo("Asia/Taipei")).timestamp()
     before = store.get_overview_stats(today_start=now_ts - 60, hourly_start=now_ts - 60)

@@ -187,13 +187,18 @@ OBSERVABILITY_DDL = (
     "CREATE TABLE IF NOT EXISTS replies ("
     "reply_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, line_user_id TEXT NOT NULL, "
     "kind TEXT NOT NULL, status TEXT NOT NULL, latency_ms INTEGER NOT NULL, "
-    "audio_url TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+    "round_trip_ms INTEGER, audio_url TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
     "CREATE INDEX IF NOT EXISTS idx_replies_trace ON replies (trace_id);"
     "CREATE INDEX IF NOT EXISTS idx_replies_created ON replies (created_at);"
 )
 
 # risk_events 既有表補 trace_id（可空）：讓風險事件掛回該輪鏈路。
 RISK_EVENTS_TRACE_MIGRATION_DDL = "ALTER TABLE risk_events ADD COLUMN IF NOT EXISTS trace_id TEXT;"
+
+# replies 既有表補 round_trip_ms（可空，✅ D-05 戊-2）：端到端往返延遲；NULL＝未量測。
+REPLIES_ROUND_TRIP_MIGRATION_DDL = (
+    "ALTER TABLE replies ADD COLUMN IF NOT EXISTS round_trip_ms INTEGER;"
+)
 
 # 會話主鍵遷移（冪等）：turns／risk_events／conversation_summaries 加 elder_id、
 # 舊 line_user_id 欄改可空（新寫入不再填）；摘要卸下 (line_user_id, date) 主鍵、
@@ -252,6 +257,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(CONVERSATION_SUMMARIES_DDL)
         conn.execute(OBSERVABILITY_DDL)
         conn.execute(RISK_EVENTS_TRACE_MIGRATION_DDL)
+        conn.execute(REPLIES_ROUND_TRIP_MIGRATION_DDL)
         conn.execute(SESSION_KEY_MIGRATION_DDL)
         conn.execute(ACCOUNTS_LINE_COLUMNS_RETIRE_DDL)
         conn.commit()

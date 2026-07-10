@@ -67,7 +67,7 @@
 | # | 工項 | 依據 | 規模 |
 | :--- | :--- | :--- | :---: |
 | 戊-1 | ✅ 完成（2026-07-10）：CI 五 job——pytest＋ruff／Pg 合約測試（pgvector service container）／frontend tsc＋建置／app tsc／pip＋npm audit（警示不擋門） | A-6 | M |
-| 戊-2 | KPI 量測基建：token 用量落庫＋往返延遲統計匯出 | D-05（A-7、G-6） | M |
+| 戊-2 | ✅ 完成（2026-07-10）：Gemini usage 落庫 llm_calls（收集器彙總工具迴圈）＋replies.round_trip_ms 端到端往返＋overview 各階段 p50／p95 與往返統計（admin 前端同步顯示） | D-05（A-7、G-6） | M |
 | 戊-3 | 覆蓋補強：worker 接線／app.py／rag 支援模組 | M-8 | M |
 | 戊-4 | 危急偵測標注測試集＋P/R 量測（KPI 用） | D-05 | M |
 

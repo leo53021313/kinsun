@@ -21,6 +21,7 @@ export type StageStats = {
   call_count: number;
   error_count: number;
   avg_latency_ms: number;
+  p50_latency_ms: number;
   p95_latency_ms: number;
 };
 export type HourlyCount = { hour_start: number; turn_count: number };
@@ -97,6 +98,7 @@ export type TraceReply = {
   kind: string;
   status: string;
   latency_ms: number;
+  round_trip_ms: number | null;
   audio_url: string;
   created_at: number;
 };

@@ -97,6 +97,7 @@ class TraceStore(Protocol):
         kind: str,
         status: str,
         latency_ms: int,
+        round_trip_ms: int | None = None,
         audio_url: str,
     ) -> None: ...
     def get_trace(self, trace_id: str) -> Trace | None: ...
@@ -250,11 +251,13 @@ class PgTraceStore:
         kind: str,
         status: str,
         latency_ms: int,
+        round_trip_ms: int | None = None,
         audio_url: str,
     ) -> None:
         self._db.execute(
             "INSERT INTO replies (reply_id, trace_id, line_user_id, kind, status, "
-            "latency_ms, audio_url, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            "latency_ms, round_trip_ms, audio_url, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 self._new_id(),
                 trace_id,
@@ -262,6 +265,7 @@ class PgTraceStore:
                 kind,
                 status,
                 latency_ms,
+                round_trip_ms,
                 audio_url,
                 self._now(),
             ),
@@ -294,7 +298,7 @@ class PgTraceStore:
         )
         reply_row = self._db.query_one(
             "SELECT reply_id, trace_id, line_user_id, kind, status, latency_ms, "
-            "audio_url, created_at FROM replies WHERE trace_id = %s "
+            "round_trip_ms, audio_url, created_at FROM replies WHERE trace_id = %s "
             "ORDER BY created_at LIMIT 1",
             (trace_id,),
         )
@@ -448,11 +452,26 @@ class PgTraceStore:
             row = self._db.query_one(
                 f"SELECT COUNT(*), COUNT(*) FILTER (WHERE status <> 'ok'), "
                 f"COALESCE(AVG(latency_ms), 0), "
+                f"COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms), 0), "
                 f"COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms), 0) "
                 f"FROM {table} WHERE created_at >= %s",
                 (today_start,),
             )
-            stages.append(StageStats(stage, row[0], row[1], float(row[2]), float(row[3])))
+            stages.append(
+                StageStats(stage, row[0], row[1], float(row[2]), float(row[3]), float(row[4]))
+            )
+        # 端到端往返（✅ D-05 戊-2）：round_trip_ms 為 NULL（未量測）者不計。
+        row = self._db.query_one(
+            "SELECT COUNT(*), COUNT(*) FILTER (WHERE status <> 'ok'), "
+            "COALESCE(AVG(round_trip_ms), 0), "
+            "COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY round_trip_ms), 0), "
+            "COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY round_trip_ms), 0) "
+            "FROM replies WHERE created_at >= %s AND round_trip_ms IS NOT NULL",
+            (today_start,),
+        )
+        stages.append(
+            StageStats("round_trip", row[0], row[1], float(row[2]), float(row[3]), float(row[4]))
+        )
         hourly_rows = self._db.query(
             "SELECT floor(created_at / 3600) * 3600 AS hour_start, COUNT(*) "
             "FROM turns WHERE created_at >= %s GROUP BY 1 ORDER BY 1",
@@ -637,6 +656,7 @@ class FakeTraceStore:
         kind: str,
         status: str,
         latency_ms: int,
+        round_trip_ms: int | None = None,
         audio_url: str,
     ) -> None:
         self.replies.append(
@@ -647,6 +667,7 @@ class FakeTraceStore:
                 kind,
                 status,
                 latency_ms,
+                round_trip_ms,
                 audio_url,
                 self.now,
             )
@@ -786,6 +807,21 @@ class FakeTraceStore:
 
     def get_overview_stats(self, *, today_start: float, hourly_start: float) -> OverviewStats:
         today_turns = [t for t in self.turns if t[3] >= today_start]
+
+        def _nearest_rank(lats: list[int], pct: int) -> float:
+            return float(lats[max(0, -(-pct * len(lats) // 100) - 1)]) if lats else 0.0
+
+        def _stage_stats(stage: str, statuses: list[str], lats: list[int]) -> StageStats:
+            lats = sorted(lats)
+            return StageStats(
+                stage,
+                len(statuses),
+                sum(1 for st in statuses if st != "ok"),
+                sum(lats) / len(lats) if lats else 0.0,
+                _nearest_rank(lats, 50),
+                _nearest_rank(lats, 95),
+            )
+
         stages = []
         for stage, calls in (
             ("asr", self.asr_calls),
@@ -793,17 +829,18 @@ class FakeTraceStore:
             ("tts", self.tts_calls),
         ):
             recent = [c for c in calls if c.created_at >= today_start]
-            lats = sorted(c.latency_ms for c in recent)
-            p95 = lats[max(0, -(-95 * len(lats) // 100) - 1)] if lats else 0.0
             stages.append(
-                StageStats(
-                    stage,
-                    len(recent),
-                    sum(1 for c in recent if c.status != "ok"),
-                    sum(lats) / len(lats) if lats else 0.0,
-                    float(p95),
-                )
+                _stage_stats(stage, [c.status for c in recent], [c.latency_ms for c in recent])
             )
+        # 端到端往返（✅ D-05 戊-2）：round_trip_ms 為 None（未量測）者不計。
+        measured = [
+            r for r in self.replies if r.created_at >= today_start and r.round_trip_ms is not None
+        ]
+        stages.append(
+            _stage_stats(
+                "round_trip", [r.status for r in measured], [r.round_trip_ms for r in measured]
+            )
+        )
         llm_recent = [c for c in self.llm_calls if c.created_at >= today_start]
         buckets: dict[float, int] = {}
         for t in self.turns:

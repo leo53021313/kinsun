@@ -1,14 +1,19 @@
+from types import SimpleNamespace
+
 import pytest
 
 from kinsun.llm import (
     GeminiClient,
     LLMClient,
     LLMError,
+    LLMUsage,
     Message,
     ToolCall,
     ToolResult,
     ToolSpec,
     _to_contents,
+    collect_llm_usage,
+    report_llm_usage,
 )
 
 
@@ -123,3 +128,65 @@ def test_generate_tool_turn_echoes_thought_signature_back():
 
     assert turn.text == "台北晴，多喝水"
     assert _find_function_call_signature(fake.last_contents, "get_weather") == b"SIG-1"
+
+
+# --- LLM 用量收集（✅ D-05 戊-2：token 用量落庫的量測 seam）---
+
+
+def test_collect_llm_usage_accumulates_reports():
+    usage = LLMUsage()
+    with collect_llm_usage(usage):
+        report_llm_usage(100, 20)
+        report_llm_usage(50, 10)
+    assert (usage.input_tokens, usage.output_tokens) == (150, 30)
+
+
+def test_report_llm_usage_without_collector_is_noop():
+    report_llm_usage(1, 1)  # 無收集器時靜默略過，不可丟例外
+
+
+def test_collector_stops_counting_after_exit():
+    usage = LLMUsage()
+    with collect_llm_usage(usage):
+        pass
+    report_llm_usage(5, 5)
+    assert (usage.input_tokens, usage.output_tokens) == (0, 0)
+
+
+def test_generate_reports_usage_metadata():
+    client = GeminiClient(api_key="dummy", model="m", timeout=30.0)
+    resp = _FakeResp(parts=[], text="好")
+    resp.usage_metadata = SimpleNamespace(
+        prompt_token_count=120, candidates_token_count=8, thoughts_token_count=32
+    )
+    client._client = _FakeGenAI(resp)
+    usage = LLMUsage()
+    with collect_llm_usage(usage):
+        client.generate(system_prompt="s", messages=[Message("user", "嗨")])
+    # 輸出 token＝候選＋思考（thinking 模型的思考也計費為輸出）。
+    assert (usage.input_tokens, usage.output_tokens) == (120, 40)
+
+
+def test_generate_tool_turn_reports_usage_metadata():
+    client = GeminiClient(api_key="dummy", model="m", timeout=30.0)
+    resp = _FakeResp(parts=[], text="台北晴")
+    resp.usage_metadata = SimpleNamespace(prompt_token_count=200, candidates_token_count=15)
+    client._client = _FakeGenAI(resp)
+    usage = LLMUsage()
+    with collect_llm_usage(usage):
+        client.generate_tool_turn(
+            system_prompt="s",
+            messages=[Message("user", "天氣")],
+            tools=[_weather_spec()],
+            tool_results=[],
+        )
+    assert (usage.input_tokens, usage.output_tokens) == (200, 15)
+
+
+def test_generate_without_usage_metadata_records_nothing():
+    client = GeminiClient(api_key="dummy", model="m", timeout=30.0)
+    client._client = _FakeGenAI(_FakeResp(parts=[], text="好"))
+    usage = LLMUsage()
+    with collect_llm_usage(usage):
+        client.generate(system_prompt="s", messages=[Message("user", "嗨")])
+    assert (usage.input_tokens, usage.output_tokens) == (0, 0)

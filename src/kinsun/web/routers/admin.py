@@ -151,6 +151,7 @@ def _overview_json(stats: OverviewStats, *, generated_at: float) -> dict:
                 "call_count": s.call_count,
                 "error_count": s.error_count,
                 "avg_latency_ms": s.avg_latency_ms,
+                "p50_latency_ms": s.p50_latency_ms,
                 "p95_latency_ms": s.p95_latency_ms,
             }
             for s in stats.stages
@@ -246,6 +247,7 @@ def _trace_json(t: Trace) -> dict:
             "kind": t.reply.kind,
             "status": t.reply.status,
             "latency_ms": t.reply.latency_ms,
+            "round_trip_ms": t.reply.round_trip_ms,
             "audio_url": t.reply.audio_url,
             "created_at": t.reply.created_at,
         },

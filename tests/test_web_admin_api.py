@@ -63,7 +63,8 @@ def test_overview_shape():
     body = res.json()["data"]
     assert body["turn_count"] == 1
     assert body["active_elder_count"] == 1
-    assert {s["stage"] for s in body["stages"]} == {"asr", "llm", "tts"}
+    assert {s["stage"] for s in body["stages"]} == {"asr", "llm", "tts", "round_trip"}
+    assert all("p50_latency_ms" in s and "p95_latency_ms" in s for s in body["stages"])
     assert isinstance(body["hourly_turns"], list)
     assert isinstance(body["generated_at"], float)
     assert body["alerts"] == []  # 未注入 risk_events 時不告警
