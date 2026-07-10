@@ -50,7 +50,7 @@ def test_list_is_scoped_to_line_user(store, ns):
     elder_id_1 = f"{ns}U1"
     elder_id_2 = f"{ns}U2"
     store.record(elder_id_1, RiskAssessment(RiskTier.L2, 0.9, "頭暈"))
-    store.record(elder_id_2, RiskAssessment(RiskTier.L3, 0.95, "昏倒"))
+    store.record(elder_id_2, RiskAssessment(RiskTier.L2, 0.95, "昏倒"))
     reasons = {e.reason for e in store.list_for_elder(elder_id_1)}
     assert "頭暈" in reasons
     assert "昏倒" not in reasons

@@ -51,7 +51,6 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.audio_retention_days == 2  # 預設 2 天清理；0＝不清理開關保留
     assert settings.audio_upload_timeout_seconds == 10
     assert settings.audio_max_upload_bytes == 10 * 1024 * 1024
-    assert settings.safety_confidence_high == 0.7
     assert settings.safety_confidence_mid == 0.4
     assert settings.asr_api_key == ""
     assert settings.tts_api_key == ""

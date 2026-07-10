@@ -33,7 +33,7 @@ def store(request, ns):
 def test_record_then_list_scoped_to_elder(store, ns):
     store.record(f"{ns}e1", f"{ns}g1", RiskTier.L2, delivered=True)
     store.record(f"{ns}e1", f"{ns}g2", RiskTier.L2, delivered=False)
-    store.record(f"{ns}e2", f"{ns}g1", RiskTier.L3, delivered=True)
+    store.record(f"{ns}e2", f"{ns}g1", RiskTier.L2, delivered=True)
     got = store.list_for_elder(f"{ns}e1")
     assert {(d.guardian_id, d.delivered) for d in got} == {
         (f"{ns}g1", True),

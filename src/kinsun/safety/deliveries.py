@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Protocol
 
 from kinsun.db import Database, _Errors
-from kinsun.safety.tiers import RiskTier
+from kinsun.safety.tiers import RiskTier, tier_from_db
 
 
 @dataclass(frozen=True)
@@ -66,7 +66,8 @@ class PgRiskNotificationLogStore:
             (elder_id,),
         )
         return [
-            RiskNotificationLog(r[0], r[1], r[2], RiskTier(r[3]), bool(r[4]), r[5]) for r in rows
+            RiskNotificationLog(r[0], r[1], r[2], tier_from_db(r[3]), bool(r[4]), r[5])
+            for r in rows
         ]
 
 

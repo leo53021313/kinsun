@@ -78,7 +78,7 @@ def _auth():
 
 def test_health_report_recent_only():
     risks = [
-        RiskEvent("r1", "U-elder", RiskTier.L3, "昏倒", RECENT),
+        RiskEvent("r1", "U-elder", RiskTier.L2, "昏倒", RECENT),
         RiskEvent("r0", "U-elder", RiskTier.L2, "舊事件", OLD),
     ]
     reminders = [
@@ -90,7 +90,7 @@ def test_health_report_recent_only():
     assert res.status_code == 200
     body = res.json()["data"]
     assert [e["reason"] for e in body["risk_events"]] == ["昏倒"]
-    assert body["risk_events"][0]["tier"] == 3
+    assert body["risk_events"][0]["tier"] == 2
     assert [r["content"] for r in body["reminders"]] == ["早上用藥：A"]
 
 

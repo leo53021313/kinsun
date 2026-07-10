@@ -15,17 +15,15 @@ def _llm(tier, conf):
 
 
 def test_absolute_keyword_overrides_even_if_llm_low():
+    """✅ D-72（己-4）：絕對詞直判 L2 頂級，不受信心門檻影響。"""
     det = RiskDetector(FakeClassifier(_llm(RiskTier.L0, 0.0)))
-    assert det.assess("救命").tier == RiskTier.L3
+    got = det.assess("救命")
+    assert got.tier == RiskTier.L2
+    assert "keyword:absolute" in got.signals
 
 
 def test_takes_max_of_keyword_and_llm():
-    det = RiskDetector(FakeClassifier(_llm(RiskTier.L3, 0.9)))
-    assert det.assess("今天天氣真好").tier == RiskTier.L3
-
-
-def test_llm_l3_low_confidence_downgrades_to_l2():
-    det = RiskDetector(FakeClassifier(_llm(RiskTier.L3, 0.5)))
+    det = RiskDetector(FakeClassifier(_llm(RiskTier.L2, 0.9)))
     assert det.assess("今天天氣真好").tier == RiskTier.L2
 
 
@@ -52,7 +50,7 @@ class _BoomClassifier:
 
 def test_assess_never_raises_on_classifier_error():
     det = RiskDetector(_BoomClassifier())
-    assert det.assess("救命").tier == RiskTier.L3
+    assert det.assess("救命").tier == RiskTier.L2
 
 
 def test_classifier_error_nonempty_text_failsafe_l1():

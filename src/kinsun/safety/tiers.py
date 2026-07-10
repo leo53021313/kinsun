@@ -7,10 +7,16 @@ from enum import IntEnum
 
 
 class RiskTier(IntEnum):
+    """三級制（✅ D-72，己-4）：L2 為頂級、達 L2 即通知家屬；L1 進每日摘要不即時通知。"""
+
     L0 = 0  # 一般
-    L1 = 1  # 關注
-    L2 = 2  # 警示
-    L3 = 3  # 緊急
+    L1 = 1  # 小訊號
+    L2 = 2  # 明確警訊
+
+
+def tier_from_db(value: int) -> RiskTier:
+    """讀 DB 的 tier 欄：四級制時代的舊資料（3）夾回 L2，不炸也不流失。"""
+    return RiskTier(min(int(value), RiskTier.L2))
 
 
 # 分級器故障時保守留痕事件的固定理由（✅ D-31，甲-5）。

@@ -82,7 +82,6 @@ class Settings:
     audio_signed_url_expires_seconds: int
     audio_max_upload_bytes: int
     auth_rate_limit_max_attempts: int
-    safety_confidence_high: float
     safety_confidence_mid: float
     auth_rate_limit_window_seconds: float
     asr_debug_show_transcript: bool
@@ -160,7 +159,6 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         auth_rate_limit_max_attempts=int(env.get("AUTH_RATE_LIMIT_MAX_ATTEMPTS", "10")),
         # 危急信心門檻（✅ D-41 丙-6 env 化）：數值先用現值，實測再調（會-7）；
         # 降級規則將隨 D-72 三級制重設計（己-4）。
-        safety_confidence_high=float(env.get("SAFETY_CONFIDENCE_HIGH", "0.7")),
         safety_confidence_mid=float(env.get("SAFETY_CONFIDENCE_MID", "0.4")),
         auth_rate_limit_window_seconds=float(env.get("AUTH_RATE_LIMIT_WINDOW_SECONDS", "300")),
         asr_debug_show_transcript=_parse_bool(env.get("ASR_DEBUG_SHOW_TRANSCRIPT", "false")),

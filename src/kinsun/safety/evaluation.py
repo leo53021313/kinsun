@@ -106,7 +106,7 @@ def load_labeled_utterances(path: Path) -> list[LabeledUtterance]:
             raise EvaluationError(f"第 {line_number} 行缺 text（或為空白）")
         tier_name = str(row.get("tier", ""))
         if tier_name not in RiskTier.__members__:
-            raise EvaluationError(f"第 {line_number} 行 tier 不合法：{tier_name!r}（需 L0–L3）")
+            raise EvaluationError(f"第 {line_number} 行 tier 不合法：{tier_name!r}（需 L0–L2）")
         if text in seen:
             raise EvaluationError(f"第 {line_number} 行 text 重複：{text!r}")
         seen.add(text)
@@ -216,7 +216,6 @@ def _build_detector_assess() -> Callable[[str], RiskAssessment]:
                 timeout=settings.gemini_timeout_seconds,
             )
         ),
-        high=settings.safety_confidence_high,
         mid=settings.safety_confidence_mid,
     )
     return detector.assess

@@ -31,18 +31,18 @@ def test_load_parses_text_tier_and_note(tmp_path):
     path = _write_jsonl(
         tmp_path / "labeled.jsonl",
         [
-            {"text": "我想不開了", "tier": "L3", "note": "自殺意念"},
+            {"text": "我想不開了", "tier": "L2", "note": "自殺意念"},
             {"text": "今天天氣真好", "tier": "L0"},
         ],
     )
     examples = load_labeled_utterances(path)
-    assert examples[0] == LabeledUtterance("我想不開了", RiskTier.L3, "自殺意念")
+    assert examples[0] == LabeledUtterance("我想不開了", RiskTier.L2, "自殺意念")
     assert examples[1].expected == RiskTier.L0
     assert examples[1].note == ""
 
 
 def test_load_rejects_unknown_tier(tmp_path):
-    path = _write_jsonl(tmp_path / "labeled.jsonl", [{"text": "嗨", "tier": "L9"}])
+    path = _write_jsonl(tmp_path / "labeled.jsonl", [{"text": "嗨", "tier": "L3"}])
     with pytest.raises(EvaluationError, match="tier"):
         load_labeled_utterances(path)
 
@@ -81,10 +81,10 @@ def test_evaluate_alert_precision_recall_and_missed():
         LabeledUtterance("A", RiskTier.L2),  # 命中
         LabeledUtterance("B", RiskTier.L2),  # 漏報
         LabeledUtterance("C", RiskTier.L0),  # 誤報
-        LabeledUtterance("D", RiskTier.L3),  # 命中
+        LabeledUtterance("D", RiskTier.L2),  # 命中
     ]
     report = evaluate(
-        _stub_assess({"A": RiskTier.L2, "B": RiskTier.L0, "C": RiskTier.L2, "D": RiskTier.L3}),
+        _stub_assess({"A": RiskTier.L2, "B": RiskTier.L0, "C": RiskTier.L2, "D": RiskTier.L2}),
         examples,
     )
     assert report.total == 4
@@ -115,8 +115,8 @@ def test_metrics_are_none_when_undefined():
     """分母為 0（該級無標注也無預測）時精確率／召回率為 None，報告顯示「—」。"""
     examples = [LabeledUtterance("A", RiskTier.L0)]
     report = evaluate(_stub_assess({"A": RiskTier.L0}), examples)
-    assert report.per_tier[RiskTier.L3].precision is None
-    assert report.per_tier[RiskTier.L3].recall is None
+    assert report.per_tier[RiskTier.L2].precision is None
+    assert report.per_tier[RiskTier.L2].recall is None
     assert "—" in format_report(report)
 
 
@@ -133,7 +133,7 @@ def test_format_report_mentions_alert_metrics():
 
 
 def test_keyword_only_assess_matches_keyword_rules():
-    assert keyword_only_assess("救命啊").tier == RiskTier.L3
+    assert keyword_only_assess("救命啊").tier == RiskTier.L2
     assert keyword_only_assess("我有點頭暈").tier == RiskTier.L2
     assert keyword_only_assess("今天天氣真好").tier == RiskTier.L0
 
@@ -142,4 +142,4 @@ def test_shipped_dataset_loads_and_covers_all_tiers():
     examples = load_labeled_utterances(DATASET_PATH)
     assert len(examples) >= 50
     tiers = {e.expected for e in examples}
-    assert tiers == {RiskTier.L0, RiskTier.L1, RiskTier.L2, RiskTier.L3}
+    assert tiers == {RiskTier.L0, RiskTier.L1, RiskTier.L2}

@@ -63,8 +63,8 @@ def test_pipeline_replies_and_runs_detection():
 
 def test_pipeline_notifies_on_l2_or_above():
     notifier = SpyNotifier()
-    _pipeline(StubDetector(RiskTier.L3), notifier).process(b"\x00", elder_id="u1")
-    assert notifier.calls == [("u1", RiskTier.L3)]
+    _pipeline(StubDetector(RiskTier.L2), notifier).process(b"\x00", elder_id="u1")
+    assert notifier.calls == [("u1", RiskTier.L2)]
 
 
 class _BoomRiskEvents:
@@ -101,22 +101,22 @@ def test_pipeline_notifies_before_reply_generation():
         asr=MockAsrClient("阿公早安"),
         agent=_BoomAgent(),
         tts=TextBubbleTts(),
-        detector=StubDetector(RiskTier.L3),
+        detector=StubDetector(RiskTier.L2),
         notifier=notifier,
         risk_events=FakeRiskEventStore(),
     )
     with pytest.raises(RuntimeError):
         pipeline.process(b"\x00", elder_id="u1")
-    assert notifier.calls == [("u1", RiskTier.L3)]
+    assert notifier.calls == [("u1", RiskTier.L2)]
 
 
 def test_pipeline_record_failure_does_not_break():
     notifier = SpyNotifier()
-    result = _pipeline(StubDetector(RiskTier.L3), notifier, _BoomRiskEvents()).process(
+    result = _pipeline(StubDetector(RiskTier.L2), notifier, _BoomRiskEvents()).process(
         b"\x00", elder_id="u1"
     )
     assert result.text == "你說的是：阿公早安"
-    assert notifier.calls == [("u1", RiskTier.L3)]
+    assert notifier.calls == [("u1", RiskTier.L2)]
 
 
 class _BoomTts:
@@ -222,7 +222,7 @@ def test_pipeline_passes_trace_id_to_risk_events():
         asr=MockAsrClient("救命"),
         agent=CareAgent(EchoLLM(), NullSession()),
         tts=TextBubbleTts(),
-        detector=StubDetector(RiskTier.L3),
+        detector=StubDetector(RiskTier.L2),
         notifier=SpyNotifier(),
         risk_events=risk_events,
         traces=traces,
@@ -266,10 +266,10 @@ def test_process_text_skips_asr_and_replies():
 def test_process_text_notifies_and_records_on_l3():
     notifier = SpyNotifier()
     events = FakeRiskEventStore()
-    _text_pipeline(StubDetector(RiskTier.L3), notifier, events).process_text(
+    _text_pipeline(StubDetector(RiskTier.L2), notifier, events).process_text(
         "救命", elder_id="u1", trace_id="t9"
     )
-    assert notifier.calls == [("u1", RiskTier.L3)]
+    assert notifier.calls == [("u1", RiskTier.L2)]
     assert events.recorded_trace_ids == ["t9"]
 
 

@@ -46,7 +46,8 @@ def _format_alert(assessment: RiskAssessment) -> str:
         f"{_ALERT_PREFIX}您關心的長輩可能需要您的注意："
         f"{assessment.reason}（風險等級 {assessment.tier.name}）。請盡快主動關心一下。"
     )
-    if assessment.tier == RiskTier.L3:
+    # L3 刪除後（✅ D-72），119 提示改掛「絕對危急詞命中」訊號——tier 已無法區分。
+    if "keyword:absolute" in assessment.signals:
         text += "（如情況緊急，請自行評估是否撥打 119。金孫不提供醫療診斷。）"
     return text
 

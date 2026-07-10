@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Protocol
 
 from kinsun.db import Database, _Errors
-from kinsun.safety.tiers import FAILSAFE_EVENT_REASON, RiskAssessment, RiskTier
+from kinsun.safety.tiers import FAILSAFE_EVENT_REASON, RiskAssessment, RiskTier, tier_from_db
 
 
 @dataclass(frozen=True)
@@ -63,7 +63,7 @@ class PgRiskEventStore:
             "WHERE elder_id = %s ORDER BY created_at DESC",
             (elder_id,),
         )
-        return [RiskEvent(r[0], r[1], RiskTier(r[2]), r[3], r[4]) for r in rows]
+        return [RiskEvent(r[0], r[1], tier_from_db(r[2]), r[3], r[4]) for r in rows]
 
     def count_failsafe_since(self, cutoff: float) -> int:
         """近期 fail-safe 留痕事件數（✅ D-31）——以固定理由字串辨識，供 admin 告警門檻。"""

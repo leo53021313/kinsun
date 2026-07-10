@@ -83,7 +83,6 @@ def build_app() -> FastAPI:
         tts=build_tts_client(settings),
         detector=RiskDetector(
             LlmRiskClassifier(safety_llm),
-            high=settings.safety_confidence_high,
             mid=settings.safety_confidence_mid,
         ),
         notifier=GuardianNotifier(
