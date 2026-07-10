@@ -27,7 +27,8 @@ from kinsun.accounts.models import (
 from kinsun.accounts.passwords import hash_password, verify_password
 from kinsun.accounts.store import AccountStore
 
-CONSENT_VERSION = "1.0"
+# 2.0（✅ 己-2，2026-07-10）：明示資料去向＋永久保留＋團隊可讀；D-62 改版不重新徵求。
+CONSENT_VERSION = "2.0"
 
 # 登入時間差防護（✅ D-60 丙-11）：帳號不存在時仍對此假雜湊跑一次驗證，
 # 讓「查無帳號」與「密碼錯誤」耗時相近，降低帳號枚舉的計時信號。

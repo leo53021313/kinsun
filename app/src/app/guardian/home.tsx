@@ -131,6 +131,12 @@ export default function GuardianHome() {
                 onChangeText={setNewName}
                 placeholder="例如：阿公"
               />
+              {/* 代辦同意文案（✅ 己-2）：資料去向＋永久保留＋團隊可讀，按建立即代為同意。 */}
+              <Text style={styles.consentText}>
+                建立後，金孫會記錄長輩與它的對話內容（文字與語音），用來陪伴關懷、產生每日摘要、
+                偵測到危急狀況時通知家人；資料會一直保留，開發團隊為了改善服務可檢視內容。
+                按下「建立長輩檔案」即代表您替長輩同意以上事項。
+              </Text>
               <Button label="建立長輩檔案" onPress={addElder} busy={busy} />
               {inviteCode ? (
                 <View style={styles.invite}>
@@ -211,6 +217,7 @@ const styles = StyleSheet.create({
   },
   qrBox: { alignSelf: "center", backgroundColor: "#FFFFFF", padding: spacing.m, borderRadius: 12 },
   inviteHint: { fontSize: 14, color: colors.textSoft },
+  consentText: { fontSize: 13, color: colors.textSoft, lineHeight: 19 },
   inviteCode: { fontSize: 26, fontWeight: "800", color: colors.primary, letterSpacing: 1 },
   elderRow: {
     backgroundColor: colors.surface,
