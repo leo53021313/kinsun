@@ -124,7 +124,9 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | :--- | :--- | :--- |
 | `POST /api/app/guardians` | `POST /api/v1/guardians` | 家屬註冊 |
 | `POST /api/app/sessions` | `POST /api/v1/sessions` | 登入 |
-| `POST /api/app/device-bindings` | `POST /api/v1/device-bindings` | 長輩裝置綁定（PROXY 同意留痕）　✅ D-71：本區將增長輩帳密註冊／登入端點（家屬代辦建帳、長輩機登入一次；端點形狀於己-6 設計） |
+| `POST /api/app/device-bindings` | `POST /api/v1/device-bindings` | 長輩裝置綁定（PROXY 同意留痕；首次配對必經） |
+| —（新增） | `PUT /api/v1/elders/{elder_id}/account` | ✅ D-71（己-6）：家屬代辦長輩帳密（帳號＝手機號碼；PUT＝重設）；invalid_phone 400／phone_taken 409 |
+| —（新增） | `POST /api/v1/elder-sessions` | ✅ D-71（己-6）：長輩帳密登入（只管重登；未配對 403 not_paired）；納 D-58 節流 |
 | `POST /api/app/turns` | `POST /api/v1/turns` | 對講機回合（raw body 音檔；上限 env 化 D-26） |
 | `current_app_guardian` 屬性 | **刪除** | 死碼（D-28） |
 

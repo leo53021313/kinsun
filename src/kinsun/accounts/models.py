@@ -94,6 +94,16 @@ class GuardianAccount:
 
 
 @dataclass(frozen=True)
+class ElderAccount:
+    """長輩的 App 登入帳號（✅ D-71 己-6）：手機號碼＋密碼雜湊，由家屬代辦。"""
+
+    elder_id: str
+    phone: str
+    password_hash: str
+    created_at: float
+
+
+@dataclass(frozen=True)
 class ApiToken:
     """API token 發放紀錄：DB 只存 SHA-256 雜湊，明文只在發放當下回傳一次。"""
 

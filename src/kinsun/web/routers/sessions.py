@@ -1,4 +1,7 @@
-"""登入會話資源：家屬登入＋登出撤銷（✅ D-25 修訂：token 永久記住、可主動登出）。"""
+"""登入會話資源：家屬登入＋長輩登入＋登出撤銷（token 永久記住、可主動登出）。
+
+長輩帳密（✅ D-71 己-6）：帳號＝手機號碼、由家屬代辦；只管「重登」——
+首次一定要掃碼配對，未配對回 403 not_paired 提示先掃碼。"""
 
 from __future__ import annotations
 
@@ -16,6 +19,11 @@ class LoginIn(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+class ElderLoginIn(BaseModel):
+    phone: str = Field(min_length=8, max_length=20)
+    password: str = Field(min_length=1, max_length=128)
+
+
 def create_sessions_router(
     *, accounts: AccountService, rate_limiter: SlidingWindowRateLimiter
 ) -> APIRouter:
@@ -29,6 +37,16 @@ def create_sessions_router(
         except AppAccountError as exc:
             raise HTTPException(status_code=401, detail=exc.reason) from exc
         return ok({"guardian_id": guardian.guardian_id, "name": guardian.name, "token": token})
+
+    @router.post("/elder-sessions")
+    def elder_login(body: ElderLoginIn, request: Request) -> dict:
+        throttle_or_429(rate_limiter, "elder-login", request)
+        try:
+            elder, token = accounts.login_elder(body.phone, body.password)
+        except AppAccountError as exc:
+            status = 403 if exc.reason == "not_paired" else 401
+            raise HTTPException(status_code=status, detail=exc.reason) from exc
+        return ok({"elder_id": elder.elder_id, "name": elder.name, "token": token})
 
     @router.delete("/sessions", status_code=204)
     def logout(authorization: str = Header(default="")) -> None:

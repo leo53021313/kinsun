@@ -13,6 +13,7 @@ from kinsun.accounts.models import (
     Consent,
     ConsentBy,
     Elder,
+    ElderAccount,
     ElderGuardian,
     Guardian,
     GuardianAccount,
@@ -54,6 +55,8 @@ class AccountStore(Protocol):
         self, account: GuardianAccount, *, tx: Executor | None = None
     ) -> None: ...
     def get_guardian_account_by_email(self, email: str) -> GuardianAccount | None: ...
+    def save_elder_account(self, account: ElderAccount, *, tx: Executor | None = None) -> None: ...
+    def get_elder_account_by_phone(self, phone: str) -> ElderAccount | None: ...
     def save_api_token(self, token: ApiToken, *, tx: Executor | None = None) -> None: ...
     def get_api_token(self, token_hash: str) -> ApiToken | None: ...
     def remove_api_token(self, token_hash: str) -> None: ...
@@ -267,6 +270,22 @@ class PgAccountStore:
         )
         return GuardianAccount(*rows[0]) if rows else None
 
+    def save_elder_account(self, account: ElderAccount, *, tx: Executor | None = None) -> None:
+        (tx or self._db).execute(
+            "INSERT INTO elder_accounts (elder_id, phone, password_hash, created_at) "
+            "VALUES (%s, %s, %s, %s) ON CONFLICT (elder_id) DO UPDATE SET "
+            "phone = EXCLUDED.phone, password_hash = EXCLUDED.password_hash",
+            (account.elder_id, account.phone, account.password_hash, account.created_at),
+        )
+
+    def get_elder_account_by_phone(self, phone: str) -> ElderAccount | None:
+        rows = self._db.query(
+            "SELECT elder_id, phone, password_hash, created_at "
+            "FROM elder_accounts WHERE phone = %s",
+            (phone,),
+        )
+        return ElderAccount(*rows[0]) if rows else None
+
     def save_api_token(self, token: ApiToken, *, tx: Executor | None = None) -> None:
         (tx or self._db).execute(
             "INSERT INTO api_tokens (token_hash, principal_type, principal_id, created_at) "
@@ -321,6 +340,7 @@ class FakeAccountStore:
         self.invites: dict[str, Invite] = {}
         self.channel_bindings: dict[tuple[Channel, str], ChannelBinding] = {}
         self.guardian_accounts: dict[str, GuardianAccount] = {}
+        self.elder_accounts: dict[str, ElderAccount] = {}
         self.api_tokens: dict[str, ApiToken] = {}
 
     @contextmanager
@@ -411,6 +431,12 @@ class FakeAccountStore:
 
     def get_guardian_account_by_email(self, email: str) -> GuardianAccount | None:
         return next((a for a in self.guardian_accounts.values() if a.email == email), None)
+
+    def save_elder_account(self, account: ElderAccount, *, tx: Executor | None = None) -> None:
+        self.elder_accounts[account.elder_id] = account
+
+    def get_elder_account_by_phone(self, phone: str) -> ElderAccount | None:
+        return next((a for a in self.elder_accounts.values() if a.phone == phone), None)
 
     def save_api_token(self, token: ApiToken, *, tx: Executor | None = None) -> None:
         # 與 Pg 一致：ON CONFLICT DO NOTHING（token_hash 不覆寫）。

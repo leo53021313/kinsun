@@ -104,6 +104,13 @@ export default function ElderBind() {
         busy={busy}
         disabled={!code.trim()}
       />
+      {/* 帳密只管「重登」（✅ D-71 己-6）：換手機或登出後走這裡，首次仍要掃碼配對。 */}
+      <Button
+        label="用過金孫？帳號密碼登入"
+        variant="outline"
+        onPress={() => router.push("/elder/login")}
+        disabled={busy}
+      />
     </View>
   );
 }

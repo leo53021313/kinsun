@@ -166,3 +166,59 @@ def test_elder_device_token_rejected_on_guardian_api():
     client = _client(_FakeVerifier(boom=True), repo_svc)
     res = client.get("/api/v1/elders", headers={"Authorization": f"Bearer {device_token}"})
     assert res.status_code == 401
+
+
+# --- 家屬代辦長輩帳密（✅ D-71 己-6）：PUT /elders/{elder_id}/account ---
+
+
+def _put_account(client, elder_id, payload):
+    return client.put(
+        f"/api/v1/elders/{elder_id}/account",
+        json=payload,
+        headers={"Authorization": "Bearer tok"},
+    )
+
+
+def test_set_elder_account_ok_and_resettable():
+    accounts = _accounts()
+    elder_id = accounts.elders_managed_by("U-son")[0].elder_id
+    client = _client(_FakeVerifier("U-son"), accounts)
+    res = _put_account(client, elder_id, {"phone": "0912-345-678", "password": "sunsun-8888"})
+    assert res.status_code == 200
+    assert res.json()["data"]["elder_id"] == elder_id
+    # PUT＝upsert：同長輩重呼即重設密碼，不衝突。
+    res2 = _put_account(client, elder_id, {"phone": "0912345678", "password": "new-pass-888"})
+    assert res2.status_code == 200
+
+
+def test_set_elder_account_invalid_phone_400():
+    accounts = _accounts()
+    elder_id = accounts.elders_managed_by("U-son")[0].elder_id
+    client = _client(_FakeVerifier("U-son"), accounts)
+    res = _put_account(client, elder_id, {"phone": "abcd-efgh", "password": "sunsun-8888"})
+    assert res.status_code == 400
+    assert res.json()["detail"] == "invalid_phone"
+
+
+def test_set_elder_account_phone_taken_409():
+    accounts = _accounts()
+    elder_id = accounts.elders_managed_by("U-son")[0].elder_id
+    other = accounts.create_elder("U-son", "兒子", "阿嬤")
+    client = _client(_FakeVerifier("U-son"), accounts)
+    assert (
+        _put_account(
+            client, elder_id, {"phone": "0912345678", "password": "sunsun-8888"}
+        ).status_code
+        == 200
+    )
+    res = _put_account(client, other.elder_id, {"phone": "0912345678", "password": "other-888"})
+    assert res.status_code == 409
+    assert res.json()["detail"] == "phone_taken"
+
+
+def test_set_elder_account_scope_guard_404():
+    accounts = _accounts()
+    elder_id = accounts.elders_managed_by("U-son")[0].elder_id
+    stranger = _client(_FakeVerifier("U-stranger"), accounts)
+    res = _put_account(stranger, elder_id, {"phone": "0912345678", "password": "sunsun-8888"})
+    assert res.status_code == 404

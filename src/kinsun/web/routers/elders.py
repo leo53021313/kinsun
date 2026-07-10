@@ -5,10 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from kinsun.accounts.models import InviteRole
-from kinsun.accounts.service import AccountService
+from kinsun.accounts.service import AccountService, AppAccountError
 from kinsun.web.envelope import ok
 from kinsun.web.routers.deps import GuardianAuth, GuardianScope
 
@@ -16,6 +16,11 @@ from kinsun.web.routers.deps import GuardianAuth, GuardianScope
 class CreateElderIn(BaseModel):
     name: str
     guardian_name: str = ""
+
+
+class ElderAccountIn(BaseModel):
+    phone: str = Field(min_length=8, max_length=20)
+    password: str = Field(min_length=8, max_length=128)
 
 
 def create_elders_router(
@@ -63,5 +68,18 @@ def create_elders_router(
         scope.assert_manages(auth, elder_id)
         invite = accounts.revoke_elder_device(elder_id)
         return ok({"invite_code": invite.code})
+
+    @router.put("/elders/{elder_id}/account")
+    def set_elder_account(
+        elder_id: str, body: ElderAccountIn, auth: GuardianAuth = Depends(current_guardian)
+    ) -> dict:
+        """家屬代辦長輩帳密（✅ D-71 己-6）：PUT＝upsert，重呼即重設密碼／換號碼。"""
+        scope.assert_manages(auth, elder_id)
+        try:
+            accounts.register_elder_account(elder_id, body.phone, body.password)
+        except AppAccountError as exc:
+            status = 409 if exc.reason == "phone_taken" else 400
+            raise HTTPException(status_code=status, detail=exc.reason) from exc
+        return ok({"elder_id": elder_id})
 
     return router

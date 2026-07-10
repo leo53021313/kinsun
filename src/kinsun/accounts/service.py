@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets
 import uuid
 from collections.abc import Callable
@@ -16,6 +17,7 @@ from kinsun.accounts.models import (
     Consent,
     ConsentBy,
     Elder,
+    ElderAccount,
     ElderGuardian,
     Guardian,
     GuardianAccount,
@@ -33,6 +35,12 @@ CONSENT_VERSION = "2.0"
 # 登入時間差防護（✅ D-60 丙-11）：帳號不存在時仍對此假雜湊跑一次驗證，
 # 讓「查無帳號」與「密碼錯誤」耗時相近，降低帳號枚舉的計時信號。
 _TIMING_DUMMY_HASH = hash_password("kinsun-timing-dummy")
+
+
+def _normalize_phone(phone: str) -> str | None:
+    """手機號碼正規化：去空白與連字號後需為 8–15 位數字，否則 None。"""
+    digits = re.sub(r"[\s\-]", "", phone)
+    return digits if re.fullmatch(r"\d{8,15}", digits) else None
 
 
 class InviteError(Exception):
@@ -225,6 +233,52 @@ class AccountService:
             )
             token = self._issue_token(PrincipalType.GUARDIAN, guardian.guardian_id, tx=tx)
         return guardian, token
+
+    def register_elder_account(self, elder_id: str, phone: str, password: str) -> None:
+        """長輩帳密由家屬代辦（✅ D-71 己-6）：手機號碼為帳號；同長輩重呼＝重設。"""
+        normalized = _normalize_phone(phone)
+        if normalized is None:
+            raise AppAccountError("invalid_phone")
+        existing = self._repo.get_elder_account_by_phone(normalized)
+        if existing is not None and existing.elder_id != elder_id:
+            raise AppAccountError("phone_taken")
+        self._repo.save_elder_account(
+            ElderAccount(elder_id, normalized, hash_password(password), self._clock().timestamp())
+        )
+
+    def login_elder(self, phone: str, password: str) -> tuple[Elder, str]:
+        """長輩帳密登入（✅ D-71 己-6）：只管「重登」——首次一定要掃碼配對
+        （同意留痕由配對建立，登入不建）；查無帳號或密碼錯一律 invalid_credentials。"""
+        normalized = _normalize_phone(phone)
+        account = (
+            self._repo.get_elder_account_by_phone(normalized) if normalized is not None else None
+        )
+        if account is None:
+            verify_password(password, _TIMING_DUMMY_HASH)  # 補時間差（✅ D-60）
+            raise AppAccountError("invalid_credentials")
+        if not verify_password(password, account.password_hash):
+            raise AppAccountError("invalid_credentials")
+        elder = self._repo.get_elder(account.elder_id)
+        if elder is None:
+            raise AppAccountError("invalid_credentials")
+        if not self.has_valid_consent(elder.elder_id):
+            raise AppAccountError("not_paired")
+        self._ensure_elder_app_binding(elder.elder_id)
+        return elder, self._issue_token(PrincipalType.ELDER, elder.elder_id)
+
+    def _ensure_elder_app_binding(self, elder_id: str) -> None:
+        """換機重登：裝置作廢後 APP 綁定已拆，登入時補回（既有綁定不動）。"""
+        if self.app_external_id_of_elder(elder_id) is not None:
+            return
+        self._repo.save_channel_binding(
+            ChannelBinding(
+                Channel.APP,
+                self._new_id(),
+                PrincipalType.ELDER,
+                elder_id,
+                self._clock().timestamp(),
+            ),
+        )
 
     def login_guardian(self, email: str, password: str) -> tuple[Guardian, str]:
         """家屬登入：查無帳號或密碼錯一律 invalid_credentials（不洩漏帳號存在性）。"""

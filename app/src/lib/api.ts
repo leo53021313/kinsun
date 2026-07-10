@@ -151,6 +151,28 @@ export function getHealthReport(elderId: string, token: string): Promise<HealthR
   return request(`/api/v1/elders/${elderId}/health-report`, { token });
 }
 
+/** 長輩帳密登入（✅ D-71 己-6）：帳號＝手機號碼；只管重登，未配對回 403 not_paired。 */
+export function loginElder(phone: string, password: string): Promise<ElderSession> {
+  return request("/api/v1/elder-sessions", {
+    method: "POST",
+    body: JSON.stringify({ phone, password }),
+  });
+}
+
+/** 家屬代辦長輩帳密（✅ D-71 己-6）：PUT＝重呼即重設密碼／換號碼。 */
+export async function setElderAccount(
+  elderId: string,
+  phone: string,
+  password: string,
+  token: string,
+): Promise<void> {
+  await request(`/api/v1/elders/${elderId}/account`, {
+    method: "PUT",
+    body: JSON.stringify({ phone, password }),
+    token,
+  });
+}
+
 /** 每日摘要（✅ D-09 己-3）：家屬可看摘要、不開放逐字對話。 */
 export function listDailySummaries(
   elderId: string,

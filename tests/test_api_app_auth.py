@@ -255,3 +255,62 @@ def test_register_and_binding_throttled_separately():
     assert client.post("/api/v1/guardians", json=reg).status_code == 429
     assert client.post("/api/v1/device-bindings", json={"code": "nope"}).status_code == 404
     assert client.post("/api/v1/device-bindings", json={"code": "nope"}).status_code == 429
+
+
+# --- 長輩帳密（✅ D-71 己-6）：POST /elder-sessions ---
+
+
+def _paired_elder_with_account(svc, phone="0912345678", password="sunsun-8888"):
+    from kinsun.accounts.models import ConsentBy
+
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    invite = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
+    svc.bind_elder_device(invite.code, consent_by=ConsentBy.PROXY)
+    svc.register_elder_account(elder.elder_id, phone, password)
+    return elder
+
+
+def test_elder_login_returns_session():
+    svc = _service()
+    elder = _paired_elder_with_account(svc)
+    res = _client(svc).post(
+        "/api/v1/elder-sessions", json={"phone": "0912-345-678", "password": "sunsun-8888"}
+    )
+    assert res.status_code == 200
+    body = res.json()["data"]
+    assert body["elder_id"] == elder.elder_id
+    assert body["name"] == "阿公"
+    assert len(body["token"]) >= 32
+
+
+def test_elder_login_wrong_password_401():
+    svc = _service()
+    _paired_elder_with_account(svc)
+    res = _client(svc).post(
+        "/api/v1/elder-sessions", json={"phone": "0912345678", "password": "wrong-password"}
+    )
+    assert res.status_code == 401
+    assert res.json()["error"]["code"] == "invalid_credentials"
+
+
+def test_elder_login_not_paired_403():
+    svc = _service()
+    elder = svc.create_elder("U-son", "兒子", "阿公")  # 未掃碼配對
+    svc.register_elder_account(elder.elder_id, "0912345678", "sunsun-8888")
+    res = _client(svc).post(
+        "/api/v1/elder-sessions", json={"phone": "0912345678", "password": "sunsun-8888"}
+    )
+    assert res.status_code == 403
+    assert res.json()["error"]["code"] == "not_paired"
+
+
+def test_elder_login_throttled_429():
+    svc = _service()
+    _paired_elder_with_account(svc)
+    client = _client(svc, rate_limiter=SlidingWindowRateLimiter(2, 300.0))
+    payload = {"phone": "0912345678", "password": "wrong-password"}
+    assert client.post("/api/v1/elder-sessions", json=payload).status_code == 401
+    assert client.post("/api/v1/elder-sessions", json=payload).status_code == 401
+    res = client.post("/api/v1/elder-sessions", json=payload)
+    assert res.status_code == 429
+    assert res.json()["error"]["code"] == "too_many_requests"

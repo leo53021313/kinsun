@@ -80,7 +80,7 @@
 | 己-3 | ✅ 完成（2026-07-10）：daily-summaries 端點（守門＋limit）＋App 長輩詳情「每日摘要」區塊＋shared 型別 | D-09（會-4） | M |
 | 己-4 | ✅ 完成（2026-07-10）：三級制落地——絕對詞直判 L2、單一降級門檻（HIGH 移除）、prompt 改 0–2、119 提示掛 absolute 訊號、舊資料夾回、三端與文件標注集同步 | D-72＋D-10（會-5） | M |
 | 己-5 | ✅ 完成（2026-07-10）：摘要提示納入摘要日 L1 理由（排除 L2 與 fail-safe 留痕）；worker 接 PgRiskEventStore | D-10（會-5） | S |
-| 己-6 | 長輩帳密登入（✅ D-71 細節已定）：家屬代辦註冊帳密＋長輩手機登入一次永久記住＋邀請碼／QR 保留配對 | D-71 | L |
+| 己-6 | ✅ 完成（2026-07-10）：帳號＝手機號碼（Leo 拍板）；首次掃碼配對＋帳密只管重登（未配對 403）；PUT /elders/{id}/account 代辦＋POST /elder-sessions（節流）＋App 兩端 UI＋elder_accounts 新表 | D-71 | L |
 | 己-7 | 衛教資料遷移：自負責組員的 Supabase 取得資料 → 本專案 Supabase 入庫＋回答品質驗收 | D-03（會-14） | M |
 | 己-8 | ✅ 完成（2026-07-10，範圍 Leo 核可）：revoke_consent 刪除；can_view_transcript 方法＋欄位全刪（冪等 DROP）；escalation_order 保留（家屬排序仍用） | D-13／09／10 | S |
 

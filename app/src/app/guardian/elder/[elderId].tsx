@@ -2,13 +2,15 @@ import { useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 
-import { Button, EmptyHint, ErrorText, Section } from "@/components/ui";
+import { Button, EmptyHint, ErrorText, Field, Section } from "@/components/ui";
 import {
+  ApiError,
   createGuardianInvite,
   getHealthReport,
   listAppointments,
   listDailySummaries,
   listMedications,
+  setElderAccount,
   type Appointment,
   type DailySummary,
   type HealthReport,
@@ -36,6 +38,10 @@ export default function ElderDetail() {
   const [inviteCode, setInviteCode] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [accountPhone, setAccountPhone] = useState("");
+  const [accountPassword, setAccountPassword] = useState("");
+  const [accountMessage, setAccountMessage] = useState("");
+  const [accountBusy, setAccountBusy] = useState(false);
   const { session } = useSession();
   const token = session?.token ?? "";
 
@@ -68,6 +74,23 @@ export default function ElderDetail() {
       alive = false;
     };
   }, [elderId, session]);
+
+  async function saveAccount() {
+    if (!elderId) {
+      return;
+    }
+    setAccountMessage("");
+    setAccountBusy(true);
+    try {
+      await setElderAccount(elderId, accountPhone, accountPassword, token);
+      setAccountMessage("已設定完成。長輩手機用這組號碼＋密碼登入一次就會一直記住。");
+      setAccountPassword("");
+    } catch (exc) {
+      setAccountMessage(exc instanceof ApiError ? exc.message : "設定失敗，請稍後再試。");
+    } finally {
+      setAccountBusy(false);
+    }
+  }
 
   async function makeInvite() {
     if (!elderId) {
@@ -145,6 +168,34 @@ export default function ElderDetail() {
             </Text>
           ))
         )}
+      </Section>
+
+      <Section title="長輩登入帳密（代辦）">
+        <Text style={styles.soft}>
+          幫長輩設定手機號碼＋密碼。換手機或登出後，長輩用這組帳密登入即可，不用再掃碼；
+          忘記密碼時在這裡重設一次就好。
+        </Text>
+        <Field
+          label="長輩手機號碼"
+          value={accountPhone}
+          onChangeText={setAccountPhone}
+          keyboardType="phone-pad"
+          placeholder="09xxxxxxxx"
+        />
+        <Field
+          label="密碼（至少 8 碼）"
+          value={accountPassword}
+          onChangeText={setAccountPassword}
+          secureTextEntry
+        />
+        <Button
+          label="儲存帳密"
+          onPress={saveAccount}
+          busy={accountBusy}
+          variant="outline"
+          disabled={!accountPhone.trim() || accountPassword.length < 8}
+        />
+        {accountMessage ? <Text style={styles.soft}>{accountMessage}</Text> : null}
       </Section>
 
       <Section title="邀請其他家屬">

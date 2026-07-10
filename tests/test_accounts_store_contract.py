@@ -18,6 +18,7 @@ from kinsun.accounts.models import (
     Consent,
     ConsentBy,
     Elder,
+    ElderAccount,
     ElderGuardian,
     Guardian,
     GuardianAccount,
@@ -147,6 +148,26 @@ def test_guardian_account_roundtrip_by_email(store, ns):
         GuardianAccount(f"{ns}g1", f"{ns}son@example.com", "scrypt$16384$8$1$11$11", 2000.0)
     )
     assert store.get_guardian_account_by_email(f"{ns}son@example.com").password_hash == (
+        "scrypt$16384$8$1$11$11"
+    )
+
+
+def test_elder_account_roundtrip_by_phone(store, ns):
+    """✅ D-71（己-6）：長輩帳號以手機號碼為帳號；save 為 upsert（家屬可重設密碼／換號碼）。"""
+    store.save_elder_account(
+        ElderAccount(f"{ns}e1", f"{ns}0912345678", "scrypt$16384$8$1$00$00", 1000.0)
+    )
+    got = store.get_elder_account_by_phone(f"{ns}0912345678")
+    assert got is not None
+    assert got.elder_id == f"{ns}e1"
+    assert got.password_hash == "scrypt$16384$8$1$00$00"
+    assert store.get_elder_account_by_phone(f"{ns}0900000000") is None
+    # upsert：同長輩重設密碼＋換手機號碼，舊號碼查不到。
+    store.save_elder_account(
+        ElderAccount(f"{ns}e1", f"{ns}0987654321", "scrypt$16384$8$1$11$11", 2000.0)
+    )
+    assert store.get_elder_account_by_phone(f"{ns}0912345678") is None
+    assert store.get_elder_account_by_phone(f"{ns}0987654321").password_hash == (
         "scrypt$16384$8$1$11$11"
     )
 
