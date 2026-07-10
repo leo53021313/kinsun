@@ -91,7 +91,6 @@ def _fake_core(
         router=router or _SpyRouter(),
         accounts=SimpleNamespace(
             get_elder=lambda elder_id: None,
-            has_valid_consent=lambda elder_id: True,
             guardians_of=lambda elder_id: [],
         ),
         med_store=SimpleNamespace(list_for_slot=lambda slot: []),
