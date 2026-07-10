@@ -193,7 +193,7 @@ class BindingFlow:
             line_user_id, BindingState.AWAIT_CONFIRM, {"code": code, "role": preview.role.value}
         )
         if preview.role == InviteRole.ELDER:
-            # 同意文案一次到位（✅ 己-2）：明示資料去向（D-15）＋永久保留（D-14）＋團隊可讀（D-59）。
+            # 同意文案一次到位（✅ 己-2）：資料去向＋永久保留＋團隊可讀。
             return (
                 f"您要綁定為『{preview.elder_name}』本人嗎？綁定後，金孫會記錄您與它的"
                 "對話內容（文字與語音），用來提供關懷、產生每日摘要給您的家人，"

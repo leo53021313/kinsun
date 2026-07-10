@@ -95,7 +95,7 @@ class AccountService:
     def _save_new_elder(self, elder: Elder, guardian_id: str, tx) -> None:
         self._repo.save_elder(elder, tx=tx)
         self._repo.save_elder_guardian(
-            ElderGuardian(elder.elder_id, guardian_id, Role.PRIMARY, 1, True), tx=tx
+            ElderGuardian(elder.elder_id, guardian_id, Role.PRIMARY, 1), tx=tx
         )
 
     def create_elder_for_guardian(self, guardian_id: str, elder_name: str) -> Elder:
@@ -161,9 +161,7 @@ class AccountService:
                 egs = self._repo.list_elder_guardians(invite.elder_id)
                 order = max((eg.escalation_order for eg in egs), default=0)
                 self._repo.save_elder_guardian(
-                    ElderGuardian(
-                        invite.elder_id, guardian.guardian_id, Role.GUARDIAN, order + 1, False
-                    ),
+                    ElderGuardian(invite.elder_id, guardian.guardian_id, Role.GUARDIAN, order + 1),
                     tx=tx,
                 )
             self._repo.save_invite(
@@ -178,20 +176,6 @@ class AccountService:
                 ),
                 tx=tx,
             )
-
-    def revoke_consent(self, elder_id: str) -> None:
-        consent = self._repo.get_consent(elder_id)
-        if consent is None:
-            return
-        self._repo.save_consent(
-            Consent(
-                consent.elder_id,
-                consent.consent_by,
-                consent.version,
-                consent.granted_at,
-                self._clock().timestamp(),
-            )
-        )
 
     def guardians_of(self, elder_id: str) -> list[ElderGuardian]:
         return self._repo.list_elder_guardians(elder_id)
@@ -354,10 +338,6 @@ class AccountService:
     def elders_managed_by(self, line_user_id: str) -> list[Elder]:
         guardian = self._repo.get_guardian_by_line(line_user_id)
         return [] if guardian is None else self.elders_of_guardian(guardian.guardian_id)
-
-    def can_view_transcript(self, elder_id: str, guardian_id: str) -> bool:
-        eg = self._repo.get_elder_guardian(elder_id, guardian_id)
-        return eg is not None and eg.can_view_transcript
 
     def _fail(self, invite: Invite, reason: str) -> None:
         self._repo.save_invite(

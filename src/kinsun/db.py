@@ -24,7 +24,7 @@ ACCOUNTS_DDL = (
     "guardian_id TEXT PRIMARY KEY, name TEXT NOT NULL);"
     "CREATE TABLE IF NOT EXISTS elder_guardians ("
     "elder_id TEXT NOT NULL, guardian_id TEXT NOT NULL, role TEXT NOT NULL, "
-    "escalation_order INTEGER NOT NULL, can_view_transcript BOOLEAN NOT NULL, "
+    "escalation_order INTEGER NOT NULL, "
     "PRIMARY KEY (elder_id, guardian_id));"
     "CREATE TABLE IF NOT EXISTS consents ("
     "elder_id TEXT PRIMARY KEY, consent_by TEXT NOT NULL, version TEXT NOT NULL, "
@@ -225,6 +225,11 @@ ACCOUNTS_LINE_COLUMNS_RETIRE_DDL = (
     "ALTER TABLE guardians DROP COLUMN IF EXISTS line_user_id;"
 )
 
+# 死碼欄位退役（✅ 己-8，D-09）：家屬看逐字對話不開放，開關欄位無人讀取。
+ELDER_GUARDIANS_TRANSCRIPT_COLUMN_RETIRE_DDL = (
+    "ALTER TABLE elder_guardians DROP COLUMN IF EXISTS can_view_transcript;"
+)
+
 # 遷移用的交易級諮詢鎖鍵：webhook 與 scheduler 同時啟動時，讓 ensure_schema 的 DDL
 # 串行化，避免併發跑遷移互搶 AccessExclusiveLock 造成 Postgres 死結。任意固定常數即可，
 # 全專案共用同一把鎖。
@@ -260,6 +265,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(REPLIES_ROUND_TRIP_MIGRATION_DDL)
         conn.execute(SESSION_KEY_MIGRATION_DDL)
         conn.execute(ACCOUNTS_LINE_COLUMNS_RETIRE_DDL)
+        conn.execute(ELDER_GUARDIANS_TRANSCRIPT_COLUMN_RETIRE_DDL)
         conn.commit()
 
 

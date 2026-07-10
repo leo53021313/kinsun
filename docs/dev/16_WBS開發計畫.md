@@ -82,7 +82,7 @@
 | 己-5 | ✅ 完成（2026-07-10）：摘要提示納入摘要日 L1 理由（排除 L2 與 fail-safe 留痕）；worker 接 PgRiskEventStore | D-10（會-5） | S |
 | 己-6 | 長輩帳密登入（✅ D-71 細節已定）：家屬代辦註冊帳密＋長輩手機登入一次永久記住＋邀請碼／QR 保留配對 | D-71 | L |
 | 己-7 | 衛教資料遷移：自負責組員的 Supabase 取得資料 → 本專案 Supabase 入庫＋回答品質驗收 | D-03（會-14） | M |
-| 己-8 | 死碼清理：`revoke_consent`／`can_view_transcript`／`escalation_order`（刪除範圍實作時 Leo 逐項確認） | D-13／09／10 | S |
+| 己-8 | ✅ 完成（2026-07-10，範圍 Leo 核可）：revoke_consent 刪除；can_view_transcript 方法＋欄位全刪（冪等 DROP）；escalation_order 保留（家屬排序仍用） | D-13／09／10 | S |
 
 無需工項的決議：會-6 詞表（實測時滾動加）、會-7 門檻數值（實測再調）、會-11 問候維持文字、會-15 麥克風文案照現值；會-8／9／10／13 擱置、會-12 掛起。
 

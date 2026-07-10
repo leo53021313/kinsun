@@ -34,7 +34,6 @@ def test_create_elder_makes_primary_guardian():
     eg = repo.list_elder_guardians(elder.elder_id)[0]
     assert eg.role == Role.PRIMARY
     assert eg.escalation_order == 1
-    assert eg.can_view_transcript is True
 
 
 def test_generate_invite_sets_ttl_and_limit():
@@ -72,7 +71,6 @@ def test_redeem_guardian_adds_relation():
     assert len(egs) == 2
     assert egs[1].role == Role.GUARDIAN
     assert egs[1].escalation_order == 2
-    assert egs[1].can_view_transcript is False
 
 
 def test_redeem_unknown_code():
@@ -115,31 +113,7 @@ def test_guardian_redeem_does_not_create_elder_consent():
     assert repo.get_consent(elder.elder_id) is None
 
 
-def test_guardian_redeem_does_not_resurrect_revoked_consent():
-    repo = FakeAccountStore()
-    svc = _service(repo)
-    elder = svc.create_elder("U-son", "兒子", "阿公")
-    inv_e = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
-    svc.redeem_invite(inv_e.code, "U-elder", consent_by=ConsentBy.SELF)
-    svc.revoke_consent(elder.elder_id)
-    assert svc.consented_elder_id(Channel.LINE, "U-elder") is None
-    # 之後有家屬加入，不可「復活」長輩已撤回的同意。
-    inv_g = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
-    svc.redeem_invite(inv_g.code, "U-daughter", consent_by=ConsentBy.SELF)
-    assert svc.consented_elder_id(Channel.LINE, "U-elder") is None
-
-
-def test_revoke_consent_sets_revoked():
-    repo = FakeAccountStore()
-    svc = _service(repo)
-    elder = svc.create_elder("U-son", "兒子", "阿公")
-    inv = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
-    svc.redeem_invite(inv.code, "U-elder", consent_by=ConsentBy.SELF)
-    svc.revoke_consent(elder.elder_id)
-    assert repo.get_consent(elder.elder_id).revoked_at == NOW.timestamp()
-
-
-def test_guardians_of_sorted_and_permissions():
+def test_guardians_of_sorted_by_escalation_order():
     repo = FakeAccountStore()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
@@ -147,10 +121,6 @@ def test_guardians_of_sorted_and_permissions():
     svc.redeem_invite(inv.code, "U-daughter", consent_by=ConsentBy.SELF)
     egs = svc.guardians_of(elder.elder_id)
     assert [e.escalation_order for e in egs] == [1, 2]
-    primary, secondary = egs
-    assert svc.can_view_transcript(elder.elder_id, primary.guardian_id) is True
-    assert svc.can_view_transcript(elder.elder_id, secondary.guardian_id) is False
-    assert svc.can_view_transcript(elder.elder_id, "nobody") is False
 
 
 def test_get_elder():
@@ -169,8 +139,6 @@ def test_consented_elder_lifecycle():
     inv = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
     svc.redeem_invite(inv.code, "U-elder", consent_by=ConsentBy.SELF)
     assert svc.consented_elder_id(Channel.LINE, "U-elder") is not None
-    svc.revoke_consent(elder.elder_id)
-    assert svc.consented_elder_id(Channel.LINE, "U-elder") is None
 
 
 def test_consented_elder_bound_without_consent():
@@ -232,8 +200,6 @@ def test_consented_elder_id_resolves_and_rejects():
     svc.redeem_invite(inv_elder.code, "U-elder", consent_by=ConsentBy.SELF)
     assert svc.consented_elder_id(Channel.LINE, "U-elder") == elder.elder_id
     assert svc.consented_elder_id(Channel.LINE, "U-nobody") is None
-    svc.revoke_consent(elder.elder_id)
-    assert svc.consented_elder_id(Channel.LINE, "U-elder") is None
 
 
 def test_create_elder_uses_repo_transaction():

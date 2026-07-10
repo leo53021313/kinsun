@@ -62,8 +62,8 @@ def test_guardian_roundtrip_and_by_line(store, ns):
 def test_elder_guardians_ordered_by_escalation(store, ns):
     elder_id = f"{ns}e1"
     # 存入順序刻意與 escalation_order 相反，證明回傳依 escalation_order 排序而非存入順序。
-    store.save_elder_guardian(ElderGuardian(elder_id, f"{ns}g2", Role.GUARDIAN, 2, False))
-    store.save_elder_guardian(ElderGuardian(elder_id, f"{ns}g1", Role.PRIMARY, 1, True))
+    store.save_elder_guardian(ElderGuardian(elder_id, f"{ns}g2", Role.GUARDIAN, 2))
+    store.save_elder_guardian(ElderGuardian(elder_id, f"{ns}g1", Role.PRIMARY, 1))
     egs = store.list_elder_guardians(elder_id)
     assert [e.guardian_id for e in egs] == [f"{ns}g1", f"{ns}g2"]
     assert [e.escalation_order for e in egs] == [1, 2]

@@ -38,8 +38,8 @@ class ElderGuardian:
     elder_id: str
     guardian_id: str
     role: Role
+    # escalation_order 保留（✅ 己-8 決議）：升級鏈不做（D-10），但家屬通知與清單順序仍靠它。
     escalation_order: int
-    can_view_transcript: bool
 
 
 @dataclass(frozen=True)

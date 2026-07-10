@@ -118,26 +118,24 @@ class PgAccountStore:
     def save_elder_guardian(self, eg: ElderGuardian, *, tx: Executor | None = None) -> None:
         (tx or self._db).execute(
             "INSERT INTO elder_guardians "
-            "(elder_id, guardian_id, role, escalation_order, can_view_transcript) "
-            "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (elder_id, guardian_id) DO UPDATE SET "
-            "role = EXCLUDED.role, escalation_order = EXCLUDED.escalation_order, "
-            "can_view_transcript = EXCLUDED.can_view_transcript",
+            "(elder_id, guardian_id, role, escalation_order) "
+            "VALUES (%s, %s, %s, %s) ON CONFLICT (elder_id, guardian_id) DO UPDATE SET "
+            "role = EXCLUDED.role, escalation_order = EXCLUDED.escalation_order",
             (
                 eg.elder_id,
                 eg.guardian_id,
                 eg.role.value,
                 eg.escalation_order,
-                bool(eg.can_view_transcript),
             ),
         )
 
     def _to_eg(self, row: tuple) -> ElderGuardian:
-        elder_id, guardian_id, role, order, can_view = row
-        return ElderGuardian(elder_id, guardian_id, Role(role), order, bool(can_view))
+        elder_id, guardian_id, role, order = row
+        return ElderGuardian(elder_id, guardian_id, Role(role), order)
 
     def get_elder_guardian(self, elder_id: str, guardian_id: str) -> ElderGuardian | None:
         rows = self._db.query(
-            "SELECT elder_id, guardian_id, role, escalation_order, can_view_transcript "
+            "SELECT elder_id, guardian_id, role, escalation_order "
             "FROM elder_guardians WHERE elder_id = %s AND guardian_id = %s",
             (elder_id, guardian_id),
         )
@@ -145,7 +143,7 @@ class PgAccountStore:
 
     def list_elder_guardians(self, elder_id: str) -> list[ElderGuardian]:
         rows = self._db.query(
-            "SELECT elder_id, guardian_id, role, escalation_order, can_view_transcript "
+            "SELECT elder_id, guardian_id, role, escalation_order "
             "FROM elder_guardians WHERE elder_id = %s ORDER BY escalation_order",
             (elder_id,),
         )

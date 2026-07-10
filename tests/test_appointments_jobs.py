@@ -13,7 +13,7 @@ class _FakeRouter:
 
 
 def _eg(guardian_id, order=1):
-    return ElderGuardian("e1", guardian_id, Role.GUARDIAN, order, False)
+    return ElderGuardian("e1", guardian_id, Role.GUARDIAN, order)
 
 
 def _job(appts_by_date, *, elders, guardians, hour=8, record=None):

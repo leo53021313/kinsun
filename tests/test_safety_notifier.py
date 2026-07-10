@@ -28,7 +28,7 @@ class _SpyRouter:
 
 
 def _eg(guardian_id, order):
-    return ElderGuardian("e-elder", guardian_id, Role.GUARDIAN, order, False)
+    return ElderGuardian("e-elder", guardian_id, Role.GUARDIAN, order)
 
 
 class _StubDirectory:

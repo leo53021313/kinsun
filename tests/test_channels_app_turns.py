@@ -153,10 +153,16 @@ def test_turn_requires_elder_token():
     assert _post_audio(client, guardian_token).status_code == 401
 
 
-def test_turn_blocked_after_consent_revoked():
+def test_turn_blocked_after_binding_removed():
+    """token 不代表同意：App 通道綁定消失（如後台拆綁）即擋。
+    （revoke_consent 已隨 D-13「不做撤回」刪除——己-8，改以拆綁定觸發同一 403 路徑。）"""
+    from kinsun.accounts.models import Channel, PrincipalType
+
     svc = _service()
     elder, token = _bound_elder_token(svc)
-    svc.revoke_consent(elder.elder_id)
+    svc._repo.remove_channel_bindings_for_principal(
+        Channel.APP, PrincipalType.ELDER, elder.elder_id
+    )
     res = _post_audio(_client(svc), token)
     assert res.status_code == 403
     assert res.json()["error"]["code"] == "consent_revoked"
