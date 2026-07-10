@@ -190,8 +190,7 @@ def test_remove_channel_bindings_for_principal_scoped_by_channel(store, ns):
     )
     store.remove_channel_bindings_for_principal(Channel.APP, PrincipalType.ELDER, f"{ns}e1")
     channels = {
-        b.channel
-        for b in store.list_channel_bindings_for_principal(PrincipalType.ELDER, f"{ns}e1")
+        b.channel for b in store.list_channel_bindings_for_principal(PrincipalType.ELDER, f"{ns}e1")
     }
     assert Channel.APP not in channels
     assert Channel.LINE in channels

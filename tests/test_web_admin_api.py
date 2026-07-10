@@ -74,9 +74,7 @@ def test_overview_alert_when_failsafe_over_threshold():
     stub = _StubRiskEvents(failsafe_count=3)
     res = _client(risk_events=stub).get("/api/v1/admin/overview", headers=_auth())
     body = res.json()["data"]
-    assert body["alerts"] == [
-        {"kind": "risk_classifier_failure", "count": 3, "window_minutes": 60}
-    ]
+    assert body["alerts"] == [{"kind": "risk_classifier_failure", "count": 3, "window_minutes": 60}]
     assert stub.cutoffs == [(NOW - timedelta(minutes=60)).timestamp()]
 
 

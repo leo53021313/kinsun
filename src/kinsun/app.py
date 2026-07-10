@@ -89,9 +89,7 @@ def build_app() -> FastAPI:
         notifier=GuardianNotifier(
             core.accounts,
             core.router,
-            deliveries=PgRiskNotificationLogStore(
-                db, clock=clock, new_id=lambda: uuid.uuid4().hex
-            ),
+            deliveries=PgRiskNotificationLogStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex),
         ),
         risk_events=risk_events,
         traces=core.traces,

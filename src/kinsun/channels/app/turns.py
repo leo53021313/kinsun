@@ -114,10 +114,12 @@ def create_app_turns_router(
             voice=voice,
             traces=traces,
         )
-        return ok({
-            "text": collector.text,
-            "audio_url": collector.audio_url,
-            "duration_ms": collector.duration_ms,
-        })
+        return ok(
+            {
+                "text": collector.text,
+                "audio_url": collector.audio_url,
+                "duration_ms": collector.duration_ms,
+            }
+        )
 
     return router

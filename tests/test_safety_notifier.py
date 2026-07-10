@@ -75,9 +75,7 @@ def test_delivery_log_failure_does_not_break_notify():
             raise RuntimeError("db down")
 
     router = _SpyRouter()
-    notifier = GuardianNotifier(
-        _StubDirectory(["g1"]), router, deliveries=_BoomDeliveries()
-    )
+    notifier = GuardianNotifier(_StubDirectory(["g1"]), router, deliveries=_BoomDeliveries())
     notifier.notify("e-elder", RiskAssessment(RiskTier.L2, 0.8, "胸口悶", []))
     assert [g for _, g, _ in router.sent] == ["g1"]
 

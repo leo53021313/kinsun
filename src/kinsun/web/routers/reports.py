@@ -33,15 +33,17 @@ def create_reports_router(
             reminder_logs=reminder_logs,
             now=clock(),
         )
-        return ok({
-            "risk_events": [
-                {"tier": int(e.tier), "reason": e.reason, "created_at": e.created_at}
-                for e in report.risks
-            ],
-            "reminders": [
-                {"kind": r.kind, "content": r.content, "created_at": r.created_at}
-                for r in report.reminders
-            ],
-        })
+        return ok(
+            {
+                "risk_events": [
+                    {"tier": int(e.tier), "reason": e.reason, "created_at": e.created_at}
+                    for e in report.risks
+                ],
+                "reminders": [
+                    {"kind": r.kind, "content": r.content, "created_at": r.created_at}
+                    for r in report.reminders
+                ],
+            }
+        )
 
     return router

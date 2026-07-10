@@ -5,9 +5,7 @@ from kinsun.web.ratelimit import SlidingWindowRateLimiter
 
 def _limiter(max_attempts=3, window_seconds=60.0, start=1000.0):
     state = {"now": start}
-    limiter = SlidingWindowRateLimiter(
-        max_attempts, window_seconds, clock=lambda: state["now"]
-    )
+    limiter = SlidingWindowRateLimiter(max_attempts, window_seconds, clock=lambda: state["now"])
     return limiter, state
 
 

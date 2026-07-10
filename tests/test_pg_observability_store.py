@@ -62,9 +62,7 @@ def test_feed_overview_and_purge(pg_database):
     )
     after = store.get_overview_stats(today_start=now_ts - 60, hourly_start=now_ts - 60)
     assert after.active_elder_count - before.active_elder_count == 2
-    pg_database.execute(
-        "DELETE FROM turns WHERE elder_id IN ('e-active-1', 'e-active-2')", ()
-    )
+    pg_database.execute("DELETE FROM turns WHERE elder_id IN ('e-active-1', 'e-active-2')", ())
     assert isinstance(store.list_feed(after=0.0, limit=5), list)
     # before 游標（✅ D-29 乙-6）：動態 WHERE 條件需在真 Postgres 上驗語法。
     assert isinstance(store.list_feed(after=0.0, before=9e12, limit=5), list)

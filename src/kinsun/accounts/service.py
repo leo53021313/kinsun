@@ -298,9 +298,7 @@ class AccountService:
         """作廢長輩裝置並重發綁定碼（✅ D-25 修訂）：
         撤銷該長輩全部 token＋拆 App 通道綁定（LINE 綁定不動），回新的長輩綁定碼。"""
         self._repo.remove_api_tokens_for_principal(PrincipalType.ELDER, elder_id)
-        self._repo.remove_channel_bindings_for_principal(
-            Channel.APP, PrincipalType.ELDER, elder_id
-        )
+        self._repo.remove_channel_bindings_for_principal(Channel.APP, PrincipalType.ELDER, elder_id)
         return self.generate_invite(elder_id, InviteRole.ELDER)
 
     def app_external_id_of_elder(self, elder_id: str) -> str | None:

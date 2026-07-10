@@ -44,9 +44,7 @@ class PgRiskNotificationLogStore:
         self._clock = clock
         self._new_id = new_id
 
-    def record(
-        self, elder_id: str, guardian_id: str, tier: RiskTier, *, delivered: bool
-    ) -> None:
+    def record(self, elder_id: str, guardian_id: str, tier: RiskTier, *, delivered: bool) -> None:
         self._db.execute(
             "INSERT INTO risk_notification_logs "
             "(risk_notification_log_id, elder_id, guardian_id, tier, delivered, created_at) "
@@ -82,9 +80,7 @@ class FakeRiskNotificationLogStore:
     def __init__(self) -> None:
         self.recorded: list[RiskNotificationLog] = []
 
-    def record(
-        self, elder_id: str, guardian_id: str, tier: RiskTier, *, delivered: bool
-    ) -> None:
+    def record(self, elder_id: str, guardian_id: str, tier: RiskTier, *, delivered: bool) -> None:
         index = len(self.recorded)
         self.recorded.append(
             RiskNotificationLog(str(index), elder_id, guardian_id, tier, delivered, float(index))

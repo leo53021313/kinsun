@@ -21,8 +21,8 @@ DGX 實機鎖定（2026-07-02，GB10 / aarch64 / CUDA 13）：
 from __future__ import annotations
 
 import asyncio
-import io
 import hmac
+import io
 import os
 import subprocess
 import sys

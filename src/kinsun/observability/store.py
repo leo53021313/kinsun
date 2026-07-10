@@ -332,9 +332,7 @@ class PgTraceStore:
             elder_name=name_row[0] if name_row else "",
         )
 
-    def list_feed(
-        self, *, after: float, before: float | None = None, limit: int
-    ) -> list[FeedItem]:
+    def list_feed(self, *, after: float, before: float | None = None, limit: int) -> list[FeedItem]:
         # before（✅ D-29 回翻歷史）為選配上界：created_at < before；游標值＝epoch 秒。
         def cond(alias: str) -> str:
             base = f"{alias}.created_at > %s"
@@ -684,9 +682,7 @@ class FakeTraceStore:
             elder_name,
         )
 
-    def list_feed(
-        self, *, after: float, before: float | None = None, limit: int
-    ) -> list[FeedItem]:
+    def list_feed(self, *, after: float, before: float | None = None, limit: int) -> list[FeedItem]:
         items: list[FeedItem] = []
         for elder_id, role, content, ts in self.turns:
             if ts > after:

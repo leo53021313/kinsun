@@ -118,12 +118,14 @@ def create_admin_router(
             start=start,
             end=start + 86400.0,
         )
-        return ok({
-            "elder_id": elder.elder_id,
-            "name": elder.name,
-            "date": day.isoformat(),
-            "items": [_timeline_json(i) for i in items],
-        })
+        return ok(
+            {
+                "elder_id": elder.elder_id,
+                "name": elder.name,
+                "date": day.isoformat(),
+                "items": [_timeline_json(i) for i in items],
+            }
+        )
 
     @router.get("/traces/{trace_id}", dependencies=[Depends(require_admin)])
     def trace_detail(trace_id: str) -> dict:

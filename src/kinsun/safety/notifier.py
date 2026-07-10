@@ -99,9 +99,7 @@ class GuardianNotifier:
                 if delivered:
                     sent += 1
                 # 送達與否獨立留痕（✅ D-36）：「家屬當時有沒有收到」查得到。
-                self._record_delivery(
-                    elder_id, guardian_id, assessment.tier, delivered=delivered
-                )
+                self._record_delivery(elder_id, guardian_id, assessment.tier, delivered=delivered)
             logger.warning(
                 "已通知家屬 elder=%s tier=%s 成功=%d/%d",
                 elder_id,
