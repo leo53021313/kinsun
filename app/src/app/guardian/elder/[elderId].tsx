@@ -7,8 +7,10 @@ import {
   createGuardianInvite,
   getHealthReport,
   listAppointments,
+  listDailySummaries,
   listMedications,
   type Appointment,
+  type DailySummary,
   type HealthReport,
   type Medication,
 } from "@/lib/api";
@@ -30,6 +32,7 @@ export default function ElderDetail() {
   const [medications, setMedications] = useState<Medication[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [report, setReport] = useState<HealthReport | null>(null);
+  const [summaries, setSummaries] = useState<DailySummary[] | null>(null);
   const [inviteCode, setInviteCode] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -43,15 +46,17 @@ export default function ElderDetail() {
     let alive = true;
     (async () => {
       try {
-        const [meds, appts, hr] = await Promise.all([
+        const [meds, appts, hr, daily] = await Promise.all([
           listMedications(elderId, session.token),
           listAppointments(elderId, session.token),
           getHealthReport(elderId, session.token),
+          listDailySummaries(elderId, session.token),
         ]);
         if (alive) {
           setMedications(meds);
           setAppointments(appts);
           setReport(hr);
+          setSummaries(daily);
         }
       } catch (exc) {
         if (alive) {
@@ -103,6 +108,21 @@ export default function ElderDetail() {
         )}
       </Section>
 
+      <Section title="每日摘要">
+        {summaries === null ? (
+          <EmptyHint text="載入中…" />
+        ) : summaries.length === 0 ? (
+          <EmptyHint text="還沒有摘要——長輩與金孫聊過天後，隔天早上就會出現。" />
+        ) : (
+          summaries.map((s) => (
+            <View key={s.date} style={styles.summaryItem}>
+              <Text style={styles.summaryDate}>{s.date}</Text>
+              <Text style={styles.row}>{s.content}</Text>
+            </View>
+          ))
+        )}
+      </Section>
+
       <Section title="固定用藥">
         {medications.length === 0 ? (
           <EmptyHint text="尚未設定用藥（可先在 LINE 端設定，App 版編輯後續提供）。" />
@@ -143,5 +163,7 @@ const styles = StyleSheet.create({
   risk: { fontSize: 16, color: colors.danger },
   soft: { fontSize: 14, color: colors.textSoft },
   row: { fontSize: 17, color: colors.text },
+  summaryItem: { gap: 2 },
+  summaryDate: { fontSize: 14, color: colors.textSoft },
   inviteCode: { fontSize: 26, fontWeight: "800", color: colors.primary, letterSpacing: 1 },
 });

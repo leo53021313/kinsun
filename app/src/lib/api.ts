@@ -8,6 +8,7 @@ import type {
   AppNotification,
   Appointment,
   CreatedElder,
+  DailySummary,
   Elder,
   ElderSession,
   GuardianSession,
@@ -21,6 +22,7 @@ export type {
   AppNotification,
   Appointment,
   CreatedElder,
+  DailySummary,
   Elder,
   ElderSession,
   GuardianSession,
@@ -147,4 +149,13 @@ export function listAppointments(elderId: string, token: string): Promise<Appoin
 
 export function getHealthReport(elderId: string, token: string): Promise<HealthReport> {
   return request(`/api/v1/elders/${elderId}/health-report`, { token });
+}
+
+/** 每日摘要（✅ D-09 己-3）：家屬可看摘要、不開放逐字對話。 */
+export function listDailySummaries(
+  elderId: string,
+  token: string,
+  limit = 14,
+): Promise<DailySummary[]> {
+  return request(`/api/v1/elders/${elderId}/daily-summaries?limit=${limit}`, { token });
 }

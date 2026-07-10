@@ -8,6 +8,7 @@ export type Appointment = { appointment_id: string; date: string; label: string 
 export type RiskEventItem = { tier: number; reason: string; created_at: number };
 export type ReminderItem = { kind: string; content: string; created_at: number };
 export type HealthReport = { risk_events: RiskEventItem[]; reminders: ReminderItem[] };
+export type DailySummary = { date: string; content: string; created_at: number };
 export type AppNotification = { content: string; created_at: number };
 
 // --- App 認證 ---

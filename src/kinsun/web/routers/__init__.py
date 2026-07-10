@@ -20,6 +20,7 @@ from kinsun.appointments.service import AppointmentService
 from kinsun.medications.service import MedicationService
 from kinsun.notifications.store import AppNotificationStore
 from kinsun.reports.reminders import ReminderLogStore
+from kinsun.reports.summaries import ConversationSummaryStore
 from kinsun.safety.events import RiskEventStore
 from kinsun.web.auth import LiffVerifier
 from kinsun.web.ratelimit import SlidingWindowRateLimiter
@@ -50,8 +51,9 @@ def create_guardian_face_router(
     clock: Callable[[], datetime],
     risk_events: RiskEventStore,
     reminder_logs: ReminderLogStore,
+    summaries: ConversationSummaryStore,
 ) -> APIRouter:
-    """家屬面聚合：長輩／用藥／回診／健康報告，共用雙認證與可及範圍守門。"""
+    """家屬面聚合：長輩／用藥／回診／健康報告／每日摘要，共用雙認證與可及範圍守門。"""
     current_guardian = build_current_guardian(verifier, accounts)
     scope = GuardianScope(accounts)
     router = APIRouter()
@@ -72,6 +74,7 @@ def create_guardian_face_router(
         create_reports_router(
             risk_events=risk_events,
             reminder_logs=reminder_logs,
+            summaries=summaries,
             clock=clock,
             current_guardian=current_guardian,
             scope=scope,

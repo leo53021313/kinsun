@@ -1,14 +1,19 @@
-"""健康報告資源：近 30 天危急事件＋提醒紀錄彙整（聚合計算端點，單數命名）。"""
+"""健康報告與每日摘要資源：家屬可見的長輩狀況彙整。
+
+health-report 為聚合計算端點（單數命名）；daily-summaries 為列表資源
+（複數 kebab-case）——家屬可看每日摘要、不開放逐字對話（✅ D-09 己-3）。
+"""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from kinsun.reports.health import build_health_report
 from kinsun.reports.reminders import ReminderLogStore
+from kinsun.reports.summaries import ConversationSummaryStore
 from kinsun.safety.events import RiskEventStore
 from kinsun.web.envelope import ok
 from kinsun.web.routers.deps import GuardianAuth, GuardianScope
@@ -18,6 +23,7 @@ def create_reports_router(
     *,
     risk_events: RiskEventStore,
     reminder_logs: ReminderLogStore,
+    summaries: ConversationSummaryStore,
     clock: Callable[[], datetime],
     current_guardian: Callable[..., GuardianAuth],
     scope: GuardianScope,
@@ -44,6 +50,19 @@ def create_reports_router(
                     for r in report.reminders
                 ],
             }
+        )
+
+    @router.get("/elders/{elder_id}/daily-summaries")
+    def daily_summaries(
+        elder_id: str,
+        limit: int = Query(default=30, ge=1, le=90),
+        auth: GuardianAuth = Depends(current_guardian),
+    ) -> dict:
+        scope.assert_manages(auth, elder_id)
+        rows = summaries.list_for_elder(elder_id)[:limit]
+        return ok(
+            [{"date": s.date, "content": s.content, "created_at": s.created_at} for s in rows],
+            meta={"limit": limit},
         )
 
     return router

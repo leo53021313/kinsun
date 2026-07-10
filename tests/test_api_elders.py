@@ -12,6 +12,7 @@ from kinsun.web.routers import create_guardian_face_router
 from tests.fakes import (
     FakeAccountStore,
     FakeAppointmentStore,
+    FakeConversationSummaryStore,
     FakeMedicationStore,
     FakeReminderLogStore,
     FakeRiskEventStore,
@@ -51,6 +52,7 @@ def _client(verifier, accounts):
             clock=lambda: NOW,
             risk_events=FakeRiskEventStore(),
             reminder_logs=FakeReminderLogStore(),
+            summaries=FakeConversationSummaryStore(),
         ),
         prefix="/api/v1",
     )

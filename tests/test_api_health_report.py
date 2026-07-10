@@ -11,7 +11,12 @@ from kinsun.reports.reminders import ReminderLog
 from kinsun.safety.events import RiskEvent
 from kinsun.safety.tiers import RiskTier
 from kinsun.web.routers import create_guardian_face_router
-from tests.fakes import FakeAccountStore, FakeAppointmentStore, FakeMedicationStore
+from tests.fakes import (
+    FakeAccountStore,
+    FakeAppointmentStore,
+    FakeConversationSummaryStore,
+    FakeMedicationStore,
+)
 
 TPE = timezone(timedelta(hours=8))
 NOW = datetime(2026, 7, 30, 12, 0, tzinfo=TPE)
@@ -43,7 +48,7 @@ class _Reminders:
         return self._logs
 
 
-def _client(line_user_id, *, risks, reminders, bind_elder=True):
+def _client(line_user_id, *, risks, reminders, bind_elder=True, summaries=None):
     repo = FakeAccountStore()
     ids = (f"id{i}" for i in count(1))
     accounts = AccountService(
@@ -66,6 +71,7 @@ def _client(line_user_id, *, risks, reminders, bind_elder=True):
             clock=lambda: NOW,
             risk_events=_RiskEvents(risks),
             reminder_logs=_Reminders(reminders),
+            summaries=summaries or FakeConversationSummaryStore(),
         ),
         prefix="/api/v1",
     )
@@ -113,3 +119,44 @@ def test_health_report_unbound_elder_still_reports():
     assert res.status_code == 200
     assert res.json()["data"]["risk_events"] == []
     assert [r["content"] for r in res.json()["data"]["reminders"]] == ["早上用藥：A"]
+
+
+# --- 每日摘要開放家屬（✅ D-09 己-3）---
+
+
+def _summaries_store(rows):
+    store = FakeConversationSummaryStore()
+    for elder_id, date, content in rows:
+        store.save(elder_id, date, content)
+    return store
+
+
+def test_daily_summaries_listed_newest_first():
+    summaries = _summaries_store([])
+    client, elder_id = _client("U-son", risks=[], reminders=[], summaries=summaries)
+    summaries.save(elder_id, "2026-07-28", "阿公聊了孫子，心情不錯")
+    summaries.save(elder_id, "2026-07-29", "阿公說膝蓋有點痠")
+    res = client.get(f"/api/v1/elders/{elder_id}/daily-summaries", headers=_auth())
+    assert res.status_code == 200
+    body = res.json()
+    assert body["success"] is True
+    assert [(s["date"], s["content"]) for s in body["data"]] == [
+        ("2026-07-29", "阿公說膝蓋有點痠"),
+        ("2026-07-28", "阿公聊了孫子，心情不錯"),
+    ]
+
+
+def test_daily_summaries_limit():
+    summaries = _summaries_store([])
+    client, elder_id = _client("U-son", risks=[], reminders=[], summaries=summaries)
+    for day in ("2026-07-27", "2026-07-28", "2026-07-29"):
+        summaries.save(elder_id, day, f"{day} 的摘要")
+    res = client.get(f"/api/v1/elders/{elder_id}/daily-summaries?limit=1", headers=_auth())
+    assert [s["date"] for s in res.json()["data"]] == ["2026-07-29"]
+
+
+def test_daily_summaries_scope_guard_404_for_stranger():
+    client, elder_id = _client("U-son", risks=[], reminders=[])
+    stranger, _ = _client("U-stranger", risks=[], reminders=[])
+    res = stranger.get(f"/api/v1/elders/{elder_id}/daily-summaries", headers=_auth())
+    assert res.status_code == 404

@@ -28,6 +28,7 @@ from kinsun.config import load_dotenv, load_settings
 from kinsun.llm import build_gemini_for
 from kinsun.medications.flow import MedicationMenu
 from kinsun.pipeline import VoicePipeline
+from kinsun.reports.summaries import PgConversationSummaryStore
 from kinsun.safety.classifier import LlmRiskClassifier
 from kinsun.safety.deliveries import PgRiskNotificationLogStore
 from kinsun.safety.detector import RiskDetector
@@ -158,6 +159,7 @@ def build_app() -> FastAPI:
             clock=clock,
             risk_events=risk_events,
             reminder_logs=core.reminder_logs,
+            summaries=PgConversationSummaryStore(db, clock=clock),
         ),
         prefix="/api/v1",
     )
