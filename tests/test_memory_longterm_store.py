@@ -164,3 +164,40 @@ def test_search_missing_created_at_sorts_last():
         }
     )
     assert _texts(Mem0LongTermStore(mem).search("sess1", "x")) == ["喜歡麥當勞", "沒日期的事實"]
+
+
+class _ListableMem0:
+    """支援 get_all 的 fake（mem0 2.0.10：entity 參數走 filters）。"""
+
+    def __init__(self, get_all_return=None, raise_on_get_all=False):
+        self.get_all_calls = []
+        self._return = get_all_return or {"results": []}
+        self._raise = raise_on_get_all
+
+    def get_all(self, *, filters=None, limit=50, **kwargs):
+        _reject_entity_kwargs(kwargs)
+        self.get_all_calls.append({"filters": filters, "limit": limit})
+        if self._raise:
+            raise RuntimeError("boom")
+        return self._return
+
+
+def test_list_for_elder_maps_and_sorts_newest_first():
+    """admin 觀測（spec 2026-07-12 §3.3）：列出全部記憶，created_at 由新到舊。"""
+    mem = _ListableMem0(
+        get_all_return={
+            "results": [
+                {"memory": "喜歡下棋", "created_at": "2026-07-01T08:00:00", "metadata": {}},
+                {"memory": "早餐吃稀飯", "created_at": "2026-07-10T08:00:00", "metadata": {}},
+            ]
+        }
+    )
+    items = Mem0LongTermStore(mem).list_for_elder("e1")
+    assert _texts(items) == ["早餐吃稀飯", "喜歡下棋"]
+    assert mem.get_all_calls == [{"filters": {"user_id": "e1"}, "limit": 50}]
+
+
+def test_list_for_elder_survives_mem0_failure():
+    """觀測讀取失敗不可影響服務：退化為空清單。"""
+    mem = _ListableMem0(raise_on_get_all=True)
+    assert Mem0LongTermStore(mem).list_for_elder("e1") == []

@@ -6,8 +6,14 @@
 import { ApiError, type Envelope, unwrapEnvelope } from "kinsun-shared/envelope";
 import type {
   AdminElder,
+  AdminElderAccount,
+  AdminElderMemory,
+  AdminElderReminders,
+  AdminJob,
+  AdminRiskNotification,
   FeedMessage,
   HourlyCount,
+  Meta,
   Overview,
   OverviewAlert,
   StageStats,
@@ -19,8 +25,14 @@ import type {
 export { ApiError };
 export type {
   AdminElder,
+  AdminElderAccount,
+  AdminElderMemory,
+  AdminElderReminders,
+  AdminJob,
+  AdminRiskNotification,
   FeedMessage,
   HourlyCount,
+  Meta,
   Overview,
   OverviewAlert,
   StageStats,
@@ -50,11 +62,17 @@ export function setOnUnauthorized(callback: (() => void) | null): void {
   onUnauthorized = callback;
 }
 
-async function apiFetch<T>(path: string): Promise<{ data: T; meta: Record<string, unknown> | null }> {
-  const headers = new Headers();
+async function apiFetch<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<{ data: T; meta: Record<string, unknown> | null }> {
+  const headers = new Headers(init.headers);
   const key = getAdminKey();
   if (key) headers.set("X-Admin-Key", key);
-  const res = await fetch(path, { headers });
+  if (init.body !== undefined && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const res = await fetch(path, { ...init, headers });
   if (res.status === 401) {
     clearAdminKey();
     onUnauthorized?.();
@@ -99,4 +117,51 @@ export async function getTimeline(elderId: string, date: string): Promise<Timeli
 
 export async function getTrace(traceId: string): Promise<TraceDetail> {
   return (await apiFetch<TraceDetail>(`/api/v1/admin/traces/${traceId}`)).data;
+}
+
+// --- 內測基礎建設（spec 2026-07-12）：長輩詳情分頁＋排程觀測與手動觸發 ---
+
+/** 公開 meta：內測模式（手動觸發按鈕顯示與否）。 */
+export async function getMeta(): Promise<Meta> {
+  return (await apiFetch<Meta>("/api/v1/meta")).data;
+}
+
+export async function getElderReminders(elderId: string): Promise<AdminElderReminders> {
+  return (await apiFetch<AdminElderReminders>(`/api/v1/admin/elders/${elderId}/reminders`)).data;
+}
+
+export async function getElderMemory(elderId: string): Promise<AdminElderMemory> {
+  return (await apiFetch<AdminElderMemory>(`/api/v1/admin/elders/${elderId}/memory`)).data;
+}
+
+export async function getElderAccount(elderId: string): Promise<AdminElderAccount> {
+  return (await apiFetch<AdminElderAccount>(`/api/v1/admin/elders/${elderId}/account`)).data;
+}
+
+export async function listElderRiskNotifications(
+  elderId: string,
+): Promise<AdminRiskNotification[]> {
+  return (
+    await apiFetch<AdminRiskNotification[]>(`/api/v1/admin/elders/${elderId}/risk-notifications`)
+  ).data;
+}
+
+export async function listJobs(): Promise<AdminJob[]> {
+  return (await apiFetch<AdminJob[]>("/api/v1/admin/jobs")).data;
+}
+
+/** 內測限定：立即執行排程任務。 */
+export async function runJob(jobName: string): Promise<void> {
+  await apiFetch(`/api/v1/admin/jobs/${jobName}/run`, { method: "POST" });
+}
+
+/** 內測限定：立即發送某長輩的用藥／回診提醒。 */
+export async function dispatchReminder(
+  elderId: string,
+  body: { kind: "medication" | "appointment"; slot?: string },
+): Promise<void> {
+  await apiFetch(`/api/v1/admin/elders/${elderId}/reminders/dispatch`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
