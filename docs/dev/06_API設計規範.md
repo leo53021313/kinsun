@@ -121,7 +121,7 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | as-is | to-be | 說明 |
 | :--- | :--- | :--- |
 | `GET /api/me/elders` | `GET /api/v1/elders` | 列登入家屬管理的長輩（✅ D-28 改名） |
-| `POST /api/elders` | `POST /api/v1/elders` | 建長輩＋首綁邀請碼 |
+| `POST /api/elders` | `POST /api/v1/elders` | 建長輩＋首綁邀請碼；payload 三端統一 `{name}`（✅ 庚-29——LIFF 家屬名改由後端取 ID token 顯示名稱，前端不再自送 guardian_name） |
 | `POST /api/elders/{elder_id}/guardian-invites` | `POST /api/v1/elders/{elder_id}/guardian-invites` | 產家屬邀請碼 |
 | `GET|POST /api/elders/{elder_id}/medications`、`PUT|DELETE .../{medication_id}` | 同路徑掛 `/api/v1/` | 用藥 CRUD |
 | `GET|POST /api/elders/{elder_id}/appointments`、`PUT|DELETE .../{appointment_id}` | 同路徑掛 `/api/v1/` | 回診 CRUD；payload `{date, label, time}`，`time` 選填 HH:MM（✅ 庚-15，空＝未指定、提醒不帶時間） |

@@ -12,13 +12,15 @@ import {
   type Medication,
 } from "@/lib/api";
 import { SLOTS, slotLabel } from "@/lib/medicationSlots";
-import { useSession } from "@/lib/SessionProvider";
+import { useSession, useSignOutOnAuthError } from "@/lib/SessionProvider";
+import { strings } from "@/lib/strings";
 import { colors, spacing } from "@/lib/theme";
 
 /** 用藥管理：清單＋編輯／刪除＋同頁表單（App 版編輯，取代走 LINE 端）。 */
 export default function MedicationsManage() {
   const { elderId } = useLocalSearchParams<{ elderId: string }>();
   const { session } = useSession();
+  const signOutOn401 = useSignOutOnAuthError();
   const token = session?.token ?? "";
   const [medications, setMedications] = useState<Medication[] | null>(null);
   const [name, setName] = useState("");
@@ -33,10 +35,11 @@ export default function MedicationsManage() {
     }
     try {
       setMedications(await listMedications(elderId, token));
-    } catch {
-      setError("載入失敗，請稍後再試。");
+    } catch (exc) {
+      if (await signOutOn401(exc)) return;
+      setError(strings.common.loadFailed);
     }
-  }, [elderId, token]);
+  }, [elderId, token, signOutOn401]);
 
   useEffect(() => {
     reload();
@@ -68,7 +71,8 @@ export default function MedicationsManage() {
       resetForm();
       await reload();
     } catch (exc) {
-      setError(exc instanceof ApiError ? exc.message : "儲存失敗，請稍後再試。");
+      if (await signOutOn401(exc)) return;
+      setError(exc instanceof ApiError ? exc.message : strings.common.saveFailed);
     } finally {
       setBusy(false);
     }
@@ -82,10 +86,10 @@ export default function MedicationsManage() {
   }
 
   function confirmRemove(med: Medication) {
-    Alert.alert("刪除用藥", `確定要刪除「${med.name}」嗎？`, [
-      { text: "取消", style: "cancel" },
+    Alert.alert(strings.medications.deleteTitle, strings.medications.confirmDelete(med.name), [
+      { text: strings.common.cancel, style: "cancel" },
       {
-        text: "刪除",
+        text: strings.common.delete,
         style: "destructive",
         onPress: async () => {
           if (!elderId) {
@@ -99,7 +103,8 @@ export default function MedicationsManage() {
             }
             await reload();
           } catch (exc) {
-            setError(exc instanceof ApiError ? exc.message : "刪除失敗，請稍後再試。");
+            if (await signOutOn401(exc)) return;
+            setError(exc instanceof ApiError ? exc.message : strings.common.deleteFailed);
           } finally {
             setBusy(false);
           }
@@ -112,11 +117,11 @@ export default function MedicationsManage() {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <ErrorText message={error} />
 
-      <Section title="固定用藥">
+      <Section title={strings.medications.listSection}>
         {medications === null ? (
-          <EmptyHint text="載入中…" />
+          <EmptyHint text={strings.common.loading} />
         ) : medications.length === 0 ? (
-          <EmptyHint text="還沒有用藥，從下方新增第一筆。" />
+          <EmptyHint text={strings.medications.empty} />
         ) : (
           medications.map((m) => (
             <View key={m.medication_id} style={styles.item}>
@@ -124,18 +129,18 @@ export default function MedicationsManage() {
                 {m.name}（{m.slots.map(slotLabel).join("、")}）
               </Text>
               <View style={styles.itemActions}>
-                <Button label="編輯" variant="outline" disabled={busy} onPress={() => startEdit(m)} />
-                <Button label="刪除" variant="outline" disabled={busy} onPress={() => confirmRemove(m)} />
+                <Button label={strings.common.edit} variant="outline" disabled={busy} onPress={() => startEdit(m)} />
+                <Button label={strings.common.delete} variant="outline" disabled={busy} onPress={() => confirmRemove(m)} />
               </View>
             </View>
           ))
         )}
       </Section>
 
-      <Section title={editingId ? "編輯用藥" : "新增用藥"}>
-        <Field label="藥名" value={name} onChangeText={setName} placeholder="例：降血壓藥" />
+      <Section title={editingId ? strings.medications.editSection : strings.medications.addSection}>
+        <Field label={strings.medications.nameLabel} value={name} onChangeText={setName} placeholder={strings.medications.namePlaceholder} />
         <Text style={styles.slotTitle} maxFontSizeMultiplier={1.6}>
-          提醒時段（可複選）
+          {strings.medications.slotsLabel}
         </Text>
         <View style={styles.slotRow}>
           {SLOTS.map((s) => {
@@ -159,12 +164,12 @@ export default function MedicationsManage() {
           })}
         </View>
         <Button
-          label={editingId ? "更新" : "新增"}
+          label={editingId ? strings.common.update : strings.common.create}
           onPress={submit}
           busy={busy}
           disabled={!name.trim() || slots.length === 0}
         />
-        {editingId ? <Button label="取消編輯" variant="outline" onPress={resetForm} /> : null}
+        {editingId ? <Button label={strings.common.cancelEdit} variant="outline" onPress={resetForm} /> : null}
       </Section>
     </ScrollView>
   );

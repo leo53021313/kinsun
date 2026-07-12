@@ -5,8 +5,10 @@ from kinsun.web.auth import AuthError, LineIdTokenVerifier
 
 
 def test_verify_returns_sub():
-    transport = FakeTransport([Response(200, {}, b'{"sub": "U-123"}')])
-    assert LineIdTokenVerifier("ch", 10, transport=transport).verify("tok") == "U-123"
+    transport = FakeTransport([Response(200, {}, b'{"sub": "U-123", "name": "\u5152\u5b50"}')])
+    identity = LineIdTokenVerifier("ch", 10, transport=transport).verify("tok")
+    assert identity.line_user_id == "U-123"
+    assert identity.display_name == "兒子"
     method, url, data, headers, _timeout = transport.calls[0]
     assert (method, url) == ("POST", "https://api.line.me/oauth2/v2.1/verify")
     assert headers["Content-Type"] == "application/x-www-form-urlencoded"

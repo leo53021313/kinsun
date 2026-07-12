@@ -5,6 +5,7 @@ import { KeyboardAvoidingView, Platform, StyleSheet, View } from "react-native";
 import { Button, ErrorText, Field } from "@/components/ui";
 import { ApiError, registerGuardian } from "@/lib/api";
 import { useSession } from "@/lib/SessionProvider";
+import { strings } from "@/lib/strings";
 import { colors, spacing } from "@/lib/theme";
 
 export default function GuardianRegister() {
@@ -19,7 +20,7 @@ export default function GuardianRegister() {
   async function submit() {
     setError("");
     if (password.length < 8) {
-      setError("密碼至少 8 碼。");
+      setError(strings.guardianRegister.passwordTooShort);
       return;
     }
     setBusy(true);
@@ -29,9 +30,9 @@ export default function GuardianRegister() {
       router.replace("/guardian/home");
     } catch (exc) {
       if (exc instanceof ApiError && exc.code === "email_taken") {
-        setError("這個 Email 已經註冊過了，請直接登入。");
+        setError(strings.guardianRegister.emailTaken);
       } else {
-        setError(exc instanceof Error ? exc.message : "連線失敗，請稍後再試。");
+        setError(exc instanceof Error ? exc.message : strings.common.connectionFailed);
       }
     } finally {
       setBusy(false);
@@ -44,7 +45,12 @@ export default function GuardianRegister() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <View style={styles.form}>
-        <Field label="您的稱呼" value={name} onChangeText={setName} placeholder="例如：兒子小明" />
+        <Field
+          label={strings.guardianRegister.nameLabel}
+          value={name}
+          onChangeText={setName}
+          placeholder={strings.guardianRegister.namePlaceholder}
+        />
         <Field
           label="Email"
           value={email}
@@ -54,14 +60,14 @@ export default function GuardianRegister() {
           placeholder="you@example.com"
         />
         <Field
-          label="密碼"
+          label={strings.common.passwordLabel}
           value={password}
           onChangeText={setPassword}
           secureTextEntry
-          placeholder="至少 8 碼"
+          placeholder={strings.common.passwordPlaceholder}
         />
         <ErrorText message={error} />
-        <Button label="註冊並登入" onPress={submit} busy={busy} />
+        <Button label={strings.guardianRegister.submit} onPress={submit} busy={busy} />
       </View>
     </KeyboardAvoidingView>
   );

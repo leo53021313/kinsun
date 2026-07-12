@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import { type AdminElder, listElders } from "../api";
 import { formatTime } from "../format";
+import { strings } from "../strings";
 
 export function EldersPage() {
   const [elders, setElders] = useState<AdminElder[]>([]);
@@ -12,21 +13,21 @@ export function EldersPage() {
     listElders().then(setElders, () => setError(true));
   }, []);
 
-  if (error) return <p className="error-banner">載入失敗，請重新整理。</p>;
+  if (error) return <p className="error-banner">{strings.common.loadFailedRefresh}</p>;
   return (
     <section>
-      <h2>長輩清單</h2>
-      {elders.length === 0 && <p>目前沒有長輩資料。</p>}
+      <h2>{strings.elders.title}</h2>
+      {elders.length === 0 && <p>{strings.elders.noElders}</p>}
       {elders.map((e) => (
         <div className="card feed-item" key={e.elder_id}>
           <Link to={`/elders/${e.elder_id}`}>
             <strong>{e.name}</strong>
           </Link>
           <span className="feed-time">
-            {e.bound_channels ? `通道：${e.bound_channels}` : "尚未綁定"}
+            {e.bound_channels ? strings.elders.boundChannels(e.bound_channels) : strings.elders.notBound}
           </span>
           <span className="feed-time">
-            {e.last_active_at ? `最後活動 ${formatTime(e.last_active_at)}` : "尚無對話"}
+            {e.last_active_at ? strings.elders.lastActive(formatTime(e.last_active_at)) : strings.elders.noConversation}
           </span>
         </div>
       ))}

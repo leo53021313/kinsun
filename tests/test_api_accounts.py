@@ -8,7 +8,7 @@ from kinsun.accounts.models import InviteRole
 from kinsun.accounts.service import AccountService
 from kinsun.appointments.service import AppointmentService
 from kinsun.medications.service import MedicationService
-from kinsun.web.auth import AuthError
+from kinsun.web.auth import AuthError, LineIdentity
 from kinsun.web.routers import create_guardian_face_router
 from tests.fakes import (
     FakeAccountStore,
@@ -31,7 +31,7 @@ class _FakeVerifier:
     def verify(self, id_token):
         if self._boom:
             raise AuthError("bad")
-        return self._line_user_id
+        return LineIdentity(self._line_user_id, "兒子")
 
 
 def _setup(line_user_id="U-son"):
@@ -63,21 +63,46 @@ def _auth():
 
 
 def test_create_elder_returns_binding_code():
+    """payload 三端統一 {name}（✅ 庚-29／F-9）：LIFF 首建家屬檔命名取
+    ID token 的 LINE 顯示名稱（替身回「兒子」），不再由前端自送 guardian_name。"""
     client, accounts = _setup()
-    res = client.post(
-        "/api/v1/elders", headers=_auth(), json={"name": "阿公", "guardian_name": "兒子"}
-    )
+    res = client.post("/api/v1/elders", headers=_auth(), json={"name": "阿公"})
     assert res.status_code == 201
     code = res.json()["data"]["invite_code"]
     assert [e.name for e in accounts.elders_managed_by("U-son")] == ["阿公"]
     assert accounts.preview_invite(code).role == InviteRole.ELDER
 
 
+def test_liff_first_elder_names_guardian_from_id_token():
+    """✅ 庚-29：LIFF 首次建長輩時，家屬檔名字取自 ID token 顯示名稱（替身＝兒子）。"""
+    repo = FakeAccountStore()
+    ids = (f"id{i}" for i in count(1))
+    accounts = AccountService(
+        repo, clock=lambda: NOW, new_id=lambda: next(ids), new_code=lambda: "c"
+    )
+    app = FastAPI()
+    app.include_router(
+        create_guardian_face_router(
+            verifier=_FakeVerifier(),
+            accounts=accounts,
+            medications=MedicationService(FakeMedicationStore()),
+            appointments=AppointmentService(FakeAppointmentStore()),
+            clock=lambda: NOW,
+            risk_events=FakeRiskEventStore(),
+            reminder_logs=FakeReminderLogStore(),
+            summaries=FakeConversationSummaryStore(),
+        ),
+        prefix="/api/v1",
+    )
+    client = TestClient(app)
+    res = client.post("/api/v1/elders", headers=_auth(), json={"name": "阿公"})
+    assert res.status_code == 201
+    assert [g.name for g in repo.guardians.values()] == ["兒子"]
+
+
 def test_create_elder_rejects_empty_name():
     client, _ = _setup()
-    res = client.post(
-        "/api/v1/elders", headers=_auth(), json={"name": "  ", "guardian_name": "兒子"}
-    )
+    res = client.post("/api/v1/elders", headers=_auth(), json={"name": "  "})
     assert res.status_code == 400
 
 

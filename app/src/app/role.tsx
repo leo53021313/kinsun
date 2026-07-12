@@ -2,6 +2,7 @@ import { useRouter } from "expo-router";
 import { StyleSheet, Text, View } from "react-native";
 
 import { Button } from "@/components/ui";
+import { strings } from "@/lib/strings";
 import { colors, elder, spacing } from "@/lib/theme";
 
 /** 首次開啟：選擇身分。長輩按鈕放大、置頂。 */
@@ -9,16 +10,16 @@ export default function RoleScreen() {
   const router = useRouter();
   return (
     <View style={styles.container}>
-      <Text style={styles.brand}>金孫</Text>
-      <Text style={styles.slogan}>聽懂國台語的長輩陪伴守護</Text>
+      <Text style={styles.brand}>{strings.role.brand}</Text>
+      <Text style={styles.slogan}>{strings.role.slogan}</Text>
       <View style={styles.buttons}>
         <Button
-          label="我是長輩"
+          label={strings.role.iAmElder}
           size="big"
           onPress={() => router.push("/elder/bind")}
         />
         <Button
-          label="我是家屬"
+          label={strings.role.iAmGuardian}
           variant="outline"
           onPress={() => router.push("/guardian/login")}
         />

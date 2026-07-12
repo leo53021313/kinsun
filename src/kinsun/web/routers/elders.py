@@ -15,8 +15,10 @@ from kinsun.web.routers.deps import GuardianAuth, GuardianScope
 
 
 class CreateElderIn(BaseModel):
+    """payload 三端統一為 {name}（✅ 庚-29／F-9）：LIFF 首次建家屬檔的命名
+    改取 ID token 的 LINE 顯示名稱（GuardianAuth.display_name），不再由前端自送。"""
+
     name: str
-    guardian_name: str = ""
 
 
 class ElderAccountIn(BaseModel):
@@ -46,7 +48,7 @@ def create_elders_router(
         if auth.guardian_id is not None:
             elder = accounts.create_elder_for_guardian(auth.guardian_id, name)
         else:
-            elder = accounts.create_elder(auth.line_user_id or "", body.guardian_name, name)
+            elder = accounts.create_elder(auth.line_user_id or "", auth.display_name, name)
         invite = accounts.generate_invite(elder.elder_id, InviteRole.ELDER)
         return ok({"elder_id": elder.elder_id, "name": elder.name, "invite_code": invite.code})
 
