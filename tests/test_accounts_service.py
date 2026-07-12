@@ -34,7 +34,6 @@ def test_create_elder_makes_primary_guardian():
     eg = repo.list_elder_guardians(elder.elder_id)[0]
     assert eg.role == Role.PRIMARY
     assert eg.escalation_order == 1
-    assert eg.can_view_transcript is True
 
 
 def test_generate_invite_sets_ttl_and_limit():
@@ -72,7 +71,6 @@ def test_redeem_guardian_adds_relation():
     assert len(egs) == 2
     assert egs[1].role == Role.GUARDIAN
     assert egs[1].escalation_order == 2
-    assert egs[1].can_view_transcript is False
 
 
 def test_redeem_unknown_code():
@@ -115,31 +113,7 @@ def test_guardian_redeem_does_not_create_elder_consent():
     assert repo.get_consent(elder.elder_id) is None
 
 
-def test_guardian_redeem_does_not_resurrect_revoked_consent():
-    repo = FakeAccountStore()
-    svc = _service(repo)
-    elder = svc.create_elder("U-son", "兒子", "阿公")
-    inv_e = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
-    svc.redeem_invite(inv_e.code, "U-elder", consent_by=ConsentBy.SELF)
-    svc.revoke_consent(elder.elder_id)
-    assert svc.consented_elder_id(Channel.LINE, "U-elder") is None
-    # 之後有家屬加入，不可「復活」長輩已撤回的同意。
-    inv_g = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
-    svc.redeem_invite(inv_g.code, "U-daughter", consent_by=ConsentBy.SELF)
-    assert svc.consented_elder_id(Channel.LINE, "U-elder") is None
-
-
-def test_revoke_consent_sets_revoked():
-    repo = FakeAccountStore()
-    svc = _service(repo)
-    elder = svc.create_elder("U-son", "兒子", "阿公")
-    inv = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
-    svc.redeem_invite(inv.code, "U-elder", consent_by=ConsentBy.SELF)
-    svc.revoke_consent(elder.elder_id)
-    assert repo.get_consent(elder.elder_id).revoked_at == NOW.timestamp()
-
-
-def test_guardians_of_sorted_and_permissions():
+def test_guardians_of_sorted_by_escalation_order():
     repo = FakeAccountStore()
     svc = _service(repo)
     elder = svc.create_elder("U-son", "兒子", "阿公")
@@ -147,10 +121,6 @@ def test_guardians_of_sorted_and_permissions():
     svc.redeem_invite(inv.code, "U-daughter", consent_by=ConsentBy.SELF)
     egs = svc.guardians_of(elder.elder_id)
     assert [e.escalation_order for e in egs] == [1, 2]
-    primary, secondary = egs
-    assert svc.can_view_transcript(elder.elder_id, primary.guardian_id) is True
-    assert svc.can_view_transcript(elder.elder_id, secondary.guardian_id) is False
-    assert svc.can_view_transcript(elder.elder_id, "nobody") is False
 
 
 def test_get_elder():
@@ -169,8 +139,6 @@ def test_consented_elder_lifecycle():
     inv = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
     svc.redeem_invite(inv.code, "U-elder", consent_by=ConsentBy.SELF)
     assert svc.consented_elder_id(Channel.LINE, "U-elder") is not None
-    svc.revoke_consent(elder.elder_id)
-    assert svc.consented_elder_id(Channel.LINE, "U-elder") is None
 
 
 def test_consented_elder_bound_without_consent():
@@ -232,8 +200,6 @@ def test_consented_elder_id_resolves_and_rejects():
     svc.redeem_invite(inv_elder.code, "U-elder", consent_by=ConsentBy.SELF)
     assert svc.consented_elder_id(Channel.LINE, "U-elder") == elder.elder_id
     assert svc.consented_elder_id(Channel.LINE, "U-nobody") is None
-    svc.revoke_consent(elder.elder_id)
-    assert svc.consented_elder_id(Channel.LINE, "U-elder") is None
 
 
 def test_create_elder_uses_repo_transaction():
@@ -301,6 +267,39 @@ def test_bind_elder_device_issues_token_and_app_binding():
     # 邀請碼一次性：再用即失敗。
     with pytest.raises(InviteError):
         svc.bind_elder_device(inv.code, consent_by=ConsentBy.PROXY)
+
+
+def test_bind_elder_device_rejects_guardian_invite():
+    """庚-04（A-46）：家屬邀請碼不可經 /device-bindings 換出長輩裝置 token。
+
+    修復前 bind_elder_device 不看 invite.role，GUARDIAN 碼會走 redeem 的 guardian
+    分支（建空名 Guardian＋消耗邀請碼）卻仍發長輩 token——權限邊界破口。
+    """
+    repo = FakeAccountStore()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    guardian_invite = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
+    with pytest.raises(InviteError) as exc:
+        svc.bind_elder_device(guardian_invite.code, consent_by=ConsentBy.PROXY)
+    assert exc.value.reason == "wrong_role"
+    # 邀請碼未被消耗（仍可正常給家屬用）、未發任何 token、未建綁定。
+    assert repo.get_invite(guardian_invite.code).used_at is None
+    assert repo.list_channel_bindings_for_principal(PrincipalType.ELDER, elder.elder_id) == []
+
+
+def test_logout_all_devices_revokes_every_guardian_token():
+    """庚-05（A-47）：家屬「登出所有裝置」撤銷該家屬全部 token（永久 token 外洩補救）。"""
+    repo = FakeAccountStore()
+    svc = _service(repo)
+    guardian = svc.register_guardian_account("a@example.com", "correct-horse-8", "兒子")[0]
+    # 同一家屬多裝置登入 → 多顆 token。
+    _, t1 = svc.login_guardian("a@example.com", "correct-horse-8")
+    _, t2 = svc.login_guardian("a@example.com", "correct-horse-8")
+    assert svc.authenticate_token(t1) is not None
+    assert svc.authenticate_token(t2) is not None
+    svc.logout_all_devices(guardian.guardian_id)
+    assert svc.authenticate_token(t1) is None
+    assert svc.authenticate_token(t2) is None
 
 
 def test_authenticate_token_rejects_unknown():

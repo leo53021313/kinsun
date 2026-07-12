@@ -33,7 +33,9 @@ pipeline——因為 HF 內建的 `ffmpeg_read` 是把 bytes 灌進 ffmpeg `stdi
 |---|---|---|
 | `ASR_MODEL_ID` | `MediaTek-Research/Breeze-ASR-26` | 覆寫模型 id |
 | `ASR_MAX_CONCURRENCY` | `1` | 同時處理的辨識請求數（threadpool + semaphore） |
-| `ASR_MAX_QUEUE` | `8` | 等候佇列上限，超過回 503 |
+| `ASR_MAX_QUEUE` | `8` | 等候佇列上限，超過回 503（`overloaded`） |
+| `ASR_API_KEY` | 空 | 共用金鑰（✅ D-56）：設定後驗 `X-Api-Key`（錯誤回 401）；留空＝內網不驗 |
+| `ASR_MAX_BODY_BYTES` | `10485760` | 單請求 body 上限（bytes）；超過回 413、空 body 回 400（✅ D-26） |
 | `ASR_PRELOAD` | `0` | 設 `1` 於服務啟動（lifespan）即載入模型，預設延遲載入 |
 
 > DGX Spark（GB10）實機驗證：不指定 device 會落在 CPU、一句數十秒；GPU + fp16 才夠即時（真人聲實測約 1.1 秒）。

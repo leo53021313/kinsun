@@ -16,6 +16,7 @@ class _StubSettings:
         self.tts_backend = backend
         self.tts_endpoint = endpoint
         self.tts_timeout_seconds = timeout
+        self.tts_api_key = ""
 
 
 def test_dgx_tts_returns_audio_and_duration():

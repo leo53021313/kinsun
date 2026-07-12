@@ -96,13 +96,29 @@ def test_text_routes_to_binding():
     assert r.sent == ["已建立"]
 
 
-def test_text_none_falls_back_to_prompt():
+def test_text_default_runs_pipeline():
+    """✅ D-11（甲-4）：文字輸入預設走完整對話管線。"""
+    r = _Replies()
+    pipe = _Pipeline(text="回覆")
+    dispatch(
+        _msg("text", text="閒聊", reply=r),
+        pipeline=pipe,
+        binding=_Binding(None),
+        gate=_Gate(True),
+    )
+    assert pipe.text_calls == [("閒聊", "e-1")]
+    assert r.sent == ["回覆"]
+
+
+def test_text_flag_off_falls_back_to_prompt():
+    """關閉旗標＝維運逃生口：回到只收語音的提示。"""
     r = _Replies()
     dispatch(
         _msg("text", text="閒聊", reply=r),
         pipeline=_Pipeline(),
         binding=_Binding(None),
         gate=_Gate(True),
+        text_input_enabled=False,
     )
     assert r.sent == [NON_AUDIO_PROMPT]
 
@@ -367,3 +383,35 @@ def test_dispatch_without_trace_id_records_nothing():
         traces=traces,
     )
     assert traces.replies == []  # 無 trace_id（非觀測路徑）不記
+
+
+def test_dispatch_records_round_trip_from_received_at():
+    """✅ D-05（戊-2）：received_at（通道收件時刻）→ 回覆送達的端到端往返延遲落庫。"""
+    traces = FakeTraceStore()
+    r = _Replies()
+    msg = InboundMessage(Channel.LINE, "U-1", "audio", "", b"xy", r, trace_id="t3", received_at=0.5)
+    dispatch(
+        msg,
+        pipeline=_VoicePipeline(TtsResult(text="回覆")),
+        binding=_Binding(None),
+        gate=_Gate(True),
+        traces=traces,
+        timer=iter([1.0, 1.25]).__next__,
+    )
+    assert traces.replies[0].latency_ms == 250  # 發送段：1.0 → 1.25
+    assert traces.replies[0].round_trip_ms == 750  # 端到端：0.5 → 1.25
+
+
+def test_dispatch_round_trip_null_when_received_at_unknown():
+    traces = FakeTraceStore()
+    r = _Replies()
+    msg = InboundMessage(Channel.LINE, "U-1", "audio", "", b"xy", r, trace_id="t4")
+    dispatch(
+        msg,
+        pipeline=_VoicePipeline(TtsResult(text="回覆")),
+        binding=_Binding(None),
+        gate=_Gate(True),
+        traces=traces,
+        timer=iter([0.0, 0.1]).__next__,
+    )
+    assert traces.replies[0].round_trip_ms is None

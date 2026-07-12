@@ -33,12 +33,29 @@ class ConsentGate:
             return None
 
 
-class AllowAllGate:
-    """全放行閘門：`BINDING_GATE_ENABLED=false` 時使用（demo／開發），不查綁定狀態。
-    直接以 external_id 充當會話鍵（記憶會落在通道識別下），僅限開發環境。"""
+class BindingResolver(Protocol):
+    """查綁定不查同意（AllowAllGate 專用）：旁路模式仍以 elder_id 為會話鍵。"""
 
-    def __init__(self) -> None:
+    def bound_elder_id(self, channel: Channel, external_id: str) -> str | None: ...
+
+
+class AllowAllGate:
+    """全放行閘門：`BINDING_GATE_ENABLED=false` 時使用（demo／開發），不查同意狀態。
+
+    ✅ D-19（丙-2）：有綁定者仍解析為 elder_id——與 ConsentGate 同一會話鍵語意，
+    切旗標不再換記憶主鍵；查無綁定（或解析故障）才退回 external_id 充當會話鍵。
+    僅限開發環境。"""
+
+    def __init__(self, resolver: BindingResolver | None = None) -> None:
+        self._resolver = resolver
         logger.warning("綁定閘門已停用（BINDING_GATE_ENABLED=false），所有使用者可直接對話")
 
     def resolve_elder(self, channel: Channel, external_id: str) -> str | None:
+        if self._resolver is not None:
+            try:
+                elder_id = self._resolver.bound_elder_id(channel, external_id)
+                if elder_id:
+                    return elder_id
+            except Exception:  # noqa: BLE001 - 旁路模式解析故障退回通道識別，不中斷
+                logger.exception("旁路模式綁定解析失敗，退回通道識別 external=%s", external_id)
         return external_id

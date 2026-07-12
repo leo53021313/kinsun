@@ -4,7 +4,12 @@ import { type Overview, getOverview } from "../api";
 import { formatLatency, formatTime } from "../format";
 import { usePolling } from "../usePolling";
 
-const STAGE_LABEL: Record<string, string> = { asr: "ASR", llm: "LLM", tts: "TTS" };
+const STAGE_LABEL: Record<string, string> = {
+  asr: "ASR",
+  llm: "LLM",
+  tts: "TTS",
+  round_trip: "往返（端到端）",
+};
 
 function HourlyChart({ data }: { data: Overview["hourly_turns"] }) {
   const width = 720;
@@ -65,6 +70,12 @@ export function OverviewPage() {
     <section>
       <h2>總覽儀表板</h2>
       {disconnected && <p className="error-banner">連線中斷，重試中…</p>}
+      {(overview.alerts ?? []).map((a) => (
+        <p key={a.kind} className="error-banner">
+          ⚠ 危急分級器最近 {a.window_minutes} 分鐘故障 {a.count} 次——AI
+          分級可能失效、只剩關鍵詞守門，請排查 Gemini 連線（失敗句已保守記 L1 留痕）。
+        </p>
+      ))}
       <div className="stat-grid">
         <div className="card">
           <div>今日訊息量</div>
@@ -94,6 +105,7 @@ export function OverviewPage() {
               <th>次數</th>
               <th>錯誤</th>
               <th>平均延遲</th>
+              <th>p50 延遲</th>
               <th>p95 延遲</th>
             </tr>
           </thead>
@@ -104,6 +116,7 @@ export function OverviewPage() {
                 <td>{s.call_count}</td>
                 <td>{s.error_count}</td>
                 <td>{formatLatency(Math.round(s.avg_latency_ms))}</td>
+                <td>{formatLatency(Math.round(s.p50_latency_ms))}</td>
                 <td>{formatLatency(Math.round(s.p95_latency_ms))}</td>
               </tr>
             ))}
