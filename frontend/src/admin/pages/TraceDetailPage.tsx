@@ -32,7 +32,7 @@ export function TraceDetailPage() {
   return (
     <section>
       <h2>
-        單輪處理鏈路　<small>{trace.elder_name || trace.line_user_id}</small>
+        單輪處理鏈路　<small>{trace.elder_name || trace.external_id}</small>
       </h2>
       <button type="button" onClick={load}>
         重新整理

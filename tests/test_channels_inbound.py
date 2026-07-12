@@ -29,15 +29,18 @@ class _Pipeline:
         self._boom = boom
         self.calls = []
         self.text_calls = []
+        self.obs_marks = []  # (external_id, channel) 觀測標記——庚-07 驗通道有貫穿
 
-    def process(self, audio, *, elder_id, line_user_id="", trace_id="", audio_url=""):
+    def process(self, audio, *, elder_id, external_id="", channel="", trace_id="", audio_url=""):
         self.calls.append((audio, elder_id))
+        self.obs_marks.append((external_id, channel))
         if self._boom is not None:
             raise self._boom
         return SimpleNamespace(text=self._text)
 
-    def process_text(self, text, *, elder_id, line_user_id="", trace_id=""):
+    def process_text(self, text, *, elder_id, external_id="", channel="", trace_id=""):
         self.text_calls.append((text, elder_id))
+        self.obs_marks.append((external_id, channel))
         if self._boom is not None:
             raise self._boom
         return SimpleNamespace(text=self._text)
@@ -67,7 +70,7 @@ class _VoicePipeline:
     def __init__(self, result):
         self._result = result
 
-    def process(self, audio, *, elder_id, line_user_id="", trace_id="", audio_url=""):
+    def process(self, audio, *, elder_id, external_id="", channel="", trace_id="", audio_url=""):
         return self._result
 
 
@@ -108,6 +111,18 @@ def test_text_default_runs_pipeline():
     )
     assert pipe.text_calls == [("閒聊", "e-1")]
     assert r.sent == ["回覆"]
+
+
+def test_pipeline_receives_external_id_and_channel_for_observability():
+    """✅ 庚-07（A-8）：來源通道與外部識別碼一路帶進管線供觀測五表標記。"""
+    pipe = _Pipeline(text="回覆")
+    dispatch(
+        _msg("text", text="閒聊", reply=_Replies(), external_id="U-9"),
+        pipeline=pipe,
+        binding=_Binding(None),
+        gate=_Gate(True),
+    )
+    assert pipe.obs_marks == [("U-9", "line")]  # channel 取自 InboundMessage.channel
 
 
 def test_text_flag_off_falls_back_to_prompt():

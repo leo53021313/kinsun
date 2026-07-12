@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from kinsun.accounts.models import ConsentBy
 from kinsun.accounts.service import AccountService, InviteError
 from kinsun.web.envelope import ok
-from kinsun.web.ratelimit import SlidingWindowRateLimiter, throttle_or_429
+from kinsun.web.ratelimit import RateLimiter, throttle_or_429
 
 # 邀請碼錯誤 → (HTTP, 標準錯誤碼)：查無 404，其餘為「碼已不可用」的衝突（✅ D-24）。
 _INVITE_STATUS = {
@@ -28,7 +28,7 @@ class DeviceBindingIn(BaseModel):
 
 
 def create_device_bindings_router(
-    *, accounts: AccountService, rate_limiter: SlidingWindowRateLimiter
+    *, accounts: AccountService, rate_limiter: RateLimiter
 ) -> APIRouter:
     router = APIRouter(tags=["auth"])
 

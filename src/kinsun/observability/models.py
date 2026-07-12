@@ -9,7 +9,8 @@ from dataclasses import dataclass
 class WebhookEvent:
     webhook_event_id: str
     trace_id: str
-    line_user_id: str
+    external_id: str
+    channel: str
     event_type: str
     message_type: str
     payload: dict
@@ -20,7 +21,8 @@ class WebhookEvent:
 class AsrCall:
     asr_call_id: str
     trace_id: str
-    line_user_id: str
+    external_id: str
+    channel: str
     status: str  # "ok" | "error"
     latency_ms: int
     transcript: str
@@ -33,7 +35,8 @@ class AsrCall:
 class LlmCall:
     llm_call_id: str
     trace_id: str
-    line_user_id: str
+    external_id: str
+    channel: str
     status: str
     latency_ms: int
     model_name: str
@@ -48,7 +51,8 @@ class LlmCall:
 class TtsCall:
     tts_call_id: str
     trace_id: str
-    line_user_id: str
+    external_id: str
+    channel: str
     status: str
     latency_ms: int
     content: str
@@ -60,7 +64,8 @@ class TtsCall:
 class Reply:
     reply_id: str
     trace_id: str
-    line_user_id: str
+    external_id: str
+    channel: str
     kind: str  # "voice" | "text"
     status: str
     latency_ms: int
@@ -82,7 +87,8 @@ class Trace:
     """單輪處理鏈路：webhook → ASR → LLM（可多筆）→ TTS → 回覆＋掛上的風險事件。"""
 
     trace_id: str
-    line_user_id: str
+    external_id: str
+    channel: str
     webhook_event: WebhookEvent | None
     asr_call: AsrCall | None
     llm_calls: list[LlmCall]
