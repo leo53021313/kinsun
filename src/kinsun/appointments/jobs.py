@@ -21,7 +21,6 @@ def build_appointment_reminder_job(
     today: Callable[[], str],
     tomorrow: Callable[[], str],
     lookup_elder: Callable[[str], object],
-    has_valid_consent: Callable[[str], bool],
     guardians_of: Callable[[str], list[ElderGuardian]],
     router: ChannelRouter,
     hour: int,
@@ -40,12 +39,12 @@ def build_appointment_reminder_job(
         if elder is None:
             return
         when_word = "今天" if when == "today" else "明天"
-        if has_valid_consent(appt.elder_id):
-            router.send_text(
-                PrincipalType.ELDER,
-                appt.elder_id,
-                f"{elder.name}，{when_word}要回診囉：{appt.label}。記得準時，需要的話請家人陪您去。",
-            )
+        # 出站不查同意（✅ D-30 己-1）：長輩提醒一律照發。
+        router.send_text(
+            PrincipalType.ELDER,
+            appt.elder_id,
+            f"{elder.name}，{when_word}要回診囉：{appt.label}。記得準時，需要的話請家人陪您去。",
+        )
         for eg in guardians_of(appt.elder_id):
             router.send_text(
                 PrincipalType.GUARDIAN,

@@ -1,10 +1,3 @@
-export const SLOTS = [
-  { value: "morning", label: "早上" },
-  { value: "noon", label: "中午" },
-  { value: "evening", label: "晚上" },
-  { value: "bedtime", label: "睡前" },
-] as const;
+/** 用藥時段用語：轉出自三端共用字典（⏳ D-46，乙-5）。 */
 
-export function slotLabel(value: string): string {
-  return SLOTS.find((s) => s.value === value)?.label ?? value;
-}
+export { SLOTS, slotLabel } from "kinsun-shared/terms";

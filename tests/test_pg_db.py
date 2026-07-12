@@ -1,6 +1,7 @@
 """ensure_schema 的併發遷移防護（諮詢鎖）整合測試。
 
-需連真實 Postgres：設定 ``KINSUN_IT=1`` 與 ``DATABASE_URL`` 才會啟用。
+需連獨立測試庫：設定 ``KINSUN_IT=1`` 與 ``KINSUN_TEST_DATABASE_URL`` 才會啟用
+（✅ D-69：不再直連 DATABASE_URL 正式庫）。
 驗證 webhook 與 scheduler 同時啟動時，兩者的 ensure_schema 不會併發跑 DDL
 互搶 AccessExclusiveLock 而死結——改以交易級諮詢鎖串行化。
 """
@@ -11,7 +12,9 @@ import time
 
 import pytest
 
-pytestmark = pytest.mark.skipif(os.environ.get("KINSUN_IT") != "1", reason="需雲端 key")
+pytestmark = pytest.mark.skipif(
+    os.environ.get("KINSUN_IT") != "1", reason="需 KINSUN_IT=1（連獨立測試庫）"
+)
 
 
 def _advisory_waiters(conn, key: int) -> int:
@@ -25,10 +28,10 @@ def _advisory_waiters(conn, key: int) -> int:
     return int(row[0])
 
 
-def test_ensure_schema_serialized_by_advisory_lock():
+def test_ensure_schema_serialized_by_advisory_lock(pg_url):
     from kinsun.db import SCHEMA_MIGRATION_LOCK_KEY, connect, ensure_schema
 
-    url = os.environ["DATABASE_URL"]
+    url = pg_url
     # 先讓 schema 就緒（排除首次建表雜訊），並確認單獨呼叫本身可正常完成。
     ensure_schema(url)
 
@@ -65,12 +68,12 @@ def test_ensure_schema_serialized_by_advisory_lock():
     holder.close()
 
 
-def test_ensure_schema_concurrent_no_deadlock():
+def test_ensure_schema_concurrent_no_deadlock(pg_url):
     """重現原始情境：多個行程（webhook、scheduler…）同時啟動一起跑 ensure_schema。
     有了諮詢鎖串行化，全部都應成功、無人因 DeadlockDetected 崩潰。"""
     from kinsun.db import ensure_schema
 
-    url = os.environ["DATABASE_URL"]
+    url = pg_url
     n = 10
     start = threading.Barrier(n)
     errors: list[BaseException] = []
@@ -94,11 +97,11 @@ def test_ensure_schema_concurrent_no_deadlock():
     assert not errors, f"併發 ensure_schema 出現錯誤（含死結）：{names}"
 
 
-def test_session_key_schema_supports_elder_keys(pg_database, ns):
+def test_session_key_schema_supports_elder_keys(pg_database, pg_url, ns):
     from kinsun.db import ensure_schema
 
-    ensure_schema(os.environ["DATABASE_URL"])
-    ensure_schema(os.environ["DATABASE_URL"])  # 冪等（含帳號欄位退役 DDL）
+    ensure_schema(pg_url)
+    ensure_schema(pg_url)  # 冪等（含帳號欄位退役 DDL）
     # 帳號欄位已退役：elders 不再有 line_user_id。
     cols = pg_database.query(
         "SELECT column_name FROM information_schema.columns "

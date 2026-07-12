@@ -13,17 +13,16 @@ class _FakeRouter:
 
 
 def _eg(guardian_id, order=1):
-    return ElderGuardian("e1", guardian_id, Role.GUARDIAN, order, False)
+    return ElderGuardian("e1", guardian_id, Role.GUARDIAN, order)
 
 
-def _job(appts_by_date, *, elders, consented, guardians, hour=8, record=None):
+def _job(appts_by_date, *, elders, guardians, hour=8, record=None):
     router = _FakeRouter()
     job = build_appointment_reminder_job(
         appts_on=lambda d: appts_by_date.get(d, []),
         today=lambda: "2026-07-15",
         tomorrow=lambda: "2026-07-16",
         lookup_elder=lambda eid: elders.get(eid),
-        has_valid_consent=lambda elder_id: consented.get(elder_id, False),
         guardians_of=lambda eid: [_eg(g, i + 1) for i, g in enumerate(guardians.get(eid, []))],
         router=router,
         hour=hour,
@@ -38,7 +37,7 @@ def test_today_and_tomorrow_to_elder_and_guardians():
         "2026-07-15": [Appointment("a1", "e1", "2026-07-15", "心臟科回診")],
         "2026-07-16": [Appointment("a2", "e1", "2026-07-16", "眼科回診")],
     }
-    job, pushed = _job(appts, elders=elders, consented={"e1": True}, guardians={"e1": ["g-son"]})
+    job, pushed = _job(appts, elders=elders, guardians={"e1": ["g-son"]})
     job.run()
     elder_msgs = [(g, t) for p, g, t in pushed if p is PrincipalType.ELDER]
     guardian_msgs = [(g, t) for p, g, t in pushed if p is PrincipalType.GUARDIAN]
@@ -49,12 +48,12 @@ def test_today_and_tomorrow_to_elder_and_guardians():
     assert job.cron == "0 8 * * *"
 
 
-def test_elder_skipped_without_consent_but_guardians_notified():
-    elders = {"e1": Elder("e1", "阿公")}
-    appts = {"2026-07-15": [Appointment("a1", "e1", "2026-07-15", "回診")]}
-    job, pushed = _job(appts, elders=elders, consented={"e1": False}, guardians={"e1": ["g-son"]})
+def test_skips_unknown_elder_entirely():
+    """查無此長輩（資料不一致）連家屬也不通知——訊息內容組不出來。"""
+    appts = {"2026-07-15": [Appointment("a1", "e-ghost", "2026-07-15", "回診")]}
+    job, pushed = _job(appts, elders={}, guardians={"e-ghost": ["g-son"]})
     job.run()
-    assert pushed == [(PrincipalType.GUARDIAN, "g-son", "【金孫提醒】阿公 今天要回診——回診。")]
+    assert pushed == []
 
 
 def test_records_reminder_per_event():
@@ -64,7 +63,6 @@ def test_records_reminder_per_event():
     job, _ = _job(
         appts,
         elders=elders,
-        consented={"e1": True},
         guardians={"e1": ["g-son"]},
         record=lambda e, k, c: recorded.append((e, k, c)),
     )
@@ -72,12 +70,14 @@ def test_records_reminder_per_event():
     assert recorded == [("e1", "appointment", "今天回診：心臟科回診")]
 
 
-def test_unconsented_elder_still_notifies_guardians_in_order():
+def test_elder_always_reminded_and_guardians_in_order():
+    """✅ D-30（己-1）：出站不查同意——長輩一律提醒，家屬依序通知。"""
     elders = {"e1": Elder("e1", "阿公")}
     appts = {"2026-07-16": [Appointment("a1", "e1", "2026-07-16", "回診")]}
-    job, pushed = _job(appts, elders=elders, consented={}, guardians={"e1": ["g-son", "g-dau"]})
+    job, pushed = _job(appts, elders=elders, guardians={"e1": ["g-son", "g-dau"]})
     job.run()
     assert pushed == [
+        (PrincipalType.ELDER, "e1", "阿公，明天要回診囉：回診。記得準時，需要的話請家人陪您去。"),
         (PrincipalType.GUARDIAN, "g-son", "【金孫提醒】阿公 明天要回診——回診。"),
         (PrincipalType.GUARDIAN, "g-dau", "【金孫提醒】阿公 明天要回診——回診。"),
     ]

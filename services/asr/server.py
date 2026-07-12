@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import os
 import subprocess
 import tempfile
@@ -25,6 +26,10 @@ _TARGET_SR = 16000
 ASR_MODEL_ID = os.environ.get("ASR_MODEL_ID", "MediaTek-Research/Breeze-ASR-26")
 ASR_MAX_CONCURRENCY = int(os.environ.get("ASR_MAX_CONCURRENCY", "1"))
 ASR_MAX_QUEUE = int(os.environ.get("ASR_MAX_QUEUE", "8"))
+# 單請求 body 上限（✅ D-26 乙-7）；預設 10MB 對齊主 API 對講機上限。
+ASR_MAX_BODY_BYTES = int(os.environ.get("ASR_MAX_BODY_BYTES", "10485760"))
+# 共用金鑰（✅ D-56 乙方向丙-10）：設定後驗 X-Api-Key；未設＝內網開發模式不驗。
+ASR_API_KEY = os.environ.get("ASR_API_KEY", "")
 ASR_PRELOAD = os.environ.get("ASR_PRELOAD", "0") not in {"0", "false", "no"}
 
 _model = None
@@ -108,12 +113,25 @@ async def healthz() -> dict:
     return {"status": "ok", "model_loaded": _model is not None}
 
 
+def _require_api_key(request: Request) -> None:
+    if not ASR_API_KEY:
+        return
+    if not hmac.compare_digest(request.headers.get("x-api-key", ""), ASR_API_KEY):
+        raise HTTPException(status_code=401, detail="invalid_api_key")
+
+
 @app.post("/transcribe")
 async def transcribe(request: Request) -> dict[str, str]:
     global _inflight
+    _require_api_key(request)
     audio = await request.body()
+    # 基本請求驗證（✅ D-26 乙-7）：空 body 400、超大 413，不進模型。
+    if not audio:
+        raise HTTPException(status_code=400, detail="missing_audio")
+    if len(audio) > ASR_MAX_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="audio_too_large")
     if _inflight >= ASR_MAX_CONCURRENCY + ASR_MAX_QUEUE:
-        raise HTTPException(status_code=503, detail="ASR 過載，請稍後再試")
+        raise HTTPException(status_code=503, detail="overloaded")
     _inflight += 1
     try:
         async with _sem:

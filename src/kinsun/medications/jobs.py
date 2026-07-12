@@ -20,7 +20,6 @@ def build_medication_slot_job(
     slot: MedicationSlot,
     meds_at_slot: Callable[[], list[Medication]],
     lookup_elder: Callable[[str], object],
-    has_valid_consent: Callable[[str], bool],
     router: ChannelRouter,
     hour: int,
     minute: int = 0,
@@ -36,9 +35,10 @@ def build_medication_slot_job(
         return list(by_elder.items())
 
     def action(item: tuple[str, list[str]]) -> None:
+        # 出站不查同意（✅ D-30 己-1）：提醒一律照發；查無此長輩才略過。
         elder_id, names = item
         elder = lookup_elder(elder_id)
-        if elder is None or not has_valid_consent(elder_id):
+        if elder is None:
             return
         sent = router.send_text(
             PrincipalType.ELDER, elder_id, f"{elder.name}，{label}該吃藥囉：{'、'.join(names)}"
