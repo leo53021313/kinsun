@@ -28,7 +28,6 @@ export default function ElderTalk() {
   // 錄音提示音（✅ D-48 丁-2）：開始／結束各一聲，跟觸覺一起給體感。
   const startBeep = useAudioPlayer(require("@/assets/sounds/record-start.wav"));
   const stopBeep = useAudioPlayer(require("@/assets/sounds/record-stop.wav"));
-  const [token, setToken] = useState("");
   const [avatar, setAvatar] = useState<AvatarState>("idle");
   const [replyText, setReplyText] = useState(IDLE_HINT);
   const [micReady, setMicReady] = useState(false);
@@ -45,9 +44,6 @@ export default function ElderTalk() {
     }
     let alive = true;
     (async () => {
-      if (alive) {
-        setToken(session.token);
-      }
       const permission = await AudioModule.requestRecordingPermissionsAsync();
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
       if (alive) {
@@ -97,7 +93,7 @@ export default function ElderTalk() {
       if (!uri) {
         throw new Error("no recording");
       }
-      const reply = await postTurn(uri, token);
+      const reply = await postTurn(uri, session?.token ?? "");
       setReplyText(reply.text);
       if (reply.audio_url) {
         setAvatar("speaking");
