@@ -20,6 +20,7 @@ from typing import Protocol
 from fastapi import HTTPException, Request
 
 from kinsun.db import Database
+from kinsun.web.errors import ErrorCode
 
 logger = logging.getLogger("kinsun.web.ratelimit")
 
@@ -113,4 +114,4 @@ def client_ip(request: Request) -> str:
 def throttle_or_429(limiter: RateLimiter, scope: str, request: Request) -> None:
     """認證端點共用節流守門（✅ D-58）：scope 區分端點、各自計數，超限回 429。"""
     if not limiter.hit(f"{scope}:{client_ip(request)}"):
-        raise HTTPException(status_code=429, detail="too_many_requests")
+        raise HTTPException(status_code=429, detail=ErrorCode.TOO_MANY_REQUESTS)

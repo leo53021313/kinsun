@@ -25,6 +25,7 @@ from kinsun.medications.store import MedicationStore
 from kinsun.scheduler.scheduler import Job
 from kinsun.scheduler.state import ScheduleStateStore
 from kinsun.web.envelope import ok
+from kinsun.web.errors import ErrorCode
 from kinsun.web.routers.admin import build_require_admin
 
 
@@ -51,7 +52,7 @@ def create_admin_jobs_router(
 
     def require_testing() -> None:
         if not internal_testing_enabled:
-            raise HTTPException(status_code=403, detail="internal_testing_disabled")
+            raise HTTPException(status_code=403, detail=ErrorCode.INTERNAL_TESTING_DISABLED)
 
     @router.get("/jobs", dependencies=[Depends(require_admin)])
     def list_jobs() -> dict:
@@ -74,7 +75,7 @@ def create_admin_jobs_router(
     def run_job(job_name: str) -> dict:
         job = next((j for j in jobs if j.name == job_name), None)
         if job is None:
-            raise HTTPException(status_code=404, detail="job_not_found")
+            raise HTTPException(status_code=404, detail=ErrorCode.JOB_NOT_FOUND)
         job.run()  # 同步執行；內測工具，接受長任務佔用一個 worker thread
         return ok({"job_name": job.name, "ran_at": clock().timestamp()})
 
@@ -84,12 +85,12 @@ def create_admin_jobs_router(
     )
     def dispatch_reminder(elder_id: str, body: DispatchReminderBody) -> dict:
         if accounts.get_elder(elder_id) is None:
-            raise HTTPException(status_code=404, detail="elder_not_found")
+            raise HTTPException(status_code=404, detail=ErrorCode.ELDER_NOT_FOUND)
         if body.kind == "medication":
             try:
                 slot = MedicationSlot(body.slot or "")
             except ValueError as exc:
-                raise HTTPException(status_code=400, detail="invalid_slot") from exc
+                raise HTTPException(status_code=400, detail=ErrorCode.INVALID_SLOT) from exc
             meds = [m for m in med_store.list_for_elder(elder_id) if slot in m.slots]
             build_medication_slot_job(
                 slot=slot,
