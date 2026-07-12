@@ -100,6 +100,7 @@ def build_app() -> FastAPI:
         risk_events=risk_events,
         traces=core.traces,
         model_name=settings.gemini_model,
+        safety_model_name=settings.gemini_model_safety,
     )
     binding_sessions = PgBindingSessionStore(db)
     medication_menu = MedicationMenu(core.medications, core.accounts, binding_sessions, clock=clock)

@@ -192,7 +192,12 @@ def create_admin_router(
                     for m in med_store.list_for_elder(elder_id)
                 ],
                 "appointments": [
-                    {"appointment_id": a.appointment_id, "date": a.date, "label": a.label}
+                    {
+                        "appointment_id": a.appointment_id,
+                        "date": a.date,
+                        "label": a.label,
+                        "time": a.time,
+                    }
                     for a in appt_store.list_for_elder(elder_id)
                 ],
                 "reminder_logs": [
@@ -299,6 +304,7 @@ def create_admin_router(
                     else d.guardian_id,
                     "tier": int(d.tier),
                     "delivered": d.delivered,
+                    "channels": d.channels,
                     "created_at": d.created_at,
                 }
                 for d in deliveries.list_for_elder(elder_id)[:100]

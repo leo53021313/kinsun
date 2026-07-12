@@ -154,17 +154,18 @@ class BoomTts:
         raise TTSError("合成失敗")
 
 
-def _traced_pipeline(traces, *, tts=None, llm=None):
+def _traced_pipeline(traces, *, tts=None, llm=None, detector=None):
     return VoicePipeline(
         asr=MockAsrClient("阿公早安"),
         agent=CareAgent(llm or EchoLLM(), NullSession()),
         tts=tts or TextBubbleTts(),
-        detector=StubDetector(RiskTier.L0),
+        detector=detector or StubDetector(RiskTier.L0),
         notifier=SpyNotifier(),
         risk_events=FakeRiskEventStore(),
         traces=traces,
         model_name="test-model",
-        timer=iter([0.0, 0.1, 0.2, 0.5, 0.6, 0.9]).__next__,
+        safety_model_name="safety-model",
+        timer=iter([0.0, 0.1, 0.2, 0.3, 0.5, 0.6, 0.9, 1.0]).__next__,
     )
 
 
@@ -178,18 +179,59 @@ def test_pipeline_records_all_stages_on_success():
     assert traces.asr_calls[0].transcript == "阿公早安"
     assert traces.asr_calls[0].source_audio_url == "https://x/in.m4a"
     assert traces.asr_calls[0].latency_ms == 100  # timer 0.0 → 0.1
-    assert traces.llm_calls[0].status == "ok"
-    assert traces.llm_calls[0].model_name == "test-model"
-    assert traces.llm_calls[0].content == "你說的是：阿公早安"
+    # llm_calls[0]＝危急分級（✅ 庚-10）、[1]＝回覆生成
+    assert traces.llm_calls[1].status == "ok"
+    assert traces.llm_calls[1].model_name == "test-model"
+    assert traces.llm_calls[1].content == "你說的是：阿公早安"
     assert traces.tts_calls[0].status == "ok"
+
+
+def test_pipeline_records_safety_classification_as_llm_call():
+    """✅ 庚-10（A-9）：危急分級呼叫補記 llm_call trace（模型名＝安全模型）。"""
+    traces = FakeTraceStore()
+    _traced_pipeline(traces).process(b"\x00", elder_id="u1", trace_id="t1")
+    assert len(traces.llm_calls) == 2
+    safety = traces.llm_calls[0]
+    assert safety.model_name == "safety-model"
+    assert safety.status == "ok"
+    assert "L0" in safety.content
+    assert safety.trace_id == "t1"
+
+
+class _UsageReportingDetector:
+    """分級時申報 token（模擬真 LlmRiskClassifier 經 GeminiClient 透出 usage）。"""
+
+    def assess(self, text: str) -> RiskAssessment:
+        report_llm_usage(30, 5)
+        return RiskAssessment(RiskTier.L0, 0.9, "stub", ["llm"])
+
+
+def test_pipeline_collects_safety_tokens_separately_from_agent():
+    """✅ 庚-10：分級 token 記在分級那筆、不混進回覆生成那筆。"""
+    traces = FakeTraceStore()
+    _traced_pipeline(traces, detector=_UsageReportingDetector()).process(
+        b"\x00", elder_id="u1", trace_id="t1"
+    )
+    assert traces.llm_calls[0].input_tokens == 30
+    assert traces.llm_calls[0].output_tokens == 5
+    assert traces.llm_calls[1].input_tokens is None  # agent 那筆不含分級 token
+
+
+def test_pipeline_records_safety_failsafe_as_error():
+    """分級器故障（fail-safe，從不拋例外）→ 該筆 llm_call 記 error 供觀測。"""
+    traces = FakeTraceStore()
+    _traced_pipeline(traces, detector=StubFailsafeDetector()).process(
+        b"\x00", elder_id="u1", trace_id="t1"
+    )
+    assert traces.llm_calls[0].status == "error"
 
 
 def test_pipeline_records_llm_error_and_reraises():
     traces = FakeTraceStore()
     with pytest.raises(LLMError):
         _traced_pipeline(traces, llm=BoomLLM()).process(b"\x00", elder_id="u1", trace_id="t1")
-    assert traces.llm_calls[0].status == "error"
-    assert "模型掛了" in traces.llm_calls[0].error_message
+    assert traces.llm_calls[1].status == "error"
+    assert "模型掛了" in traces.llm_calls[1].error_message
     assert traces.tts_calls == []  # LLM 失敗即中止，不會記 TTS
 
 
@@ -324,13 +366,13 @@ def test_pipeline_records_llm_token_usage():
     _traced_pipeline(traces, llm=_UsageReportingLLM()).process(
         b"\x00", elder_id="u1", trace_id="t1"
     )
-    assert traces.llm_calls[0].input_tokens == 120
-    assert traces.llm_calls[0].output_tokens == 40
+    assert traces.llm_calls[1].input_tokens == 120
+    assert traces.llm_calls[1].output_tokens == 40
 
 
 def test_pipeline_records_null_tokens_when_llm_reports_no_usage():
     # 零申報（假 LLM／舊 SDK 無 usage_metadata）記 NULL＝「未量測」，與量測到 0 區隔。
     traces = FakeTraceStore()
     _traced_pipeline(traces).process(b"\x00", elder_id="u1", trace_id="t1")
-    assert traces.llm_calls[0].input_tokens is None
-    assert traces.llm_calls[0].output_tokens is None
+    assert traces.llm_calls[1].input_tokens is None
+    assert traces.llm_calls[1].output_tokens is None
