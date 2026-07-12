@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
 
 import { getAdminKey, setAdminKey, setOnUnauthorized } from "./api";
+import { ElderDetailPage } from "./pages/ElderDetailPage";
 import { EldersPage } from "./pages/EldersPage";
-import { ElderTimelinePage } from "./pages/ElderTimelinePage";
 import { MessagesPage } from "./pages/MessagesPage";
 import { OverviewPage } from "./pages/OverviewPage";
+import { SystemPage } from "./pages/SystemPage";
 import { TraceDetailPage } from "./pages/TraceDetailPage";
 
 function KeyForm({ onSubmit }: { onSubmit: () => void }) {
@@ -49,13 +50,15 @@ export function App() {
         </NavLink>
         <NavLink to="/messages">訊息流</NavLink>
         <NavLink to="/elders">長輩</NavLink>
+        <NavLink to="/system">系統</NavLink>
       </nav>
       <main className="admin-main">
         <Routes>
           <Route path="/" element={<OverviewPage />} />
           <Route path="/messages" element={<MessagesPage />} />
           <Route path="/elders" element={<EldersPage />} />
-          <Route path="/elders/:elderId" element={<ElderTimelinePage />} />
+          <Route path="/elders/:elderId" element={<ElderDetailPage />} />
+          <Route path="/system" element={<SystemPage />} />
           <Route path="/traces/:traceId" element={<TraceDetailPage />} />
         </Routes>
       </main>

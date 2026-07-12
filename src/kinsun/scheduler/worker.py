@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 from kinsun.accounts.models import PrincipalType
 from kinsun.appointments.jobs import build_appointment_reminder_job
 from kinsun.audio.publisher import build_audio_publisher
-from kinsun.composition import assemble_core, build_externals
+from kinsun.composition import Core, assemble_core, build_externals
 from kinsun.config import Settings, load_dotenv, load_settings
 from kinsun.db import Database
 from kinsun.llm import build_gemini_for
@@ -34,18 +34,14 @@ from kinsun.reports.reminders import safe_record
 from kinsun.reports.summaries import PgConversationSummaryStore, summarize_day
 from kinsun.safety.events import PgRiskEventStore
 from kinsun.scheduler.jobs import build_audio_cleanup_job, build_consolidation_job
-from kinsun.scheduler.scheduler import Scheduler
+from kinsun.scheduler.scheduler import Job, Scheduler
 from kinsun.scheduler.state import PgScheduleStateStore
 
 logger = logging.getLogger("kinsun.scheduler.worker")
 
 
-def build_scheduler(
-    settings: Settings, *, clock: Callable[[], datetime]
-) -> tuple[Scheduler, Database]:
-    tz = ZoneInfo(settings.timezone)
-    externals = build_externals(settings)
-    core = assemble_core(settings, externals, clock=clock)
+def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime]) -> list[Job]:
+    """組出全部排程 job；worker 排程執行、web 端 admin 手動觸發（spec 2026-07-12）共用同一份。"""
     db = core.db
     memory = core.memory
     long_term = core.long_term
@@ -174,8 +170,17 @@ def build_scheduler(
                 name="inbound-audio-cleanup",
             )
         )
-    state = PgScheduleStateStore(db, tz)
-    return Scheduler(jobs, clock, state), db
+    return jobs
+
+
+def build_scheduler(
+    settings: Settings, *, clock: Callable[[], datetime]
+) -> tuple[Scheduler, Database]:
+    externals = build_externals(settings)
+    core = assemble_core(settings, externals, clock=clock)
+    jobs = build_jobs(settings, core, clock=clock)
+    state = PgScheduleStateStore(core.db, ZoneInfo(settings.timezone))
+    return Scheduler(jobs, clock, state), core.db
 
 
 def serve(scheduler: Scheduler, *, tick_seconds: int) -> None:
