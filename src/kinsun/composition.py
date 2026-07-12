@@ -68,6 +68,7 @@ class Core:
     long_term: Mem0LongTermStore
     messenger: LineApiMessenger
     router: ChannelRouter
+    account_store: PgAccountStore
     accounts: AccountService
     med_store: PgMedicationStore
     appt_store: PgAppointmentStore
@@ -165,6 +166,7 @@ def assemble_core(
                 Channel.APP: AppOutboundChannel(notifications),
             },
         ),
+        account_store=account_store,
         accounts=accounts,
         med_store=med_store,
         appt_store=appt_store,

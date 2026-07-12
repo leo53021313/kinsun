@@ -20,6 +20,7 @@ class LongTermStore(Protocol):
         self, elder_id: str, messages: list[Message], *, provenance: str = "self_claimed"
     ) -> None: ...
     def search(self, elder_id: str, query: str, *, top_k: int = 5) -> list[MemoryItem]: ...
+    def list_for_elder(self, elder_id: str, *, limit: int = 50) -> list[MemoryItem]: ...
 
 
 def _created_at(item: dict) -> str:
@@ -77,6 +78,17 @@ class Mem0LongTermStore:
             seen.add(key)
             out.append(item)
         return out
+
+    def list_for_elder(self, elder_id: str, *, limit: int = 50) -> list[MemoryItem]:
+        """列出某長輩全部長期記憶（admin 觀測用），由新到舊；取失敗回空清單。"""
+        try:
+            result = self._memory.get_all(filters={"user_id": elder_id}, limit=limit)
+        except Exception as exc:  # noqa: BLE001 — 觀測讀取失敗不可影響服務
+            logger.warning("長期記憶列表失敗 elder=%s：%s", elder_id, exc)
+            return []
+        items = (result.get("results") or []) if isinstance(result, dict) else (result or [])
+        ordered = sorted(items, key=_created_at, reverse=True)
+        return [item for item in map(_to_memory_item, ordered) if item.text]
 
     def search(self, elder_id: str, query: str, *, top_k: int | None = None) -> list[MemoryItem]:
         user_items = self._search_raw(query, elder_id, top_k or self._top_k)

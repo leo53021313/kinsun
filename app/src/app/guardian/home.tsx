@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import { Alert, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import QRCode from "react-native-qrcode-svg";
 
+import { RoleSwitcher } from "@/components/RoleSwitcher";
 import { Button, EmptyHint, ErrorText, Field, Section } from "@/components/ui";
 import { createElder, listElders, listNotifications, logoutGuardian, type Elder } from "@/lib/api";
 import { loadSeenAt } from "@/lib/notificationsSeen";
@@ -176,6 +177,7 @@ export default function GuardianHome() {
         ListFooterComponent={
           <View style={styles.footer}>
             <Button label="登出" variant="outline" onPress={logout} />
+            <RoleSwitcher />
           </View>
         }
       />
@@ -232,5 +234,5 @@ const styles = StyleSheet.create({
   elderRowPressed: { backgroundColor: colors.border },
   elderName: { fontSize: 20, fontWeight: "700", color: colors.text },
   elderArrow: { fontSize: 26, color: colors.textSoft },
-  footer: { marginTop: spacing.l },
+  footer: { marginTop: spacing.l, gap: spacing.m },
 });

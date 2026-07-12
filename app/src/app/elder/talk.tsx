@@ -12,6 +12,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AvatarPlaceholder, type AvatarState } from "@/components/AvatarPlaceholder";
+import { RoleSwitcher } from "@/components/RoleSwitcher";
 import { ApiError, postTurn } from "@/lib/api";
 import { useSession } from "@/lib/SessionProvider";
 import { colors, elder, spacing } from "@/lib/theme";
@@ -128,6 +129,7 @@ export default function ElderTalk() {
 
   return (
     <SafeAreaView style={styles.container}>
+      <RoleSwitcher />
       <View style={styles.avatarZone}>
         <AvatarPlaceholder state={avatar} />
       </View>
