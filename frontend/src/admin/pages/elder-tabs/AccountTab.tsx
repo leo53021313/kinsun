@@ -3,13 +3,7 @@ import { useParams } from "react-router-dom";
 
 import { type AdminElderAccount, getElderAccount } from "../../api";
 import { formatTime } from "../../format";
-
-const INVITE_STATUS_LABELS: Record<string, string> = {
-  active: "有效",
-  used: "已使用",
-  expired: "已過期",
-  locked: "已鎖定（嘗試次數用完）",
-};
+import { strings } from "../../strings";
 
 /** 帳號與綁定分頁：排查「為什麼登不進去」——綁定、邀請碼、同意、帳密、token。 */
 export function AccountTab() {
@@ -25,51 +19,56 @@ export function AccountTab() {
 
   useEffect(load, [load]);
 
-  if (error) return <p className="error-banner">載入失敗，請重新整理。</p>;
-  if (!data) return <p>載入中…</p>;
+  if (error) return <p className="error-banner">{strings.common.loadFailedRefresh}</p>;
+  if (!data) return <p>{strings.common.loading}</p>;
+  const account = strings.elderTabs.account;
   return (
     <div>
-      <h3>綁定通道</h3>
-      {data.bindings.length === 0 && <p>尚未綁定任何通道。</p>}
+      <h3>{account.bindingsHeading}</h3>
+      {data.bindings.length === 0 && <p>{account.noBindings}</p>}
       {data.bindings.map((b) => (
         <div className="card" key={`${b.channel}-${b.external_id}`}>
           <span className="badge badge-ok">{b.channel}</span> {b.external_id}
-          <small className="timeline-time">　綁定於 {formatTime(b.created_at)}</small>
-        </div>
-      ))}
-      <h3>帳號</h3>
-      <div className="card">
-        {data.has_password_account
-          ? `已設定帳密登入（手機：${data.phone}）`
-          : "尚未設定帳密登入（家屬可在 App 代辦）"}
-        ｜有效 token：{data.tokens.length} 個
-      </div>
-      <h3>邀請碼</h3>
-      {data.invites.length === 0 && <p>沒有邀請碼紀錄。</p>}
-      {data.invites.map((i) => (
-        <div className="card" key={i.code}>
-          <strong>{i.code}</strong>　{i.role === "elder" ? "長輩綁定碼" : "家屬邀請碼"}
-          {INVITE_STATUS_LABELS[i.status] ?? i.status}
           <small className="timeline-time">
-            　到期 {formatTime(i.expires_at)}｜已嘗試 {i.attempts} 次
+            　{account.boundAtPrefix} {formatTime(b.created_at)}
           </small>
         </div>
       ))}
-      <h3>同意紀錄</h3>
+      <h3>{account.accountHeading}</h3>
+      <div className="card">
+        {data.has_password_account
+          ? account.passwordAccount(data.phone)
+          : account.noPasswordAccount}
+        {account.validTokenLine(data.tokens.length)}
+      </div>
+      <h3>{account.invitesHeading}</h3>
+      {data.invites.length === 0 && <p>{account.noInvites}</p>}
+      {data.invites.map((i) => (
+        <div className="card" key={i.code}>
+          <strong>{i.code}</strong>　
+          {i.role === "elder" ? account.inviteRoleElder : account.inviteRoleGuardian}
+          {account.inviteStatus[i.status] ?? i.status}
+          <small className="timeline-time">
+            　{account.inviteMeta(formatTime(i.expires_at), i.attempts)}
+          </small>
+        </div>
+      ))}
+      <h3>{account.consentHeading}</h3>
       <div className="card">
         {data.consent
-          ? `${data.consent.consent_by === "proxy" ? "家屬代辦" : "本人"}同意（版本 ${
-              data.consent.version
-            }）於 ${formatTime(data.consent.granted_at)}${
-              data.consent.revoked_at ? `；已於 ${formatTime(data.consent.revoked_at)} 撤回` : ""
-            }`
-          : "尚無同意紀錄"}
+          ? account.consentRecord({
+              isProxy: data.consent.consent_by === "proxy",
+              version: data.consent.version,
+              grantedAt: formatTime(data.consent.granted_at),
+              revokedAt: data.consent.revoked_at ? formatTime(data.consent.revoked_at) : null,
+            })
+          : account.noConsent}
       </div>
-      <h3>家屬連結</h3>
-      {data.guardians.length === 0 && <p>尚無家屬連結。</p>}
+      <h3>{account.guardiansHeading}</h3>
+      {data.guardians.length === 0 && <p>{account.noGuardians}</p>}
       {data.guardians.map((g) => (
         <div className="card" key={g.guardian_id}>
-          {g.name}（{g.role}）　升級順位 {g.escalation_order}
+          {g.name}（{g.role}）　{account.escalationPrefix} {g.escalation_order}
         </div>
       ))}
     </div>

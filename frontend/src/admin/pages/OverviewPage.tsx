@@ -2,27 +2,21 @@ import { useState } from "react";
 
 import { type Overview, getOverview } from "../api";
 import { formatLatency, formatTime } from "../format";
+import { strings } from "../strings";
 import { usePolling } from "../usePolling";
-
-const STAGE_LABEL: Record<string, string> = {
-  asr: "ASR",
-  llm: "LLM",
-  tts: "TTS",
-  round_trip: "往返（端到端）",
-};
 
 function HourlyChart({ data }: { data: Overview["hourly_turns"] }) {
   const width = 720;
   const height = 160;
   const barGap = 4;
-  if (data.length === 0) return <p>近 24 小時沒有訊息。</p>;
+  if (data.length === 0) return <p>{strings.overview.noRecentMessages}</p>;
   const max = Math.max(...data.map((d) => d.turn_count));
   const barWidth = width / data.length - barGap;
   return (
     <svg
       viewBox={`0 0 ${width} ${height + 20}`}
       role="img"
-      aria-label="近 24 小時逐時訊息量"
+      aria-label={strings.overview.hourlyChartAriaLabel}
       style={{ width: "100%", height: "auto" }}
     >
       {data.map((d, i) => {
@@ -38,7 +32,7 @@ function HourlyChart({ data }: { data: Overview["hourly_turns"] }) {
               height={barHeight}
               fill="#3b82f6"
             >
-              <title>{`${hour} 時：${d.turn_count} 則`}</title>
+              <title>{strings.overview.hourBarTitle(hour, d.turn_count)}</title>
             </rect>
             <text x={x + barWidth / 2} y={height + 14} fontSize="10" textAnchor="middle">
               {hour}
@@ -64,56 +58,60 @@ export function OverviewPage() {
   }, 5000);
 
   if (overview === null) {
-    return disconnected ? <p className="error-banner">連線中斷，重試中…</p> : <p>載入中…</p>;
+    return disconnected ? (
+      <p className="error-banner">{strings.common.disconnected}</p>
+    ) : (
+      <p>{strings.common.loading}</p>
+    );
   }
   return (
     <section>
-      <h2>總覽儀表板</h2>
-      {disconnected && <p className="error-banner">連線中斷，重試中…</p>}
+      <h2>{strings.overview.title}</h2>
+      {disconnected && <p className="error-banner">{strings.common.disconnected}</p>}
       {(overview.alerts ?? []).map((a) => (
         <p key={a.kind} className="error-banner">
           {a.kind === "guardian_notification_failure"
-            ? `⚠ 最近 ${a.window_minutes} 分鐘有 ${a.count} 則危急通知送不到家屬——家屬可能漏收警報，請至長輩詳情頁的「危急通知」查明並主動聯絡。`
-            : `⚠ 危急分級器最近 ${a.window_minutes} 分鐘故障 ${a.count} 次——AI 分級可能失效、只剩關鍵詞守門，請排查 Gemini 連線（失敗句已保守記 L1 留痕）。`}
+            ? strings.overview.guardianNotificationFailure(a.window_minutes, a.count)
+            : strings.overview.riskClassifierFailure(a.window_minutes, a.count)}
         </p>
       ))}
       <div className="stat-grid">
         <div className="card">
-          <div>今日訊息量</div>
+          <div>{strings.overview.statTurnCount}</div>
           <div className="stat-value">{overview.turn_count}</div>
         </div>
         <div className="card">
-          <div>活躍長輩</div>
+          <div>{strings.overview.statActiveElders}</div>
           <div className="stat-value">{overview.active_elder_count}</div>
         </div>
         <div className="card">
-          <div>風險事件</div>
+          <div>{strings.overview.statRiskEvents}</div>
           <div className="stat-value">{overview.risk_event_count}</div>
         </div>
         <div className="card">
-          <div>LLM token（入／出）</div>
+          <div>{strings.overview.statLlmTokens}</div>
           <div className="stat-value">
             {overview.llm_input_tokens}／{overview.llm_output_tokens}
           </div>
         </div>
       </div>
       <div className="card">
-        <h3>各階段今日狀況</h3>
+        <h3>{strings.overview.stagesHeading}</h3>
         <table>
           <thead>
             <tr>
-              <th>階段</th>
-              <th>次數</th>
-              <th>錯誤</th>
-              <th>平均延遲</th>
-              <th>p50 延遲</th>
-              <th>p95 延遲</th>
+              <th>{strings.overview.stageColumns.stage}</th>
+              <th>{strings.overview.stageColumns.count}</th>
+              <th>{strings.overview.stageColumns.error}</th>
+              <th>{strings.overview.stageColumns.avgLatency}</th>
+              <th>{strings.overview.stageColumns.p50Latency}</th>
+              <th>{strings.overview.stageColumns.p95Latency}</th>
             </tr>
           </thead>
           <tbody>
             {overview.stages.map((s) => (
               <tr key={s.stage}>
-                <td>{STAGE_LABEL[s.stage] ?? s.stage}</td>
+                <td>{strings.overview.stageLabel[s.stage] ?? s.stage}</td>
                 <td>{s.call_count}</td>
                 <td>{s.error_count}</td>
                 <td>{formatLatency(Math.round(s.avg_latency_ms))}</td>
@@ -125,10 +123,12 @@ export function OverviewPage() {
         </table>
       </div>
       <div className="card">
-        <h3>近 24 小時訊息量</h3>
+        <h3>{strings.overview.hourlyHeading}</h3>
         <HourlyChart data={overview.hourly_turns} />
       </div>
-      <p className="feed-time">更新於 {formatTime(overview.generated_at)}</p>
+      <p className="feed-time">
+        {strings.overview.updatedAtPrefix} {formatTime(overview.generated_at)}
+      </p>
     </section>
   );
 }

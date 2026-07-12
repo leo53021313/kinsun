@@ -1,8 +1,8 @@
-import liff from "@line/liff";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { type Elder, createElder, generateGuardianInvite, listElders } from "../api";
+import { strings } from "../strings";
 
 type CodeNotice = { kind: "elder" | "guardian"; code: string };
 
@@ -15,7 +15,7 @@ export function EldersPage() {
   function reload() {
     listElders()
       .then(setElders)
-      .catch(() => setError("載入失敗，請稍後再試"));
+      .catch(() => setError(strings.common.loadFailed));
   }
 
   useEffect(reload, []);
@@ -23,17 +23,17 @@ export function EldersPage() {
   async function create() {
     setError(null);
     if (!newName.trim()) {
-      setError("請輸入長輩稱呼");
+      setError(strings.elders.nameRequired);
       return;
     }
     try {
-      const profile = await liff.getProfile();
-      const res = await createElder(newName.trim(), profile.displayName);
+      // 家屬名改由後端從 ID token 取 LINE 顯示名稱（✅ 庚-29），前端不再自送。
+      const res = await createElder(newName.trim());
       setNewName("");
       setNotice({ kind: "elder", code: res.invite_code });
       reload();
     } catch {
-      setError("建立失敗，請稍後再試");
+      setError(strings.elders.createFailed);
     }
   }
 
@@ -43,46 +43,47 @@ export function EldersPage() {
       const res = await generateGuardianInvite(elderId);
       setNotice({ kind: "guardian", code: res.invite_code });
     } catch {
-      setError("產生邀請碼失敗，請稍後再試");
+      setError(strings.elders.inviteFailed);
     }
   }
 
-  if (!elders) return <p>載入中…</p>;
+  if (!elders) return <p>{strings.common.loading}</p>;
   return (
     <main>
-      <h1>您管理的長輩</h1>
+      <h1>{strings.elders.title}</h1>
       {error && <p>{error}</p>}
       {notice && (
         <p>
           {notice.kind === "elder"
-            ? "長輩綁定碼（請交給長輩在 LINE 貼上，24 小時內有效）："
-            : "家屬邀請碼（請交給其他家屬在 LINE 貼上，24 小時內有效）："}
+            ? strings.elders.elderCodeNotice
+            : strings.elders.guardianCodeNotice}
           <strong>{notice.code}</strong>
         </p>
       )}
       <ul>
         {elders.map((e) => (
           <li key={e.elder_id}>
-            {e.name}：<Link to={`/elders/${e.elder_id}/medications`}>用藥</Link>
+            {e.name}：
+            <Link to={`/elders/${e.elder_id}/medications`}>{strings.elders.linkMedications}</Link>
             {" / "}
-            <Link to={`/elders/${e.elder_id}/appointments`}>回診</Link>
+            <Link to={`/elders/${e.elder_id}/appointments`}>{strings.elders.linkAppointments}</Link>
             {" / "}
-            <Link to={`/elders/${e.elder_id}/health-report`}>健康報告</Link>
+            <Link to={`/elders/${e.elder_id}/health-report`}>{strings.elders.linkHealthReport}</Link>
             {" / "}
             <button type="button" onClick={() => invite(e.elder_id)}>
-              邀請家屬
+              {strings.elders.inviteGuardian}
             </button>
           </li>
         ))}
       </ul>
-      <h2>新增長輩</h2>
+      <h2>{strings.elders.addHeading}</h2>
       <input
         value={newName}
         onChange={(e) => setNewName(e.target.value)}
-        placeholder="長輩稱呼（例：阿公、王媽媽）"
+        placeholder={strings.elders.namePlaceholder}
       />
       <button type="button" onClick={create}>
-        建立
+        {strings.elders.createButton}
       </button>
     </main>
   );
