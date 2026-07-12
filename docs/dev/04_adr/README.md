@@ -16,3 +16,4 @@
 | [009](ADR-009-家屬雙認證並存.md) | 家屬雙認證並存（App token＋LIFF idToken） | 已接受 | LINE 退場時機待議 |
 | [010](ADR-010-單一儲存庫佈局.md) | 單一儲存庫（monorepo）佈局 | 已接受 | — |
 | [011](ADR-011-通道中立身分層.md) | 通道中立身分層（elder_id 主鍵＋channel_bindings） | 已接受 | D-08 |
+| [012](ADR-012-內測模式後端下發.md) | 內測模式後端單一開關（INTERNAL_TESTING_ENABLED 經公開 meta 下發） | 已接受 | D-73 |
