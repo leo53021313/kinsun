@@ -36,6 +36,15 @@ CONSENT_VERSION = "2.0"
 # 讓「查無帳號」與「密碼錯誤」耗時相近，降低帳號枚舉的計時信號。
 _TIMING_DUMMY_HASH = hash_password("kinsun-timing-dummy")
 
+# 密碼規則住在服務層（✅ 庚-20／A-50）：HTTP 層 pydantic 只是提早擋，
+# 非 HTTP 呼叫者（CLI、腳本）同樣受檢。
+_MIN_PASSWORD_LENGTH = 8
+
+
+def _validate_password(password: str) -> None:
+    if len(password) < _MIN_PASSWORD_LENGTH:
+        raise AppAccountError("password_too_short")
+
 
 def _normalize_phone(phone: str) -> str | None:
     """手機號碼正規化：去空白與連字號後需為 8–15 位數字，否則 None。"""
@@ -213,6 +222,7 @@ class AccountService:
         self, email: str, password: str, name: str
     ) -> tuple[Guardian, str]:
         """家屬註冊：建 Guardian＋登入帳號並發 token。email 重複丟 email_taken。"""
+        _validate_password(password)
         normalized = email.strip().lower()
         if self._repo.get_guardian_account_by_email(normalized) is not None:
             raise AppAccountError("email_taken")
@@ -244,6 +254,7 @@ class AccountService:
 
     def register_elder_account(self, elder_id: str, phone: str, password: str) -> None:
         """長輩帳密由家屬代辦（✅ D-71 己-6）：手機號碼為帳號；同長輩重呼＝重設。"""
+        _validate_password(password)
         normalized = _normalize_phone(phone)
         if normalized is None:
             raise AppAccountError("invalid_phone")
