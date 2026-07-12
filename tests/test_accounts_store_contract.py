@@ -215,3 +215,34 @@ def test_remove_channel_bindings_for_principal_scoped_by_channel(store, ns):
     }
     assert Channel.APP not in channels
     assert Channel.LINE in channels
+
+
+def test_list_invites_for_elder_filters_and_sorts(store, ns):
+    """admin 觀測（spec 2026-07-12 §3.3）：只回該長輩的邀請碼，expires_at 由新到舊。"""
+    store.save_invite(Invite(f"{ns}c1", f"{ns}e1", InviteRole.ELDER, 1000.0, 5, 0, None))
+    store.save_invite(Invite(f"{ns}c2", f"{ns}e1", InviteRole.GUARDIAN, 2000.0, 5, 0, None))
+    store.save_invite(Invite(f"{ns}c9", f"{ns}e2", InviteRole.ELDER, 3000.0, 5, 0, None))
+    codes = [i.code for i in store.list_invites_for_elder(f"{ns}e1")]
+    assert codes == [f"{ns}c2", f"{ns}c1"]
+    assert store.list_invites_for_elder(f"{ns}nobody") == []
+
+
+def test_list_api_tokens_for_principal_filters_and_sorts(store, ns):
+    """admin 觀測（spec 2026-07-12 §3.3）：只回本人 token 概況，created_at 由新到舊。"""
+    store.save_api_token(ApiToken(f"{ns}h1", PrincipalType.ELDER, f"{ns}e1", 1000.0))
+    store.save_api_token(ApiToken(f"{ns}h2", PrincipalType.ELDER, f"{ns}e1", 2000.0))
+    store.save_api_token(ApiToken(f"{ns}h3", PrincipalType.GUARDIAN, f"{ns}g1", 3000.0))
+    hashes = [t.token_hash for t in store.list_api_tokens_for_principal(PrincipalType.ELDER, f"{ns}e1")]
+    assert hashes == [f"{ns}h2", f"{ns}h1"]
+    assert store.list_api_tokens_for_principal(PrincipalType.ELDER, f"{ns}nobody") == []
+
+
+def test_get_elder_account_by_elder_id(store, ns):
+    """admin 觀測（spec 2026-07-12 §3.3）：以 elder_id 查長輩帳號有無設定。"""
+    store.save_elder_account(
+        ElderAccount(f"{ns}e1", f"{ns}0912345678", "scrypt$16384$8$1$00$00", 1000.0)
+    )
+    got = store.get_elder_account(f"{ns}e1")
+    assert got is not None
+    assert got.phone == f"{ns}0912345678"
+    assert store.get_elder_account(f"{ns}nobody") is None
