@@ -23,6 +23,7 @@ from kinsun.llm import build_gemini_for
 from kinsun.medications.jobs import build_medication_slot_job
 from kinsun.medications.models import MedicationSlot
 from kinsun.memory.longterm.consolidation import run_consolidation
+from kinsun.memory.longterm.consolidation_log import PgConsolidationLogStore
 from kinsun.observability.jobs import build_observability_cleanup_job
 from kinsun.proactive.jobs import (
     GREETING_INTENT,
@@ -61,9 +62,17 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
     summaries = PgConversationSummaryStore(db, clock=clock)
     # 摘要納 L1 小訊號（✅ D-10 己-5）：worker 自組 risk_events 讀取端。
     risk_events = PgRiskEventStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex)
+    # 整理進度標記（✅ 庚-06／庚-13）：逐日補齊＋冪等，避免停機漏天與重覆寫入。
+    consolidation_log = PgConsolidationLogStore(db, clock=clock)
 
     def run_one(elder_id: str) -> None:
-        run_consolidation(elder_id, short_term=memory, long_term=long_term)
+        run_consolidation(
+            elder_id,
+            short_term=memory,
+            long_term=long_term,
+            log=consolidation_log,
+            now=clock(),
+        )
         try:
             summarize_day(
                 elder_id,

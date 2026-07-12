@@ -153,6 +153,13 @@ APP_NOTIFICATIONS_DDL = (
     "ON app_notifications (external_id, created_at);"
 )
 
+# 整理進度標記（✅ 庚-06／庚-13）：某長輩某日已整理進長期記憶，供冪等與跨多日補齊。
+MEMORY_CONSOLIDATIONS_DDL = (
+    "CREATE TABLE IF NOT EXISTS memory_consolidations ("
+    "elder_id TEXT NOT NULL, day TEXT NOT NULL, turn_count INTEGER NOT NULL, "
+    "created_at DOUBLE PRECISION NOT NULL, PRIMARY KEY (elder_id, day));"
+)
+
 CONVERSATION_SUMMARIES_DDL = (
     "CREATE TABLE IF NOT EXISTS conversation_summaries ("
     "elder_id TEXT, line_user_id TEXT, date TEXT NOT NULL, "
@@ -262,6 +269,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(REMINDER_LOGS_DDL)
         conn.execute(RISK_NOTIFICATION_LOGS_DDL)
         conn.execute(APP_NOTIFICATIONS_DDL)
+        conn.execute(MEMORY_CONSOLIDATIONS_DDL)
         conn.execute(CONVERSATION_SUMMARIES_DDL)
         conn.execute(OBSERVABILITY_DDL)
         conn.execute(RISK_EVENTS_TRACE_MIGRATION_DDL)
