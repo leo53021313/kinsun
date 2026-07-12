@@ -45,6 +45,8 @@ ERROR_MESSAGES: dict[str, str] = {
     "validation_error": "輸入資料格式不正確",
     "audio_too_large": "音檔太大，請縮短錄音再試一次",
     "unsupported_media_type": "上傳格式不正確，請使用語音錄音",
+    "job_not_found": "找不到這個排程任務",
+    "internal_testing_disabled": "內部測試模式未開啟",
     "admin_disabled": "服務未開放",
     "overloaded": "服務忙碌中，請稍後再試",
 }
