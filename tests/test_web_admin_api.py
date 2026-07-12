@@ -48,6 +48,18 @@ class _StubRiskEvents:
         return self._count
 
 
+class _StubDeliveries:
+    """只提供送達失敗計數的替身（庚-02）。"""
+
+    def __init__(self, failed_count: int) -> None:
+        self._count = failed_count
+        self.cutoffs: list[float] = []
+
+    def count_failed_since(self, cutoff: float) -> int:
+        self.cutoffs.append(cutoff)
+        return self._count
+
+
 class _FakeLongTerm:
     """LongTermStore 替身：只實作 admin 觀測用到的 list_for_elder。"""
 
@@ -136,6 +148,25 @@ def test_overview_alert_when_failsafe_over_threshold():
 def test_overview_no_alert_below_threshold():
     stub = _StubRiskEvents(failsafe_count=2)
     res = _client(risk_events=stub).get("/api/v1/admin/overview", headers=_auth())
+    assert res.json()["data"]["alerts"] == []
+
+
+def test_overview_alert_when_guardian_notification_fails():
+    """✅ 庚-02（A-40）：近 1 小時有家屬通知送失敗 → overview 帶告警（家屬漏收＝最嚴重失敗）。"""
+    stub = _StubDeliveries(failed_count=1)
+    res = _client(deliveries=stub).get("/api/v1/admin/overview", headers=_auth())
+    body = res.json()["data"]
+    assert {
+        "kind": "guardian_notification_failure",
+        "count": 1,
+        "window_minutes": 60,
+    } in body["alerts"]
+    assert stub.cutoffs == [(NOW - timedelta(minutes=60)).timestamp()]
+
+
+def test_overview_no_delivery_alert_when_none_failed():
+    stub = _StubDeliveries(failed_count=0)
+    res = _client(deliveries=stub).get("/api/v1/admin/overview", headers=_auth())
     assert res.json()["data"]["alerts"] == []
 
 

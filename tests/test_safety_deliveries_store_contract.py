@@ -27,7 +27,7 @@ def store(request, ns):
             clock=lambda: FIXED_CLOCK,
             new_id=lambda: next(ids),
         )
-    return FakeRiskNotificationLogStore()
+    return FakeRiskNotificationLogStore(clock=lambda: FIXED_CLOCK.timestamp())
 
 
 def test_record_then_list_scoped_to_elder(store, ns):
@@ -40,3 +40,13 @@ def test_record_then_list_scoped_to_elder(store, ns):
         (f"{ns}g2", False),
     }
     assert all(d.tier == RiskTier.L2 for d in got)
+
+
+def test_count_failed_since_counts_undelivered_across_elders(store, ns):
+    """✅ 庚-02（A-40）：送達失敗（delivered=False）跨長輩全域計數，供 admin 告警。"""
+    store.record(f"{ns}e1", f"{ns}g1", RiskTier.L2, delivered=True)
+    store.record(f"{ns}e1", f"{ns}g2", RiskTier.L2, delivered=False)
+    store.record(f"{ns}e2", f"{ns}g3", RiskTier.L2, delivered=False)
+    ts = FIXED_CLOCK.timestamp()
+    assert store.count_failed_since(ts - 1) == 2  # 兩筆失敗（跨長輩），成功不計
+    assert store.count_failed_since(ts + 1) == 0  # 視窗之後無

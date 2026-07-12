@@ -95,7 +95,7 @@
 | # | 工項 | 問題 | 規模 |
 | :--- | :--- | :---: | :---: |
 | 庚-01 | ✅ 完成（2026-07-12，TDD）：pipeline 落庫門檻放寬至 ≥L1（通知維持 ≥L2），D-10 己-5「L1 小訊號進每日摘要」生產路徑生效；契約測試改寫＋全套 591 綠。已知副作用：健康報告出現「關注」級事件（本無 tier 過濾，接受；不想顯示另開工項） | A-39 | M |
-| 庚-02 | 危急通知失敗可觀測：L2 通知 `delivered=False` 時重試／落死信／或 admin 告警（現 admin 只看分級器故障）。**家屬漏收警報＝最嚴重產品失敗卻無感知**。 | A-40 | M |
+| 庚-02 | ✅ 完成（2026-07-12，TDD）：admin overview 新增 `guardian_notification_failure` 告警——近 60 分鐘任一筆 `delivered=False` 即紅字橫幅（門檻 1，不設噪音緩衝）；`RiskNotificationLogStore.count_failed_since` 三件套＋契約測試；OverviewPage 依 kind 分文字。採最小方案（Leo 拍板：不做重試／死信，發表期靠後台盯）。 | A-40 | M |
 | 庚-03 | ⏸ **擱置（Leo 2026-07-12：著作權相關先不處理）**——RAG 來源著作權把關：`SourceValidator` 補查 `copyright_status`，或撤 `ntuh_epaper`／`cgmh`（DISALLOWED）的 `approved_for_rag`。 | A-26 | S |
 | 庚-04 | ✅ 完成（2026-07-12，TDD）：`bind_elder_device` redeem 前驗 `invite.role is ELDER`，家屬邀請碼回 409 `invite_wrong_role`（未消耗碼、未發 token）；06 端點表＋錯誤碼表同步 | A-46 | S |
 | 庚-05 | ✅ 完成（2026-07-12，TDD）：`DELETE /api/v1/sessions/all`＋`AccountService.logout_all_devices`（撤該家屬全部 token），與長輩 `revoke_elder_device` 對稱；06 端點表同步 | A-47 | S |
