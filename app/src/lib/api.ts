@@ -189,3 +189,81 @@ export function listDailySummaries(
 ): Promise<DailySummary[]> {
   return request(`/api/v1/elders/${elderId}/daily-summaries?limit=${limit}`, { token });
 }
+
+// --- 家屬端：用藥／回診管理（App 版編輯，對接既有 CRUD 端點） ---
+
+export function createMedication(
+  elderId: string,
+  name: string,
+  slots: string[],
+  token: string,
+): Promise<Medication> {
+  return request(`/api/v1/elders/${elderId}/medications`, {
+    method: "POST",
+    body: JSON.stringify({ name, slots }),
+    token,
+  });
+}
+
+export function updateMedication(
+  elderId: string,
+  medicationId: string,
+  name: string,
+  slots: string[],
+  token: string,
+): Promise<Medication> {
+  return request(`/api/v1/elders/${elderId}/medications/${medicationId}`, {
+    method: "PUT",
+    body: JSON.stringify({ name, slots }),
+    token,
+  });
+}
+
+export function deleteMedication(
+  elderId: string,
+  medicationId: string,
+  token: string,
+): Promise<void> {
+  return request(`/api/v1/elders/${elderId}/medications/${medicationId}`, {
+    method: "DELETE",
+    token,
+  });
+}
+
+export function createAppointment(
+  elderId: string,
+  date: string,
+  label: string,
+  token: string,
+): Promise<Appointment> {
+  return request(`/api/v1/elders/${elderId}/appointments`, {
+    method: "POST",
+    body: JSON.stringify({ date, label }),
+    token,
+  });
+}
+
+export function updateAppointment(
+  elderId: string,
+  appointmentId: string,
+  date: string,
+  label: string,
+  token: string,
+): Promise<Appointment> {
+  return request(`/api/v1/elders/${elderId}/appointments/${appointmentId}`, {
+    method: "PUT",
+    body: JSON.stringify({ date, label }),
+    token,
+  });
+}
+
+export function deleteAppointment(
+  elderId: string,
+  appointmentId: string,
+  token: string,
+): Promise<void> {
+  return request(`/api/v1/elders/${elderId}/appointments/${appointmentId}`, {
+    method: "DELETE",
+    token,
+  });
+}
