@@ -14,6 +14,7 @@ import type {
   GuardianSession,
   HealthReport,
   Medication,
+  Meta,
   TurnReply,
 } from "kinsun-shared/types";
 
@@ -28,6 +29,7 @@ export type {
   GuardianSession,
   HealthReport,
   Medication,
+  Meta,
   TurnReply,
 };
 
@@ -171,6 +173,12 @@ export async function setElderAccount(
     body: JSON.stringify({ phone, password }),
     token,
   });
+}
+
+// --- 公開 meta（內測模式下發，spec 2026-07-12） ---
+
+export function getMeta(): Promise<Meta> {
+  return request("/api/v1/meta");
 }
 
 /** 每日摘要（✅ D-09 己-3）：家屬可看摘要、不開放逐字對話。 */
