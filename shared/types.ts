@@ -115,3 +115,6 @@ export type TraceDetail = {
   reply: TraceReply | null;
   risk_events: TraceRiskEvent[];
 };
+
+// --- 公開 meta（spec 2026-07-12 內測基礎建設） ---
+export type Meta = { internal_testing: boolean };

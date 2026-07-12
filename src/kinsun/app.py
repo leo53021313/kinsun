@@ -43,6 +43,7 @@ from kinsun.web.routers import (
     create_admin_router,
     create_app_auth_router,
     create_guardian_face_router,
+    create_meta_router,
 )
 from kinsun.web.security import install_security_headers
 
@@ -194,6 +195,11 @@ def build_app() -> FastAPI:
             inbound_audio=inbound_audio,
             max_audio_bytes=settings.audio_max_upload_bytes,
         ),
+        prefix="/api/v1",
+    )
+    # 公開 meta（spec 2026-07-12）：內測模式下發；App 與 admin 前端啟動時查一次。
+    app.include_router(
+        create_meta_router(internal_testing_enabled=settings.internal_testing_enabled),
         prefix="/api/v1",
     )
     dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
