@@ -5,7 +5,8 @@
 
 import liff from "@line/liff";
 
-import { ApiError, type Envelope, unwrapEnvelope } from "kinsun-shared/envelope";
+import { createApiClient } from "kinsun-shared/client";
+import { ApiError } from "kinsun-shared/envelope";
 import type {
   Appointment,
   CreatedElder,
@@ -19,21 +20,19 @@ import type {
 export { ApiError };
 export type { Appointment, Elder, Medication, ReminderItem, RiskEventItem };
 
-async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const token = liff.getIDToken();
-  const headers = new Headers(init.headers);
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-  if (init.body) headers.set("Content-Type", "application/json");
-  const res = await fetch(path, { ...init, headers });
-  if (res.status === 204) return undefined as T;
-  let body: Envelope<T>;
-  try {
-    body = (await res.json()) as Envelope<T>;
-  } catch {
-    throw new ApiError(res.status, `http_${res.status}`);
-  }
-  return unwrapEnvelope(res.status, body);
-}
+// 共同流程住共用包（✅ 庚-30）；LIFF 差異只有「認證頭＝LINE ID token」。
+const client = createApiClient({
+  authHeaders: () => {
+    const token = liff.getIDToken();
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+    return headers;
+  },
+});
+
+const apiFetch = client.request;
 
 export function listElders(): Promise<Elder[]> {
   return apiFetch("/api/v1/elders");
