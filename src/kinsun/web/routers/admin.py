@@ -26,6 +26,7 @@ from kinsun.reports.summaries import ConversationSummaryStore
 from kinsun.safety.deliveries import RiskNotificationLogStore
 from kinsun.safety.events import RiskEventStore
 from kinsun.web.envelope import ok
+from kinsun.web.errors import ErrorCode
 
 # 分級器故障告警（✅ D-31＋D-66 admin 半邊）：近 60 分鐘 fail-safe 留痕事件達門檻即回告警。
 # 門檻與視窗暫為常數；隨丙-6（危急門檻 env 化）一併調整。
@@ -43,9 +44,9 @@ def build_require_admin(admin_api_key: str) -> Callable:
 
     def require_admin(x_admin_key: str = Header(default="", alias="X-Admin-Key")) -> None:
         if not admin_api_key:
-            raise HTTPException(status_code=503, detail="admin_disabled")
+            raise HTTPException(status_code=503, detail=ErrorCode.ADMIN_DISABLED)
         if not hmac.compare_digest(x_admin_key.encode(), admin_api_key.encode()):
-            raise HTTPException(status_code=401, detail="invalid_admin_key")
+            raise HTTPException(status_code=401, detail=ErrorCode.INVALID_ADMIN_KEY)
 
     return require_admin
 
@@ -115,7 +116,7 @@ def create_admin_router(
             None,
         )
         if elder is None:
-            raise HTTPException(status_code=404, detail="elder_not_found")
+            raise HTTPException(status_code=404, detail=ErrorCode.ELDER_NOT_FOUND)
         return elder
 
     @router.get("/messages", dependencies=[Depends(require_admin)])
@@ -145,7 +146,7 @@ def create_admin_router(
             try:
                 day = datetime.strptime(date, "%Y-%m-%d").date()
             except ValueError as exc:
-                raise HTTPException(status_code=400, detail="invalid_date") from exc
+                raise HTTPException(status_code=400, detail=ErrorCode.INVALID_DATE) from exc
         else:
             day = clock().date()
         # 台灣無日光節約時間，一天固定 86400 秒。
@@ -168,7 +169,7 @@ def create_admin_router(
     def trace_detail(trace_id: str) -> dict:
         trace = traces.get_trace(trace_id)
         if trace is None:
-            raise HTTPException(status_code=404, detail="trace_not_found")
+            raise HTTPException(status_code=404, detail=ErrorCode.TRACE_NOT_FOUND)
         return ok(_trace_json(trace))
 
     # --- 長輩詳情分頁（spec 2026-07-12 §3.3）：以 elder_id 主鍵直查，與時間軸的
@@ -176,7 +177,7 @@ def create_admin_router(
 
     def _require_elder(elder_id: str) -> None:
         if account_store.get_elder(elder_id) is None:
-            raise HTTPException(status_code=404, detail="elder_not_found")
+            raise HTTPException(status_code=404, detail=ErrorCode.ELDER_NOT_FOUND)
 
     @router.get("/elders/{elder_id}/reminders", dependencies=[Depends(require_admin)])
     def elder_reminders(elder_id: str) -> dict:

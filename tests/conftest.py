@@ -21,6 +21,13 @@ import uuid
 
 import pytest
 
+from kinsun.accounts import passwords as _passwords
+
+# 測試加速（✅ 庚-20）：生產 scrypt N=2**17（單次 ~200ms），測試裡雜湊呼叫上百次
+# 會拖慢全套。此處降回 2**14——參數隨值存，驗證邏輯不受影響；
+# 生產預設值由 test_accounts_passwords.py 以 PROD_SCRYPT_N 專測把關。
+_passwords._N = 2**14
+
 
 @pytest.fixture
 def ns() -> str:

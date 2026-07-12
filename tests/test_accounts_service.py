@@ -316,3 +316,11 @@ def test_redeem_invite_line_channel_unchanged():
     svc.redeem_invite(inv.code, "U-elder", consent_by=ConsentBy.SELF)
     binding = repo.get_channel_binding(Channel.LINE, "U-elder")
     assert binding is not None and binding.principal_id == elder.elder_id
+
+
+def test_register_guardian_rejects_short_password():
+    """✅ 庚-20（A-50）：密碼長度檢查下沉服務層——非 HTTP 呼叫者也擋弱密碼。"""
+    svc = _service(FakeAccountStore())
+    with pytest.raises(AppAccountError) as exc:
+        svc.register_guardian_account("son@example.com", "short-7", "兒子")
+    assert exc.value.reason == "password_too_short"
