@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 
 import { type AdminRiskNotification, listElderRiskNotifications } from "../../api";
 import { formatTime } from "../../format";
+import { adminTierLabel } from "kinsun-shared/terms";
 
 /** 送達語意（✅ 庚-16）：推播未上線前，App 通道僅為「落庫待拉取」而非真送達——
  * 只走 App 的成功要誠實顯示「已入通知匣（待開啟）」，避免維運誤信家屬已收到。 */
@@ -35,7 +36,7 @@ export function RiskNotificationsTab() {
       {items.map((n, i) => (
         <div className="card timeline-item" key={`${n.created_at}-${i}`}>
           <span className="timeline-time">{formatTime(n.created_at)}</span>
-          <span className="badge badge-risk">L{n.tier}</span>
+          <span className="badge badge-risk">{adminTierLabel(n.tier)}</span>
           <span>通知 {n.guardian_name}</span>
           <span className={`badge ${n.delivered ? "badge-ok" : "badge-error"}`}>
             {deliveryLabel(n)}

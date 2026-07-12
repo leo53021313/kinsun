@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 
 import { type TraceDetail, getTrace } from "../api";
 import { formatLatency, formatTime } from "../format";
+import { adminTierLabel } from "kinsun-shared/terms";
 
 function StatusBadge({ status }: { status: string }) {
   return (
@@ -134,7 +135,7 @@ export function TraceDetailPage() {
           <h3>風險事件</h3>
           {trace.risk_events.map((r, i) => (
             <p key={`${r.created_at}-${i}`}>
-              <span className="badge badge-risk">L{r.tier}</span>　{r.reason}　
+              <span className="badge badge-risk">{adminTierLabel(r.tier)}</span>　{r.reason}　
               {formatTime(r.created_at)}
             </p>
           ))}

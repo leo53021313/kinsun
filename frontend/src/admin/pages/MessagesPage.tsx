@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { type FeedMessage, listMessages, listMessagesBefore } from "../api";
 import { formatTime } from "../format";
 import { usePolling } from "../usePolling";
+import { adminTierLabel } from "kinsun-shared/terms";
 
 const KIND_LABEL: Record<string, string> = {
   turn: "對話",
@@ -70,7 +71,7 @@ export function MessagesPage() {
             <strong>{m.elder_name || m.elder_id}</strong>
             {m.role && <em>（{m.role === "user" ? "長輩" : "金孫"}）</em>}
             ：{m.content}
-            {m.tier !== null && <span> 等級 L{m.tier}</span>}
+            {m.tier !== null && <span> 等級 {adminTierLabel(m.tier)}</span>}
             {m.trace_id && <Link to={`/traces/${m.trace_id}`}>　檢視鏈路</Link>}
           </span>
         </div>

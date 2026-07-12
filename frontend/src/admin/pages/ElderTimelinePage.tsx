@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 
 import { type Timeline, getTimeline } from "../api";
 import { formatClock } from "../format";
+import { adminTierLabel } from "kinsun-shared/terms";
 
 function today(): string {
   const now = new Date();
@@ -68,7 +69,7 @@ export function ElderTimelinePage() {
           {item.kind === "risk" && (
             <div className="card timeline-item">
               <span className="timeline-time">{formatClock(item.created_at)}</span>
-              <span className="badge badge-risk">風險 L{item.tier}</span>
+              <span className="badge badge-risk">風險 {adminTierLabel(item.tier ?? 0)}</span>
               <span>{item.content}</span>
               {item.trace_id && <Link to={`/traces/${item.trace_id}`}>檢視鏈路</Link>}
             </div>
