@@ -37,10 +37,10 @@ def _store(pg_database):
 def test_feed_overview_and_purge(pg_database):
     store = _store(pg_database)
     trace_id = f"it-{uuid.uuid4().hex}"
-    line_user_id = f"it-user-{uuid.uuid4().hex[:8]}"
+    external_id = f"it-user-{uuid.uuid4().hex[:8]}"
     store.record_asr_call(
         trace_id=trace_id,
-        line_user_id=line_user_id,
+        external_id=external_id,
         status="ok",
         latency_ms=50,
         transcript="嗨",
@@ -51,7 +51,7 @@ def test_feed_overview_and_purge(pg_database):
     for round_trip_ms in (700, 900, 1400):
         store.record_reply(
             trace_id=trace_id,
-            line_user_id=line_user_id,
+            external_id=external_id,
             kind="voice",
             status="ok",
             latency_ms=100,
@@ -60,7 +60,7 @@ def test_feed_overview_and_purge(pg_database):
         )
     store.record_reply(
         trace_id=trace_id,
-        line_user_id=line_user_id,
+        external_id=external_id,
         kind="text",
         status="ok",
         latency_ms=5,

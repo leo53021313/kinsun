@@ -32,6 +32,11 @@ from kinsun.web.envelope import ok
 FAILSAFE_ALERT_WINDOW_MINUTES = 60
 FAILSAFE_ALERT_THRESHOLD = 3
 
+# 家屬通知送失敗告警（✅ 庚-02／A-40）：家屬漏收危急警報＝最嚴重產品失敗，
+# 一筆送失敗即告警（門檻 1，不設容忍噪音的緩衝）。
+DELIVERY_FAILURE_ALERT_WINDOW_MINUTES = 60
+DELIVERY_FAILURE_ALERT_THRESHOLD = 1
+
 
 def build_require_admin(admin_api_key: str) -> Callable:
     """X-Admin-Key 守門（admin.py 與 admin_jobs.py 共用）。"""
@@ -67,19 +72,29 @@ def create_admin_router(
         return now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
 
     def _alerts(now: datetime) -> list[dict]:
-        if risk_events is None:
-            return []
-        cutoff = (now - timedelta(minutes=FAILSAFE_ALERT_WINDOW_MINUTES)).timestamp()
-        n = risk_events.count_failsafe_since(cutoff)
-        if n < FAILSAFE_ALERT_THRESHOLD:
-            return []
-        return [
-            {
-                "kind": "risk_classifier_failure",
-                "count": n,
-                "window_minutes": FAILSAFE_ALERT_WINDOW_MINUTES,
-            }
-        ]
+        alerts: list[dict] = []
+        if risk_events is not None:
+            cutoff = (now - timedelta(minutes=FAILSAFE_ALERT_WINDOW_MINUTES)).timestamp()
+            n = risk_events.count_failsafe_since(cutoff)
+            if n >= FAILSAFE_ALERT_THRESHOLD:
+                alerts.append(
+                    {
+                        "kind": "risk_classifier_failure",
+                        "count": n,
+                        "window_minutes": FAILSAFE_ALERT_WINDOW_MINUTES,
+                    }
+                )
+        d_cutoff = (now - timedelta(minutes=DELIVERY_FAILURE_ALERT_WINDOW_MINUTES)).timestamp()
+        failed = deliveries.count_failed_since(d_cutoff)
+        if failed >= DELIVERY_FAILURE_ALERT_THRESHOLD:
+            alerts.append(
+                {
+                    "kind": "guardian_notification_failure",
+                    "count": failed,
+                    "window_minutes": DELIVERY_FAILURE_ALERT_WINDOW_MINUTES,
+                }
+            )
+        return alerts
 
     @router.get("/overview", dependencies=[Depends(require_admin)])
     def overview() -> dict:
@@ -355,7 +370,8 @@ def _timeline_json(i: TimelineItem) -> dict:
 def _trace_json(t: Trace) -> dict:
     return {
         "trace_id": t.trace_id,
-        "line_user_id": t.line_user_id,
+        "external_id": t.external_id,
+        "channel": t.channel,
         "elder_name": t.elder_name,
         "webhook_event": None
         if t.webhook_event is None

@@ -72,8 +72,9 @@ export function OverviewPage() {
       {disconnected && <p className="error-banner">連線中斷，重試中…</p>}
       {(overview.alerts ?? []).map((a) => (
         <p key={a.kind} className="error-banner">
-          ⚠ 危急分級器最近 {a.window_minutes} 分鐘故障 {a.count} 次——AI
-          分級可能失效、只剩關鍵詞守門，請排查 Gemini 連線（失敗句已保守記 L1 留痕）。
+          {a.kind === "guardian_notification_failure"
+            ? `⚠ 最近 ${a.window_minutes} 分鐘有 ${a.count} 則危急通知送不到家屬——家屬可能漏收警報，請至長輩詳情頁的「危急通知」查明並主動聯絡。`
+            : `⚠ 危急分級器最近 ${a.window_minutes} 分鐘故障 ${a.count} 次——AI 分級可能失效、只剩關鍵詞守門，請排查 Gemini 連線（失敗句已保守記 L1 留痕）。`}
         </p>
       ))}
       <div className="stat-grid">

@@ -50,7 +50,8 @@ class TraceStore(Protocol):
         self,
         *,
         trace_id: str,
-        line_user_id: str,
+        external_id: str,
+        channel: str = "",
         event_type: str,
         message_type: str,
         payload: dict,
@@ -59,7 +60,8 @@ class TraceStore(Protocol):
         self,
         *,
         trace_id: str,
-        line_user_id: str,
+        external_id: str,
+        channel: str = "",
         status: str,
         latency_ms: int,
         transcript: str,
@@ -70,7 +72,8 @@ class TraceStore(Protocol):
         self,
         *,
         trace_id: str,
-        line_user_id: str,
+        external_id: str,
+        channel: str = "",
         status: str,
         latency_ms: int,
         model_name: str,
@@ -83,7 +86,8 @@ class TraceStore(Protocol):
         self,
         *,
         trace_id: str,
-        line_user_id: str,
+        external_id: str,
+        channel: str = "",
         status: str,
         latency_ms: int,
         content: str,
@@ -93,7 +97,8 @@ class TraceStore(Protocol):
         self,
         *,
         trace_id: str,
-        line_user_id: str,
+        external_id: str,
+        channel: str = "",
         kind: str,
         status: str,
         latency_ms: int,
@@ -138,18 +143,21 @@ class PgTraceStore:
         self,
         *,
         trace_id: str,
-        line_user_id: str,
+        external_id: str,
+        channel: str = "",
         event_type: str,
         message_type: str,
         payload: dict,
     ) -> None:
         self._db.execute(
-            "INSERT INTO webhook_events (webhook_event_id, trace_id, line_user_id, "
-            "event_type, message_type, payload, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            "INSERT INTO webhook_events (webhook_event_id, trace_id, external_id, channel, "
+            "event_type, message_type, payload, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 self._new_id(),
                 trace_id,
-                line_user_id,
+                external_id,
+                channel,
                 event_type,
                 message_type,
                 Json(payload),
@@ -161,7 +169,8 @@ class PgTraceStore:
         self,
         *,
         trace_id: str,
-        line_user_id: str,
+        external_id: str,
+        channel: str = "",
         status: str,
         latency_ms: int,
         transcript: str,
@@ -169,13 +178,14 @@ class PgTraceStore:
         error_message: str,
     ) -> None:
         self._db.execute(
-            "INSERT INTO asr_calls (asr_call_id, trace_id, line_user_id, status, "
+            "INSERT INTO asr_calls (asr_call_id, trace_id, external_id, channel, status, "
             "latency_ms, transcript, source_audio_url, error_message, created_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 self._new_id(),
                 trace_id,
-                line_user_id,
+                external_id,
+                channel,
                 status,
                 latency_ms,
                 transcript,
@@ -189,7 +199,8 @@ class PgTraceStore:
         self,
         *,
         trace_id: str,
-        line_user_id: str,
+        external_id: str,
+        channel: str = "",
         status: str,
         latency_ms: int,
         model_name: str,
@@ -199,13 +210,14 @@ class PgTraceStore:
         error_message: str,
     ) -> None:
         self._db.execute(
-            "INSERT INTO llm_calls (llm_call_id, trace_id, line_user_id, status, "
+            "INSERT INTO llm_calls (llm_call_id, trace_id, external_id, channel, status, "
             "latency_ms, model_name, input_tokens, output_tokens, content, "
-            "error_message, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "error_message, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 self._new_id(),
                 trace_id,
-                line_user_id,
+                external_id,
+                channel,
                 status,
                 latency_ms,
                 model_name,
@@ -221,20 +233,22 @@ class PgTraceStore:
         self,
         *,
         trace_id: str,
-        line_user_id: str,
+        external_id: str,
+        channel: str = "",
         status: str,
         latency_ms: int,
         content: str,
         error_message: str,
     ) -> None:
         self._db.execute(
-            "INSERT INTO tts_calls (tts_call_id, trace_id, line_user_id, status, "
+            "INSERT INTO tts_calls (tts_call_id, trace_id, external_id, channel, status, "
             "latency_ms, content, error_message, created_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 self._new_id(),
                 trace_id,
-                line_user_id,
+                external_id,
+                channel,
                 status,
                 latency_ms,
                 content,
@@ -247,7 +261,8 @@ class PgTraceStore:
         self,
         *,
         trace_id: str,
-        line_user_id: str,
+        external_id: str,
+        channel: str = "",
         kind: str,
         status: str,
         latency_ms: int,
@@ -255,13 +270,14 @@ class PgTraceStore:
         audio_url: str,
     ) -> None:
         self._db.execute(
-            "INSERT INTO replies (reply_id, trace_id, line_user_id, kind, status, "
+            "INSERT INTO replies (reply_id, trace_id, external_id, channel, kind, status, "
             "latency_ms, round_trip_ms, audio_url, created_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 self._new_id(),
                 trace_id,
-                line_user_id,
+                external_id,
+                channel,
                 kind,
                 status,
                 latency_ms,
@@ -273,31 +289,31 @@ class PgTraceStore:
 
     def get_trace(self, trace_id: str) -> Trace | None:
         webhook_row = self._db.query_one(
-            "SELECT webhook_event_id, trace_id, line_user_id, event_type, message_type, "
+            "SELECT webhook_event_id, trace_id, external_id, channel, event_type, message_type, "
             "payload, created_at FROM webhook_events WHERE trace_id = %s "
             "ORDER BY created_at LIMIT 1",
             (trace_id,),
         )
         asr_row = self._db.query_one(
-            "SELECT asr_call_id, trace_id, line_user_id, status, latency_ms, transcript, "
+            "SELECT asr_call_id, trace_id, external_id, channel, status, latency_ms, transcript, "
             "source_audio_url, error_message, created_at FROM asr_calls "
             "WHERE trace_id = %s ORDER BY created_at LIMIT 1",
             (trace_id,),
         )
         llm_rows = self._db.query(
-            "SELECT llm_call_id, trace_id, line_user_id, status, latency_ms, model_name, "
+            "SELECT llm_call_id, trace_id, external_id, channel, status, latency_ms, model_name, "
             "input_tokens, output_tokens, content, error_message, created_at "
             "FROM llm_calls WHERE trace_id = %s ORDER BY created_at",
             (trace_id,),
         )
         tts_row = self._db.query_one(
-            "SELECT tts_call_id, trace_id, line_user_id, status, latency_ms, content, "
+            "SELECT tts_call_id, trace_id, external_id, channel, status, latency_ms, content, "
             "error_message, created_at FROM tts_calls WHERE trace_id = %s "
             "ORDER BY created_at LIMIT 1",
             (trace_id,),
         )
         reply_row = self._db.query_one(
-            "SELECT reply_id, trace_id, line_user_id, kind, status, latency_ms, "
+            "SELECT reply_id, trace_id, external_id, channel, kind, status, latency_ms, "
             "round_trip_ms, audio_url, created_at FROM replies WHERE trace_id = %s "
             "ORDER BY created_at LIMIT 1",
             (trace_id,),
@@ -315,18 +331,18 @@ class PgTraceStore:
         risk_events = [TraceRiskEvent(*r) for r in risk_rows]
         if not any([webhook_event, asr_call, llm_calls, tts_call, reply, risk_events]):
             return None
-        line_user_id = next(
-            (x.line_user_id for x in [webhook_event, asr_call, tts_call, reply] if x),
-            llm_calls[0].line_user_id if llm_calls else "",
-        )
+        rows_with_source = [webhook_event, asr_call, tts_call, reply, *llm_calls]
+        external_id = next((x.external_id for x in rows_with_source if x), "")
+        channel = next((x.channel for x in rows_with_source if x), "")
         name_row = self._db.query_one(
             "SELECT e.name FROM channel_bindings b JOIN elders e ON e.elder_id = b.principal_id "
             "WHERE b.external_id = %s AND b.principal_type = 'elder' LIMIT 1",
-            (line_user_id,),
+            (external_id,),
         )
         return Trace(
             trace_id=trace_id,
-            line_user_id=line_user_id,
+            external_id=external_id,
+            channel=channel,
             webhook_event=webhook_event,
             asr_call=asr_call,
             llm_calls=llm_calls,
@@ -388,12 +404,12 @@ class PgTraceStore:
             "UNION ALL "
             "SELECT 'voice', 'user', a.transcript, NULL, a.trace_id, "
             "a.source_audio_url, a.created_at "
-            "FROM asr_calls a JOIN channel_bindings b ON b.external_id = a.line_user_id "
+            "FROM asr_calls a JOIN channel_bindings b ON b.external_id = a.external_id "
             "AND b.principal_type = 'elder' AND b.principal_id = %s "
             "WHERE a.created_at >= %s AND a.created_at < %s "
             "UNION ALL "
             "SELECT 'voice', 'assistant', '', NULL, p.trace_id, p.audio_url, p.created_at "
-            "FROM replies p JOIN channel_bindings b ON b.external_id = p.line_user_id "
+            "FROM replies p JOIN channel_bindings b ON b.external_id = p.external_id "
             "AND b.principal_type = 'elder' AND b.principal_id = %s "
             "WHERE p.audio_url <> '' AND p.created_at >= %s AND p.created_at < %s "
             "ORDER BY created_at",
@@ -433,7 +449,7 @@ class PgTraceStore:
         today_start: float,
         hourly_start: float,
     ) -> OverviewStats:
-        # 活躍長輩以 elder_id 計（✅ D-34 丙-4）：line_user_id 已退役恆 NULL，舊查詢恆 0。
+        # 活躍長輩以 elder_id 計（✅ D-34 丙-4）：turns 的舊 line_user_id 欄已退役恆 NULL。
         turn_row = self._db.query_one(
             "SELECT COUNT(*), COUNT(DISTINCT elder_id) FROM turns WHERE created_at >= %s",
             (today_start,),
@@ -560,14 +576,22 @@ class FakeTraceStore:
         self,
         *,
         trace_id: str,
-        line_user_id: str,
+        external_id: str,
+        channel: str = "",
         event_type: str,
         message_type: str,
         payload: dict,
     ) -> None:
         self.webhook_events.append(
             WebhookEvent(
-                self._next_id(), trace_id, line_user_id, event_type, message_type, payload, self.now
+                self._next_id(),
+                trace_id,
+                external_id,
+                channel,
+                event_type,
+                message_type,
+                payload,
+                self.now,
             )
         )
 
@@ -575,7 +599,8 @@ class FakeTraceStore:
         self,
         *,
         trace_id: str,
-        line_user_id: str,
+        external_id: str,
+        channel: str = "",
         status: str,
         latency_ms: int,
         transcript: str,
@@ -586,7 +611,8 @@ class FakeTraceStore:
             AsrCall(
                 self._next_id(),
                 trace_id,
-                line_user_id,
+                external_id,
+                channel,
                 status,
                 latency_ms,
                 transcript,
@@ -600,7 +626,8 @@ class FakeTraceStore:
         self,
         *,
         trace_id: str,
-        line_user_id: str,
+        external_id: str,
+        channel: str = "",
         status: str,
         latency_ms: int,
         model_name: str,
@@ -613,7 +640,8 @@ class FakeTraceStore:
             LlmCall(
                 self._next_id(),
                 trace_id,
-                line_user_id,
+                external_id,
+                channel,
                 status,
                 latency_ms,
                 model_name,
@@ -629,7 +657,8 @@ class FakeTraceStore:
         self,
         *,
         trace_id: str,
-        line_user_id: str,
+        external_id: str,
+        channel: str = "",
         status: str,
         latency_ms: int,
         content: str,
@@ -639,7 +668,8 @@ class FakeTraceStore:
             TtsCall(
                 self._next_id(),
                 trace_id,
-                line_user_id,
+                external_id,
+                channel,
                 status,
                 latency_ms,
                 content,
@@ -652,7 +682,8 @@ class FakeTraceStore:
         self,
         *,
         trace_id: str,
-        line_user_id: str,
+        external_id: str,
+        channel: str = "",
         kind: str,
         status: str,
         latency_ms: int,
@@ -663,7 +694,8 @@ class FakeTraceStore:
             Reply(
                 self._next_id(),
                 trace_id,
-                line_user_id,
+                external_id,
+                channel,
                 kind,
                 status,
                 latency_ms,
@@ -686,14 +718,14 @@ class FakeTraceStore:
         ]
         if not any([webhook_event, asr_call, llm_calls, tts_call, reply, risk_events]):
             return None
-        line_user_id = next(
-            (x.line_user_id for x in [webhook_event, asr_call, tts_call, reply] if x),
-            llm_calls[0].line_user_id if llm_calls else "",
-        )
-        elder_name = self._elder_name_by_id(self._elder_id_by_external(line_user_id))
+        rows_with_source = [webhook_event, asr_call, tts_call, reply, *llm_calls]
+        external_id = next((x.external_id for x in rows_with_source if x), "")
+        channel = next((x.channel for x in rows_with_source if x), "")
+        elder_name = self._elder_name_by_id(self._elder_id_by_external(external_id))
         return Trace(
             trace_id,
-            line_user_id,
+            external_id,
+            channel,
             webhook_event,
             asr_call,
             llm_calls,
@@ -767,7 +799,7 @@ class FakeTraceStore:
                 items.append(TimelineItem("risk", "", reason, tier, tid, "", ts))
         for c in self.asr_calls:
             if (
-                self._elder_id_by_external(c.line_user_id) == elder_id
+                self._elder_id_by_external(c.external_id) == elder_id
                 and start <= c.created_at < end
             ):
                 items.append(
@@ -783,7 +815,7 @@ class FakeTraceStore:
                 )
         for r in self.replies:
             if (
-                self._elder_id_by_external(r.line_user_id) == elder_id
+                self._elder_id_by_external(r.external_id) == elder_id
                 and r.audio_url
                 and start <= r.created_at < end
             ):

@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from kinsun.accounts.service import AccountService, AppAccountError
 from kinsun.web.envelope import ok
-from kinsun.web.ratelimit import SlidingWindowRateLimiter, throttle_or_429
+from kinsun.web.ratelimit import RateLimiter, throttle_or_429
 
 
 class RegisterIn(BaseModel):
@@ -17,9 +17,7 @@ class RegisterIn(BaseModel):
     name: str = Field(min_length=1, max_length=50)
 
 
-def create_guardians_router(
-    *, accounts: AccountService, rate_limiter: SlidingWindowRateLimiter
-) -> APIRouter:
+def create_guardians_router(*, accounts: AccountService, rate_limiter: RateLimiter) -> APIRouter:
     router = APIRouter(tags=["auth"])
 
     @router.post("/guardians", status_code=201)
