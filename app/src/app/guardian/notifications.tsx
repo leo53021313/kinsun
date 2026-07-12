@@ -6,6 +6,7 @@ import { EmptyHint, ErrorText } from "@/components/ui";
 import { type AppNotification, listNotifications } from "@/lib/api";
 import { saveSeenAt } from "@/lib/notificationsSeen";
 import { useSession, useSignOutOnAuthError } from "@/lib/SessionProvider";
+import { strings } from "@/lib/strings";
 import { colors, spacing } from "@/lib/theme";
 import { formatTime } from "kinsun-shared/format";
 
@@ -41,7 +42,7 @@ export default function GuardianNotifications() {
         } catch (exc) {
           if (await signOutOn401(exc)) return;
           if (alive) {
-            setError(exc instanceof Error ? exc.message : "載入失敗");
+            setError(exc instanceof Error ? exc.message : strings.common.loadFailedShort);
             setLoaded(true);
           }
         }
@@ -60,7 +61,7 @@ export default function GuardianNotifications() {
         contentContainerStyle={styles.list}
         ListHeaderComponent={<ErrorText message={error} />}
         ListEmptyComponent={
-          loaded ? <EmptyHint text="目前沒有通知。金孫有事會第一時間放在這裡。" /> : null
+          loaded ? <EmptyHint text={strings.notifications.empty} /> : null
         }
         renderItem={({ item }) => (
           <View style={styles.row}>

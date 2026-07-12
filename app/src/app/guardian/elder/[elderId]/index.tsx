@@ -20,6 +20,7 @@ import { slotLabel } from "@/lib/medicationSlots";
 import { useSession, useSignOutOnAuthError } from "@/lib/SessionProvider";
 import { formatTime } from "kinsun-shared/format";
 import { tierLabel } from "kinsun-shared/terms";
+import { strings } from "@/lib/strings";
 import { colors, spacing } from "@/lib/theme";
 
 /** 長輩詳情：用藥／回診／健康報告／家屬邀請碼，單頁分區塊。 */
@@ -65,7 +66,7 @@ export default function ElderDetail() {
         } catch (exc) {
           if (await signOutOn401(exc)) return;
           if (alive) {
-            setError(exc instanceof Error ? exc.message : "載入失敗");
+            setError(exc instanceof Error ? exc.message : strings.common.loadFailedShort);
           }
         }
       })();
@@ -83,11 +84,11 @@ export default function ElderDetail() {
     setAccountBusy(true);
     try {
       await setElderAccount(elderId, accountPhone, accountPassword, token);
-      setAccountMessage("已設定完成。長輩手機用這組號碼＋密碼登入一次就會一直記住。");
+      setAccountMessage(strings.elderDetail.accountSaved);
       setAccountPassword("");
     } catch (exc) {
       if (await signOutOn401(exc)) return;
-      setAccountMessage(exc instanceof ApiError ? exc.message : "設定失敗，請稍後再試。");
+      setAccountMessage(exc instanceof ApiError ? exc.message : strings.elderDetail.accountSaveFailed);
     } finally {
       setAccountBusy(false);
     }
@@ -102,7 +103,7 @@ export default function ElderDetail() {
       setInviteCode(await createGuardianInvite(elderId, token));
     } catch (exc) {
       if (await signOutOn401(exc)) return;
-      setError(exc instanceof Error ? exc.message : "產生邀請碼失敗");
+      setError(exc instanceof Error ? exc.message : strings.elderDetail.inviteFailed);
     } finally {
       setBusy(false);
     }
@@ -112,13 +113,13 @@ export default function ElderDetail() {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <ErrorText message={error} />
 
-      <Section title="健康報告（近 30 天）">
+      <Section title={strings.elderDetail.healthReportSection}>
         {report === null ? (
-          <EmptyHint text="載入中…" />
+          <EmptyHint text={strings.common.loading} />
         ) : (
           <View style={styles.reportBody}>
             {report.risk_events.length === 0 ? (
-              <Text style={styles.ok}>沒有危急事件，一切平安。</Text>
+              <Text style={styles.ok}>{strings.elderDetail.noRiskEvents}</Text>
             ) : (
               report.risk_events.map((e, i) => (
                 <Text key={`risk-${i}`} style={styles.risk}>
@@ -127,17 +128,17 @@ export default function ElderDetail() {
               ))
             )}
             {report.reminders.length > 0 ? (
-              <Text style={styles.soft}>近 30 天提醒 {report.reminders.length} 則</Text>
+              <Text style={styles.soft}>{strings.elderDetail.remindersCount(report.reminders.length)}</Text>
             ) : null}
           </View>
         )}
       </Section>
 
-      <Section title="每日摘要">
+      <Section title={strings.elderDetail.dailySummarySection}>
         {summaries === null ? (
-          <EmptyHint text="載入中…" />
+          <EmptyHint text={strings.common.loading} />
         ) : summaries.length === 0 ? (
-          <EmptyHint text="還沒有摘要——長輩與金孫聊過天後，隔天早上就會出現。" />
+          <EmptyHint text={strings.elderDetail.noSummaries} />
         ) : (
           summaries.map((s) => (
             <View key={s.date} style={styles.summaryItem}>
@@ -148,9 +149,9 @@ export default function ElderDetail() {
         )}
       </Section>
 
-      <Section title="固定用藥">
+      <Section title={strings.elderDetail.medicationsSection}>
         {medications.length === 0 ? (
-          <EmptyHint text="還沒有用藥，點下方「管理用藥」新增。" />
+          <EmptyHint text={strings.elderDetail.noMedications} />
         ) : (
           medications.map((m) => (
             <Text key={m.medication_id} style={styles.row}>
@@ -159,15 +160,15 @@ export default function ElderDetail() {
           ))
         )}
         <Button
-          label="管理用藥"
+          label={strings.elderDetail.manageMedications}
           variant="outline"
           onPress={() => router.push(`/guardian/elder/${elderId}/medications`)}
         />
       </Section>
 
-      <Section title="即將回診">
+      <Section title={strings.elderDetail.upcomingAppointmentsSection}>
         {appointments.length === 0 ? (
-          <EmptyHint text="沒有排定的回診。" />
+          <EmptyHint text={strings.elderDetail.noAppointments} />
         ) : (
           appointments.map((a) => (
             <Text key={a.appointment_id} style={styles.row}>
@@ -176,32 +177,29 @@ export default function ElderDetail() {
           ))
         )}
         <Button
-          label="管理回診"
+          label={strings.elderDetail.manageAppointments}
           variant="outline"
           onPress={() => router.push(`/guardian/elder/${elderId}/appointments`)}
         />
       </Section>
 
-      <Section title="長輩登入帳密（代辦）">
-        <Text style={styles.soft}>
-          幫長輩設定手機號碼＋密碼。換手機或登出後，長輩用這組帳密登入即可，不用再掃碼；
-          忘記密碼時在這裡重設一次就好。
-        </Text>
+      <Section title={strings.elderDetail.accountSection}>
+        <Text style={styles.soft}>{strings.elderDetail.accountHelp}</Text>
         <Field
-          label="長輩手機號碼"
+          label={strings.elderDetail.accountPhoneLabel}
           value={accountPhone}
           onChangeText={setAccountPhone}
           keyboardType="phone-pad"
           placeholder="09xxxxxxxx"
         />
         <Field
-          label="密碼（至少 8 碼）"
+          label={strings.elderDetail.accountPasswordLabel}
           value={accountPassword}
           onChangeText={setAccountPassword}
           secureTextEntry
         />
         <Button
-          label="儲存帳密"
+          label={strings.elderDetail.saveAccount}
           onPress={saveAccount}
           busy={accountBusy}
           variant="outline"
@@ -210,8 +208,8 @@ export default function ElderDetail() {
         {accountMessage ? <Text style={styles.soft}>{accountMessage}</Text> : null}
       </Section>
 
-      <Section title="邀請其他家屬">
-        <Button label="產生家屬邀請碼" onPress={makeInvite} busy={busy} variant="outline" />
+      <Section title={strings.elderDetail.inviteSection}>
+        <Button label={strings.elderDetail.makeInvite} onPress={makeInvite} busy={busy} variant="outline" />
         {inviteCode ? <Text style={styles.inviteCode}>{inviteCode}</Text> : null}
       </Section>
     </ScrollView>

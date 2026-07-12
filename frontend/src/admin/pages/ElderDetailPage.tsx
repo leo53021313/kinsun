@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { strings } from "../strings";
 import { ElderTimelinePage } from "./ElderTimelinePage";
 import { AccountTab } from "./elder-tabs/AccountTab";
 import { MemoryTab } from "./elder-tabs/MemoryTab";
@@ -7,11 +8,11 @@ import { RemindersTab } from "./elder-tabs/RemindersTab";
 import { RiskNotificationsTab } from "./elder-tabs/RiskNotificationsTab";
 
 const TABS = [
-  { key: "timeline", label: "時間軸" },
-  { key: "reminders", label: "提醒設定" },
-  { key: "memory", label: "記憶與摘要" },
-  { key: "account", label: "帳號與綁定" },
-  { key: "risk", label: "危急通知" },
+  { key: "timeline", label: strings.elderTabs.tabs.timeline },
+  { key: "reminders", label: strings.elderTabs.tabs.reminders },
+  { key: "memory", label: strings.elderTabs.tabs.memory },
+  { key: "account", label: strings.elderTabs.tabs.account },
+  { key: "risk", label: strings.elderTabs.tabs.risk },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];

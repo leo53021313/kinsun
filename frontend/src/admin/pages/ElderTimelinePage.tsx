@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 
 import { type Timeline, getTimeline } from "../api";
 import { formatClock } from "../format";
+import { strings } from "../strings";
 import { adminTierLabel } from "kinsun-shared/terms";
 
 function today(): string {
@@ -28,18 +29,18 @@ export function ElderTimelinePage() {
 
   return (
     <section>
-      <h2>{timeline ? `${timeline.name} 的時間軸` : "長輩時間軸"}</h2>
+      <h2>{timeline ? strings.timeline.title(timeline.name) : strings.timeline.fallbackTitle}</h2>
       <div className="card">
         <label>
-          日期：
+          {strings.timeline.dateLabel}
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
         </label>
         <button type="button" onClick={load}>
-          重新整理
+          {strings.common.refresh}
         </button>
       </div>
-      {error && <p className="error-banner">載入失敗，請重新整理。</p>}
-      {timeline && timeline.items.length === 0 && <p>這一天沒有任何紀錄。</p>}
+      {error && <p className="error-banner">{strings.common.loadFailedRefresh}</p>}
+      {timeline && timeline.items.length === 0 && <p>{strings.timeline.noRecords}</p>}
       {timeline?.items.map((item, index) => (
         <div key={`${item.kind}-${item.created_at}-${index}`}>
           {item.kind === "turn" && (
@@ -52,26 +53,29 @@ export function ElderTimelinePage() {
             <div className="card timeline-item">
               <span className="timeline-time">{formatClock(item.created_at)}</span>
               <span className="badge badge-voice">
-                語音（{item.role === "user" ? "長輩" : "金孫"}）
+                {strings.timeline.voice}（
+                {item.role === "user" ? strings.common.roleElder : strings.common.roleAssistant}）
               </span>
               {item.content && <span>{item.content}</span>}
               {item.audio_url && <audio controls src={item.audio_url} preload="none" />}
-              {item.trace_id && <Link to={`/traces/${item.trace_id}`}>檢視鏈路</Link>}
+              {item.trace_id && <Link to={`/traces/${item.trace_id}`}>{strings.common.viewTrace}</Link>}
             </div>
           )}
           {item.kind === "reminder" && (
             <div className="card timeline-item">
               <span className="timeline-time">{formatClock(item.created_at)}</span>
-              <span className="badge badge-reminder">推播</span>
+              <span className="badge badge-reminder">{strings.timeline.reminderBadge}</span>
               <span>{item.content}</span>
             </div>
           )}
           {item.kind === "risk" && (
             <div className="card timeline-item">
               <span className="timeline-time">{formatClock(item.created_at)}</span>
-              <span className="badge badge-risk">風險 {adminTierLabel(item.tier ?? 0)}</span>
+              <span className="badge badge-risk">
+                {strings.timeline.riskPrefix} {adminTierLabel(item.tier ?? 0)}
+              </span>
               <span>{item.content}</span>
-              {item.trace_id && <Link to={`/traces/${item.trace_id}`}>檢視鏈路</Link>}
+              {item.trace_id && <Link to={`/traces/${item.trace_id}`}>{strings.common.viewTrace}</Link>}
             </div>
           )}
         </div>

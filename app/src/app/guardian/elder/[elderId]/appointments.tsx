@@ -13,6 +13,7 @@ import {
   type Appointment,
 } from "@/lib/api";
 import { useSession, useSignOutOnAuthError } from "@/lib/SessionProvider";
+import { strings } from "@/lib/strings";
 import { colors, spacing } from "@/lib/theme";
 
 /** 以本地時區組 YYYY-MM-DD（不用 toISOString，避免 UTC 位移跨日）。 */
@@ -52,7 +53,7 @@ export default function AppointmentsManage() {
       setAppointments(await listAppointments(elderId, token));
     } catch (exc) {
       if (await signOutOn401(exc)) return;
-      setError("載入失敗，請稍後再試。");
+      setError(strings.common.loadFailed);
     }
   }, [elderId, token, signOutOn401]);
 
@@ -86,7 +87,7 @@ export default function AppointmentsManage() {
       await reload();
     } catch (exc) {
       if (await signOutOn401(exc)) return;
-      setError(exc instanceof ApiError ? exc.message : "儲存失敗，請稍後再試。");
+      setError(exc instanceof ApiError ? exc.message : strings.common.saveFailed);
     } finally {
       setBusy(false);
     }
@@ -102,10 +103,10 @@ export default function AppointmentsManage() {
 
   function confirmRemove(appt: Appointment) {
     const shown = appt.time ? `${appt.date} ${appt.time}` : appt.date;
-    Alert.alert("刪除回診", `確定要刪除「${shown}｜${appt.label}」嗎？`, [
-      { text: "取消", style: "cancel" },
+    Alert.alert(strings.appointments.deleteTitle, strings.appointments.confirmDelete(shown, appt.label), [
+      { text: strings.common.cancel, style: "cancel" },
       {
-        text: "刪除",
+        text: strings.common.delete,
         style: "destructive",
         onPress: async () => {
           if (!elderId) {
@@ -120,7 +121,7 @@ export default function AppointmentsManage() {
             await reload();
           } catch (exc) {
             if (await signOutOn401(exc)) return;
-            setError(exc instanceof ApiError ? exc.message : "刪除失敗，請稍後再試。");
+            setError(exc instanceof ApiError ? exc.message : strings.common.deleteFailed);
           } finally {
             setBusy(false);
           }
@@ -133,11 +134,11 @@ export default function AppointmentsManage() {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <ErrorText message={error} />
 
-      <Section title="已排定回診">
+      <Section title={strings.appointments.listSection}>
         {appointments === null ? (
-          <EmptyHint text="載入中…" />
+          <EmptyHint text={strings.common.loading} />
         ) : appointments.length === 0 ? (
-          <EmptyHint text="沒有排定的回診，從下方新增第一筆。" />
+          <EmptyHint text={strings.appointments.empty} />
         ) : (
           appointments.map((a) => (
             <View key={a.appointment_id} style={styles.item}>
@@ -146,18 +147,18 @@ export default function AppointmentsManage() {
                 {a.time ? ` ${a.time}` : ""}｜{a.label}
               </Text>
               <View style={styles.itemActions}>
-                <Button label="編輯" variant="outline" disabled={busy} onPress={() => startEdit(a)} />
-                <Button label="刪除" variant="outline" disabled={busy} onPress={() => confirmRemove(a)} />
+                <Button label={strings.common.edit} variant="outline" disabled={busy} onPress={() => startEdit(a)} />
+                <Button label={strings.common.delete} variant="outline" disabled={busy} onPress={() => confirmRemove(a)} />
               </View>
             </View>
           ))
         )}
       </Section>
 
-      <Section title={editingId ? "編輯回診" : "新增回診"}>
+      <Section title={editingId ? strings.appointments.editSection : strings.appointments.addSection}>
         <View style={styles.dateField}>
           <Text style={styles.dateLabel} maxFontSizeMultiplier={1.6}>
-            回診日期
+            {strings.appointments.dateLabel}
           </Text>
           <Pressable
             accessibilityRole="button"
@@ -168,7 +169,7 @@ export default function AppointmentsManage() {
               maxFontSizeMultiplier={1.6}
               style={[styles.dateText, date ? null : styles.datePlaceholder]}
             >
-              {date || "點這裡選日期"}
+              {date || strings.appointments.datePlaceholder}
             </Text>
           </Pressable>
         </View>
@@ -188,7 +189,7 @@ export default function AppointmentsManage() {
         ) : null}
         <View style={styles.dateField}>
           <Text style={styles.dateLabel} maxFontSizeMultiplier={1.6}>
-            看診時間（選填）
+            {strings.appointments.timeLabel}
           </Text>
           <Pressable
             accessibilityRole="button"
@@ -199,7 +200,7 @@ export default function AppointmentsManage() {
               maxFontSizeMultiplier={1.6}
               style={[styles.dateText, time ? null : styles.datePlaceholder]}
             >
-              {time || "點這裡選時間（提醒會帶上）"}
+              {time || strings.appointments.timePlaceholder}
             </Text>
           </Pressable>
         </View>
@@ -217,18 +218,18 @@ export default function AppointmentsManage() {
           />
         ) : null}
         <Field
-          label="回診內容"
+          label={strings.appointments.contentLabel}
           value={label}
           onChangeText={setLabel}
-          placeholder="例：心臟科回診 林口長庚"
+          placeholder={strings.appointments.contentPlaceholder}
         />
         <Button
-          label={editingId ? "更新" : "新增"}
+          label={editingId ? strings.common.update : strings.common.create}
           onPress={submit}
           busy={busy}
           disabled={!date || !label.trim()}
         />
-        {editingId ? <Button label="取消編輯" variant="outline" onPress={resetForm} /> : null}
+        {editingId ? <Button label={strings.common.cancelEdit} variant="outline" onPress={resetForm} /> : null}
       </Section>
     </ScrollView>
   );

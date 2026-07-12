@@ -9,6 +9,7 @@ import { Button, EmptyHint, ErrorText, Field, Section } from "@/components/ui";
 import { createElder, listElders, listNotifications, logoutGuardian, type Elder } from "@/lib/api";
 import { loadSeenAt } from "@/lib/notificationsSeen";
 import { useSession, useSignOutOnAuthError } from "@/lib/SessionProvider";
+import { strings } from "@/lib/strings";
 import { colors, spacing } from "@/lib/theme";
 
 /** 家屬首頁：長輩列表＋新增長輩（成功即顯示長輩綁定碼）。 */
@@ -43,7 +44,7 @@ export default function GuardianHome() {
         } catch (exc) {
           if (await signOutOn401(exc)) return;
           if (alive) {
-            setError(exc instanceof Error ? exc.message : "載入失敗");
+            setError(exc instanceof Error ? exc.message : strings.common.loadFailedShort);
           }
         }
         try {
@@ -68,7 +69,7 @@ export default function GuardianHome() {
   async function addElder() {
     const name = newName.trim();
     if (!name) {
-      setError("請先輸入長輩的稱呼。");
+      setError(strings.guardianHome.nameRequired);
       return;
     }
     setError("");
@@ -80,17 +81,17 @@ export default function GuardianHome() {
       setNewName("");
     } catch (exc) {
       if (await signOutOn401(exc)) return;
-      setError(exc instanceof Error ? exc.message : "新增失敗");
+      setError(exc instanceof Error ? exc.message : strings.guardianHome.addFailed);
     } finally {
       setBusy(false);
     }
   }
 
   function logout() {
-    Alert.alert("登出", "確定要登出嗎？", [
-      { text: "取消", style: "cancel" },
+    Alert.alert(strings.guardianHome.logout, strings.guardianHome.logoutConfirm, [
+      { text: strings.common.cancel, style: "cancel" },
       {
-        text: "登出",
+        text: strings.guardianHome.logout,
         style: "destructive",
         onPress: async () => {
           // 先撤銷伺服器端 token（✅ D-25 修訂）；離線也不擋本機登出。
@@ -118,7 +119,7 @@ export default function GuardianHome() {
                 pressed ? styles.elderRowPressed : null,
               ]}
             >
-              <Text style={styles.notifyLabel}>通知</Text>
+              <Text style={styles.notifyLabel}>{strings.guardianHome.notify}</Text>
               <View style={styles.notifyRight}>
                 {unreadCount > 0 ? (
                   <View style={styles.badge}>
@@ -128,23 +129,19 @@ export default function GuardianHome() {
                 <Text style={styles.elderArrow}>›</Text>
               </View>
             </Pressable>
-            <Section title="新增長輩">
+            <Section title={strings.guardianHome.addElderSection}>
               <Field
-                label="長輩稱呼"
+                label={strings.guardianHome.elderNameLabel}
                 value={newName}
                 onChangeText={setNewName}
-                placeholder="例如：阿公"
+                placeholder={strings.guardianHome.elderNamePlaceholder}
               />
               {/* 代辦同意文案（✅ 己-2）：資料去向＋永久保留＋團隊可讀，按建立即代為同意。 */}
-              <Text style={styles.consentText}>
-                建立後，金孫會記錄長輩與它的對話內容（文字與語音），用來陪伴關懷、產生每日摘要、
-                偵測到危急狀況時通知家人；資料會一直保留，開發團隊為了改善服務可檢視內容。
-                按下「建立長輩檔案」即代表您替長輩同意以上事項。
-              </Text>
-              <Button label="建立長輩檔案" onPress={addElder} busy={busy} />
+              <Text style={styles.consentText}>{strings.guardianHome.consent}</Text>
+              <Button label={strings.guardianHome.createElder} onPress={addElder} busy={busy} />
               {inviteCode ? (
                 <View style={styles.invite}>
-                  <Text style={styles.inviteHint}>長輩綁定碼（在長輩手機輸入或掃描一次即可）：</Text>
+                  <Text style={styles.inviteHint}>{strings.guardianHome.inviteHint}</Text>
                   <Text style={styles.inviteCode} selectable>
                     {inviteCode}
                   </Text>
@@ -153,11 +150,11 @@ export default function GuardianHome() {
                     <QRCode value={inviteCode} size={168} />
                   </View>
                   <Button
-                    label="複製綁定碼"
+                    label={strings.guardianHome.copyCode}
                     variant="outline"
                     onPress={async () => {
                       await Clipboard.setStringAsync(inviteCode);
-                      Alert.alert("已複製", "綁定碼已複製，可貼給家人或長輩。");
+                      Alert.alert(strings.guardianHome.copiedTitle, strings.guardianHome.copiedMessage);
                     }}
                   />
                 </View>
@@ -166,7 +163,7 @@ export default function GuardianHome() {
             </Section>
           </View>
         }
-        ListEmptyComponent={<EmptyHint text="還沒有長輩檔案，先在上面建立一位吧。" />}
+        ListEmptyComponent={<EmptyHint text={strings.guardianHome.empty} />}
         renderItem={({ item }) => (
           <Pressable
             accessibilityRole="button"
@@ -179,7 +176,7 @@ export default function GuardianHome() {
         )}
         ListFooterComponent={
           <View style={styles.footer}>
-            <Button label="登出" variant="outline" onPress={logout} />
+            <Button label={strings.guardianHome.logout} variant="outline" onPress={logout} />
             <RoleSwitcher />
           </View>
         }

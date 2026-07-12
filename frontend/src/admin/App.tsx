@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
 
 import { getAdminKey, setAdminKey, setOnUnauthorized } from "./api";
+import { strings } from "./strings";
 import { ElderDetailPage } from "./pages/ElderDetailPage";
 import { EldersPage } from "./pages/EldersPage";
 import { MessagesPage } from "./pages/MessagesPage";
@@ -21,14 +22,14 @@ function KeyForm({ onSubmit }: { onSubmit: () => void }) {
         onSubmit();
       }}
     >
-      <h1>金孫 觀測後台</h1>
+      <h1>{strings.app.title}</h1>
       <input
         type="password"
-        placeholder="請輸入管理金鑰"
+        placeholder={strings.app.keyPlaceholder}
         value={value}
         onChange={(e) => setValue(e.target.value)}
       />
-      <button type="submit">進入</button>
+      <button type="submit">{strings.app.enter}</button>
     </form>
   );
 }
@@ -44,13 +45,13 @@ export function App() {
   return (
     <BrowserRouter basename="/admin">
       <nav className="admin-nav">
-        <strong>金孫 觀測後台</strong>
+        <strong>{strings.app.title}</strong>
         <NavLink to="/" end>
-          總覽
+          {strings.app.nav.overview}
         </NavLink>
-        <NavLink to="/messages">訊息流</NavLink>
-        <NavLink to="/elders">長輩</NavLink>
-        <NavLink to="/system">系統</NavLink>
+        <NavLink to="/messages">{strings.app.nav.messages}</NavLink>
+        <NavLink to="/elders">{strings.app.nav.elders}</NavLink>
+        <NavLink to="/system">{strings.app.nav.system}</NavLink>
       </nav>
       <main className="admin-main">
         <Routes>

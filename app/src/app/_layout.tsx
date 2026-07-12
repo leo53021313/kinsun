@@ -1,6 +1,7 @@
 import { Stack } from "expo-router";
 
 import { SessionProvider } from "@/lib/SessionProvider";
+import { strings } from "@/lib/strings";
 import { colors } from "@/lib/theme";
 
 export default function RootLayout() {
@@ -24,19 +25,19 @@ function RootStack() {
       }}
     >
       <Stack.Screen name="index" options={{ headerShown: false }} />
-      <Stack.Screen name="role" options={{ title: "選擇身分" }} />
-      <Stack.Screen name="guardian/login" options={{ title: "家屬登入" }} />
-      <Stack.Screen name="guardian/register" options={{ title: "家屬註冊" }} />
+      <Stack.Screen name="role" options={{ title: strings.nav.role }} />
+      <Stack.Screen name="guardian/login" options={{ title: strings.nav.guardianLogin }} />
+      <Stack.Screen name="guardian/register" options={{ title: strings.nav.guardianRegister }} />
       <Stack.Screen
         name="guardian/home"
-        options={{ title: "我的長輩", headerBackVisible: false }}
+        options={{ title: strings.nav.guardianHome, headerBackVisible: false }}
       />
-      <Stack.Screen name="guardian/elder/[elderId]/index" options={{ title: "長輩詳情" }} />
-      <Stack.Screen name="guardian/elder/[elderId]/medications" options={{ title: "用藥管理" }} />
-      <Stack.Screen name="guardian/elder/[elderId]/appointments" options={{ title: "回診管理" }} />
-      <Stack.Screen name="guardian/notifications" options={{ title: "通知" }} />
-      <Stack.Screen name="elder/bind" options={{ title: "輸入綁定碼" }} />
-      <Stack.Screen name="elder/login" options={{ title: "長輩登入" }} />
+      <Stack.Screen name="guardian/elder/[elderId]/index" options={{ title: strings.nav.elderDetail }} />
+      <Stack.Screen name="guardian/elder/[elderId]/medications" options={{ title: strings.nav.medications }} />
+      <Stack.Screen name="guardian/elder/[elderId]/appointments" options={{ title: strings.nav.appointments }} />
+      <Stack.Screen name="guardian/notifications" options={{ title: strings.nav.notifications }} />
+      <Stack.Screen name="elder/bind" options={{ title: strings.nav.elderBind }} />
+      <Stack.Screen name="elder/login" options={{ title: strings.nav.elderLogin }} />
       <Stack.Screen name="elder/talk" options={{ headerShown: false }} />
     </Stack>
   );

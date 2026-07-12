@@ -1,0 +1,56 @@
+/** LIFF 端 UI 文案集中（✅ 庚-31／D-50）：改文案只動此檔。 */
+
+export const strings = {
+  common: {
+    loading: "載入中…",
+    loadFailed: "載入失敗，請稍後再試",
+    saveFailed: "儲存失敗，請稍後再試",
+    deleteFailed: "刪除失敗，請稍後再試",
+    backToElders: "← 返回長輩清單",
+    edit: "編輯",
+    delete: "刪除",
+    add: "新增",
+    update: "更新",
+    cancelEdit: "取消編輯",
+  },
+  app: {
+    initFailed: "初始化失敗，請稍後再試",
+  },
+  elders: {
+    title: "您管理的長輩",
+    nameRequired: "請輸入長輩稱呼",
+    createFailed: "建立失敗，請稍後再試",
+    inviteFailed: "產生邀請碼失敗，請稍後再試",
+    elderCodeNotice: "長輩綁定碼（請交給長輩在 LINE 貼上，24 小時內有效）：",
+    guardianCodeNotice: "家屬邀請碼（請交給其他家屬在 LINE 貼上，24 小時內有效）：",
+    linkMedications: "用藥",
+    linkAppointments: "回診",
+    linkHealthReport: "健康報告",
+    inviteGuardian: "邀請家屬",
+    addHeading: "新增長輩",
+    namePlaceholder: "長輩稱呼（例：阿公、王媽媽）",
+    createButton: "建立",
+  },
+  medications: {
+    title: "用藥管理",
+    slotRequired: "請填藥名並至少選一個時段",
+    editHeading: "編輯用藥",
+    addHeading: "新增用藥",
+    namePlaceholder: "藥名",
+  },
+  appointments: {
+    title: "回診管理",
+    fieldsRequired: "請填日期與內容",
+    editHeading: "編輯回診",
+    addHeading: "新增回診",
+    timeTitle: "看診時間（選填，提醒會帶上）",
+    labelPlaceholder: "例：心臟科回診 林口長庚",
+  },
+  healthReport: {
+    title: "健康報告（近 30 天）",
+    riskEventsHeading: "危急事件",
+    noRiskEvents: "近 30 天無危急事件",
+    remindersHeading: "提醒紀錄",
+    noReminders: "近 30 天無提醒紀錄",
+  },
+} as const;
