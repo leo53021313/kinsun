@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from kinsun.safety.classifier import RiskClassifier
 from kinsun.safety.keywords import classify_keywords
-from kinsun.safety.tiers import RiskAssessment, RiskTier
+from kinsun.safety.tiers import FAILSAFE_EVENT_REASON, RiskAssessment, RiskTier
 
 
 class RiskDetector:
-    def __init__(self, classifier: RiskClassifier, *, high: float = 0.7, mid: float = 0.4) -> None:
+    """三級制（✅ D-72，己-4）：單一降級門檻 mid——純 LLM 判 L2 但信心不足降 L1；
+    關鍵詞（絕對詞與症狀詞）撐住的 L2 不受門檻影響。"""
+
+    def __init__(self, classifier: RiskClassifier, *, mid: float = 0.4) -> None:
         self._classifier = classifier
-        self._high = high
         self._mid = mid
 
     def assess(self, text: str) -> RiskAssessment:
@@ -26,11 +28,13 @@ class RiskDetector:
         signals.extend(llm.signals)
 
         if kw_absolute:
-            return RiskAssessment(RiskTier.L3, llm.confidence, "命中絕對危急詞", signals)
+            return RiskAssessment(RiskTier.L2, llm.confidence, "命中絕對危急詞", signals)
 
         final = max(kw_tier, llm.tier)
-        if final == RiskTier.L3 and llm.confidence < self._high and kw_tier < RiskTier.L3:
-            final = RiskTier.L2
         if final == RiskTier.L2 and llm.confidence < self._mid and kw_tier < RiskTier.L2:
             final = RiskTier.L1
+        # ✅ D-31（甲-5）fail-safe：分級器故障（例外或回傳無法解析）且句子非空時，
+        # 不再靜默 L0——保守記 L1 供留痕（pipeline 落庫不通知）。關鍵詞命中者不受影響。
+        if "llm:error" in llm.signals and text.strip() and final < RiskTier.L1:
+            return RiskAssessment(RiskTier.L1, 0.0, FAILSAFE_EVENT_REASON, signals)
         return RiskAssessment(final, llm.confidence, llm.reason, signals)

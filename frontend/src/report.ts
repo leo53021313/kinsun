@@ -1,14 +1,10 @@
-const TIER_LABELS: Record<number, string> = { 2: "警示", 3: "緊急" };
-const KIND_LABELS: Record<string, string> = { medication: "用藥", appointment: "回診" };
+/** 健康報告顯示用語：等級與時間轉出自三端共用字典（⏳ D-46，乙-5）。 */
 
-export function tierLabel(tier: number): string {
-  return TIER_LABELS[tier] ?? `L${tier}`;
-}
+export { formatDateTime as formatTime } from "kinsun-shared/format";
+export { tierLabel } from "kinsun-shared/terms";
+
+const KIND_LABELS: Record<string, string> = { medication: "用藥", appointment: "回診" };
 
 export function kindLabel(kind: string): string {
   return KIND_LABELS[kind] ?? kind;
-}
-
-export function formatTime(epoch: number): string {
-  return new Date(epoch * 1000).toLocaleString("zh-TW");
 }

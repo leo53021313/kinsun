@@ -13,6 +13,7 @@ from kinsun.accounts.models import (
     Consent,
     ConsentBy,
     Elder,
+    ElderAccount,
     ElderGuardian,
     Guardian,
     GuardianAccount,
@@ -54,8 +55,17 @@ class AccountStore(Protocol):
         self, account: GuardianAccount, *, tx: Executor | None = None
     ) -> None: ...
     def get_guardian_account_by_email(self, email: str) -> GuardianAccount | None: ...
+    def save_elder_account(self, account: ElderAccount, *, tx: Executor | None = None) -> None: ...
+    def get_elder_account_by_phone(self, phone: str) -> ElderAccount | None: ...
     def save_api_token(self, token: ApiToken, *, tx: Executor | None = None) -> None: ...
     def get_api_token(self, token_hash: str) -> ApiToken | None: ...
+    def remove_api_token(self, token_hash: str) -> None: ...
+    def remove_api_tokens_for_principal(
+        self, principal_type: PrincipalType, principal_id: str
+    ) -> None: ...
+    def remove_channel_bindings_for_principal(
+        self, channel: Channel, principal_type: PrincipalType, principal_id: str
+    ) -> None: ...
     def transaction(self) -> object: ...
 
 
@@ -111,26 +121,24 @@ class PgAccountStore:
     def save_elder_guardian(self, eg: ElderGuardian, *, tx: Executor | None = None) -> None:
         (tx or self._db).execute(
             "INSERT INTO elder_guardians "
-            "(elder_id, guardian_id, role, escalation_order, can_view_transcript) "
-            "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (elder_id, guardian_id) DO UPDATE SET "
-            "role = EXCLUDED.role, escalation_order = EXCLUDED.escalation_order, "
-            "can_view_transcript = EXCLUDED.can_view_transcript",
+            "(elder_id, guardian_id, role, escalation_order) "
+            "VALUES (%s, %s, %s, %s) ON CONFLICT (elder_id, guardian_id) DO UPDATE SET "
+            "role = EXCLUDED.role, escalation_order = EXCLUDED.escalation_order",
             (
                 eg.elder_id,
                 eg.guardian_id,
                 eg.role.value,
                 eg.escalation_order,
-                bool(eg.can_view_transcript),
             ),
         )
 
     def _to_eg(self, row: tuple) -> ElderGuardian:
-        elder_id, guardian_id, role, order, can_view = row
-        return ElderGuardian(elder_id, guardian_id, Role(role), order, bool(can_view))
+        elder_id, guardian_id, role, order = row
+        return ElderGuardian(elder_id, guardian_id, Role(role), order)
 
     def get_elder_guardian(self, elder_id: str, guardian_id: str) -> ElderGuardian | None:
         rows = self._db.query(
-            "SELECT elder_id, guardian_id, role, escalation_order, can_view_transcript "
+            "SELECT elder_id, guardian_id, role, escalation_order "
             "FROM elder_guardians WHERE elder_id = %s AND guardian_id = %s",
             (elder_id, guardian_id),
         )
@@ -138,7 +146,7 @@ class PgAccountStore:
 
     def list_elder_guardians(self, elder_id: str) -> list[ElderGuardian]:
         rows = self._db.query(
-            "SELECT elder_id, guardian_id, role, escalation_order, can_view_transcript "
+            "SELECT elder_id, guardian_id, role, escalation_order "
             "FROM elder_guardians WHERE elder_id = %s ORDER BY escalation_order",
             (elder_id,),
         )
@@ -262,6 +270,22 @@ class PgAccountStore:
         )
         return GuardianAccount(*rows[0]) if rows else None
 
+    def save_elder_account(self, account: ElderAccount, *, tx: Executor | None = None) -> None:
+        (tx or self._db).execute(
+            "INSERT INTO elder_accounts (elder_id, phone, password_hash, created_at) "
+            "VALUES (%s, %s, %s, %s) ON CONFLICT (elder_id) DO UPDATE SET "
+            "phone = EXCLUDED.phone, password_hash = EXCLUDED.password_hash",
+            (account.elder_id, account.phone, account.password_hash, account.created_at),
+        )
+
+    def get_elder_account_by_phone(self, phone: str) -> ElderAccount | None:
+        rows = self._db.query(
+            "SELECT elder_id, phone, password_hash, created_at "
+            "FROM elder_accounts WHERE phone = %s",
+            (phone,),
+        )
+        return ElderAccount(*rows[0]) if rows else None
+
     def save_api_token(self, token: ApiToken, *, tx: Executor | None = None) -> None:
         (tx or self._db).execute(
             "INSERT INTO api_tokens (token_hash, principal_type, principal_id, created_at) "
@@ -280,6 +304,26 @@ class PgAccountStore:
         h, ptype, pid, created = rows[0]
         return ApiToken(h, PrincipalType(ptype), pid, created)
 
+    def remove_api_token(self, token_hash: str) -> None:
+        self._db.execute("DELETE FROM api_tokens WHERE token_hash = %s", (token_hash,))
+
+    def remove_api_tokens_for_principal(
+        self, principal_type: PrincipalType, principal_id: str
+    ) -> None:
+        self._db.execute(
+            "DELETE FROM api_tokens WHERE principal_type = %s AND principal_id = %s",
+            (principal_type.value, principal_id),
+        )
+
+    def remove_channel_bindings_for_principal(
+        self, channel: Channel, principal_type: PrincipalType, principal_id: str
+    ) -> None:
+        self._db.execute(
+            "DELETE FROM channel_bindings "
+            "WHERE channel = %s AND principal_type = %s AND principal_id = %s",
+            (channel.value, principal_type.value, principal_id),
+        )
+
 
 class FakeAccountStore:
     """AccountStore 的記憶體替身（測試用，不碰 DB）。
@@ -296,6 +340,7 @@ class FakeAccountStore:
         self.invites: dict[str, Invite] = {}
         self.channel_bindings: dict[tuple[Channel, str], ChannelBinding] = {}
         self.guardian_accounts: dict[str, GuardianAccount] = {}
+        self.elder_accounts: dict[str, ElderAccount] = {}
         self.api_tokens: dict[str, ApiToken] = {}
 
     @contextmanager
@@ -387,9 +432,40 @@ class FakeAccountStore:
     def get_guardian_account_by_email(self, email: str) -> GuardianAccount | None:
         return next((a for a in self.guardian_accounts.values() if a.email == email), None)
 
+    def save_elder_account(self, account: ElderAccount, *, tx: Executor | None = None) -> None:
+        self.elder_accounts[account.elder_id] = account
+
+    def get_elder_account_by_phone(self, phone: str) -> ElderAccount | None:
+        return next((a for a in self.elder_accounts.values() if a.phone == phone), None)
+
     def save_api_token(self, token: ApiToken, *, tx: Executor | None = None) -> None:
         # 與 Pg 一致：ON CONFLICT DO NOTHING（token_hash 不覆寫）。
         self.api_tokens.setdefault(token.token_hash, token)
 
     def get_api_token(self, token_hash: str) -> ApiToken | None:
         return self.api_tokens.get(token_hash)
+
+    def remove_api_token(self, token_hash: str) -> None:
+        self.api_tokens.pop(token_hash, None)
+
+    def remove_api_tokens_for_principal(
+        self, principal_type: PrincipalType, principal_id: str
+    ) -> None:
+        self.api_tokens = {
+            h: t
+            for h, t in self.api_tokens.items()
+            if not (t.principal_type is principal_type and t.principal_id == principal_id)
+        }
+
+    def remove_channel_bindings_for_principal(
+        self, channel: Channel, principal_type: PrincipalType, principal_id: str
+    ) -> None:
+        self.channel_bindings = {
+            key: b
+            for key, b in self.channel_bindings.items()
+            if not (
+                b.channel is channel
+                and b.principal_type is principal_type
+                and b.principal_id == principal_id
+            )
+        }

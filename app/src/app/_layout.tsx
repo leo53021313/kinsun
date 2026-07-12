@@ -1,8 +1,17 @@
 import { Stack } from "expo-router";
 
+import { SessionProvider } from "@/lib/SessionProvider";
 import { colors } from "@/lib/theme";
 
 export default function RootLayout() {
+  return (
+    <SessionProvider>
+      <RootStack />
+    </SessionProvider>
+  );
+}
+
+function RootStack() {
   return (
     <Stack
       screenOptions={{
@@ -21,7 +30,9 @@ export default function RootLayout() {
         options={{ title: "我的長輩", headerBackVisible: false }}
       />
       <Stack.Screen name="guardian/elder/[elderId]" options={{ title: "長輩詳情" }} />
+      <Stack.Screen name="guardian/notifications" options={{ title: "通知" }} />
       <Stack.Screen name="elder/bind" options={{ title: "輸入綁定碼" }} />
+      <Stack.Screen name="elder/login" options={{ title: "長輩登入" }} />
       <Stack.Screen name="elder/talk" options={{ headerShown: false }} />
     </Stack>
   );

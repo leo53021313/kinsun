@@ -14,6 +14,13 @@ _TPE = timezone(timedelta(hours=8))
 _NOW = datetime(2026, 7, 2, 9, 0, tzinfo=_TPE)
 
 
+_SIGN_RESPONSE = Response(
+    200,
+    {},
+    b'{"signedURL":"/object/sign/tts-audio/tts/20260702/abc123.m4a?token=tok"}',
+)
+
+
 def _publisher(transport, **kwargs):
     return SupabaseAudioPublisher(
         "https://proj.supabase.co",
@@ -23,15 +30,17 @@ def _publisher(transport, **kwargs):
         clock=lambda: _NOW,
         new_id=lambda: "abc123",
         transport=transport,
+        signed_url_expires_seconds=600,
         **kwargs,
     )
 
 
-def test_publish_uploads_and_returns_public_url():
-    transport = FakeTransport([Response(200, {}, b"{}")])
+def test_publish_uploads_and_returns_signed_url():
+    transport = FakeTransport([Response(200, {}, b"{}"), _SIGN_RESPONSE])
     url = _publisher(transport).publish(b"AUDIO", content_type="audio/mp4")
     assert url == (
-        "https://proj.supabase.co/storage/v1/object/public/tts-audio/tts/20260702/abc123.m4a"
+        "https://proj.supabase.co/storage/v1"
+        "/object/sign/tts-audio/tts/20260702/abc123.m4a?token=tok"
     )
     method, call_url, data, headers, _timeout = transport.calls[0]
     assert method == "POST"
@@ -41,6 +50,25 @@ def test_publish_uploads_and_returns_public_url():
     assert headers["Authorization"] == "Bearer service-key"
     assert headers["Content-Type"] == "audio/mp4"
     assert data == b"AUDIO"
+
+
+def test_publish_requests_signed_url_with_expiry():
+    transport = FakeTransport([Response(200, {}, b"{}"), _SIGN_RESPONSE])
+    _publisher(transport).publish(b"AUDIO", content_type="audio/mp4")
+    method, call_url, data, headers, _timeout = transport.calls[1]
+    assert method == "POST"
+    assert call_url == (
+        "https://proj.supabase.co/storage/v1/object/sign/tts-audio/tts/20260702/abc123.m4a"
+    )
+    assert json.loads(data) == {"expiresIn": 600}
+    assert headers["Authorization"] == "Bearer service-key"
+    assert headers["Content-Type"] == "application/json"
+
+
+def test_publish_sign_response_missing_url_raises():
+    transport = FakeTransport([Response(200, {}, b"{}"), Response(200, {}, b"{}")])
+    with pytest.raises(AudioPublishError):
+        _publisher(transport).publish(b"AUDIO", content_type="audio/mp4")
 
 
 def test_publish_transport_error_raises():
@@ -80,12 +108,20 @@ def test_cleanup_deletes_expired_date_folders():
     assert not any("20260702" in p for p in all_paths)
 
 
+def test_cleanup_disabled_when_retention_nonpositive():
+    """retention_days<=0＝不清理（2026-07-09 修訂：音檔本體先不刪）——不得發出任何請求。"""
+    transport = FakeTransport()
+    _publisher(transport).cleanup(retention_days=0)
+    assert transport.calls == []
+
+
 def test_build_requires_supabase_config():
     class _S:
         supabase_url = ""
         supabase_service_key = ""
         audio_bucket = "tts-audio"
         audio_upload_timeout_seconds = 10.0
+        audio_signed_url_expires_seconds = 86400
 
     with pytest.raises(AudioPublishError):
         build_audio_publisher(_S(), clock=lambda: _NOW, new_id=lambda: "x")

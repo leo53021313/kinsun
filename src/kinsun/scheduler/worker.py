@@ -19,6 +19,7 @@ from kinsun.audio.publisher import build_audio_publisher
 from kinsun.composition import assemble_core, build_externals
 from kinsun.config import Settings, load_dotenv, load_settings
 from kinsun.db import Database
+from kinsun.llm import build_gemini_for
 from kinsun.medications.jobs import build_medication_slot_job
 from kinsun.medications.models import MedicationSlot
 from kinsun.memory.longterm.consolidation import run_consolidation
@@ -31,6 +32,7 @@ from kinsun.proactive.jobs import (
 )
 from kinsun.reports.reminders import safe_record
 from kinsun.reports.summaries import PgConversationSummaryStore, summarize_day
+from kinsun.safety.events import PgRiskEventStore
 from kinsun.scheduler.jobs import build_audio_cleanup_job, build_consolidation_job
 from kinsun.scheduler.scheduler import Scheduler
 from kinsun.scheduler.state import PgScheduleStateStore
@@ -47,7 +49,12 @@ def build_scheduler(
     db = core.db
     memory = core.memory
     long_term = core.long_term
-    gemini = core.gemini
+    # 摘要按用途配模型（✅ D-16 丁-5）：與主模型相同時共用連線。
+    gemini = (
+        core.gemini
+        if settings.gemini_model_summary == settings.gemini_model
+        else build_gemini_for(settings, settings.gemini_model_summary)
+    )
     accounts = core.accounts
     med_store = core.med_store
     appt_store = core.appt_store
@@ -56,6 +63,8 @@ def build_scheduler(
     router = core.router
     traces = core.traces
     summaries = PgConversationSummaryStore(db, clock=clock)
+    # 摘要納 L1 小訊號（✅ D-10 己-5）：worker 自組 risk_events 讀取端。
+    risk_events = PgRiskEventStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex)
 
     def run_one(elder_id: str) -> None:
         run_consolidation(elder_id, short_term=memory, long_term=long_term)
@@ -66,6 +75,7 @@ def build_scheduler(
                 summarizer=gemini,
                 summaries=summaries,
                 clock=clock,
+                risk_events=risk_events,
             )
         except Exception:  # noqa: BLE001 - 摘要失敗不影響整理與其他長輩
             logger.warning("對話摘要失敗 elder=%s", elder_id)
@@ -116,7 +126,6 @@ def build_scheduler(
                 slot=slot,
                 meds_at_slot=lambda s=slot: med_store.list_for_slot(s),
                 lookup_elder=accounts.get_elder,
-                has_valid_consent=accounts.has_valid_consent,
                 router=router,
                 hour=hour,
                 name=name,
@@ -129,14 +138,14 @@ def build_scheduler(
             today=lambda: clock().date().isoformat(),
             tomorrow=lambda: (clock().date() + timedelta(days=1)).isoformat(),
             lookup_elder=accounts.get_elder,
-            has_valid_consent=accounts.has_valid_consent,
             guardians_of=accounts.guardians_of,
             router=router,
             hour=settings.appointment_reminder_hour,
             record=reminder_logs.record,
         )
     )
-    if settings.tts_backend == "dgx":
+    # 音檔清理僅在 AUDIO_RETENTION_DAYS>0 時註冊（0＝音檔本體不刪，2026-07-09 修訂）。
+    if settings.tts_backend == "dgx" and settings.audio_retention_days > 0:
         publisher = build_audio_publisher(settings, clock=clock, new_id=lambda: uuid.uuid4().hex)
         jobs.append(
             build_audio_cleanup_job(
@@ -152,8 +161,9 @@ def build_scheduler(
             hour=settings.longterm_consolidation_hour,
         )
     )
-    # 進站音檔與 TTS 音檔同樣走過期清理；有 Supabase 憑證即啟用。
-    if settings.supabase_url and settings.supabase_service_key:
+    # 進站音檔與 TTS 音檔同樣走過期清理；有 Supabase 憑證且 retention>0 才啟用。
+    has_storage = bool(settings.supabase_url and settings.supabase_service_key)
+    if has_storage and settings.audio_retention_days > 0:
         inbound_audio = build_audio_publisher(
             settings, clock=clock, new_id=lambda: uuid.uuid4().hex, prefix="inbound"
         )

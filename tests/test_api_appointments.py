@@ -7,11 +7,12 @@ from fastapi.testclient import TestClient
 from kinsun.accounts.service import AccountService
 from kinsun.appointments.service import AppointmentService
 from kinsun.medications.service import MedicationService
-from kinsun.web.api import create_api_router
 from kinsun.web.auth import AuthError
+from kinsun.web.routers import create_guardian_face_router
 from tests.fakes import (
     FakeAccountStore,
     FakeAppointmentStore,
+    FakeConversationSummaryStore,
     FakeMedicationStore,
     FakeReminderLogStore,
     FakeRiskEventStore,
@@ -43,7 +44,7 @@ def _setup(line_user_id="U-son"):
     appointments = AppointmentService(FakeAppointmentStore(), new_id=lambda: next(appt_ids))
     app = FastAPI()
     app.include_router(
-        create_api_router(
+        create_guardian_face_router(
             verifier=_FakeVerifier(line_user_id),
             accounts=accounts,
             medications=MedicationService(FakeMedicationStore()),
@@ -51,7 +52,9 @@ def _setup(line_user_id="U-son"):
             clock=lambda: NOW,
             risk_events=FakeRiskEventStore(),
             reminder_logs=FakeReminderLogStore(),
-        )
+            summaries=FakeConversationSummaryStore(),
+        ),
+        prefix="/api/v1",
     )
     return TestClient(app), elder.elder_id
 
@@ -62,35 +65,35 @@ def _auth():
 
 def _add(client, elder_id, date="2026-08-01", label="回診"):
     res = client.post(
-        f"/api/elders/{elder_id}/appointments",
+        f"/api/v1/elders/{elder_id}/appointments",
         headers=_auth(),
         json={"date": date, "label": label},
     )
-    return res.json()["appointment_id"]
+    return res.json()["data"]["appointment_id"]
 
 
 def test_list_requires_management():
     client, elder_id = _setup(line_user_id="U-stranger")
-    assert client.get(f"/api/elders/{elder_id}/appointments", headers=_auth()).status_code == 404
+    assert client.get(f"/api/v1/elders/{elder_id}/appointments", headers=_auth()).status_code == 404
 
 
 def test_add_then_list():
     client, elder_id = _setup()
     res = client.post(
-        f"/api/elders/{elder_id}/appointments",
+        f"/api/v1/elders/{elder_id}/appointments",
         headers=_auth(),
         json={"date": "2026-08-01", "label": "心臟科回診"},
     )
     assert res.status_code == 201
-    assert res.json()["date"] == "2026-08-01"
-    listed = client.get(f"/api/elders/{elder_id}/appointments", headers=_auth()).json()
-    assert [a["label"] for a in listed["appointments"]] == ["心臟科回診"]
+    assert res.json()["data"]["date"] == "2026-08-01"
+    listed = client.get(f"/api/v1/elders/{elder_id}/appointments", headers=_auth()).json()
+    assert [a["label"] for a in listed["data"]] == ["心臟科回診"]
 
 
 def test_add_rejects_past_date():
     client, elder_id = _setup()
     res = client.post(
-        f"/api/elders/{elder_id}/appointments",
+        f"/api/v1/elders/{elder_id}/appointments",
         headers=_auth(),
         json={"date": "2026-07-01", "label": "回診"},
     )
@@ -100,12 +103,12 @@ def test_add_rejects_past_date():
 def test_add_rejects_bad_date_and_empty_label():
     client, elder_id = _setup()
     bad_date = client.post(
-        f"/api/elders/{elder_id}/appointments",
+        f"/api/v1/elders/{elder_id}/appointments",
         headers=_auth(),
         json={"date": "abc", "label": "回診"},
     )
     empty_label = client.post(
-        f"/api/elders/{elder_id}/appointments",
+        f"/api/v1/elders/{elder_id}/appointments",
         headers=_auth(),
         json={"date": "2026-08-01", "label": "  "},
     )
@@ -117,20 +120,20 @@ def test_update_changes_appt():
     client, elder_id = _setup()
     appointment_id = _add(client, elder_id, "2026-08-01", "舊")
     res = client.put(
-        f"/api/elders/{elder_id}/appointments/{appointment_id}",
+        f"/api/v1/elders/{elder_id}/appointments/{appointment_id}",
         headers=_auth(),
         json={"date": "2026-08-05", "label": "新"},
     )
     assert res.status_code == 200
-    listed = client.get(f"/api/elders/{elder_id}/appointments", headers=_auth()).json()
-    assert listed["appointments"][0]["date"] == "2026-08-05"
-    assert listed["appointments"][0]["label"] == "新"
+    listed = client.get(f"/api/v1/elders/{elder_id}/appointments", headers=_auth()).json()
+    assert listed["data"][0]["date"] == "2026-08-05"
+    assert listed["data"][0]["label"] == "新"
 
 
 def test_update_rejects_appt_not_under_elder():
     client, elder_id = _setup()
     res = client.put(
-        f"/api/elders/{elder_id}/appointments/ghost",
+        f"/api/v1/elders/{elder_id}/appointments/ghost",
         headers=_auth(),
         json={"date": "2026-08-01", "label": "x"},
     )
@@ -142,22 +145,22 @@ def test_delete_removes():
     appointment_id = _add(client, elder_id)
     assert (
         client.delete(
-            f"/api/elders/{elder_id}/appointments/{appointment_id}", headers=_auth()
+            f"/api/v1/elders/{elder_id}/appointments/{appointment_id}", headers=_auth()
         ).status_code
         == 204
     )
-    listed = client.get(f"/api/elders/{elder_id}/appointments", headers=_auth()).json()
-    assert listed["appointments"] == []
+    listed = client.get(f"/api/v1/elders/{elder_id}/appointments", headers=_auth()).json()
+    assert listed["data"] == []
 
 
 def test_delete_rejects_appt_not_under_elder():
     client, elder_id = _setup()
     assert (
-        client.delete(f"/api/elders/{elder_id}/appointments/ghost", headers=_auth()).status_code
+        client.delete(f"/api/v1/elders/{elder_id}/appointments/ghost", headers=_auth()).status_code
         == 404
     )
 
 
 def test_requires_token():
     client, elder_id = _setup()
-    assert client.get(f"/api/elders/{elder_id}/appointments").status_code == 401
+    assert client.get(f"/api/v1/elders/{elder_id}/appointments").status_code == 401

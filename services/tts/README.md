@@ -56,7 +56,9 @@ mp4/m4a 的 `moov` atom 需可 seek 的輸出，故服務走可 seek 的暫存�
 | `TTS_PROMPT_WAV` | 空（必填） | 參考音檔路徑（金孫聲音，5–15 秒乾淨人聲），缺會啟動時明確報錯 |
 | `TTS_PROMPT_TEXT` | 空（必填） | `TTS_PROMPT_WAV` 的逐字稿 |
 | `TTS_MAX_CONCURRENCY` | `1` | 同時處理的合成請求數（threadpool + semaphore） |
-| `TTS_MAX_QUEUE` | `8` | 等候佇列上限，超過回 503 |
+| `TTS_MAX_QUEUE` | `8` | 等候佇列上限，超過回 503（`overloaded`） |
+| `TTS_API_KEY` | 空 | 共用金鑰（✅ D-56）：設定後驗 `X-Api-Key`（錯誤回 401）；留空＝內網不驗 |
+| `TTS_MAX_TEXT_CHARS` | `1000` | 合成文字長度上限；超過回 413、缺 text 回 400（✅ D-26） |
 | `TTS_PRELOAD` | `0` | 設 `1` 於服務啟動（lifespan）即載入模型，預設延遲載入（大小寫不敏感） |
 
 ## 接到應用層

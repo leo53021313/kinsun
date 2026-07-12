@@ -81,6 +81,26 @@ class FakeConversationSummaryStore:
         return [ConversationSummary(elder_id, d, c, 0.0) for d, c in items]
 
 
+def _l1_signals_for_day(risk_events, elder_id: str, now: datetime) -> list[str]:
+    """取摘要日（昨天）的 L1 小訊號理由（✅ D-10 己-5）。
+
+    只取 L1：L2 已即時通知過家屬，不重複；fail-safe 留痕（分級器故障）是系統
+    事件、不是長輩狀態，不進家屬摘要。台灣無日光節約時間，一天固定 86400 秒。
+    """
+    from kinsun.safety.tiers import FAILSAFE_EVENT_REASON, RiskTier
+
+    day = now.date() - timedelta(days=1)
+    start = datetime(day.year, day.month, day.day, tzinfo=now.tzinfo).timestamp()
+    end = start + 86400.0
+    return [
+        e.reason
+        for e in reversed(risk_events.list_for_elder(elder_id))  # 由舊到新
+        if e.tier == RiskTier.L1
+        and e.reason != FAILSAFE_EVENT_REASON
+        and start <= e.created_at < end
+    ]
+
+
 def summarize_day(
     elder_id: str,
     *,
@@ -88,10 +108,20 @@ def summarize_day(
     summarizer,
     summaries: ConversationSummaryStore,
     clock: Callable[[], datetime],
+    risk_events=None,
 ) -> None:
     turns = short_term.previous_day(elder_id)
     if not turns:
         return
-    content = summarizer.generate(system_prompt=SUMMARY_PROMPT, messages=turns)
+    system_prompt = SUMMARY_PROMPT
+    signals = _l1_signals_for_day(risk_events, elder_id, clock()) if risk_events else []
+    if signals:
+        # L1 小訊號進每日摘要（✅ D-10 己-5）：不即時通知、改讓家人在摘要看到。
+        system_prompt += (
+            "另外，系統當天記錄到這些健康或情緒上的小訊號（非緊急）："
+            + "；".join(signals)
+            + "。請在摘要中自然地一併提及，讓家人知道可以多關心。"
+        )
+    content = summarizer.generate(system_prompt=system_prompt, messages=turns)
     day = (clock().date() - timedelta(days=1)).isoformat()
     summaries.save(elder_id, day, content)

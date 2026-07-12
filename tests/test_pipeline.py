@@ -1,9 +1,9 @@
 import pytest
 
 from kinsun.agent import CareAgent
-from kinsun.llm import LLMError, Message
+from kinsun.llm import LLMError, Message, report_llm_usage
 from kinsun.pipeline import VoicePipeline
-from kinsun.safety.tiers import RiskAssessment, RiskTier
+from kinsun.safety.tiers import FAILSAFE_EVENT_REASON, RiskAssessment, RiskTier
 from kinsun.speech.asr import MockAsrClient
 from kinsun.speech.tts import TextBubbleTts, TTSError, TtsResult
 from tests.fakes import FakeRiskEventStore, FakeTraceStore
@@ -63,8 +63,8 @@ def test_pipeline_replies_and_runs_detection():
 
 def test_pipeline_notifies_on_l2_or_above():
     notifier = SpyNotifier()
-    _pipeline(StubDetector(RiskTier.L3), notifier).process(b"\x00", elder_id="u1")
-    assert notifier.calls == [("u1", RiskTier.L3)]
+    _pipeline(StubDetector(RiskTier.L2), notifier).process(b"\x00", elder_id="u1")
+    assert notifier.calls == [("u1", RiskTier.L2)]
 
 
 class _BoomRiskEvents:
@@ -83,9 +83,9 @@ def test_pipeline_records_risk_event_on_l2():
     assert notifier.calls == [("u1", RiskTier.L2)]
 
 
-def test_pipeline_does_not_record_below_l2():
+def test_pipeline_does_not_record_l0():
     events = FakeRiskEventStore()
-    _pipeline(StubDetector(RiskTier.L1), SpyNotifier(), events).process(b"\x00", elder_id="u1")
+    _pipeline(StubDetector(RiskTier.L0), SpyNotifier(), events).process(b"\x00", elder_id="u1")
     assert events.recorded == []
 
 
@@ -101,22 +101,22 @@ def test_pipeline_notifies_before_reply_generation():
         asr=MockAsrClient("阿公早安"),
         agent=_BoomAgent(),
         tts=TextBubbleTts(),
-        detector=StubDetector(RiskTier.L3),
+        detector=StubDetector(RiskTier.L2),
         notifier=notifier,
         risk_events=FakeRiskEventStore(),
     )
     with pytest.raises(RuntimeError):
         pipeline.process(b"\x00", elder_id="u1")
-    assert notifier.calls == [("u1", RiskTier.L3)]
+    assert notifier.calls == [("u1", RiskTier.L2)]
 
 
 def test_pipeline_record_failure_does_not_break():
     notifier = SpyNotifier()
-    result = _pipeline(StubDetector(RiskTier.L3), notifier, _BoomRiskEvents()).process(
+    result = _pipeline(StubDetector(RiskTier.L2), notifier, _BoomRiskEvents()).process(
         b"\x00", elder_id="u1"
     )
     assert result.text == "你說的是：阿公早安"
-    assert notifier.calls == [("u1", RiskTier.L3)]
+    assert notifier.calls == [("u1", RiskTier.L2)]
 
 
 class _BoomTts:
@@ -222,7 +222,7 @@ def test_pipeline_passes_trace_id_to_risk_events():
         asr=MockAsrClient("救命"),
         agent=CareAgent(EchoLLM(), NullSession()),
         tts=TextBubbleTts(),
-        detector=StubDetector(RiskTier.L3),
+        detector=StubDetector(RiskTier.L2),
         notifier=SpyNotifier(),
         risk_events=risk_events,
         traces=traces,
@@ -266,8 +266,71 @@ def test_process_text_skips_asr_and_replies():
 def test_process_text_notifies_and_records_on_l3():
     notifier = SpyNotifier()
     events = FakeRiskEventStore()
-    _text_pipeline(StubDetector(RiskTier.L3), notifier, events).process_text(
+    _text_pipeline(StubDetector(RiskTier.L2), notifier, events).process_text(
         "救命", elder_id="u1", trace_id="t9"
     )
-    assert notifier.calls == [("u1", RiskTier.L3)]
+    assert notifier.calls == [("u1", RiskTier.L2)]
     assert events.recorded_trace_ids == ["t9"]
+
+
+class StubFailsafeDetector:
+    """模擬分級器故障的保守留痕輸出（✅ D-31）。"""
+
+    def assess(self, text: str) -> RiskAssessment:
+        return RiskAssessment(RiskTier.L1, 0.0, FAILSAFE_EVENT_REASON, ["llm:error"])
+
+
+def test_failsafe_l1_records_without_notifying():
+    """✅ D-31（甲-5）：fail-safe L1 要落庫留痕，但不通知家屬。"""
+    notifier = SpyNotifier()
+    events = FakeRiskEventStore()
+    _text_pipeline(StubFailsafeDetector(), notifier, events).process_text(
+        "今天天氣真好", elder_id="u1", trace_id="t1"
+    )
+    assert notifier.calls == []
+    assert len(events.recorded) == 1
+    assert events.recorded[0][1].reason == FAILSAFE_EVENT_REASON
+
+
+def test_plain_l1_recorded_without_notifying():
+    """一般 L1（小訊號）要落庫供每日摘要取用、但不通知家屬（✅ D-10 己-5，庚-01）。
+
+    落庫是「L1 小訊號進每日摘要」的資料來源：summaries._l1_signals_for_day 只讀
+    risk_events 中「L1 且非 fail-safe 理由」的事件——修復前此類事件從未被寫入，
+    功能在生產路徑恆為空（05 差距 A-39）。
+    """
+    notifier = SpyNotifier()
+    events = FakeRiskEventStore()
+    _text_pipeline(StubDetector(RiskTier.L1), notifier, events).process_text(
+        "最近睡不好", elder_id="u1"
+    )
+    assert notifier.calls == []
+    assert len(events.recorded) == 1
+    assert events.recorded[0][0] == "u1"
+    assert events.recorded[0][1].tier == RiskTier.L1
+    assert events.recorded[0][1].reason != FAILSAFE_EVENT_REASON
+
+
+class _UsageReportingLLM:
+    """回覆時申報 token 用量（✅ D-05 戊-2）：模擬 GeminiClient 透出 usage_metadata。"""
+
+    def generate(self, *, system_prompt: str, messages: list[Message]) -> str:
+        report_llm_usage(120, 40)
+        return "有記帳的回覆"
+
+
+def test_pipeline_records_llm_token_usage():
+    traces = FakeTraceStore()
+    _traced_pipeline(traces, llm=_UsageReportingLLM()).process(
+        b"\x00", elder_id="u1", trace_id="t1"
+    )
+    assert traces.llm_calls[0].input_tokens == 120
+    assert traces.llm_calls[0].output_tokens == 40
+
+
+def test_pipeline_records_null_tokens_when_llm_reports_no_usage():
+    # 零申報（假 LLM／舊 SDK 無 usage_metadata）記 NULL＝「未量測」，與量測到 0 區隔。
+    traces = FakeTraceStore()
+    _traced_pipeline(traces).process(b"\x00", elder_id="u1", trace_id="t1")
+    assert traces.llm_calls[0].input_tokens is None
+    assert traces.llm_calls[0].output_tokens is None

@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { type FeedMessage, listMessages } from "../api";
+import { type FeedMessage, listMessages, listMessagesBefore } from "../api";
 import { formatTime } from "../format";
 import { usePolling } from "../usePolling";
 
@@ -18,7 +18,28 @@ function messageKey(m: FeedMessage): string {
 export function MessagesPage() {
   const [messages, setMessages] = useState<FeedMessage[]>([]);
   const [disconnected, setDisconnected] = useState(false);
+  const [hasOlder, setHasOlder] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const lastSeen = useRef(0);
+
+  // 回翻歷史（✅ D-29 乙-6）：以最舊一筆為游標往回撈。
+  async function loadOlder() {
+    const oldest = messages[messages.length - 1]?.created_at;
+    if (!oldest || loadingOlder) return;
+    setLoadingOlder(true);
+    try {
+      const { messages: older, hasMore } = await listMessagesBefore(oldest);
+      setHasOlder(hasMore);
+      setMessages((prev) => {
+        const seen = new Set(prev.map(messageKey));
+        return [...prev, ...older.filter((m) => !seen.has(messageKey(m)))];
+      });
+    } catch {
+      setDisconnected(true);
+    } finally {
+      setLoadingOlder(false);
+    }
+  }
 
   usePolling(async () => {
     try {
@@ -54,6 +75,11 @@ export function MessagesPage() {
           </span>
         </div>
       ))}
+      {messages.length > 0 && hasOlder && (
+        <button type="button" className="load-older" onClick={loadOlder} disabled={loadingOlder}>
+          {loadingOlder ? "載入中…" : "載入更早的訊息"}
+        </button>
+      )}
     </section>
   );
 }
