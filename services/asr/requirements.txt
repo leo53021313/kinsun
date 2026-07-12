@@ -1,10 +1,10 @@
 # 僅在 DGX Spark（Linux + ARM64/aarch64 + GPU）安裝。
-# DGX 實機驗證（2026-07-02，GB10 / aarch64 / CUDA 13）鎖定：torch 2.12.1+cu130、transformers 5.x。
+# 版本鎖定（✅ D-56 丙-10）：依 DGX 實機 .venv 凍結（2026-07-09；torch 為 cu130 建置）。
 # 系統需 ffmpeg：服務自行以 ffmpeg 把音檔 bytes 解成 16k 單聲道 f32le 再餵給 pipeline
 #   （HF 內建 ffmpeg_read 走 stdin pipe 不可 seek，moov 在檔尾的 m4a 會解成 partial file）。
 # numpy 為 transformers/torch 的相依，服務直接使用（解碼後包成陣列）。
-fastapi
-uvicorn
-transformers
-torch
-numpy
+fastapi==0.139.0
+uvicorn==0.49.0
+transformers==5.12.1
+torch==2.12.1
+numpy==2.5.0

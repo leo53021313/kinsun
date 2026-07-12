@@ -8,11 +8,12 @@ from typing import Protocol
 from kinsun.llm import LLMClient, LLMError, Message
 from kinsun.safety.tiers import RiskAssessment, RiskTier
 
+# 三級制（✅ D-72，己-4）：L2 為頂級——立即危險與明確警訊都判 2，由家屬接手判斷。
 CLASSIFY_SYSTEM_PROMPT = (
     "你是長者照護的安全分級器。判斷使用者這句話的危急程度，"
-    '只輸出 JSON：{"tier": 0-3, "confidence": 0-1, "reason": "簡短理由"}。'
-    "tier 定義：0 一般；1 情緒或健康弱訊號；2 明確但非立即危險（持續疼痛、疑似漏藥、輕微跌倒）；"
-    "3 立即生命危險（求救、胸痛呼吸困難、意識不清、自傷意念）。"
+    '只輸出 JSON：{"tier": 0-2, "confidence": 0-1, "reason": "簡短理由"}。'
+    "tier 定義：0 一般；1 情緒或健康弱訊號（如最近睡不好、心情低落）；"
+    "2 明確警訊（持續疼痛、跌倒、疑似漏藥、求救、胸痛呼吸困難、意識不清、自傷意念）。"
     "注意區分身體不適與情緒因素，避免把口頭誇飾誤判為危急。只輸出 JSON，不要多餘文字。"
 )
 
@@ -35,7 +36,7 @@ def _extract_json(raw: str) -> str:
 def _parse_classification(raw: str) -> RiskAssessment:
     try:
         data = json.loads(_extract_json(raw))
-        tier = RiskTier(max(0, min(3, int(data["tier"]))))
+        tier = RiskTier(max(0, min(2, int(data["tier"]))))  # 舊制吐 3 也夾回 L2
         confidence = max(0.0, min(1.0, float(data.get("confidence", 0.0))))
         reason = str(data.get("reason", ""))
     except (json.JSONDecodeError, KeyError, ValueError, TypeError):

@@ -20,7 +20,7 @@ def test_invite_defaults():
     inv = Invite("c1", "e1", InviteRole.GUARDIAN, 100.0, max_attempts=5)
     assert inv.attempts == 0
     assert inv.used_at is None
-    assert ElderGuardian("e1", "g1", Role.PRIMARY, 1, True).can_view_transcript is True
+    assert ElderGuardian("e1", "g1", Role.PRIMARY, 1).escalation_order == 1
 
 
 def test_channel_binding_model():

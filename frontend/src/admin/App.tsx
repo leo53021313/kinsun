@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
 
-import { getAdminKey, setAdminKey } from "./api";
+import { getAdminKey, setAdminKey, setOnUnauthorized } from "./api";
 import { EldersPage } from "./pages/EldersPage";
 import { ElderTimelinePage } from "./pages/ElderTimelinePage";
 import { MessagesPage } from "./pages/MessagesPage";
@@ -34,6 +34,11 @@ function KeyForm({ onSubmit }: { onSubmit: () => void }) {
 
 export function App() {
   const [hasKey, setHasKey] = useState(() => getAdminKey() !== null);
+  // 金鑰失效自動回輸入頁（✅ D-52 丁-7）：任何 API 401 即切換。
+  useEffect(() => {
+    setOnUnauthorized(() => setHasKey(false));
+    return () => setOnUnauthorized(null);
+  }, []);
   if (!hasKey) return <KeyForm onSubmit={() => setHasKey(true)} />;
   return (
     <BrowserRouter basename="/admin">

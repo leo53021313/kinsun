@@ -63,8 +63,8 @@ def _record_full_trace(store, *, trace_id: str, line_user_id: str) -> None:
         status="ok",
         latency_ms=800,
         model_name="gemini-3.1-flash-lite",
-        input_tokens=None,
-        output_tokens=None,
+        input_tokens=512,
+        output_tokens=64,
         content="早安，睡得好嗎？",
         error_message="",
     )
@@ -82,6 +82,7 @@ def _record_full_trace(store, *, trace_id: str, line_user_id: str) -> None:
         kind="voice",
         status="ok",
         latency_ms=150,
+        round_trip_ms=950,
         audio_url="https://x/out.m4a",
     )
 
@@ -109,8 +110,8 @@ def test_record_then_get_trace_roundtrip(store, ns):
 
     assert [c.content for c in trace.llm_calls] == ["早安，睡得好嗎？"]
     assert trace.llm_calls[0].model_name == "gemini-3.1-flash-lite"
-    assert trace.llm_calls[0].input_tokens is None
-    assert trace.llm_calls[0].output_tokens is None
+    assert trace.llm_calls[0].input_tokens == 512
+    assert trace.llm_calls[0].output_tokens == 64
 
     assert trace.tts_call is not None
     assert trace.tts_call.content == "早安，睡得好嗎？"
@@ -119,6 +120,9 @@ def test_record_then_get_trace_roundtrip(store, ns):
     assert trace.reply is not None
     assert trace.reply.kind == "voice"
     assert trace.reply.audio_url == "https://x/out.m4a"
+    # 往返延遲（✅ D-05 戊-2）：端到端 round_trip_ms 與發送段 latency_ms 各自留存。
+    assert trace.reply.latency_ms == 150
+    assert trace.reply.round_trip_ms == 950
 
     # 未記錄任何風險事件，兩邊都應回空清單（記錄面不寫 risk_events）。
     assert trace.risk_events == []
@@ -139,6 +143,7 @@ def test_get_trace_with_only_reply_still_bundles(store, ns):
         kind="text",
         status="ok",
         latency_ms=10,
+        round_trip_ms=None,
         audio_url="",
     )
     trace = store.get_trace(trace_id)

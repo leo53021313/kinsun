@@ -40,6 +40,7 @@ export function Button(props: {
         <ActivityIndicator color={variant === "outline" ? colors.primary : "#FFFFFF"} />
       ) : (
         <Text
+          maxFontSizeMultiplier={1.6}
           style={[
             styles.buttonLabel,
             size === "big" ? styles.buttonLabelBig : null,
@@ -57,7 +58,9 @@ export function Field(props: TextInputProps & { label: string }) {
   const { label, ...input } = props;
   return (
     <View style={styles.field}>
-      <Text style={styles.fieldLabel}>{label}</Text>
+      <Text style={styles.fieldLabel} maxFontSizeMultiplier={1.6}>
+        {label}
+      </Text>
       <TextInput
         placeholderTextColor={colors.textSoft}
         {...input}
@@ -71,20 +74,30 @@ export function ErrorText(props: { message: string }) {
   if (!props.message) {
     return null;
   }
-  return <Text style={styles.error}>{props.message}</Text>;
+  return (
+    <Text style={styles.error} maxFontSizeMultiplier={2}>
+      {props.message}
+    </Text>
+  );
 }
 
 export function Section(props: { title: string; children: ReactNode }) {
   return (
     <View style={styles.section}>
-      <Text style={styles.sectionTitle}>{props.title}</Text>
+      <Text style={styles.sectionTitle} maxFontSizeMultiplier={1.6}>
+        {props.title}
+      </Text>
       {props.children}
     </View>
   );
 }
 
 export function EmptyHint(props: { text: string }) {
-  return <Text style={styles.empty}>{props.text}</Text>;
+  return (
+    <Text style={styles.empty} maxFontSizeMultiplier={2}>
+      {props.text}
+    </Text>
+  );
 }
 
 const styles = StyleSheet.create({

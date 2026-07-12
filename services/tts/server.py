@@ -21,6 +21,7 @@ DGX 實機鎖定（2026-07-02，GB10 / aarch64 / CUDA 13）：
 from __future__ import annotations
 
 import asyncio
+import hmac
 import io
 import os
 import subprocess
@@ -28,7 +29,7 @@ import sys
 import tempfile
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 
@@ -39,6 +40,10 @@ TTS_PROMPT_WAV = os.environ.get("TTS_PROMPT_WAV", "")
 TTS_PROMPT_TEXT = os.environ.get("TTS_PROMPT_TEXT", "")
 TTS_MAX_CONCURRENCY = int(os.environ.get("TTS_MAX_CONCURRENCY", "1"))
 TTS_MAX_QUEUE = int(os.environ.get("TTS_MAX_QUEUE", "8"))
+# 合成文字長度上限（✅ D-26 乙-7）：缺 text 原本會靜默合成空音，改 400。
+TTS_MAX_TEXT_CHARS = int(os.environ.get("TTS_MAX_TEXT_CHARS", "1000"))
+# 共用金鑰（✅ D-56 丙-10）：設定後驗 X-Api-Key；未設＝內網開發模式不驗。
+TTS_API_KEY = os.environ.get("TTS_API_KEY", "")
 TTS_PRELOAD = os.environ.get("TTS_PRELOAD", "0").strip().lower() not in {"0", "false", "no", ""}
 
 # zero-shot 逐字稿的 instruct 前綴（見模組 docstring 的 DGX 鎖定說明）。
@@ -142,15 +147,29 @@ async def healthz() -> dict:
     return {"status": "ok", "model_loaded": _model is not None}
 
 
+def _require_api_key(request: Request) -> None:
+    if not TTS_API_KEY:
+        return
+    if not hmac.compare_digest(request.headers.get("x-api-key", ""), TTS_API_KEY):
+        raise HTTPException(status_code=401, detail="invalid_api_key")
+
+
 @app.post("/synthesize")
-async def synthesize(payload: dict) -> Response:
+async def synthesize(payload: dict, request: Request) -> Response:
     global _inflight
+    _require_api_key(request)
+    # 基本請求驗證（✅ D-26 乙-7）：缺 text 400（原本靜默合成空音）、過長 413。
+    text = str(payload.get("text", "")).strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="missing_text")
+    if len(text) > TTS_MAX_TEXT_CHARS:
+        raise HTTPException(status_code=413, detail="text_too_long")
     if _inflight >= TTS_MAX_CONCURRENCY + TTS_MAX_QUEUE:
-        raise HTTPException(status_code=503, detail="TTS 過載，請稍後再試")
+        raise HTTPException(status_code=503, detail="overloaded")
     _inflight += 1
     try:
         async with _sem:
-            audio, duration_ms = await run_in_threadpool(_synthesize, payload.get("text", ""))
+            audio, duration_ms = await run_in_threadpool(_synthesize, text)
     finally:
         _inflight -= 1
     return Response(

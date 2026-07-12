@@ -1,13 +1,16 @@
 name: CI
 
-# 7 人協作的守門：每個對 main 的 PR（與合進 main 後）自動跑 lint、格式與測試。
-# 單元測試全離線、不需雲端金鑰；雲端整合測試（KINSUN_IT）預設 skip，故 CI 會綠。
+# 7 人協作的守門（戊-1）：每個對 main 的 PR（與合進 main 後）自動跑
+# lint、格式、單元測試、Pg 合約測試（service container 起拋棄式 pgvector，
+# 不碰正式庫，✅ D-69）、三端型別檢查與建置，外加依賴安全掃描。
+# 單元測試全離線、不需雲端金鑰；KINSUN_IT 只閘 Pg 真庫測試，由 integration job 供庫。
 
 on:
   pull_request:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch: # 允許在個人分支上手動驗證 CI 本身的修改
 
 jobs:
   test:
@@ -29,8 +32,41 @@ jobs:
       - name: Ruff 格式檢查
         run: uv run ruff format --check .
 
-      - name: 跑測試
+      - name: 跑測試（含覆蓋率門檻 80%）
+        run: uv run pytest --cov=kinsun --cov-fail-under=80
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # 與本機拋棄式測試庫同一 image（見 CONTEXT.md 合約測試）；schema 由
+        # pg_database fixture 的 ensure_schema 自動建立。
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_PASSWORD: kinsun-test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安裝 uv（含快取）
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: 建立環境（依 uv.lock 還原）
+        run: uv sync --frozen
+
+      - name: 跑測試（含 Pg 合約測試）
         run: uv run pytest
+        env:
+          KINSUN_IT: "1"
+          KINSUN_TEST_DATABASE_URL: postgresql://postgres:kinsun-test@localhost:5433/postgres
 
   frontend:
     runs-on: ubuntu-latest
@@ -59,3 +95,47 @@ jobs:
       - name: 建置觀測後台
         run: npm run build:admin
         working-directory: frontend
+
+  app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安裝 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: 安裝 App 依賴（kinsun-shared 走 file:../shared，需整庫 checkout）
+        run: npm ci
+        working-directory: app
+
+      - name: 型別檢查
+        run: npm run typecheck
+        working-directory: app
+
+  audit:
+    # 依賴安全掃描：警示不擋門（continue-on-error）——新揭露的 CVE 不應在
+    # 發表前夕擋死所有合併，但每次 PR 都看得到紅字、需人為決定處置。
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安裝 uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: pip-audit（Python 依賴）
+        run: |
+          uv export --frozen --no-emit-project -o requirements.txt
+          uvx pip-audit --disable-pip -r requirements.txt
+
+      - name: npm audit（frontend）
+        run: npm audit --audit-level=high
+        working-directory: frontend
+
+      - name: npm audit（app）
+        run: npm audit --audit-level=high
+        working-directory: app

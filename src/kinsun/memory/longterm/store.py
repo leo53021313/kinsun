@@ -54,7 +54,11 @@ class Mem0LongTermStore:
 
     def _search_raw(self, query: str, elder_id: str, top_k: int) -> list[dict]:
         try:
-            result = self._memory.search(query, filters={"user_id": elder_id}, top_k=top_k)
+            # rerank＋explain（✅ D-40 丁-4）：reranker 是否生效由 mem0 config 決定
+            # （LONGTERM_RERANK_ENABLED），未配置時 mem0 自動略過；explain 附評分細節。
+            result = self._memory.search(
+                query, filters={"user_id": elder_id}, top_k=top_k, rerank=True, explain=True
+            )
         except Exception as exc:  # noqa: BLE001 — 記憶壞掉不可中斷對話
             logger.warning("長期記憶檢索失敗，退化為無記憶：%s", exc)
             return []
@@ -78,6 +82,9 @@ class Mem0LongTermStore:
         user_items = self._search_raw(query, elder_id, top_k or self._top_k)
         health_items = self._search_raw(HEALTH_QUERY, elder_id, self._health_top_k)
         merged = self._dedup(user_items + health_items)
+        for item in merged:
+            if "score_details" in item:  # explain 供調閱：debug 層記錄，不進 prompt
+                logger.debug("記憶評分 %s：%s", item.get("id"), item.get("score_details"))
         # 由新到舊：created_at 遞減；缺 created_at 者排最後（與原排版排序一致）。
         ordered = sorted(merged, key=_created_at, reverse=True)
         return [item for item in map(_to_memory_item, ordered) if item.text]
