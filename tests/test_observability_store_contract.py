@@ -10,7 +10,7 @@ overview）為跨表 UNION ALL 的原生 SQL，其等價性刻意延後到架構
 ``test_observability_store.py``（Fake）與 ``test_pg_observability_store.py``（Pg）。
 
 斷言範圍說明：只斷言「兩邊都可靠產生」的欄位——即各 record_* 寫入的業務
-內容（trace_id／line_user_id／payload／transcript／content／kind 等）。
+內容（trace_id／external_id／payload／transcript／content／kind 等）。
 刻意不斷言主鍵 *_id 與 created_at：主鍵由各自的 new_id／_next_id 產生、
 created_at 由各自的 clock／now 決定，本非合約承諾的等價欄位。
 """
@@ -40,17 +40,19 @@ def store(request, ns):
     return FakeTraceStore()
 
 
-def _record_full_trace(store, *, trace_id: str, line_user_id: str) -> None:
+def _record_full_trace(store, *, trace_id: str, external_id: str, channel: str = "line") -> None:
     store.record_webhook_event(
         trace_id=trace_id,
-        line_user_id=line_user_id,
+        external_id=external_id,
+        channel=channel,
         event_type="message",
         message_type="audio",
         payload={"k": "v"},
     )
     store.record_asr_call(
         trace_id=trace_id,
-        line_user_id=line_user_id,
+        external_id=external_id,
+        channel=channel,
         status="ok",
         latency_ms=120,
         transcript="阿公早安",
@@ -59,7 +61,8 @@ def _record_full_trace(store, *, trace_id: str, line_user_id: str) -> None:
     )
     store.record_llm_call(
         trace_id=trace_id,
-        line_user_id=line_user_id,
+        external_id=external_id,
+        channel=channel,
         status="ok",
         latency_ms=800,
         model_name="gemini-3.1-flash-lite",
@@ -70,7 +73,8 @@ def _record_full_trace(store, *, trace_id: str, line_user_id: str) -> None:
     )
     store.record_tts_call(
         trace_id=trace_id,
-        line_user_id=line_user_id,
+        external_id=external_id,
+        channel=channel,
         status="ok",
         latency_ms=300,
         content="早安，睡得好嗎？",
@@ -78,7 +82,8 @@ def _record_full_trace(store, *, trace_id: str, line_user_id: str) -> None:
     )
     store.record_reply(
         trace_id=trace_id,
-        line_user_id=line_user_id,
+        external_id=external_id,
+        channel=channel,
         kind="voice",
         status="ok",
         latency_ms=150,
@@ -89,15 +94,18 @@ def _record_full_trace(store, *, trace_id: str, line_user_id: str) -> None:
 
 def test_record_then_get_trace_roundtrip(store, ns):
     trace_id = f"{ns}trace"
-    line_user_id = f"{ns}user"
-    _record_full_trace(store, trace_id=trace_id, line_user_id=line_user_id)
+    external_id = f"{ns}user"
+    _record_full_trace(store, trace_id=trace_id, external_id=external_id)
 
     trace = store.get_trace(trace_id)
     assert trace is not None
     assert trace.trace_id == trace_id
-    assert trace.line_user_id == line_user_id
+    assert trace.external_id == external_id
+    # ✅ 庚-07（A-8）：channel 隨 external_id 一併留痕、round-trip 取回。
+    assert trace.channel == "line"
 
     assert trace.webhook_event is not None
+    assert trace.webhook_event.channel == "line"
     assert trace.webhook_event.event_type == "message"
     assert trace.webhook_event.message_type == "audio"
     assert trace.webhook_event.payload == {"k": "v"}
@@ -136,10 +144,10 @@ def test_get_trace_with_only_reply_still_bundles(store, ns):
     # 部分鏈路：只落一筆 reply，get_trace 仍應回一個含該 reply 的 Trace，
     # 其餘子紀錄為 None／空清單。
     trace_id = f"{ns}partial"
-    line_user_id = f"{ns}user"
+    external_id = f"{ns}user"
     store.record_reply(
         trace_id=trace_id,
-        line_user_id=line_user_id,
+        external_id=external_id,
         kind="text",
         status="ok",
         latency_ms=10,
@@ -148,7 +156,7 @@ def test_get_trace_with_only_reply_still_bundles(store, ns):
     )
     trace = store.get_trace(trace_id)
     assert trace is not None
-    assert trace.line_user_id == line_user_id
+    assert trace.external_id == external_id
     assert trace.webhook_event is None
     assert trace.asr_call is None
     assert trace.llm_calls == []

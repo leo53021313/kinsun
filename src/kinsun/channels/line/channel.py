@@ -97,7 +97,8 @@ class LineChannel:
         safe_record(
             lambda: traces.record_webhook_event(
                 trace_id=trace_id,
-                line_user_id=line_user_id,
+                external_id=line_user_id,
+                channel=Channel.LINE.value,
                 event_type=str(getattr(event, "type", "") or "unknown"),
                 message_type=str(mtype or ""),
                 payload=_event_payload(event),
