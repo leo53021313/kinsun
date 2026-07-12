@@ -226,9 +226,7 @@ class PgAccountStore:
             "FROM invites WHERE elder_id = %s ORDER BY expires_at DESC",
             (elder_id,),
         )
-        return [
-            Invite(c, e, InviteRole(r), exp, m, a, u) for (c, e, r, exp, m, a, u) in rows
-        ]
+        return [Invite(c, e, InviteRole(r), exp, m, a, u) for (c, e, r, exp, m, a, u) in rows]
 
     def save_channel_binding(self, binding: ChannelBinding, *, tx: Executor | None = None) -> None:
         (tx or self._db).execute(

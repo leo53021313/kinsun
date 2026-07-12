@@ -269,9 +269,9 @@ def test_elder_reminders_shape():
     appts.save(Appointment("a1", "e1", "2026-07-20", "心臟科回診"))
     logs = FakeReminderLogStore()
     logs.record("e1", "medication", "早上用藥：降血壓藥")
-    res = _client(
-        account_store=accounts, med_store=meds, appt_store=appts, reminder_logs=logs
-    ).get("/api/v1/admin/elders/e1/reminders", headers=_auth())
+    res = _client(account_store=accounts, med_store=meds, appt_store=appts, reminder_logs=logs).get(
+        "/api/v1/admin/elders/e1/reminders", headers=_auth()
+    )
     assert res.status_code == 200
     body = res.json()["data"]
     assert body["medications"] == [
@@ -311,9 +311,7 @@ def test_elder_account_shape():
     accounts.save_elder(Elder("e1", "阿公"))
     accounts.save_guardian(Guardian("g1", "小明"))
     accounts.save_elder_guardian(ElderGuardian("e1", "g1", Role.PRIMARY, 1))
-    accounts.save_invite(
-        Invite("CODE1", "e1", InviteRole.ELDER, NOW.timestamp() + 60, 5, 0, None)
-    )
+    accounts.save_invite(Invite("CODE1", "e1", InviteRole.ELDER, NOW.timestamp() + 60, 5, 0, None))
     accounts.save_consent(Consent("e1", ConsentBy.PROXY, "v1", 1.0, None))
     accounts.save_channel_binding(
         ChannelBinding(Channel.APP, "dev1", PrincipalType.ELDER, "e1", 1.0)
@@ -340,9 +338,7 @@ def test_elder_account_shape():
 def test_elder_account_invite_status_expired():
     accounts = FakeAccountStore()
     accounts.save_elder(Elder("e1", "阿公"))
-    accounts.save_invite(
-        Invite("OLD1", "e1", InviteRole.ELDER, NOW.timestamp() - 60, 5, 0, None)
-    )
+    accounts.save_invite(Invite("OLD1", "e1", InviteRole.ELDER, NOW.timestamp() - 60, 5, 0, None))
     res = _client(account_store=accounts).get("/api/v1/admin/elders/e1/account", headers=_auth())
     assert res.json()["data"]["invites"][0]["status"] == "expired"
 
