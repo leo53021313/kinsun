@@ -145,13 +145,16 @@ REMINDER_LOGS_DDL = (
 )
 
 # 危急通知送達紀錄（✅ D-36，丙-7）：每位家屬成功／失敗獨立留痕。
+# channels 記實際走的通道（✅ 庚-16，逗號串接）；App＝落庫待拉取、非真送達。
 RISK_NOTIFICATION_LOGS_DDL = (
     "CREATE TABLE IF NOT EXISTS risk_notification_logs ("
     "risk_notification_log_id TEXT PRIMARY KEY, elder_id TEXT NOT NULL, "
     "guardian_id TEXT NOT NULL, tier INTEGER NOT NULL, delivered BOOLEAN NOT NULL, "
-    "created_at DOUBLE PRECISION NOT NULL);"
+    "created_at DOUBLE PRECISION NOT NULL, channels TEXT NOT NULL DEFAULT '');"
     "CREATE INDEX IF NOT EXISTS idx_risk_notification_logs_elder_created "
     "ON risk_notification_logs (elder_id, created_at);"
+    "ALTER TABLE risk_notification_logs "
+    "ADD COLUMN IF NOT EXISTS channels TEXT NOT NULL DEFAULT '';"
 )
 
 # App 內通知（✅ D-12，甲-6）：App 出站 adapter 落地訊息，登入後拉取。

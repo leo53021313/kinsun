@@ -163,6 +163,8 @@ export type AdminRiskNotification = {
   guardian_name: string;
   tier: number;
   delivered: boolean;
+  /** 實際走的通道（逗號串接如 "line,app"；空＝無可達通道或舊資料）。 */
+  channels: string;
   created_at: number;
 };
 export type AdminJob = { job_name: string; cron: string; last_run_at: number | null };

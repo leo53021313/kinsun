@@ -299,6 +299,7 @@ def create_admin_router(
                     else d.guardian_id,
                     "tier": int(d.tier),
                     "delivered": d.delivered,
+                    "channels": d.channels,
                     "created_at": d.created_at,
                 }
                 for d in deliveries.list_for_elder(elder_id)[:100]

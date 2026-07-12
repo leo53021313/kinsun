@@ -23,6 +23,9 @@ class RiskNotificationLog:
     tier: RiskTier
     delivered: bool
     created_at: float
+    # 實際走的通道（✅ 庚-16，逗號串接如 "line,app"；空＝無可達通道或舊資料）。
+    # App 通道＝落庫待拉取、非真送達——admin 據此區分顯示語意。
+    channels: str = ""
 
 
 class RiskNotificationLogError(Exception):
@@ -31,7 +34,13 @@ class RiskNotificationLogError(Exception):
 
 class RiskNotificationLogStore(Protocol):
     def record(
-        self, elder_id: str, guardian_id: str, tier: RiskTier, *, delivered: bool
+        self,
+        elder_id: str,
+        guardian_id: str,
+        tier: RiskTier,
+        *,
+        delivered: bool,
+        channels: str = "",
     ) -> None: ...
     def list_for_elder(self, elder_id: str) -> list[RiskNotificationLog]: ...
     def count_failed_since(self, cutoff: float) -> int: ...
@@ -45,11 +54,19 @@ class PgRiskNotificationLogStore:
         self._clock = clock
         self._new_id = new_id
 
-    def record(self, elder_id: str, guardian_id: str, tier: RiskTier, *, delivered: bool) -> None:
+    def record(
+        self,
+        elder_id: str,
+        guardian_id: str,
+        tier: RiskTier,
+        *,
+        delivered: bool,
+        channels: str = "",
+    ) -> None:
         self._db.execute(
             "INSERT INTO risk_notification_logs "
-            "(risk_notification_log_id, elder_id, guardian_id, tier, delivered, created_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s)",
+            "(risk_notification_log_id, elder_id, guardian_id, tier, delivered, "
+            "created_at, channels) VALUES (%s, %s, %s, %s, %s, %s, %s)",
             (
                 self._new_id(),
                 elder_id,
@@ -57,17 +74,19 @@ class PgRiskNotificationLogStore:
                 int(tier),
                 delivered,
                 self._clock().timestamp(),
+                channels,
             ),
         )
 
     def list_for_elder(self, elder_id: str) -> list[RiskNotificationLog]:
         rows = self._db.query(
-            "SELECT risk_notification_log_id, elder_id, guardian_id, tier, delivered, created_at "
-            "FROM risk_notification_logs WHERE elder_id = %s ORDER BY created_at DESC",
+            "SELECT risk_notification_log_id, elder_id, guardian_id, tier, delivered, "
+            "created_at, channels FROM risk_notification_logs "
+            "WHERE elder_id = %s ORDER BY created_at DESC",
             (elder_id,),
         )
         return [
-            RiskNotificationLog(r[0], r[1], r[2], tier_from_db(r[3]), bool(r[4]), r[5])
+            RiskNotificationLog(r[0], r[1], r[2], tier_from_db(r[3]), bool(r[4]), r[5], r[6])
             for r in rows
         ]
 
@@ -93,11 +112,21 @@ class FakeRiskNotificationLogStore:
         self.recorded: list[RiskNotificationLog] = []
         self._clock = clock
 
-    def record(self, elder_id: str, guardian_id: str, tier: RiskTier, *, delivered: bool) -> None:
+    def record(
+        self,
+        elder_id: str,
+        guardian_id: str,
+        tier: RiskTier,
+        *,
+        delivered: bool,
+        channels: str = "",
+    ) -> None:
         index = len(self.recorded)
         created_at = self._clock() if self._clock else float(index)
         self.recorded.append(
-            RiskNotificationLog(str(index), elder_id, guardian_id, tier, delivered, created_at)
+            RiskNotificationLog(
+                str(index), elder_id, guardian_id, tier, delivered, created_at, channels
+            )
         )
 
     def list_for_elder(self, elder_id: str) -> list[RiskNotificationLog]:

@@ -17,9 +17,12 @@ class Notifier(Protocol):
 
 class TextSender(Protocol):
     """「可送文字」插座（✅ D-18）：safety 核心只依賴此抽象，
-    不 import 邊緣層的 channels.router——組裝處把 ChannelRouter 插進來。"""
+    不 import 邊緣層的 channels.router——組裝處把 ChannelRouter 插進來。
+    回傳實際成功的通道名（✅ 庚-16），供送達留痕標註語意。"""
 
-    def send_text(self, principal_type: PrincipalType, principal_id: str, text: str) -> int: ...
+    def send_text_channels(
+        self, principal_type: PrincipalType, principal_id: str, text: str
+    ) -> list[str]: ...
 
 
 class LogNotifier:
@@ -53,10 +56,17 @@ def _format_alert(assessment: RiskAssessment) -> str:
 
 
 class DeliveryLog(Protocol):
-    """送達留痕插座（✅ D-36）：每位家屬成功／失敗各記一筆。"""
+    """送達留痕插座（✅ D-36）：每位家屬成功／失敗各記一筆；
+    channels 記實際走的通道（✅ 庚-16，逗號串接），App＝落庫待拉取而非真送達。"""
 
     def record(
-        self, elder_id: str, guardian_id: str, tier: RiskTier, *, delivered: bool
+        self,
+        elder_id: str,
+        guardian_id: str,
+        tier: RiskTier,
+        *,
+        delivered: bool,
+        channels: str = "",
     ) -> None: ...
 
 
@@ -74,11 +84,15 @@ class GuardianNotifier:
         self._router = router
         self._deliveries = deliveries
 
-    def _record_delivery(self, elder_id: str, guardian_id: str, tier, *, delivered: bool) -> None:
+    def _record_delivery(
+        self, elder_id: str, guardian_id: str, tier, *, delivered: bool, channels: str
+    ) -> None:
         if self._deliveries is None:
             return
         try:
-            self._deliveries.record(elder_id, guardian_id, tier, delivered=delivered)
+            self._deliveries.record(
+                elder_id, guardian_id, tier, delivered=delivered, channels=channels
+            )
         except Exception:  # noqa: BLE001 - 留痕失敗不可反噬通知
             logger.warning("送達紀錄寫入失敗 elder=%s guardian=%s", elder_id, guardian_id)
 
@@ -96,11 +110,21 @@ class GuardianNotifier:
             text = _format_alert(assessment)
             sent = 0
             for guardian_id in targets:
-                delivered = self._router.send_text(PrincipalType.GUARDIAN, guardian_id, text) > 0
+                channels = self._router.send_text_channels(
+                    PrincipalType.GUARDIAN, guardian_id, text
+                )
+                delivered = bool(channels)
                 if delivered:
                     sent += 1
-                # 送達與否獨立留痕（✅ D-36）：「家屬當時有沒有收到」查得到。
-                self._record_delivery(elder_id, guardian_id, assessment.tier, delivered=delivered)
+                # 送達與否獨立留痕（✅ D-36）：「家屬當時有沒有收到」查得到；
+                # 通道一併記下（✅ 庚-16）——App 僅為落庫待拉取，語意由通道還原。
+                self._record_delivery(
+                    elder_id,
+                    guardian_id,
+                    assessment.tier,
+                    delivered=delivered,
+                    channels=",".join(channels),
+                )
             logger.warning(
                 "已通知家屬 elder=%s tier=%s 成功=%d/%d",
                 elder_id,
