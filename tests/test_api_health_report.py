@@ -10,6 +10,7 @@ from kinsun.medications.service import MedicationService
 from kinsun.reports.reminders import ReminderLog
 from kinsun.safety.events import RiskEvent
 from kinsun.safety.tiers import RiskTier
+from kinsun.web.auth import LineIdentity
 from kinsun.web.routers import create_guardian_face_router
 from tests.fakes import (
     FakeAccountStore,
@@ -29,7 +30,7 @@ class _FakeVerifier:
         self._line_user_id = line_user_id
 
     def verify(self, id_token):
-        return self._line_user_id
+        return LineIdentity(self._line_user_id, "兒子")
 
 
 class _RiskEvents:

@@ -5,6 +5,7 @@ import { KeyboardAvoidingView, Platform, StyleSheet, Text, View } from "react-na
 import { Button, ErrorText, Field } from "@/components/ui";
 import { ApiError, loginGuardian } from "@/lib/api";
 import { useSession } from "@/lib/SessionProvider";
+import { strings } from "@/lib/strings";
 import { colors, spacing } from "@/lib/theme";
 
 export default function GuardianLogin() {
@@ -24,9 +25,9 @@ export default function GuardianLogin() {
       router.replace("/guardian/home");
     } catch (exc) {
       if (exc instanceof ApiError && exc.status === 401) {
-        setError("帳號或密碼不對，請再試一次。");
+        setError(strings.guardianLogin.wrongCredentials);
       } else {
-        setError(exc instanceof Error ? exc.message : "連線失敗，請稍後再試。");
+        setError(exc instanceof Error ? exc.message : strings.common.connectionFailed);
       }
     } finally {
       setBusy(false);
@@ -48,16 +49,16 @@ export default function GuardianLogin() {
           placeholder="you@example.com"
         />
         <Field
-          label="密碼"
+          label={strings.common.passwordLabel}
           value={password}
           onChangeText={setPassword}
           secureTextEntry
-          placeholder="至少 8 碼"
+          placeholder={strings.common.passwordPlaceholder}
         />
         <ErrorText message={error} />
-        <Button label="登入" onPress={submit} busy={busy} />
+        <Button label={strings.common.login} onPress={submit} busy={busy} />
         <Link href="/guardian/register" style={styles.link}>
-          <Text style={styles.linkText}>還沒有帳號？註冊</Text>
+          <Text style={styles.linkText}>{strings.guardianLogin.registerLink}</Text>
         </Link>
       </View>
     </KeyboardAvoidingView>

@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from kinsun.accounts.service import AccountService
 from kinsun.appointments.service import AppointmentService
 from kinsun.medications.service import MedicationService
-from kinsun.web.auth import AuthError
+from kinsun.web.auth import AuthError, LineIdentity
 from kinsun.web.routers import create_guardian_face_router
 from tests.fakes import (
     FakeAccountStore,
@@ -30,7 +30,7 @@ class _FakeVerifier:
     def verify(self, id_token):
         if self._boom:
             raise AuthError("bad")
-        return self._line_user_id
+        return LineIdentity(self._line_user_id, "兒子")
 
 
 def _accounts():

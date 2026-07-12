@@ -5,7 +5,8 @@ import { FlatList, StyleSheet, Text, View } from "react-native";
 import { EmptyHint, ErrorText } from "@/components/ui";
 import { type AppNotification, listNotifications } from "@/lib/api";
 import { saveSeenAt } from "@/lib/notificationsSeen";
-import { useSession } from "@/lib/SessionProvider";
+import { useSession, useSignOutOnAuthError } from "@/lib/SessionProvider";
+import { strings } from "@/lib/strings";
 import { colors, spacing } from "@/lib/theme";
 import { formatTime } from "kinsun-shared/format";
 
@@ -13,6 +14,7 @@ import { formatTime } from "kinsun-shared/format";
 export default function GuardianNotifications() {
   const router = useRouter();
   const { loading: sessionLoading, session } = useSession();
+  const signOutOn401 = useSignOutOnAuthError();
   const [items, setItems] = useState<AppNotification[]>([]);
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
@@ -38,8 +40,9 @@ export default function GuardianNotifications() {
             await saveSeenAt(list[0].created_at);
           }
         } catch (exc) {
+          if (await signOutOn401(exc)) return;
           if (alive) {
-            setError(exc instanceof Error ? exc.message : "載入失敗");
+            setError(exc instanceof Error ? exc.message : strings.common.loadFailedShort);
             setLoaded(true);
           }
         }
@@ -58,7 +61,7 @@ export default function GuardianNotifications() {
         contentContainerStyle={styles.list}
         ListHeaderComponent={<ErrorText message={error} />}
         ListEmptyComponent={
-          loaded ? <EmptyHint text="目前沒有通知。金孫有事會第一時間放在這裡。" /> : null
+          loaded ? <EmptyHint text={strings.notifications.empty} /> : null
         }
         renderItem={({ item }) => (
           <View style={styles.row}>

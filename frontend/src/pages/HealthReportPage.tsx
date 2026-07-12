@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 
 import { type ReminderItem, type RiskEventItem, getHealthReport } from "../api";
 import { formatTime, kindLabel, tierLabel } from "../report";
+import { strings } from "../strings";
 
 type Report = { risk_events: RiskEventItem[]; reminders: ReminderItem[] };
 
@@ -14,20 +15,20 @@ export function HealthReportPage() {
   useEffect(() => {
     getHealthReport(elderId)
       .then(setReport)
-      .catch(() => setError("載入失敗，請稍後再試"));
+      .catch(() => setError(strings.common.loadFailed));
   }, [elderId]);
 
   if (error) return <p>{error}</p>;
-  if (!report) return <p>載入中…</p>;
+  if (!report) return <p>{strings.common.loading}</p>;
   return (
     <main>
       <p>
-        <Link to="/">← 返回長輩清單</Link>
+        <Link to="/">{strings.common.backToElders}</Link>
       </p>
-      <h1>健康報告（近 30 天）</h1>
-      <h2>危急事件</h2>
+      <h1>{strings.healthReport.title}</h1>
+      <h2>{strings.healthReport.riskEventsHeading}</h2>
       {report.risk_events.length === 0 ? (
-        <p>近 30 天無危急事件</p>
+        <p>{strings.healthReport.noRiskEvents}</p>
       ) : (
         <ul>
           {report.risk_events.map((e, i) => (
@@ -37,9 +38,9 @@ export function HealthReportPage() {
           ))}
         </ul>
       )}
-      <h2>提醒紀錄</h2>
+      <h2>{strings.healthReport.remindersHeading}</h2>
       {report.reminders.length === 0 ? (
-        <p>近 30 天無提醒紀錄</p>
+        <p>{strings.healthReport.noReminders}</p>
       ) : (
         <ul>
           {report.reminders.map((r, i) => (
