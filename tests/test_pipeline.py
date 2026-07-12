@@ -83,9 +83,9 @@ def test_pipeline_records_risk_event_on_l2():
     assert notifier.calls == [("u1", RiskTier.L2)]
 
 
-def test_pipeline_does_not_record_below_l2():
+def test_pipeline_does_not_record_l0():
     events = FakeRiskEventStore()
-    _pipeline(StubDetector(RiskTier.L1), SpyNotifier(), events).process(b"\x00", elder_id="u1")
+    _pipeline(StubDetector(RiskTier.L0), SpyNotifier(), events).process(b"\x00", elder_id="u1")
     assert events.recorded == []
 
 
@@ -292,15 +292,23 @@ def test_failsafe_l1_records_without_notifying():
     assert events.recorded[0][1].reason == FAILSAFE_EVENT_REASON
 
 
-def test_plain_l1_not_recorded():
-    """一般 L1（非 fail-safe）維持不落庫、不通知。"""
+def test_plain_l1_recorded_without_notifying():
+    """一般 L1（小訊號）要落庫供每日摘要取用、但不通知家屬（✅ D-10 己-5，庚-01）。
+
+    落庫是「L1 小訊號進每日摘要」的資料來源：summaries._l1_signals_for_day 只讀
+    risk_events 中「L1 且非 fail-safe 理由」的事件——修復前此類事件從未被寫入，
+    功能在生產路徑恆為空（05 差距 A-39）。
+    """
     notifier = SpyNotifier()
     events = FakeRiskEventStore()
     _text_pipeline(StubDetector(RiskTier.L1), notifier, events).process_text(
         "最近睡不好", elder_id="u1"
     )
     assert notifier.calls == []
-    assert events.recorded == []
+    assert len(events.recorded) == 1
+    assert events.recorded[0][0] == "u1"
+    assert events.recorded[0][1].tier == RiskTier.L1
+    assert events.recorded[0][1].reason != FAILSAFE_EVENT_REASON
 
 
 class _UsageReportingLLM:

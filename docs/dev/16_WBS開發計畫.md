@@ -94,9 +94,9 @@
 
 | # | 工項 | 問題 | 規模 |
 | :--- | :--- | :---: | :---: |
-| 庚-01 | 「L1 小訊號進每日摘要」接線修復：pipeline 對一般 L1（非 fail-safe）也 `record` 進 risk_events（通知閘門維持 ≥L2 不變），使 D-10 己-5 生產路徑生效；或明文降級承諾並更新 D-10／BDD。**已拍板功能靜默失效**。 | A-39 | M |
+| 庚-01 | ✅ 完成（2026-07-12，TDD）：pipeline 落庫門檻放寬至 ≥L1（通知維持 ≥L2），D-10 己-5「L1 小訊號進每日摘要」生產路徑生效；契約測試改寫＋全套 591 綠。已知副作用：健康報告出現「關注」級事件（本無 tier 過濾，接受；不想顯示另開工項） | A-39 | M |
 | 庚-02 | 危急通知失敗可觀測：L2 通知 `delivered=False` 時重試／落死信／或 admin 告警（現 admin 只看分級器故障）。**家屬漏收警報＝最嚴重產品失敗卻無感知**。 | A-40 | M |
-| 庚-03 | RAG 來源著作權把關：`SourceValidator` 補查 `copyright_status`，或撤 `ntuh_epaper`／`cgmh`（DISALLOWED）的 `approved_for_rag`——兩者現在預設 ingest 名單內、爬取即入庫，違反來源自身「禁止轉載」標示。 | A-26 | S |
+| 庚-03 | ⏸ **擱置（Leo 2026-07-12：著作權相關先不處理）**——RAG 來源著作權把關：`SourceValidator` 補查 `copyright_status`，或撤 `ntuh_epaper`／`cgmh`（DISALLOWED）的 `approved_for_rag`。 | A-26 | S |
 | 庚-04 | 邀請碼角色守門：`bind_elder_device` 在 redeem 前先驗 `invite.role == ELDER`，堵住「家屬邀請碼換出長輩裝置 token」的權限錯配。 | A-46 | S |
 | 庚-05 | 家屬 token 批次撤銷：加「登出所有裝置」端點呼叫既有 `remove_api_tokens_for_principal`（現只有長輩有 `revoke_elder_device`，家屬永久 token 外洩無救）。 | A-47 | S |
 | 庚-06 | 記憶整理漏天修復：worker 停機跨多日重啟時，`run_consolidation` 改吃「上次整理→now」日範圍迴圈補整理（現只抓 previous_day、補跑一次→中間天數 turns 永不進長期記憶）。**唯一永久資料遺失風險**。 | A-18 | M |
