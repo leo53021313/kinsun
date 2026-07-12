@@ -46,7 +46,8 @@
         {
           "cameraPermission": "金孫需要相機，才能幫您掃描家人給的綁定圖。"
         }
-      ]
+      ],
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true,
