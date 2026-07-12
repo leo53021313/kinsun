@@ -17,9 +17,7 @@ class RegisterIn(BaseModel):
     name: str = Field(min_length=1, max_length=50)
 
 
-def create_guardians_router(
-    *, accounts: AccountService, rate_limiter: RateLimiter
-) -> APIRouter:
+def create_guardians_router(*, accounts: AccountService, rate_limiter: RateLimiter) -> APIRouter:
     router = APIRouter(tags=["auth"])
 
     @router.post("/guardians", status_code=201)

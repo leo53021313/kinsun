@@ -117,7 +117,8 @@ def dispatch(
             lambda: pipeline.process_text(
                 msg.text,
                 elder_id=elder_id,
-                line_user_id=msg.external_id,
+                external_id=msg.external_id,
+                channel=msg.channel.value,
                 trace_id=msg.trace_id,
             ),
             voice=voice,
@@ -137,7 +138,8 @@ def dispatch(
         lambda: pipeline.process(
             msg.audio,
             elder_id=elder_id,
-            line_user_id=msg.external_id,
+            external_id=msg.external_id,
+            channel=msg.channel.value,
             trace_id=msg.trace_id,
             audio_url=msg.audio_url,
         ),
@@ -188,7 +190,8 @@ def _record_reply(
     safe_record(
         lambda: traces.record_reply(
             trace_id=msg.trace_id,
-            line_user_id=msg.external_id,
+            external_id=msg.external_id,
+            channel=msg.channel.value,
             kind=outcome.kind,
             status="ok",
             latency_ms=latency_ms,

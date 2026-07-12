@@ -370,7 +370,8 @@ def _timeline_json(i: TimelineItem) -> dict:
 def _trace_json(t: Trace) -> dict:
     return {
         "trace_id": t.trace_id,
-        "line_user_id": t.line_user_id,
+        "external_id": t.external_id,
+        "channel": t.channel,
         "elder_name": t.elder_name,
         "webhook_event": None
         if t.webhook_event is None

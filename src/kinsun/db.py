@@ -176,40 +176,61 @@ CONVERSATION_SUMMARIES_DDL = (
     "content TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
 )
 
+# 觀測五表以 external_id＋channel 記來源（✅ 庚-07／A-8）：欄位承載任一通道的外部
+# 識別碼（非僅 LINE），故正名為 external_id 並加 channel 標明來源通道。
 OBSERVABILITY_DDL = (
     "CREATE TABLE IF NOT EXISTS webhook_events ("
     "webhook_event_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, "
-    "line_user_id TEXT NOT NULL, event_type TEXT NOT NULL, message_type TEXT NOT NULL, "
+    "external_id TEXT NOT NULL, channel TEXT NOT NULL DEFAULT '', "
+    "event_type TEXT NOT NULL, message_type TEXT NOT NULL, "
     "payload JSONB NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
     "CREATE INDEX IF NOT EXISTS idx_webhook_events_trace ON webhook_events (trace_id);"
     "CREATE INDEX IF NOT EXISTS idx_webhook_events_created ON webhook_events (created_at);"
     "CREATE TABLE IF NOT EXISTS asr_calls ("
-    "asr_call_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, line_user_id TEXT NOT NULL, "
+    "asr_call_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, external_id TEXT NOT NULL, "
+    "channel TEXT NOT NULL DEFAULT '', "
     "status TEXT NOT NULL, latency_ms INTEGER NOT NULL, transcript TEXT NOT NULL, "
     "source_audio_url TEXT NOT NULL, error_message TEXT NOT NULL, "
     "created_at DOUBLE PRECISION NOT NULL);"
     "CREATE INDEX IF NOT EXISTS idx_asr_calls_trace ON asr_calls (trace_id);"
-    "CREATE INDEX IF NOT EXISTS idx_asr_calls_line_user_created "
-    "ON asr_calls (line_user_id, created_at);"
+    "CREATE INDEX IF NOT EXISTS idx_asr_calls_external_created "
+    "ON asr_calls (external_id, created_at);"
     "CREATE TABLE IF NOT EXISTS llm_calls ("
-    "llm_call_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, line_user_id TEXT NOT NULL, "
+    "llm_call_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, external_id TEXT NOT NULL, "
+    "channel TEXT NOT NULL DEFAULT '', "
     "status TEXT NOT NULL, latency_ms INTEGER NOT NULL, model_name TEXT NOT NULL, "
     "input_tokens INTEGER, output_tokens INTEGER, content TEXT NOT NULL, "
     "error_message TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
     "CREATE INDEX IF NOT EXISTS idx_llm_calls_trace ON llm_calls (trace_id);"
     "CREATE INDEX IF NOT EXISTS idx_llm_calls_created ON llm_calls (created_at);"
     "CREATE TABLE IF NOT EXISTS tts_calls ("
-    "tts_call_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, line_user_id TEXT NOT NULL, "
+    "tts_call_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, external_id TEXT NOT NULL, "
+    "channel TEXT NOT NULL DEFAULT '', "
     "status TEXT NOT NULL, latency_ms INTEGER NOT NULL, content TEXT NOT NULL, "
     "error_message TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
     "CREATE INDEX IF NOT EXISTS idx_tts_calls_trace ON tts_calls (trace_id);"
     "CREATE INDEX IF NOT EXISTS idx_tts_calls_created ON tts_calls (created_at);"
     "CREATE TABLE IF NOT EXISTS replies ("
-    "reply_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, line_user_id TEXT NOT NULL, "
+    "reply_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, external_id TEXT NOT NULL, "
+    "channel TEXT NOT NULL DEFAULT '', "
     "kind TEXT NOT NULL, status TEXT NOT NULL, latency_ms INTEGER NOT NULL, "
     "round_trip_ms INTEGER, audio_url TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
     "CREATE INDEX IF NOT EXISTS idx_replies_trace ON replies (trace_id);"
     "CREATE INDEX IF NOT EXISTS idx_replies_created ON replies (created_at);"
+)
+
+# 觀測五表欄位正名遷移（✅ 庚-07，冪等）：既有庫 line_user_id → external_id、補 channel。
+# 以 DO 區塊守門：僅在仍有 line_user_id 且尚無 external_id 時改名；新庫 DDL 已直接建
+# external_id，DO 區塊自動略過。channel 一律 ADD IF NOT EXISTS。
+_OBSERVABILITY_TABLES = ("webhook_events", "asr_calls", "llm_calls", "tts_calls", "replies")
+OBSERVABILITY_EXTERNAL_ID_MIGRATION_DDL = "".join(
+    "DO $$ BEGIN "
+    f"IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = '{t}' "
+    "AND column_name = 'line_user_id') AND NOT EXISTS (SELECT 1 FROM "
+    f"information_schema.columns WHERE table_name = '{t}' AND column_name = 'external_id') "
+    f"THEN ALTER TABLE {t} RENAME COLUMN line_user_id TO external_id; END IF; END $$;"
+    f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT '';"
+    for t in _OBSERVABILITY_TABLES
 )
 
 # risk_events 既有表補 trace_id（可空）：讓風險事件掛回該輪鏈路。
@@ -283,6 +304,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(MEMORY_CONSOLIDATIONS_DDL)
         conn.execute(CONVERSATION_SUMMARIES_DDL)
         conn.execute(OBSERVABILITY_DDL)
+        conn.execute(OBSERVABILITY_EXTERNAL_ID_MIGRATION_DDL)
         conn.execute(RISK_EVENTS_TRACE_MIGRATION_DDL)
         conn.execute(REPLIES_ROUND_TRIP_MIGRATION_DDL)
         conn.execute(SESSION_KEY_MIGRATION_DDL)

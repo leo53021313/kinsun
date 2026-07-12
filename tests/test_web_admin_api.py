@@ -273,7 +273,7 @@ def test_trace_detail_and_404():
     traces.now = TODAY_TS
     traces.record_asr_call(
         trace_id="t1",
-        line_user_id="U1",
+        external_id="U1",
         status="ok",
         latency_ms=5,
         transcript="嗨",

@@ -24,9 +24,7 @@ class ElderLoginIn(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
-def create_sessions_router(
-    *, accounts: AccountService, rate_limiter: RateLimiter
-) -> APIRouter:
+def create_sessions_router(*, accounts: AccountService, rate_limiter: RateLimiter) -> APIRouter:
     router = APIRouter(tags=["auth"])
 
     @router.post("/sessions")

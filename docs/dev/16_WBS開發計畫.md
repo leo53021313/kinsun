@@ -100,7 +100,7 @@
 | 庚-04 | ✅ 完成（2026-07-12，TDD）：`bind_elder_device` redeem 前驗 `invite.role is ELDER`，家屬邀請碼回 409 `invite_wrong_role`（未消耗碼、未發 token）；06 端點表＋錯誤碼表同步 | A-46 | S |
 | 庚-05 | ✅ 完成（2026-07-12，TDD）：`DELETE /api/v1/sessions/all`＋`AccountService.logout_all_devices`（撤該家屬全部 token），與長輩 `revoke_elder_device` 對稱；06 端點表同步 | A-47 | S |
 | 庚-06 | ✅ 完成（2026-07-12，TDD，含庚-13）：`run_consolidation` 改吃 `(short_term, long_term, log, now)`——掃「上次整理日之後～今日之前」每個有對話的完整日，逐日 `list_for_range` 補整理；停機跨多日重啟不再漏天。新增 `MemoryStore.list_for_range`／`day_starts_with_turns`（Pg＋Fake）。worker／CLI 皆已接線。全套 627 綠。 | A-18 | M |
-| 庚-07 | 觀測五表欄位正名：`line_user_id` → `external_id`＋`channel`（現承載所有通道識別碼，違反 AGENTS.md「line_user_id 永不混用」鐵律）；含 schema 遷移＋pipeline／observability 寫入點。 | A-8 | M |
+| 庚-07 | ✅ 完成（2026-07-12）：觀測五表（webhook_events／asr_calls／llm_calls／tts_calls／replies）`line_user_id` → `external_id`＋新增 `channel`，正名兼消除「line_user_id 混用」鐵律違反。含冪等 schema 遷移（DO 區塊守門 RENAME＋`ADD COLUMN IF NOT EXISTS channel`，新舊庫皆適用）、models／store（含 Fake）三件套、pipeline 全鏈 threading、邊界（inbound dispatch 取 `msg.channel.value`、LINE webhook 記 `channel="line"`）、admin `_trace_json` 回傳改 `external_id`＋`channel`、前端 TraceDetail 型別與頁面同步。`channel` 於 record 端預設 `""`（對齊 DB 欄預設）。契約測試補 channel round-trip、dispatch 測試證通道貫穿。全套 628 綠。 | A-8 | M |
 | 庚-08 | ✅ 完成（2026-07-12，跨進程方案）：新增 `PgRateLimiter`（Postgres 共享滑動視窗，per-key `pg_advisory_xact_lock` 串行「清舊→計數→寫入」精確計數、掛鐘可跨進程、fail-open）＋`rate_limit_hits` 表；抽 `RateLimiter` Protocol，app.py 正式組裝改注入 Pg 版（記憶體版留測試／單 worker fallback）。多 worker 上限不再×worker 數。Pg IT 測試鎖「兩實例共用計數」。沿用既有 `AUTH_RATE_LIMIT_*`，無新增 env。 | A-54 | M |
 | 庚-09 | 衛教升級旗標決策：`should_escalate_to_risk_engine` 接上確定性程式碼觸發 RiskDetector，或明文降級為 advisory（現唯一消費者是 agent prompt 文字，靠 LLM 自律）。緩解：pipeline 真風險引擎在 agent 前已獨立評估。 | A-27 | S |
 
