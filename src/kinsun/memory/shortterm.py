@@ -29,6 +29,10 @@ class MemoryStore(Protocol):
     def append(self, elder_id: str, message: Message) -> None: ...
     def recent(self, elder_id: str) -> list[Message]: ...
     def previous_day(self, elder_id: str) -> list[Message]: ...
+    def list_for_range(self, elder_id: str, *, start: float, end: float) -> list[Message]: ...
+    def day_starts_with_turns(
+        self, elder_id: str, *, since: float, before: float
+    ) -> list[float]: ...
     def sessions(self) -> list[str]: ...
     def last_active(self, elder_id: str) -> float | None: ...
 
@@ -61,6 +65,10 @@ class PgMemoryStore:
     def previous_day(self, elder_id: str) -> list[Message]:
         """整理批次用：回傳『剛結束的那一天』整天的對話（時序由舊到新）。"""
         start, end = previous_day_bounds(self._clock())
+        return self.list_for_range(elder_id, start=start, end=end)
+
+    def list_for_range(self, elder_id: str, *, start: float, end: float) -> list[Message]:
+        """回傳 [start, end) 區間的對話（時序由舊到新，上限 max_turns）——整理批次逐日補齊用。"""
         rows = self._db.query(
             "SELECT role, content FROM turns "
             "WHERE elder_id = %s AND created_at >= %s AND created_at < %s "
@@ -68,6 +76,26 @@ class PgMemoryStore:
             (elder_id, start, end, self._max_turns),
         )
         return [Message(role=r, content=t) for r, t in rows]
+
+    def day_starts_with_turns(self, elder_id: str, *, since: float, before: float) -> list[float]:
+        """回傳 [since, before) 內有對話的每個日界起點時間戳（配置時區、去重、升序）。
+
+        供整理批次判斷「哪些完整日還沒整理」；日界依 clock 的時區切分（台灣無日光節約，
+        一天固定 86400 秒）。
+        """
+        rows = self._db.query(
+            "SELECT created_at FROM turns "
+            "WHERE elder_id = %s AND created_at >= %s AND created_at < %s",
+            (elder_id, since, before),
+        )
+        tz = self._clock().tzinfo
+        starts = {
+            datetime.fromtimestamp(ts, tz)
+            .replace(hour=0, minute=0, second=0, microsecond=0)
+            .timestamp()
+            for (ts,) in rows
+        }
+        return sorted(starts)
 
     def sessions(self) -> list[str]:
         rows = self._db.query(
@@ -121,6 +149,9 @@ class FakeMemoryStore:
 
     def previous_day(self, elder_id: str) -> list[Message]:
         start, end = previous_day_bounds(self._now)
+        return self.list_for_range(elder_id, start=start, end=end)
+
+    def list_for_range(self, elder_id: str, *, start: float, end: float) -> list[Message]:
         rows = sorted(
             (
                 (ts, i, m)
@@ -130,6 +161,17 @@ class FakeMemoryStore:
             key=lambda r: (r[0], r[1]),
         )
         return [m for _, _, m in rows[: self._max_turns]]
+
+    def day_starts_with_turns(self, elder_id: str, *, since: float, before: float) -> list[float]:
+        tz = self._now.tzinfo
+        starts = {
+            datetime.fromtimestamp(ts, tz)
+            .replace(hour=0, minute=0, second=0, microsecond=0)
+            .timestamp()
+            for ts, _ in self._turns.get(elder_id, [])
+            if since <= ts < before
+        }
+        return sorted(starts)
 
     def sessions(self) -> list[str]:
         return sorted(self._turns)

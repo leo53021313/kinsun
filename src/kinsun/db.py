@@ -68,6 +68,16 @@ SCHEDULER_DDL = (
     "job_name TEXT PRIMARY KEY, last_run_at DOUBLE PRECISION NOT NULL);"
 )
 
+# 認證節流共享計數（✅ 庚-08／A-54）：多 worker 共用同一滑動視窗，避免 per-process
+# 上限×worker 數放大暴力破解面。每筆＝一次嘗試（key＝scope:ip、hit_at＝掛鐘秒）；
+# 過期列於同鍵下次 hit 時清除。
+RATE_LIMIT_DDL = (
+    "CREATE TABLE IF NOT EXISTS rate_limit_hits ("
+    "key TEXT NOT NULL, hit_at DOUBLE PRECISION NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS idx_rate_limit_hits_key_time "
+    "ON rate_limit_hits (key, hit_at);"
+)
+
 MEDICATIONS_DDL = (
     "CREATE TABLE IF NOT EXISTS medications ("
     "medication_id TEXT PRIMARY KEY, elder_id TEXT NOT NULL, "
@@ -153,46 +163,74 @@ APP_NOTIFICATIONS_DDL = (
     "ON app_notifications (external_id, created_at);"
 )
 
+# 整理進度標記（✅ 庚-06／庚-13）：某長輩某日已整理進長期記憶，供冪等與跨多日補齊。
+MEMORY_CONSOLIDATIONS_DDL = (
+    "CREATE TABLE IF NOT EXISTS memory_consolidations ("
+    "elder_id TEXT NOT NULL, day TEXT NOT NULL, turn_count INTEGER NOT NULL, "
+    "created_at DOUBLE PRECISION NOT NULL, PRIMARY KEY (elder_id, day));"
+)
+
 CONVERSATION_SUMMARIES_DDL = (
     "CREATE TABLE IF NOT EXISTS conversation_summaries ("
     "elder_id TEXT, line_user_id TEXT, date TEXT NOT NULL, "
     "content TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
 )
 
+# 觀測五表以 external_id＋channel 記來源（✅ 庚-07／A-8）：欄位承載任一通道的外部
+# 識別碼（非僅 LINE），故正名為 external_id 並加 channel 標明來源通道。
 OBSERVABILITY_DDL = (
     "CREATE TABLE IF NOT EXISTS webhook_events ("
     "webhook_event_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, "
-    "line_user_id TEXT NOT NULL, event_type TEXT NOT NULL, message_type TEXT NOT NULL, "
+    "external_id TEXT NOT NULL, channel TEXT NOT NULL DEFAULT '', "
+    "event_type TEXT NOT NULL, message_type TEXT NOT NULL, "
     "payload JSONB NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
     "CREATE INDEX IF NOT EXISTS idx_webhook_events_trace ON webhook_events (trace_id);"
     "CREATE INDEX IF NOT EXISTS idx_webhook_events_created ON webhook_events (created_at);"
     "CREATE TABLE IF NOT EXISTS asr_calls ("
-    "asr_call_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, line_user_id TEXT NOT NULL, "
+    "asr_call_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, external_id TEXT NOT NULL, "
+    "channel TEXT NOT NULL DEFAULT '', "
     "status TEXT NOT NULL, latency_ms INTEGER NOT NULL, transcript TEXT NOT NULL, "
     "source_audio_url TEXT NOT NULL, error_message TEXT NOT NULL, "
     "created_at DOUBLE PRECISION NOT NULL);"
     "CREATE INDEX IF NOT EXISTS idx_asr_calls_trace ON asr_calls (trace_id);"
-    "CREATE INDEX IF NOT EXISTS idx_asr_calls_line_user_created "
-    "ON asr_calls (line_user_id, created_at);"
+    "CREATE INDEX IF NOT EXISTS idx_asr_calls_external_created "
+    "ON asr_calls (external_id, created_at);"
     "CREATE TABLE IF NOT EXISTS llm_calls ("
-    "llm_call_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, line_user_id TEXT NOT NULL, "
+    "llm_call_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, external_id TEXT NOT NULL, "
+    "channel TEXT NOT NULL DEFAULT '', "
     "status TEXT NOT NULL, latency_ms INTEGER NOT NULL, model_name TEXT NOT NULL, "
     "input_tokens INTEGER, output_tokens INTEGER, content TEXT NOT NULL, "
     "error_message TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
     "CREATE INDEX IF NOT EXISTS idx_llm_calls_trace ON llm_calls (trace_id);"
     "CREATE INDEX IF NOT EXISTS idx_llm_calls_created ON llm_calls (created_at);"
     "CREATE TABLE IF NOT EXISTS tts_calls ("
-    "tts_call_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, line_user_id TEXT NOT NULL, "
+    "tts_call_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, external_id TEXT NOT NULL, "
+    "channel TEXT NOT NULL DEFAULT '', "
     "status TEXT NOT NULL, latency_ms INTEGER NOT NULL, content TEXT NOT NULL, "
     "error_message TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
     "CREATE INDEX IF NOT EXISTS idx_tts_calls_trace ON tts_calls (trace_id);"
     "CREATE INDEX IF NOT EXISTS idx_tts_calls_created ON tts_calls (created_at);"
     "CREATE TABLE IF NOT EXISTS replies ("
-    "reply_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, line_user_id TEXT NOT NULL, "
+    "reply_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, external_id TEXT NOT NULL, "
+    "channel TEXT NOT NULL DEFAULT '', "
     "kind TEXT NOT NULL, status TEXT NOT NULL, latency_ms INTEGER NOT NULL, "
     "round_trip_ms INTEGER, audio_url TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
     "CREATE INDEX IF NOT EXISTS idx_replies_trace ON replies (trace_id);"
     "CREATE INDEX IF NOT EXISTS idx_replies_created ON replies (created_at);"
+)
+
+# 觀測五表欄位正名遷移（✅ 庚-07，冪等）：既有庫 line_user_id → external_id、補 channel。
+# 以 DO 區塊守門：僅在仍有 line_user_id 且尚無 external_id 時改名；新庫 DDL 已直接建
+# external_id，DO 區塊自動略過。channel 一律 ADD IF NOT EXISTS。
+_OBSERVABILITY_TABLES = ("webhook_events", "asr_calls", "llm_calls", "tts_calls", "replies")
+OBSERVABILITY_EXTERNAL_ID_MIGRATION_DDL = "".join(
+    "DO $$ BEGIN "
+    f"IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = '{t}' "
+    "AND column_name = 'line_user_id') AND NOT EXISTS (SELECT 1 FROM "
+    f"information_schema.columns WHERE table_name = '{t}' AND column_name = 'external_id') "
+    f"THEN ALTER TABLE {t} RENAME COLUMN line_user_id TO external_id; END IF; END $$;"
+    f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT '';"
+    for t in _OBSERVABILITY_TABLES
 )
 
 # risk_events 既有表補 trace_id（可空）：讓風險事件掛回該輪鏈路。
@@ -255,6 +293,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(APP_ACCOUNTS_DDL)
         conn.execute(BINDING_DDL)
         conn.execute(SCHEDULER_DDL)
+        conn.execute(RATE_LIMIT_DDL)
         conn.execute(MEDICATIONS_DDL)
         conn.execute(APPOINTMENTS_DDL)
         conn.execute(RAG_DDL)
@@ -262,8 +301,10 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(REMINDER_LOGS_DDL)
         conn.execute(RISK_NOTIFICATION_LOGS_DDL)
         conn.execute(APP_NOTIFICATIONS_DDL)
+        conn.execute(MEMORY_CONSOLIDATIONS_DDL)
         conn.execute(CONVERSATION_SUMMARIES_DDL)
         conn.execute(OBSERVABILITY_DDL)
+        conn.execute(OBSERVABILITY_EXTERNAL_ID_MIGRATION_DDL)
         conn.execute(RISK_EVENTS_TRACE_MIGRATION_DDL)
         conn.execute(REPLIES_ROUND_TRIP_MIGRATION_DDL)
         conn.execute(SESSION_KEY_MIGRATION_DDL)
