@@ -29,7 +29,7 @@ function RootStack() {
         name="guardian/home"
         options={{ title: "我的長輩", headerBackVisible: false }}
       />
-      <Stack.Screen name="guardian/elder/[elderId]" options={{ title: "長輩詳情" }} />
+      <Stack.Screen name="guardian/elder/[elderId]/index" options={{ title: "長輩詳情" }} />
       <Stack.Screen name="guardian/notifications" options={{ title: "通知" }} />
       <Stack.Screen name="elder/bind" options={{ title: "輸入綁定碼" }} />
       <Stack.Screen name="elder/login" options={{ title: "長輩登入" }} />

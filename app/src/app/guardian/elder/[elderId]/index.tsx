@@ -1,5 +1,5 @@
-import { useLocalSearchParams } from "expo-router";
-import { useEffect, useState } from "react";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { useCallback, useState } from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { Button, EmptyHint, ErrorText, Field, Section } from "@/components/ui";
@@ -16,17 +16,11 @@ import {
   type HealthReport,
   type Medication,
 } from "@/lib/api";
+import { slotLabel } from "@/lib/medicationSlots";
 import { useSession } from "@/lib/SessionProvider";
 import { formatTime } from "kinsun-shared/format";
 import { tierLabel } from "kinsun-shared/terms";
 import { colors, spacing } from "@/lib/theme";
-
-const SLOT_LABELS: Record<string, string> = {
-  morning: "早上",
-  noon: "中午",
-  evening: "晚上",
-  bedtime: "睡前",
-};
 
 /** 長輩詳情：用藥／回診／健康報告／家屬邀請碼，單頁分區塊。 */
 export default function ElderDetail() {
@@ -44,36 +38,40 @@ export default function ElderDetail() {
   const [accountBusy, setAccountBusy] = useState(false);
   const { session } = useSession();
   const token = session?.token ?? "";
+  const router = useRouter();
 
-  useEffect(() => {
-    if (!session || !elderId) {
-      return;
-    }
-    let alive = true;
-    (async () => {
-      try {
-        const [meds, appts, hr, daily] = await Promise.all([
-          listMedications(elderId, session.token),
-          listAppointments(elderId, session.token),
-          getHealthReport(elderId, session.token),
-          listDailySummaries(elderId, session.token),
-        ]);
-        if (alive) {
-          setMedications(meds);
-          setAppointments(appts);
-          setReport(hr);
-          setSummaries(daily);
-        }
-      } catch (exc) {
-        if (alive) {
-          setError(exc instanceof Error ? exc.message : "載入失敗");
-        }
+  // useFocusEffect：從用藥／回診管理頁返回時重載，畫面才會反映剛做的編輯。
+  useFocusEffect(
+    useCallback(() => {
+      if (!session || !elderId) {
+        return;
       }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [elderId, session]);
+      let alive = true;
+      (async () => {
+        try {
+          const [meds, appts, hr, daily] = await Promise.all([
+            listMedications(elderId, session.token),
+            listAppointments(elderId, session.token),
+            getHealthReport(elderId, session.token),
+            listDailySummaries(elderId, session.token),
+          ]);
+          if (alive) {
+            setMedications(meds);
+            setAppointments(appts);
+            setReport(hr);
+            setSummaries(daily);
+          }
+        } catch (exc) {
+          if (alive) {
+            setError(exc instanceof Error ? exc.message : "載入失敗");
+          }
+        }
+      })();
+      return () => {
+        alive = false;
+      };
+    }, [elderId, session]),
+  );
 
   async function saveAccount() {
     if (!elderId) {
@@ -148,14 +146,19 @@ export default function ElderDetail() {
 
       <Section title="固定用藥">
         {medications.length === 0 ? (
-          <EmptyHint text="尚未設定用藥（可先在 LINE 端設定，App 版編輯後續提供）。" />
+          <EmptyHint text="還沒有用藥，點下方「管理用藥」新增。" />
         ) : (
           medications.map((m) => (
             <Text key={m.medication_id} style={styles.row}>
-              {m.name}（{m.slots.map((s) => SLOT_LABELS[s] ?? s).join("、")}）
+              {m.name}（{m.slots.map(slotLabel).join("、")}）
             </Text>
           ))
         )}
+        <Button
+          label="管理用藥"
+          variant="outline"
+          onPress={() => router.push(`/guardian/elder/${elderId}/medications`)}
+        />
       </Section>
 
       <Section title="即將回診">
@@ -168,6 +171,11 @@ export default function ElderDetail() {
             </Text>
           ))
         )}
+        <Button
+          label="管理回診"
+          variant="outline"
+          onPress={() => router.push(`/guardian/elder/${elderId}/appointments`)}
+        />
       </Section>
 
       <Section title="長輩登入帳密（代辦）">
