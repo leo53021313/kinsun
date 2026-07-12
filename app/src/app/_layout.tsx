@@ -31,6 +31,7 @@ function RootStack() {
       />
       <Stack.Screen name="guardian/elder/[elderId]/index" options={{ title: "長輩詳情" }} />
       <Stack.Screen name="guardian/elder/[elderId]/medications" options={{ title: "用藥管理" }} />
+      <Stack.Screen name="guardian/elder/[elderId]/appointments" options={{ title: "回診管理" }} />
       <Stack.Screen name="guardian/notifications" options={{ title: "通知" }} />
       <Stack.Screen name="elder/bind" options={{ title: "輸入綁定碼" }} />
       <Stack.Screen name="elder/login" options={{ title: "長輩登入" }} />
