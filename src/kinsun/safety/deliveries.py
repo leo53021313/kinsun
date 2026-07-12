@@ -34,6 +34,7 @@ class RiskNotificationLogStore(Protocol):
         self, elder_id: str, guardian_id: str, tier: RiskTier, *, delivered: bool
     ) -> None: ...
     def list_for_elder(self, elder_id: str) -> list[RiskNotificationLog]: ...
+    def count_failed_since(self, cutoff: float) -> int: ...
 
 
 class PgRiskNotificationLogStore:
@@ -70,22 +71,37 @@ class PgRiskNotificationLogStore:
             for r in rows
         ]
 
+    def count_failed_since(self, cutoff: float) -> int:
+        """近期送達失敗（delivered=False）筆數，跨長輩全域——供 admin 告警門檻（✅ 庚-02）。"""
+        row = self._db.query_one(
+            "SELECT count(*) FROM risk_notification_logs "
+            "WHERE delivered = FALSE AND created_at >= %s",
+            (cutoff,),
+        )
+        return int(row[0]) if row else 0
+
 
 class FakeRiskNotificationLogStore:
     """RiskNotificationLogStore 的記憶體替身（測試用，不碰 DB）。
 
     與 Pg 合約對齊：list_for_elder 以「最近先」順序回傳；id 與 created_at 為
-    合成值（記錄序號），合約不應對其斷言。
+    合成值（記錄序號），合約不應對其斷言。若需以 created_at 過濾（如 count_failed_since），
+    注入 clock（回傳 epoch 秒）使時間戳與 Pg 對齊。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, clock: Callable[[], float] | None = None) -> None:
         self.recorded: list[RiskNotificationLog] = []
+        self._clock = clock
 
     def record(self, elder_id: str, guardian_id: str, tier: RiskTier, *, delivered: bool) -> None:
         index = len(self.recorded)
+        created_at = self._clock() if self._clock else float(index)
         self.recorded.append(
-            RiskNotificationLog(str(index), elder_id, guardian_id, tier, delivered, float(index))
+            RiskNotificationLog(str(index), elder_id, guardian_id, tier, delivered, created_at)
         )
 
     def list_for_elder(self, elder_id: str) -> list[RiskNotificationLog]:
         return [d for d in reversed(self.recorded) if d.elder_id == elder_id]
+
+    def count_failed_since(self, cutoff: float) -> int:
+        return sum(1 for d in self.recorded if not d.delivered and d.created_at >= cutoff)

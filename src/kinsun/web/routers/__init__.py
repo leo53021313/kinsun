@@ -23,7 +23,7 @@ from kinsun.reports.reminders import ReminderLogStore
 from kinsun.reports.summaries import ConversationSummaryStore
 from kinsun.safety.events import RiskEventStore
 from kinsun.web.auth import LiffVerifier
-from kinsun.web.ratelimit import SlidingWindowRateLimiter
+from kinsun.web.ratelimit import RateLimiter, SlidingWindowRateLimiter
 from kinsun.web.routers.admin import create_admin_router
 from kinsun.web.routers.admin_jobs import create_admin_jobs_router
 from kinsun.web.routers.appointments import create_appointments_router
@@ -94,7 +94,7 @@ def create_guardian_face_router(
 def create_app_auth_router(
     *,
     accounts: AccountService,
-    rate_limiter: SlidingWindowRateLimiter | None = None,
+    rate_limiter: RateLimiter | None = None,
     notifications: AppNotificationStore | None = None,
 ) -> APIRouter:
     """App 帳號面聚合：註冊／登入／裝置綁定共用同一節流器（各端點獨立計數）。"""
