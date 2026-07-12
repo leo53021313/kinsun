@@ -80,7 +80,7 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | `elder_not_found`／`medication_not_found`／`appointment_not_found`／`trace_not_found`／`invite_not_found` | 404 | 資源不存在（`not_found` 細分化） |
 | `email_taken` | 409 | 註冊 email 已存在 |
 | `invite_used`／`invite_expired`／`too_many_attempts` | 409 | 邀請碼狀態錯誤 |
-| `name_required`／`label_required`／`slots_required`／`invalid_slot`／`invalid_date`／`date_in_past` | 400 | 欄位業務驗證失敗 |
+| `name_required`／`label_required`／`slots_required`／`invalid_slot`／`invalid_date`／`invalid_time`／`date_in_past` | 400 | 欄位業務驗證失敗 |
 | `validation_error` | 422 | pydantic 欄位驗證失敗（統一改寫，§2.3） |
 | `audio_too_large` | 413 | 音檔超過上限（上限值 env 可調，✅ D-26） |
 | `invalid_signature` | 400 | LINE webhook 驗簽失敗 |
@@ -115,7 +115,7 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | `POST /api/elders` | `POST /api/v1/elders` | 建長輩＋首綁邀請碼 |
 | `POST /api/elders/{elder_id}/guardian-invites` | `POST /api/v1/elders/{elder_id}/guardian-invites` | 產家屬邀請碼 |
 | `GET|POST /api/elders/{elder_id}/medications`、`PUT|DELETE .../{medication_id}` | 同路徑掛 `/api/v1/` | 用藥 CRUD |
-| `GET|POST /api/elders/{elder_id}/appointments`、`PUT|DELETE .../{appointment_id}` | 同路徑掛 `/api/v1/` | 回診 CRUD |
+| `GET|POST /api/elders/{elder_id}/appointments`、`PUT|DELETE .../{appointment_id}` | 同路徑掛 `/api/v1/` | 回診 CRUD；payload `{date, label, time}`，`time` 選填 HH:MM（✅ 庚-15，空＝未指定、提醒不帶時間） |
 | `GET /api/elders/{elder_id}/health-report` | `GET /api/v1/elders/{elder_id}/health-report` | 聚合單數（規範允許）；✅ D-09 已新增 `GET /api/v1/elders/{elder_id}/daily-summaries`（己-3，2026-07-10：列表資源、`limit` 1–90 預設 30、meta 帶 limit） |
 | — | `DELETE /api/v1/sessions` | **新增**：登出（撤銷當前 token，D-25） |
 | — | `DELETE /api/v1/sessions/all` | **新增**：登出所有裝置（撤銷該家屬全部 token，庚-05／A-47，2026-07-12） |
