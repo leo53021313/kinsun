@@ -25,6 +25,7 @@ from kinsun.safety.events import RiskEventStore
 from kinsun.web.auth import LiffVerifier
 from kinsun.web.ratelimit import SlidingWindowRateLimiter
 from kinsun.web.routers.admin import create_admin_router
+from kinsun.web.routers.admin_jobs import create_admin_jobs_router
 from kinsun.web.routers.appointments import create_appointments_router
 from kinsun.web.routers.deps import (
     GuardianScope,
@@ -35,11 +36,18 @@ from kinsun.web.routers.device_bindings import create_device_bindings_router
 from kinsun.web.routers.elders import create_elders_router
 from kinsun.web.routers.guardians import create_guardians_router
 from kinsun.web.routers.medications import create_medications_router
+from kinsun.web.routers.meta import create_meta_router
 from kinsun.web.routers.notifications import create_notifications_router
 from kinsun.web.routers.reports import create_reports_router
 from kinsun.web.routers.sessions import create_sessions_router
 
-__all__ = ["create_admin_router", "create_app_auth_router", "create_guardian_face_router"]
+__all__ = [
+    "create_admin_jobs_router",
+    "create_admin_router",
+    "create_app_auth_router",
+    "create_guardian_face_router",
+    "create_meta_router",
+]
 
 
 def create_guardian_face_router(

@@ -39,10 +39,14 @@ from kinsun.speech.tts import build_tts_client
 from kinsun.web.auth import LineIdTokenVerifier
 from kinsun.web.envelope import install_error_envelope
 from kinsun.web.ratelimit import SlidingWindowRateLimiter
+from kinsun.scheduler.state import PgScheduleStateStore
+from kinsun.scheduler.worker import build_jobs
 from kinsun.web.routers import (
+    create_admin_jobs_router,
     create_admin_router,
     create_app_auth_router,
     create_guardian_face_router,
+    create_meta_router,
 )
 from kinsun.web.security import install_security_headers
 
@@ -78,6 +82,8 @@ def build_app() -> FastAPI:
         if settings.gemini_model_safety == settings.gemini_model
         else build_gemini_for(settings, settings.gemini_model_safety)
     )
+    # 危急送達留痕：notifier 寫入、admin 觀測讀取，共用同一實例。
+    deliveries = PgRiskNotificationLogStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex)
     pipeline = VoicePipeline(
         asr=build_asr_client(settings),
         agent=core.agent,
@@ -89,7 +95,7 @@ def build_app() -> FastAPI:
         notifier=GuardianNotifier(
             core.accounts,
             core.router,
-            deliveries=PgRiskNotificationLogStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex),
+            deliveries=deliveries,
         ),
         risk_events=risk_events,
         traces=core.traces,
@@ -149,6 +155,8 @@ def build_app() -> FastAPI:
     def healthz() -> dict:
         return {"status": "ok"}
 
+    # 對話摘要：guardian 面與 admin 觀測共用同一實例。
+    summaries = PgConversationSummaryStore(db, clock=clock)
     # prefix 由此統一指定（✅ D-28 乙-4）；/api/v1 為 D-27 版本前綴。
     app.include_router(
         create_guardian_face_router(
@@ -159,7 +167,7 @@ def build_app() -> FastAPI:
             clock=clock,
             risk_events=risk_events,
             reminder_logs=core.reminder_logs,
-            summaries=PgConversationSummaryStore(db, clock=clock),
+            summaries=summaries,
         ),
         prefix="/api/v1",
     )
@@ -169,6 +177,29 @@ def build_app() -> FastAPI:
             traces=core.traces,
             clock=clock,
             risk_events=risk_events,
+            account_store=core.account_store,
+            med_store=core.med_store,
+            appt_store=core.appt_store,
+            reminder_logs=core.reminder_logs,
+            summaries=summaries,
+            long_term=core.long_term,
+            deliveries=deliveries,
+        ),
+        prefix="/api/v1/admin",
+    )
+    # 內測操作面（spec 2026-07-12 §3.4）：與 worker 共用同一份 job 清單。
+    app.include_router(
+        create_admin_jobs_router(
+            admin_api_key=settings.admin_api_key,
+            internal_testing_enabled=settings.internal_testing_enabled,
+            jobs=build_jobs(settings, core, clock=clock),
+            schedule_state=PgScheduleStateStore(db, tz),
+            accounts=core.accounts,
+            med_store=core.med_store,
+            appt_store=core.appt_store,
+            channel_router=core.router,
+            record_reminder=core.reminder_logs.record,
+            clock=clock,
         ),
         prefix="/api/v1/admin",
     )
@@ -194,6 +225,11 @@ def build_app() -> FastAPI:
             inbound_audio=inbound_audio,
             max_audio_bytes=settings.audio_max_upload_bytes,
         ),
+        prefix="/api/v1",
+    )
+    # 公開 meta（spec 2026-07-12）：內測模式下發；App 與 admin 前端啟動時查一次。
+    app.include_router(
+        create_meta_router(internal_testing_enabled=settings.internal_testing_enabled),
         prefix="/api/v1",
     )
     dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"

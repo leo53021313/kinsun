@@ -44,6 +44,7 @@ class AccountStore(Protocol):
     def get_consent(self, elder_id: str) -> Consent | None: ...
     def save_invite(self, invite: Invite, *, tx: Executor | None = None) -> None: ...
     def get_invite(self, code: str) -> Invite | None: ...
+    def list_invites_for_elder(self, elder_id: str) -> list[Invite]: ...
     def save_channel_binding(
         self, binding: ChannelBinding, *, tx: Executor | None = None
     ) -> None: ...
@@ -57,8 +58,12 @@ class AccountStore(Protocol):
     def get_guardian_account_by_email(self, email: str) -> GuardianAccount | None: ...
     def save_elder_account(self, account: ElderAccount, *, tx: Executor | None = None) -> None: ...
     def get_elder_account_by_phone(self, phone: str) -> ElderAccount | None: ...
+    def get_elder_account(self, elder_id: str) -> ElderAccount | None: ...
     def save_api_token(self, token: ApiToken, *, tx: Executor | None = None) -> None: ...
     def get_api_token(self, token_hash: str) -> ApiToken | None: ...
+    def list_api_tokens_for_principal(
+        self, principal_type: PrincipalType, principal_id: str
+    ) -> list[ApiToken]: ...
     def remove_api_token(self, token_hash: str) -> None: ...
     def remove_api_tokens_for_principal(
         self, principal_type: PrincipalType, principal_id: str
@@ -215,6 +220,16 @@ class PgAccountStore:
         c, elder, role, expires, max_a, attempts, used = rows[0]
         return Invite(c, elder, InviteRole(role), expires, max_a, attempts, used)
 
+    def list_invites_for_elder(self, elder_id: str) -> list[Invite]:
+        rows = self._db.query(
+            "SELECT code, elder_id, role, expires_at, max_attempts, attempts, used_at "
+            "FROM invites WHERE elder_id = %s ORDER BY expires_at DESC",
+            (elder_id,),
+        )
+        return [
+            Invite(c, e, InviteRole(r), exp, m, a, u) for (c, e, r, exp, m, a, u) in rows
+        ]
+
     def save_channel_binding(self, binding: ChannelBinding, *, tx: Executor | None = None) -> None:
         (tx or self._db).execute(
             "INSERT INTO channel_bindings "
@@ -286,6 +301,14 @@ class PgAccountStore:
         )
         return ElderAccount(*rows[0]) if rows else None
 
+    def get_elder_account(self, elder_id: str) -> ElderAccount | None:
+        rows = self._db.query(
+            "SELECT elder_id, phone, password_hash, created_at "
+            "FROM elder_accounts WHERE elder_id = %s",
+            (elder_id,),
+        )
+        return ElderAccount(*rows[0]) if rows else None
+
     def save_api_token(self, token: ApiToken, *, tx: Executor | None = None) -> None:
         (tx or self._db).execute(
             "INSERT INTO api_tokens (token_hash, principal_type, principal_id, created_at) "
@@ -303,6 +326,16 @@ class PgAccountStore:
             return None
         h, ptype, pid, created = rows[0]
         return ApiToken(h, PrincipalType(ptype), pid, created)
+
+    def list_api_tokens_for_principal(
+        self, principal_type: PrincipalType, principal_id: str
+    ) -> list[ApiToken]:
+        rows = self._db.query(
+            "SELECT token_hash, principal_type, principal_id, created_at FROM api_tokens "
+            "WHERE principal_type = %s AND principal_id = %s ORDER BY created_at DESC",
+            (principal_type.value, principal_id),
+        )
+        return [ApiToken(h, PrincipalType(p), i, c) for (h, p, i, c) in rows]
 
     def remove_api_token(self, token_hash: str) -> None:
         self._db.execute("DELETE FROM api_tokens WHERE token_hash = %s", (token_hash,))
@@ -397,6 +430,10 @@ class FakeAccountStore:
     def get_invite(self, code: str) -> Invite | None:
         return self.invites.get(code)
 
+    def list_invites_for_elder(self, elder_id: str) -> list[Invite]:
+        rows = [i for i in self.invites.values() if i.elder_id == elder_id]
+        return sorted(rows, key=lambda i: i.expires_at, reverse=True)
+
     def save_channel_binding(self, binding: ChannelBinding, *, tx: Executor | None = None) -> None:
         key = (binding.channel, binding.external_id)
         existing = self.channel_bindings.get(key)
@@ -438,12 +475,25 @@ class FakeAccountStore:
     def get_elder_account_by_phone(self, phone: str) -> ElderAccount | None:
         return next((a for a in self.elder_accounts.values() if a.phone == phone), None)
 
+    def get_elder_account(self, elder_id: str) -> ElderAccount | None:
+        return self.elder_accounts.get(elder_id)
+
     def save_api_token(self, token: ApiToken, *, tx: Executor | None = None) -> None:
         # 與 Pg 一致：ON CONFLICT DO NOTHING（token_hash 不覆寫）。
         self.api_tokens.setdefault(token.token_hash, token)
 
     def get_api_token(self, token_hash: str) -> ApiToken | None:
         return self.api_tokens.get(token_hash)
+
+    def list_api_tokens_for_principal(
+        self, principal_type: PrincipalType, principal_id: str
+    ) -> list[ApiToken]:
+        rows = [
+            t
+            for t in self.api_tokens.values()
+            if t.principal_type is principal_type and t.principal_id == principal_id
+        ]
+        return sorted(rows, key=lambda t: t.created_at, reverse=True)
 
     def remove_api_token(self, token_hash: str) -> None:
         self.api_tokens.pop(token_hash, None)

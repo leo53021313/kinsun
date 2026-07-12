@@ -8,6 +8,11 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
+from kinsun.accounts.models import PrincipalType
+from kinsun.accounts.store import AccountStore
+from kinsun.appointments.store import AppointmentStore
+from kinsun.medications.store import MedicationStore
+from kinsun.memory.longterm.store import LongTermStore
 from kinsun.observability.models import (
     ElderActivity,
     FeedItem,
@@ -16,6 +21,9 @@ from kinsun.observability.models import (
     Trace,
 )
 from kinsun.observability.store import TraceStore
+from kinsun.reports.reminders import ReminderLogStore
+from kinsun.reports.summaries import ConversationSummaryStore
+from kinsun.safety.deliveries import RiskNotificationLogStore
 from kinsun.safety.events import RiskEventStore
 from kinsun.web.envelope import ok
 
@@ -25,20 +33,34 @@ FAILSAFE_ALERT_WINDOW_MINUTES = 60
 FAILSAFE_ALERT_THRESHOLD = 3
 
 
-def create_admin_router(
-    *,
-    admin_api_key: str,
-    traces: TraceStore,
-    clock: Callable[[], datetime],
-    risk_events: RiskEventStore | None = None,
-) -> APIRouter:
-    router = APIRouter(tags=["admin"])
+def build_require_admin(admin_api_key: str) -> Callable:
+    """X-Admin-Key 守門（admin.py 與 admin_jobs.py 共用）。"""
 
     def require_admin(x_admin_key: str = Header(default="", alias="X-Admin-Key")) -> None:
         if not admin_api_key:
             raise HTTPException(status_code=503, detail="admin_disabled")
         if not hmac.compare_digest(x_admin_key.encode(), admin_api_key.encode()):
             raise HTTPException(status_code=401, detail="invalid_admin_key")
+
+    return require_admin
+
+
+def create_admin_router(
+    *,
+    admin_api_key: str,
+    traces: TraceStore,
+    clock: Callable[[], datetime],
+    risk_events: RiskEventStore | None = None,
+    account_store: AccountStore,
+    med_store: MedicationStore,
+    appt_store: AppointmentStore,
+    reminder_logs: ReminderLogStore,
+    summaries: ConversationSummaryStore,
+    long_term: LongTermStore,
+    deliveries: RiskNotificationLogStore,
+) -> APIRouter:
+    router = APIRouter(tags=["admin"])
+    require_admin = build_require_admin(admin_api_key)
 
     def _today_start() -> float:
         now = clock()
@@ -133,6 +155,140 @@ def create_admin_router(
         if trace is None:
             raise HTTPException(status_code=404, detail="trace_not_found")
         return ok(_trace_json(trace))
+
+    # --- 長輩詳情分頁（spec 2026-07-12 §3.3）：以 elder_id 主鍵直查，與時間軸的
+    # _find_elder（掃活動清單）分工——這幾頁不依賴長輩曾有對話。 ---
+
+    def _require_elder(elder_id: str) -> None:
+        if account_store.get_elder(elder_id) is None:
+            raise HTTPException(status_code=404, detail="elder_not_found")
+
+    @router.get("/elders/{elder_id}/reminders", dependencies=[Depends(require_admin)])
+    def elder_reminders(elder_id: str) -> dict:
+        _require_elder(elder_id)
+        return ok(
+            {
+                "medications": [
+                    {
+                        "medication_id": m.medication_id,
+                        "name": m.name,
+                        "slots": [s.value for s in m.slots],
+                    }
+                    for m in med_store.list_for_elder(elder_id)
+                ],
+                "appointments": [
+                    {"appointment_id": a.appointment_id, "date": a.date, "label": a.label}
+                    for a in appt_store.list_for_elder(elder_id)
+                ],
+                "reminder_logs": [
+                    {"kind": log.kind, "content": log.content, "created_at": log.created_at}
+                    for log in reminder_logs.list_for_elder(elder_id)[:50]
+                ],
+            }
+        )
+
+    @router.get("/elders/{elder_id}/memory", dependencies=[Depends(require_admin)])
+    def elder_memory(elder_id: str) -> dict:
+        _require_elder(elder_id)
+        return ok(
+            {
+                "memories": [
+                    {"text": m.text, "provenance": m.provenance, "date": m.date}
+                    for m in long_term.list_for_elder(elder_id)
+                ],
+                "summaries": [
+                    {"date": s.date, "content": s.content, "created_at": s.created_at}
+                    for s in summaries.list_for_elder(elder_id)[:30]
+                ],
+            }
+        )
+
+    @router.get("/elders/{elder_id}/account", dependencies=[Depends(require_admin)])
+    def elder_account(elder_id: str) -> dict:
+        _require_elder(elder_id)
+        now = clock().timestamp()
+
+        def invite_status(invite) -> str:
+            if invite.used_at is not None:
+                return "used"
+            if invite.attempts >= invite.max_attempts:
+                return "locked"
+            if invite.expires_at < now:
+                return "expired"
+            return "active"
+
+        account = account_store.get_elder_account(elder_id)
+        consent = account_store.get_consent(elder_id)
+        return ok(
+            {
+                "bindings": [
+                    {
+                        "channel": b.channel.value,
+                        "external_id": b.external_id,
+                        "created_at": b.created_at,
+                    }
+                    for b in account_store.list_channel_bindings_for_principal(
+                        PrincipalType.ELDER, elder_id
+                    )
+                ],
+                "invites": [
+                    {
+                        "code": i.code,
+                        "role": i.role.value,
+                        "status": invite_status(i),
+                        "expires_at": i.expires_at,
+                        "attempts": i.attempts,
+                    }
+                    for i in account_store.list_invites_for_elder(elder_id)
+                ],
+                "consent": None
+                if consent is None
+                else {
+                    "consent_by": consent.consent_by.value,
+                    "version": consent.version,
+                    "granted_at": consent.granted_at,
+                    "revoked_at": consent.revoked_at,
+                },
+                "has_password_account": account is not None,
+                "phone": account.phone if account else None,
+                # token 只回概況（建立時間）；DB 僅存雜湊，雜湊本身也不外洩。
+                "tokens": [
+                    {"created_at": t.created_at}
+                    for t in account_store.list_api_tokens_for_principal(
+                        PrincipalType.ELDER, elder_id
+                    )
+                ],
+                "guardians": [
+                    {
+                        "guardian_id": eg.guardian_id,
+                        "name": g.name
+                        if (g := account_store.get_guardian(eg.guardian_id))
+                        else eg.guardian_id,
+                        "role": eg.role.value,
+                        "escalation_order": eg.escalation_order,
+                    }
+                    for eg in account_store.list_elder_guardians(elder_id)
+                ],
+            }
+        )
+
+    @router.get("/elders/{elder_id}/risk-notifications", dependencies=[Depends(require_admin)])
+    def elder_risk_notifications(elder_id: str) -> dict:
+        _require_elder(elder_id)
+        return ok(
+            [
+                {
+                    "guardian_id": d.guardian_id,
+                    "guardian_name": g.name
+                    if (g := account_store.get_guardian(d.guardian_id))
+                    else d.guardian_id,
+                    "tier": int(d.tier),
+                    "delivered": d.delivered,
+                    "created_at": d.created_at,
+                }
+                for d in deliveries.list_for_elder(elder_id)[:100]
+            ]
+        )
 
     return router
 
