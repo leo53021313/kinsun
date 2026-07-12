@@ -274,7 +274,9 @@ def test_elder_reminders_shape():
     ).get("/api/v1/admin/elders/e1/reminders", headers=_auth())
     assert res.status_code == 200
     body = res.json()["data"]
-    assert body["medications"] == [{"medication_id": "m1", "name": "降血壓藥", "slots": ["morning"]}]
+    assert body["medications"] == [
+        {"medication_id": "m1", "name": "降血壓藥", "slots": ["morning"]}
+    ]
     assert body["appointments"][0]["label"] == "心臟科回診"
     assert body["reminder_logs"][0]["kind"] == "medication"
 
@@ -297,7 +299,9 @@ def test_elder_memory_shape():
         "/api/v1/admin/elders/e1/memory", headers=_auth()
     )
     body = res.json()["data"]
-    assert body["memories"] == [{"text": "喜歡下棋", "provenance": "長輩自述", "date": "2026-07-01"}]
+    assert body["memories"] == [
+        {"text": "喜歡下棋", "provenance": "長輩自述", "date": "2026-07-01"}
+    ]
     assert body["summaries"][0]["date"] == "2026-07-11"
 
 
