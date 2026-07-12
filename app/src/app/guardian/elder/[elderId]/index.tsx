@@ -17,7 +17,7 @@ import {
   type Medication,
 } from "@/lib/api";
 import { slotLabel } from "@/lib/medicationSlots";
-import { useSession } from "@/lib/SessionProvider";
+import { useSession, useSignOutOnAuthError } from "@/lib/SessionProvider";
 import { formatTime } from "kinsun-shared/format";
 import { tierLabel } from "kinsun-shared/terms";
 import { colors, spacing } from "@/lib/theme";
@@ -37,6 +37,7 @@ export default function ElderDetail() {
   const [accountMessage, setAccountMessage] = useState("");
   const [accountBusy, setAccountBusy] = useState(false);
   const { session } = useSession();
+  const signOutOn401 = useSignOutOnAuthError();
   const token = session?.token ?? "";
   const router = useRouter();
 
@@ -62,6 +63,7 @@ export default function ElderDetail() {
             setSummaries(daily);
           }
         } catch (exc) {
+          if (await signOutOn401(exc)) return;
           if (alive) {
             setError(exc instanceof Error ? exc.message : "載入失敗");
           }
@@ -84,6 +86,7 @@ export default function ElderDetail() {
       setAccountMessage("已設定完成。長輩手機用這組號碼＋密碼登入一次就會一直記住。");
       setAccountPassword("");
     } catch (exc) {
+      if (await signOutOn401(exc)) return;
       setAccountMessage(exc instanceof ApiError ? exc.message : "設定失敗，請稍後再試。");
     } finally {
       setAccountBusy(false);
@@ -98,6 +101,7 @@ export default function ElderDetail() {
     try {
       setInviteCode(await createGuardianInvite(elderId, token));
     } catch (exc) {
+      if (await signOutOn401(exc)) return;
       setError(exc instanceof Error ? exc.message : "產生邀請碼失敗");
     } finally {
       setBusy(false);

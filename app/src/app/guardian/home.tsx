@@ -8,13 +8,14 @@ import { RoleSwitcher } from "@/components/RoleSwitcher";
 import { Button, EmptyHint, ErrorText, Field, Section } from "@/components/ui";
 import { createElder, listElders, listNotifications, logoutGuardian, type Elder } from "@/lib/api";
 import { loadSeenAt } from "@/lib/notificationsSeen";
-import { useSession } from "@/lib/SessionProvider";
+import { useSession, useSignOutOnAuthError } from "@/lib/SessionProvider";
 import { colors, spacing } from "@/lib/theme";
 
 /** 家屬首頁：長輩列表＋新增長輩（成功即顯示長輩綁定碼）。 */
 export default function GuardianHome() {
   const router = useRouter();
   const { loading, session, signOut } = useSession();
+  const signOutOn401 = useSignOutOnAuthError();
   const token = session?.token ?? "";
   const [elders, setElders] = useState<Elder[]>([]);
   const [newName, setNewName] = useState("");
@@ -40,6 +41,7 @@ export default function GuardianHome() {
             setElders(list);
           }
         } catch (exc) {
+          if (await signOutOn401(exc)) return;
           if (alive) {
             setError(exc instanceof Error ? exc.message : "載入失敗");
           }
@@ -77,6 +79,7 @@ export default function GuardianHome() {
       setInviteCode(created.invite_code);
       setNewName("");
     } catch (exc) {
+      if (await signOutOn401(exc)) return;
       setError(exc instanceof Error ? exc.message : "新增失敗");
     } finally {
       setBusy(false);

@@ -12,13 +12,14 @@ import {
   type Medication,
 } from "@/lib/api";
 import { SLOTS, slotLabel } from "@/lib/medicationSlots";
-import { useSession } from "@/lib/SessionProvider";
+import { useSession, useSignOutOnAuthError } from "@/lib/SessionProvider";
 import { colors, spacing } from "@/lib/theme";
 
 /** 用藥管理：清單＋編輯／刪除＋同頁表單（App 版編輯，取代走 LINE 端）。 */
 export default function MedicationsManage() {
   const { elderId } = useLocalSearchParams<{ elderId: string }>();
   const { session } = useSession();
+  const signOutOn401 = useSignOutOnAuthError();
   const token = session?.token ?? "";
   const [medications, setMedications] = useState<Medication[] | null>(null);
   const [name, setName] = useState("");
@@ -33,10 +34,11 @@ export default function MedicationsManage() {
     }
     try {
       setMedications(await listMedications(elderId, token));
-    } catch {
+    } catch (exc) {
+      if (await signOutOn401(exc)) return;
       setError("載入失敗，請稍後再試。");
     }
-  }, [elderId, token]);
+  }, [elderId, token, signOutOn401]);
 
   useEffect(() => {
     reload();
@@ -68,6 +70,7 @@ export default function MedicationsManage() {
       resetForm();
       await reload();
     } catch (exc) {
+      if (await signOutOn401(exc)) return;
       setError(exc instanceof ApiError ? exc.message : "儲存失敗，請稍後再試。");
     } finally {
       setBusy(false);
@@ -99,6 +102,7 @@ export default function MedicationsManage() {
             }
             await reload();
           } catch (exc) {
+            if (await signOutOn401(exc)) return;
             setError(exc instanceof ApiError ? exc.message : "刪除失敗，請稍後再試。");
           } finally {
             setBusy(false);

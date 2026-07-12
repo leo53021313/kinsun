@@ -12,7 +12,7 @@ import {
   updateAppointment,
   type Appointment,
 } from "@/lib/api";
-import { useSession } from "@/lib/SessionProvider";
+import { useSession, useSignOutOnAuthError } from "@/lib/SessionProvider";
 import { colors, spacing } from "@/lib/theme";
 
 /** 以本地時區組 YYYY-MM-DD（不用 toISOString，避免 UTC 位移跨日）。 */
@@ -32,6 +32,7 @@ function toTimeString(d: Date): string {
 export default function AppointmentsManage() {
   const { elderId } = useLocalSearchParams<{ elderId: string }>();
   const { session } = useSession();
+  const signOutOn401 = useSignOutOnAuthError();
   const token = session?.token ?? "";
   const [appointments, setAppointments] = useState<Appointment[] | null>(null);
   const [date, setDate] = useState("");
@@ -49,10 +50,11 @@ export default function AppointmentsManage() {
     }
     try {
       setAppointments(await listAppointments(elderId, token));
-    } catch {
+    } catch (exc) {
+      if (await signOutOn401(exc)) return;
       setError("載入失敗，請稍後再試。");
     }
-  }, [elderId, token]);
+  }, [elderId, token, signOutOn401]);
 
   useEffect(() => {
     reload();
@@ -83,6 +85,7 @@ export default function AppointmentsManage() {
       resetForm();
       await reload();
     } catch (exc) {
+      if (await signOutOn401(exc)) return;
       setError(exc instanceof ApiError ? exc.message : "儲存失敗，請稍後再試。");
     } finally {
       setBusy(false);
@@ -116,6 +119,7 @@ export default function AppointmentsManage() {
             }
             await reload();
           } catch (exc) {
+            if (await signOutOn401(exc)) return;
             setError(exc instanceof ApiError ? exc.message : "刪除失敗，請稍後再試。");
           } finally {
             setBusy(false);
