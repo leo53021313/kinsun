@@ -11,15 +11,16 @@ from pydantic import BaseModel, Field
 from kinsun.accounts.models import ConsentBy
 from kinsun.accounts.service import AccountService, InviteError
 from kinsun.web.envelope import ok
+from kinsun.web.errors import ErrorCode
 from kinsun.web.ratelimit import RateLimiter, throttle_or_429
 
 # 邀請碼錯誤 → (HTTP, 標準錯誤碼)：查無 404，其餘為「碼已不可用」的衝突（✅ D-24）。
 _INVITE_STATUS = {
-    "not_found": (404, "invite_not_found"),
-    "used": (409, "invite_used"),
-    "expired": (409, "invite_expired"),
-    "too_many_attempts": (409, "too_many_attempts"),
-    "wrong_role": (409, "invite_wrong_role"),  # 家屬邀請碼誤走裝置綁定（庚-04／A-46）
+    "not_found": (404, ErrorCode.INVITE_NOT_FOUND),
+    "used": (409, ErrorCode.INVITE_USED),
+    "expired": (409, ErrorCode.INVITE_EXPIRED),
+    "too_many_attempts": (409, ErrorCode.TOO_MANY_ATTEMPTS),
+    "wrong_role": (409, ErrorCode.INVITE_WRONG_ROLE),  # 家屬邀請碼誤走裝置綁定（庚-04／A-46）
 }
 
 

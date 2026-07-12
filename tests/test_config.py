@@ -167,3 +167,14 @@ def test_internal_testing_enabled_defaults_false_and_parses():
     assert load_settings(BASE_ENV).internal_testing_enabled is False
     on = load_settings({**BASE_ENV, "INTERNAL_TESTING_ENABLED": "true"})
     assert on.internal_testing_enabled is True
+
+
+def test_database_pool_max_size_default_and_override():
+    """✅ 庚-26（A-55）：連線池上限可調。
+
+    總量公式：WEB_WORKERS×本值＋排程 worker×本值 ≤ Supabase 直連上限 60。
+    """
+    settings = load_settings(BASE_ENV)
+    assert settings.database_pool_max_size == 5
+    settings = load_settings({**BASE_ENV, "DATABASE_POOL_MAX_SIZE": "3"})
+    assert settings.database_pool_max_size == 3

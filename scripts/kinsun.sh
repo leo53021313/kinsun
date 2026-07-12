@@ -152,6 +152,8 @@ launch_webhook() {
   else
     # 多 worker（✅ D-20 丙-3）：對講機一請求佔住 ASR→LLM→TTS 全鏈路，
     # 單進程會整台卡住。WEB_WORKERS 為部署層鍵（不經 config.py），預設 2。
+    # ⚠️ 連線總量（✅ 庚-26）：WEB_WORKERS×DATABASE_POOL_MAX_SIZE(5)＋排程 worker 5
+    #    ≤ Supabase 直連上限 60 → WEB_WORKERS 安全上限約 8（還要留 CLI 餘裕）。
     # 連線池評估：每 worker 池上限 5 ＋ scheduler 5 ＝ 15 連線，Supabase 額度內。
     # 注意：--reload 與 --workers 互斥（uvicorn 限制），開發模式維持單進程。
     cmd+=(--workers "${WEB_WORKERS:-2}")
