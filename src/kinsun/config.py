@@ -88,6 +88,7 @@ class Settings:
     line_text_input_enabled: bool
     admin_api_key: str
     admin_retention_days: int
+    internal_testing_enabled: bool
 
 
 def _parse_bool(raw: str) -> bool:
@@ -166,4 +167,6 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         line_text_input_enabled=_parse_bool(env.get("LINE_TEXT_INPUT_ENABLED", "true")),
         admin_api_key=env.get("ADMIN_API_KEY", ""),
         admin_retention_days=int(env.get("ADMIN_RETENTION_DAYS", "14")),
+        # 內測模式總開關（spec 2026-07-12）：App 切換身分＋後台手動觸發；正式環境務必 false。
+        internal_testing_enabled=_parse_bool(env.get("INTERNAL_TESTING_ENABLED", "false")),
     )

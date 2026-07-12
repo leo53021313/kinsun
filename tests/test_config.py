@@ -160,3 +160,10 @@ def test_gemini_model_per_purpose_override():
     s = load_settings({**BASE_ENV, "GEMINI_MODEL_SAFETY": "gemini-3.1-pro"})
     assert s.gemini_model_safety == "gemini-3.1-pro"
     assert s.gemini_model_summary == "gemini-3.1-flash-lite"
+
+
+def test_internal_testing_enabled_defaults_false_and_parses():
+    """內測總開關（spec 2026-07-12 §3.1）：預設關；true 才開。"""
+    assert load_settings(BASE_ENV).internal_testing_enabled is False
+    on = load_settings({**BASE_ENV, "INTERNAL_TESTING_ENABLED": "true"})
+    assert on.internal_testing_enabled is True
