@@ -40,7 +40,7 @@ from kinsun.speech.asr import build_asr_client
 from kinsun.speech.tts import build_tts_client
 from kinsun.web.auth import LineIdTokenVerifier
 from kinsun.web.envelope import install_error_envelope
-from kinsun.web.ratelimit import SlidingWindowRateLimiter
+from kinsun.web.ratelimit import PgRateLimiter
 from kinsun.web.routers import (
     create_admin_jobs_router,
     create_admin_router,
@@ -206,7 +206,8 @@ def build_app() -> FastAPI:
     app.include_router(
         create_app_auth_router(
             accounts=core.accounts,
-            rate_limiter=SlidingWindowRateLimiter(
+            rate_limiter=PgRateLimiter(
+                core.db,
                 settings.auth_rate_limit_max_attempts,
                 settings.auth_rate_limit_window_seconds,
             ),

@@ -118,7 +118,7 @@ def test_audio_inbound_records_webhook_event_and_uploads():
     assert msg.audio_url == "https://x/in.m4a"
     assert len(traces.webhook_events) == 1
     assert traces.webhook_events[0].trace_id == "trace-1"
-    assert traces.webhook_events[0].line_user_id == "U-1"
+    assert traces.webhook_events[0].external_id == "U-1"
     assert traces.webhook_events[0].message_type == "audio"
 
 

@@ -106,7 +106,8 @@ export type TraceReply = {
 export type TraceRiskEvent = { tier: number; reason: string; created_at: number };
 export type TraceDetail = {
   trace_id: string;
-  line_user_id: string;
+  external_id: string;
+  channel: string;
   elder_name: string;
   webhook_event: TraceWebhookEvent | null;
   asr_call: TraceAsrCall | null;
