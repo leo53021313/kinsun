@@ -84,11 +84,13 @@ MEDICATIONS_DDL = (
     "name TEXT NOT NULL, slots TEXT NOT NULL);"
 )
 
+# time＝看診時刻 ISO "HH:MM"（✅ 庚-15，選填；空＝未指定）。
 APPOINTMENTS_DDL = (
     "CREATE TABLE IF NOT EXISTS appointments ("
     "appointment_id TEXT PRIMARY KEY, elder_id TEXT NOT NULL, "
-    "date TEXT NOT NULL, label TEXT NOT NULL);"
+    "date TEXT NOT NULL, label TEXT NOT NULL, time TEXT NOT NULL DEFAULT '');"
     "CREATE INDEX IF NOT EXISTS idx_appointments_date ON appointments (date);"
+    "ALTER TABLE appointments ADD COLUMN IF NOT EXISTS time TEXT NOT NULL DEFAULT '';"
 )
 
 RAG_DDL = (
@@ -145,13 +147,16 @@ REMINDER_LOGS_DDL = (
 )
 
 # 危急通知送達紀錄（✅ D-36，丙-7）：每位家屬成功／失敗獨立留痕。
+# channels 記實際走的通道（✅ 庚-16，逗號串接）；App＝落庫待拉取、非真送達。
 RISK_NOTIFICATION_LOGS_DDL = (
     "CREATE TABLE IF NOT EXISTS risk_notification_logs ("
     "risk_notification_log_id TEXT PRIMARY KEY, elder_id TEXT NOT NULL, "
     "guardian_id TEXT NOT NULL, tier INTEGER NOT NULL, delivered BOOLEAN NOT NULL, "
-    "created_at DOUBLE PRECISION NOT NULL);"
+    "created_at DOUBLE PRECISION NOT NULL, channels TEXT NOT NULL DEFAULT '');"
     "CREATE INDEX IF NOT EXISTS idx_risk_notification_logs_elder_created "
     "ON risk_notification_logs (elder_id, created_at);"
+    "ALTER TABLE risk_notification_logs "
+    "ADD COLUMN IF NOT EXISTS channels TEXT NOT NULL DEFAULT '';"
 )
 
 # App 內通知（✅ D-12，甲-6）：App 出站 adapter 落地訊息，登入後拉取。
@@ -384,12 +389,15 @@ class Database:
 
     @contextmanager
     def transaction(self) -> Iterator[Executor]:
+        # 只翻譯 DB 層錯誤（psycopg；連線池例外亦繼承之）。交易本體（yield 區段）
+        # 拋出的業務例外（如 InviteError）原樣穿透——回滾照常發生，但不得被
+        # 誤包成 StoreError（會再被 _Errors 翻成領域錯誤，呼叫端就接不到了）。
         try:
             with self._pool.connection() as conn, conn.transaction():
                 yield _ConnExecutor(conn)
         except StoreError:
             raise
-        except Exception as exc:  # noqa: BLE001
+        except psycopg.Error as exc:
             raise StoreError(str(exc)) from exc
 
 

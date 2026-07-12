@@ -24,29 +24,29 @@ class PgAppointmentStore:
         self._db = _Errors(db, lambda m: AppointmentError(f"回診資料存取失敗：{m}"))
 
     def _to_appt(self, row: tuple) -> Appointment:
-        appointment_id, elder_id, date, label = row
-        return Appointment(appointment_id, elder_id, date, label)
+        appointment_id, elder_id, date, label, time = row
+        return Appointment(appointment_id, elder_id, date, label, time)
 
     def save(self, appt: Appointment) -> None:
         self._db.execute(
-            "INSERT INTO appointments (appointment_id, elder_id, date, label) "
-            "VALUES (%s, %s, %s, %s) ON CONFLICT (appointment_id) DO UPDATE SET "
+            "INSERT INTO appointments (appointment_id, elder_id, date, label, time) "
+            "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (appointment_id) DO UPDATE SET "
             "elder_id = EXCLUDED.elder_id, date = EXCLUDED.date, "
-            "label = EXCLUDED.label",
-            (appt.appointment_id, appt.elder_id, appt.date, appt.label),
+            "label = EXCLUDED.label, time = EXCLUDED.time",
+            (appt.appointment_id, appt.elder_id, appt.date, appt.label, appt.time),
         )
 
     def list_for_elder(self, elder_id: str) -> list[Appointment]:
         rows = self._db.query(
-            "SELECT appointment_id, elder_id, date, label FROM appointments "
-            "WHERE elder_id = %s ORDER BY date",
+            "SELECT appointment_id, elder_id, date, label, time FROM appointments "
+            "WHERE elder_id = %s ORDER BY date, time",
             (elder_id,),
         )
         return [self._to_appt(r) for r in rows]
 
     def list_for_date(self, date: str) -> list[Appointment]:
         rows = self._db.query(
-            "SELECT appointment_id, elder_id, date, label FROM appointments WHERE date = %s",
+            "SELECT appointment_id, elder_id, date, label, time FROM appointments WHERE date = %s",
             (date,),
         )
         return [self._to_appt(r) for r in rows]
@@ -66,7 +66,7 @@ class FakeAppointmentStore:
 
     def list_for_elder(self, elder_id: str) -> list[Appointment]:
         rows = [a for a in self._appts.values() if a.elder_id == elder_id]
-        return sorted(rows, key=lambda a: a.date)
+        return sorted(rows, key=lambda a: (a.date, a.time))
 
     def list_for_date(self, date: str) -> list[Appointment]:
         return [a for a in self._appts.values() if a.date == date]

@@ -42,3 +42,19 @@ def test_per_job_name_isolation(store, ns):
     # 設定 job A 不應影響 job B。
     store.set_last_run(f"{ns}a", datetime(2026, 6, 29, 3, 0, tzinfo=TPE))
     assert store.get_last_run(f"{ns}b") is None
+
+
+def test_try_claim_succeeds_only_when_expected_matches(store, ns):
+    """✅ 庚-17（A-42）：原子先搶先贏——expected 與現值相符才更新並回 True；
+    已被別的 worker 搶走（現值變了）回 False 且不覆寫。"""
+    seed = datetime(2026, 7, 12, 3, 0, tzinfo=TPE)
+    now = datetime(2026, 7, 13, 3, 0, tzinfo=TPE)
+    store.set_last_run(f"{ns}job", seed)
+    assert store.try_claim(f"{ns}job", expected=seed, now=now) is True
+    got = store.get_last_run(f"{ns}job")
+    assert got is not None and got.timestamp() == now.timestamp()
+    # 第二個 worker 拿著過時的 expected 來搶 → 失敗、狀態不動。
+    later = datetime(2026, 7, 14, 3, 0, tzinfo=TPE)
+    assert store.try_claim(f"{ns}job", expected=seed, now=later) is False
+    got2 = store.get_last_run(f"{ns}job")
+    assert got2 is not None and got2.timestamp() == now.timestamp()

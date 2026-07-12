@@ -14,7 +14,7 @@ from kinsun.observability.store import TraceStore, safe_record
 from kinsun.safety.detector import RiskDetector
 from kinsun.safety.events import RiskEventStore
 from kinsun.safety.notifier import Notifier
-from kinsun.safety.tiers import RiskTier
+from kinsun.safety.tiers import RiskAssessment, RiskTier
 from kinsun.speech.asr import ASRClient
 from kinsun.speech.tts import TTSClient, TTSError, TtsResult
 
@@ -33,6 +33,7 @@ class VoicePipeline:
         risk_events: RiskEventStore,
         traces: TraceStore | None = None,
         model_name: str = "",
+        safety_model_name: str = "",
         timer: Callable[[], float] = time.monotonic,
     ) -> None:
         self._asr = asr
@@ -43,6 +44,7 @@ class VoicePipeline:
         self._risk_events = risk_events
         self._traces = traces
         self._model_name = model_name
+        self._safety_model_name = safety_model_name
         self._timer = timer
 
     def process(
@@ -90,7 +92,9 @@ class VoicePipeline:
         self, user_text: str, *, elder_id: str, external_id: str, channel: str, trace_id: str
     ) -> TtsResult:
         """會話鍵為 elder_id；external_id＋channel 僅供觀測五表標記（可為空字串）。"""
-        assessment = self._detector.assess(user_text)
+        assessment = self._assess(
+            user_text, external_id=external_id, channel=channel, trace_id=trace_id
+        )
         # 危急通知須獨立於回覆生成：先落庫＋通知家屬，才產生回覆。
         # 否則 agent 生成回覆時若丟例外，會讓已偵測到的危急漏通知。
         # 落庫門檻＝L1：一般 L1（小訊號）是每日摘要的資料來源（✅ D-10 己-5，庚-01），
@@ -113,6 +117,38 @@ class VoicePipeline:
 
     def _latency_ms(self, started: float) -> int:
         return int((self._timer() - started) * 1000)
+
+    def _assess(
+        self, user_text: str, *, external_id: str, channel: str, trace_id: str
+    ) -> RiskAssessment:
+        """危急分級也納入觀測（✅ 庚-10／A-9）：token 進收集器、每輪補一筆 llm_call。
+
+        detector.assess 從不拋例外（fail-safe），故錯誤以 llm:error 訊號辨識，
+        不能沿用 _span 的例外偵測。
+        """
+        usage = LLMUsage()
+        started = self._timer()
+        with collect_llm_usage(usage):
+            assessment = self._detector.assess(user_text)
+        if self._traces is not None:
+            traces = self._traces
+            latency_ms = self._latency_ms(started)
+            is_error = "llm:error" in assessment.signals
+            safe_record(
+                lambda: traces.record_llm_call(
+                    trace_id=trace_id,
+                    external_id=external_id,
+                    channel=channel,
+                    status="error" if is_error else "ok",
+                    latency_ms=latency_ms,
+                    model_name=self._safety_model_name,
+                    input_tokens=usage.input_tokens or None,
+                    output_tokens=usage.output_tokens or None,
+                    content=f"風險分級 {assessment.tier.name}：{assessment.reason}",
+                    error_message="分級器故障（fail-safe 留痕）" if is_error else "",
+                )
+            )
+        return assessment
 
     @contextmanager
     def _span(self, record: Callable[[TraceStore, str, int, str], object]) -> Iterator[None]:

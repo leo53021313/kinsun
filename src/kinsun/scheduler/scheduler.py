@@ -37,26 +37,27 @@ class Scheduler:
         ran: list[str] = []
         for job in self._jobs:
             try:
-                due = self._is_due(job, now)
+                claimed = self._claim_if_due(job, now)
             except Exception:  # noqa: BLE001 - 狀態讀取/解析失敗不影響其他 job
                 logger.exception("排程到期判斷失敗：%s", job.name)
                 continue
-            if not due:
+            if not claimed:
                 continue
             try:
                 job.run()
             except Exception:  # noqa: BLE001 - 排程不可因單一 job 崩潰
                 logger.exception("排程 job 失敗：%s", job.name)
-            try:
-                self._state.set_last_run(job.name, now)
-            except Exception:  # noqa: BLE001
-                logger.exception("排程狀態寫入失敗：%s", job.name)
             ran.append(job.name)
         return ran
 
-    def _is_due(self, job: Job, now: datetime) -> bool:
+    def _claim_if_due(self, job: Job, now: datetime) -> bool:
+        """到期則原子搶占（✅ 庚-17／A-42）：執行前先以「現值仍為我讀到的 last」
+        條件更新狀態，搶到才跑——誤起雙 worker 時同一 job 只執行一次。
+        搶占＝寫入 last_run，故 job 失敗也算已跑（與舊「跑完才寫」語意一致）。"""
         last = self._state.get_last_run(job.name)
         if last is None:  # 首見：種基準，下一次 cron 時間才觸發
             self._state.set_last_run(job.name, now)
             return False
-        return croniter(job.cron, last).get_next(datetime) <= now
+        if croniter(job.cron, last).get_next(datetime) > now:
+            return False
+        return self._state.try_claim(job.name, expected=last, now=now)

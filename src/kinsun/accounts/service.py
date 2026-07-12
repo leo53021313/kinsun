@@ -121,10 +121,10 @@ class AccountService:
             self._save_new_elder(elder, guardian.guardian_id, tx)
         return elder
 
-    def generate_invite(self, elder_id: str, role: InviteRole) -> Invite:
+    def generate_invite(self, elder_id: str, role: InviteRole, *, tx=None) -> Invite:
         expires_at = (self._clock() + timedelta(hours=self._ttl_hours)).timestamp()
         invite = Invite(self._new_code(), elder_id, role, expires_at, self._max_attempts)
-        self._repo.save_invite(invite)
+        self._repo.save_invite(invite, tx=tx)
         return invite
 
     def redeem_invite(
@@ -135,19 +135,24 @@ class AccountService:
         channel: Channel = Channel.LINE,
         consent_by: ConsentBy,
     ) -> None:
-        invite = self._repo.get_invite(code)
-        if invite is None:
-            raise InviteError("not_found")
         now = self._clock()
-        if invite.used_at is not None:
-            raise InviteError("used")
-        if invite.attempts >= invite.max_attempts:
-            self._fail(invite, "too_many_attempts")
-        if now.timestamp() > invite.expires_at:
-            self._fail(invite, "expired")
-
+        # 讀碼＋檢查＋寫入同交易並列鎖該碼（✅ 庚-19／A-49）：並發同碼的第二個
+        # 請求在 FOR UPDATE 上等待，首個 commit 後看到 used_at → 正確擋下。
+        # 失敗計數（attempts+1）須存活：寫在交易內、commit 後才拋錯。
+        failure: str | None = None
         with self._repo.transaction() as tx:
-            if invite.role == InviteRole.ELDER:
+            invite = self._repo.get_invite(code, tx=tx, for_update=True)
+            if invite is None:
+                raise InviteError("not_found")
+            if invite.used_at is not None:
+                raise InviteError("used")
+            if invite.attempts >= invite.max_attempts:
+                failure = "too_many_attempts"
+            elif now.timestamp() > invite.expires_at:
+                failure = "expired"
+            if failure is not None:
+                self._record_failed_attempt(invite, tx=tx)
+            elif invite.role == InviteRole.ELDER:
                 elder = self._repo.get_elder(invite.elder_id)
                 if elder is None:
                     raise InviteError("not_found")
@@ -172,18 +177,21 @@ class AccountService:
                     ElderGuardian(invite.elder_id, guardian.guardian_id, Role.GUARDIAN, order + 1),
                     tx=tx,
                 )
-            self._repo.save_invite(
-                Invite(
-                    invite.code,
-                    invite.elder_id,
-                    invite.role,
-                    invite.expires_at,
-                    invite.max_attempts,
-                    invite.attempts + 1,
-                    now.timestamp(),
-                ),
-                tx=tx,
-            )
+            if failure is None:
+                self._repo.save_invite(
+                    Invite(
+                        invite.code,
+                        invite.elder_id,
+                        invite.role,
+                        invite.expires_at,
+                        invite.max_attempts,
+                        invite.attempts + 1,
+                        now.timestamp(),
+                    ),
+                    tx=tx,
+                )
+        if failure is not None:
+            raise InviteError(failure)
 
     def guardians_of(self, elder_id: str) -> list[ElderGuardian]:
         return self._repo.list_elder_guardians(elder_id)
@@ -263,10 +271,12 @@ class AccountService:
             raise AppAccountError("invalid_credentials")
         if not self.has_valid_consent(elder.elder_id):
             raise AppAccountError("not_paired")
-        self._ensure_elder_app_binding(elder.elder_id)
-        return elder, self._issue_token(PrincipalType.ELDER, elder.elder_id)
+        # 補綁定＋發 token 同交易（✅ 庚-18／A-48）：token 那步失敗不得留半完成綁定。
+        with self._repo.transaction() as tx:
+            self._ensure_elder_app_binding(elder.elder_id, tx=tx)
+            return elder, self._issue_token(PrincipalType.ELDER, elder.elder_id, tx=tx)
 
-    def _ensure_elder_app_binding(self, elder_id: str) -> None:
+    def _ensure_elder_app_binding(self, elder_id: str, *, tx=None) -> None:
         """換機重登：裝置作廢後 APP 綁定已拆，登入時補回（既有綁定不動）。"""
         if self.app_external_id_of_elder(elder_id) is not None:
             return
@@ -278,6 +288,7 @@ class AccountService:
                 elder_id,
                 self._clock().timestamp(),
             ),
+            tx=tx,
         )
 
     def login_guardian(self, email: str, password: str) -> tuple[Guardian, str]:
@@ -291,10 +302,12 @@ class AccountService:
         guardian = self._repo.get_guardian(account.guardian_id)
         if guardian is None:
             raise AppAccountError("invalid_credentials")
-        self._ensure_guardian_app_binding(guardian.guardian_id)
-        return guardian, self._issue_token(PrincipalType.GUARDIAN, guardian.guardian_id)
+        # 補綁定＋發 token 同交易（✅ 庚-18／A-48）。
+        with self._repo.transaction() as tx:
+            self._ensure_guardian_app_binding(guardian.guardian_id, tx=tx)
+            return guardian, self._issue_token(PrincipalType.GUARDIAN, guardian.guardian_id, tx=tx)
 
-    def _ensure_guardian_app_binding(self, guardian_id: str) -> None:
+    def _ensure_guardian_app_binding(self, guardian_id: str, *, tx=None) -> None:
         """存量帳號回填：D-12 之前註冊的家屬沒有 App 通道綁定，登入時補上。"""
         if self.app_external_ids_of_guardian(guardian_id):
             return
@@ -306,6 +319,7 @@ class AccountService:
                 guardian_id,
                 self._clock().timestamp(),
             ),
+            tx=tx,
         )
 
     def app_external_ids_of_guardian(self, guardian_id: str) -> list[str]:
@@ -349,9 +363,14 @@ class AccountService:
     def revoke_elder_device(self, elder_id: str) -> Invite:
         """作廢長輩裝置並重發綁定碼（✅ D-25 修訂）：
         撤銷該長輩全部 token＋拆 App 通道綁定（LINE 綁定不動），回新的長輩綁定碼。"""
-        self._repo.remove_api_tokens_for_principal(PrincipalType.ELDER, elder_id)
-        self._repo.remove_channel_bindings_for_principal(Channel.APP, PrincipalType.ELDER, elder_id)
-        return self.generate_invite(elder_id, InviteRole.ELDER)
+        # 撤 token＋拆綁定＋發新碼同交易（✅ 庚-18／A-48）：發碼失敗不得把長輩
+        # 登出成「無碼可重綁」的孤島狀態。
+        with self._repo.transaction() as tx:
+            self._repo.remove_api_tokens_for_principal(PrincipalType.ELDER, elder_id, tx=tx)
+            self._repo.remove_channel_bindings_for_principal(
+                Channel.APP, PrincipalType.ELDER, elder_id, tx=tx
+            )
+            return self.generate_invite(elder_id, InviteRole.ELDER, tx=tx)
 
     def app_external_id_of_elder(self, elder_id: str) -> str | None:
         """長輩的 App 通道帳號識別（無 App 綁定回 None；多裝置取排序第一筆）。"""
@@ -406,7 +425,7 @@ class AccountService:
         guardian = self._repo.get_guardian_by_line(line_user_id)
         return [] if guardian is None else self.elders_of_guardian(guardian.guardian_id)
 
-    def _fail(self, invite: Invite, reason: str) -> None:
+    def _record_failed_attempt(self, invite: Invite, *, tx=None) -> None:
         self._repo.save_invite(
             Invite(
                 invite.code,
@@ -416,6 +435,6 @@ class AccountService:
                 invite.max_attempts,
                 invite.attempts + 1,
                 invite.used_at,
-            )
+            ),
+            tx=tx,
         )
-        raise InviteError(reason)
