@@ -123,13 +123,13 @@
 
 | # | 工項 | 問題 | 規模 |
 | :--- | :--- | :---: | :---: |
-| 庚-20 | 憑證強度：scrypt N 調至 OWASP 2024 建議（參數隨值存可漸進升級）＋密碼複雜度移至服務層驗證；長輩帳號低熵手機號需搭配庚-08 節流。 | A-50 | S |
-| 庚-21 | RAG embedding 鍵統一：線上 `LONGTERM_EMBEDDING_MODEL` 與離線 `EMBEDDING_MODEL` 收斂為單一鍵，並補列 `.env.example`（現只改其一會導致查詢與文件向量空間錯配）。 | A-28 | S |
-| 庚-22 | RAG 檢索優雅降級：`embed_query` 失敗時退化（keyword 路獨立或退空結果不中斷），線上 embedder 加重試——對齊 Mem0 檢索的 fail-open 哲學。 | A-29 | S |
-| 庚-23 | RAG seed 路徑補閘：seed ingest 也過 `SourceValidator`（現完全略過，`--source` 指定未核准來源時 seed 內容直接入庫）。 | A-30 | S |
-| 庚-24 | DGX 服務端測試：`services/asr`／`services/tts` 補請求驗證／金鑰／併發閘的離線測試（現零測試；模型推論需 GPU 但這些是純邏輯）。 | A-13 | M |
-| 庚-25 | 錯誤碼中央化：codes 收進 enum／常數，並同步 06 §3 錯誤碼表（現散落字串字面值，拼字錯靜默 fallback；表已脫節）。 | A-56 | S |
-| 庚-26 | 連線池總量評估：對 Supabase 連線上限把關（N worker×5＋worker，庚-08 前置）。 | A-55 | S |
+| 庚-20 | ✅ 完成（2026-07-13，TDD）：PROD_SCRYPT_N=2**17（OWASP 2024）＋動態 maxmem，參數隨值存零遷移；`_validate_password` 下沉服務層（password_too_short）；測試環境 conftest 降 2**14 保速、生產參數專測把關。 | A-50 | S |
+| 庚-21 | ⏸ **擱置（Leo 2026-07-12：RAG 相關先不處理）** | A-28 | S |
+| 庚-22 | ⏸ **擱置（Leo 2026-07-12：RAG 相關先不處理）** | A-29 | S |
+| 庚-23 | ⏸ **擱置（Leo 2026-07-12：RAG 相關先不處理）** | A-30 | S |
+| 庚-24 | ✅ 完成（2026-07-13）：兩服務各補離線特性測試（金鑰 401、空/超大輸入、併發閘 503、healthz、TTS 回應契約 audio/mp4＋X-Duration-Ms）——假模型 monkeypatch，CI 無 GPU 可跑（12 測試）。 | A-13 | M |
+| 庚-25 | ✅ 完成（2026-07-13）：`web/errors.py` ErrorCode（StrEnum，34 碼）唯一出處，web 層字面值全換；雙向完整性測試（每碼必有繁中文案／文案表無孤兒，overloaded 掛 _PENDING_REMOVAL 待庚-43）；06 §3 表同步（兼辦庚-51 表半邊）。 | A-56 | S |
+| 庚-26 | ✅ 完成（2026-07-13）：DATABASE_POOL_MAX_SIZE（預設 5）入 config；總量公式（WEB_WORKERS×池＋排程×池 ≤ 直連 60、WEB_WORKERS 安全上限約 8、勿換 6543 交易池化埠）寫入 .env.example／kinsun.sh／14 §3.5。 | A-55 | S |
 
 ### 庚4 前端（MEDIUM／LOW）
 
