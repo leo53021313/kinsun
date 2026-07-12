@@ -389,12 +389,15 @@ class Database:
 
     @contextmanager
     def transaction(self) -> Iterator[Executor]:
+        # 只翻譯 DB 層錯誤（psycopg；連線池例外亦繼承之）。交易本體（yield 區段）
+        # 拋出的業務例外（如 InviteError）原樣穿透——回滾照常發生，但不得被
+        # 誤包成 StoreError（會再被 _Errors 翻成領域錯誤，呼叫端就接不到了）。
         try:
             with self._pool.connection() as conn, conn.transaction():
                 yield _ConnExecutor(conn)
         except StoreError:
             raise
-        except Exception as exc:  # noqa: BLE001
+        except psycopg.Error as exc:
             raise StoreError(str(exc)) from exc
 
 
