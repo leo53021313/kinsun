@@ -71,6 +71,18 @@ def test_records_reminder_per_event():
     assert recorded == [("e1", "appointment", "今天回診：心臟科回診")]
 
 
+def test_reminder_message_includes_time_when_set():
+    """✅ 庚-15（A-35）：有時刻的回診，提醒訊息帶時間（長輩與家屬皆同）。"""
+    elders = {"e1": Elder("e1", "阿公")}
+    appts = {"2026-07-15": [Appointment("a1", "e1", "2026-07-15", "心臟科回診", "10:30")]}
+    job, pushed = _job(appts, elders=elders, guardians={"e1": ["g-son"]})
+    job.run()
+    elder_msg = next(t for p, _, t in pushed if p is PrincipalType.ELDER)
+    guardian_msg = next(t for p, _, t in pushed if p is PrincipalType.GUARDIAN)
+    assert "今天 10:30 要回診囉：心臟科回診" in elder_msg
+    assert "今天 10:30 要回診——心臟科回診" in guardian_msg
+
+
 def test_no_record_when_elder_unreachable():
     """✅ 庚-14（A-34）：長輩送達 0 個通道時不記提醒紀錄——
     否則家屬健康報告會顯示長輩實際沒收到的提醒。比照用藥 job 守門。"""

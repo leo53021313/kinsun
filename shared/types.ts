@@ -4,7 +4,13 @@
 export type Elder = { elder_id: string; name: string };
 export type CreatedElder = Elder & { invite_code: string };
 export type Medication = { medication_id: string; name: string; slots: string[] };
-export type Appointment = { appointment_id: string; date: string; label: string };
+export type Appointment = {
+  appointment_id: string;
+  date: string;
+  label: string;
+  /** 看診時刻 HH:MM（選填；空＝未指定，提醒不帶時間）。 */
+  time: string;
+};
 export type RiskEventItem = { tier: number; reason: string; created_at: number };
 export type ReminderItem = { kind: string; content: string; created_at: number };
 export type HealthReport = { risk_events: RiskEventItem[]; reminders: ReminderItem[] };
@@ -119,7 +125,7 @@ export type TraceDetail = {
 
 // --- 觀測後台：長輩詳情分頁（spec 2026-07-12） ---
 export type AdminMedication = { medication_id: string; name: string; slots: string[] };
-export type AdminAppointment = { appointment_id: string; date: string; label: string };
+export type AdminAppointment = { appointment_id: string; date: string; label: string; time: string };
 export type AdminReminderLog = { kind: string; content: string; created_at: number };
 export type AdminElderReminders = {
   medications: AdminMedication[];

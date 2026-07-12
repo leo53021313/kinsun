@@ -234,11 +234,12 @@ export function createAppointment(
   elderId: string,
   date: string,
   label: string,
+  time: string,
   token: string,
 ): Promise<Appointment> {
   return request(`/api/v1/elders/${elderId}/appointments`, {
     method: "POST",
-    body: JSON.stringify({ date, label }),
+    body: JSON.stringify({ date, label, time }),
     token,
   });
 }
@@ -248,11 +249,12 @@ export function updateAppointment(
   appointmentId: string,
   date: string,
   label: string,
+  time: string,
   token: string,
 ): Promise<Appointment> {
   return request(`/api/v1/elders/${elderId}/appointments/${appointmentId}`, {
     method: "PUT",
-    body: JSON.stringify({ date, label }),
+    body: JSON.stringify({ date, label, time }),
     token,
   });
 }

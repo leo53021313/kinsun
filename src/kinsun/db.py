@@ -84,11 +84,13 @@ MEDICATIONS_DDL = (
     "name TEXT NOT NULL, slots TEXT NOT NULL);"
 )
 
+# time＝看診時刻 ISO "HH:MM"（✅ 庚-15，選填；空＝未指定）。
 APPOINTMENTS_DDL = (
     "CREATE TABLE IF NOT EXISTS appointments ("
     "appointment_id TEXT PRIMARY KEY, elder_id TEXT NOT NULL, "
-    "date TEXT NOT NULL, label TEXT NOT NULL);"
+    "date TEXT NOT NULL, label TEXT NOT NULL, time TEXT NOT NULL DEFAULT '');"
     "CREATE INDEX IF NOT EXISTS idx_appointments_date ON appointments (date);"
+    "ALTER TABLE appointments ADD COLUMN IF NOT EXISTS time TEXT NOT NULL DEFAULT '';"
 )
 
 RAG_DDL = (

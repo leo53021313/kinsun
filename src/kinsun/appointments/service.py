@@ -14,8 +14,8 @@ class AppointmentService:
         self._store = store
         self._new_id = new_id or (lambda: uuid.uuid4().hex)
 
-    def save(self, elder_id: str, date: str, label: str) -> Appointment:
-        appt = Appointment(self._new_id(), elder_id, date, label)
+    def save(self, elder_id: str, date: str, label: str, time: str = "") -> Appointment:
+        appt = Appointment(self._new_id(), elder_id, date, label, time)
         self._store.save(appt)
         return appt
 
@@ -25,8 +25,10 @@ class AppointmentService:
     def upcoming(self, elder_id: str, today: str) -> list[Appointment]:
         return [a for a in self._store.list_for_elder(elder_id) if a.date >= today]
 
-    def update(self, appointment_id: str, elder_id: str, date: str, label: str) -> Appointment:
-        appt = Appointment(appointment_id, elder_id, date, label)
+    def update(
+        self, appointment_id: str, elder_id: str, date: str, label: str, time: str = ""
+    ) -> Appointment:
+        appt = Appointment(appointment_id, elder_id, date, label, time)
         self._store.save(appt)
         return appt
 
