@@ -7,11 +7,12 @@ from fastapi.testclient import TestClient
 from kinsun.accounts.service import AccountService
 from kinsun.appointments.service import AppointmentService
 from kinsun.medications.service import MedicationService
-from kinsun.web.api import create_api_router
 from kinsun.web.auth import AuthError
+from kinsun.web.routers import create_guardian_face_router
 from tests.fakes import (
     FakeAccountStore,
     FakeAppointmentStore,
+    FakeConversationSummaryStore,
     FakeMedicationStore,
     FakeReminderLogStore,
     FakeRiskEventStore,
@@ -43,7 +44,7 @@ def _setup(line_user_id="U-son"):
     medications = MedicationService(FakeMedicationStore(), new_id=lambda: next(med_ids))
     app = FastAPI()
     app.include_router(
-        create_api_router(
+        create_guardian_face_router(
             verifier=_FakeVerifier(line_user_id),
             accounts=accounts,
             medications=medications,
@@ -51,7 +52,9 @@ def _setup(line_user_id="U-son"):
             clock=lambda: NOW,
             risk_events=FakeRiskEventStore(),
             reminder_logs=FakeReminderLogStore(),
-        )
+            summaries=FakeConversationSummaryStore(),
+        ),
+        prefix="/api/v1",
     )
     return TestClient(app), elder.elder_id
 
@@ -62,35 +65,35 @@ def _auth():
 
 def _add(client, elder_id, name="藥", slots=("morning",)):
     res = client.post(
-        f"/api/elders/{elder_id}/medications",
+        f"/api/v1/elders/{elder_id}/medications",
         headers=_auth(),
         json={"name": name, "slots": list(slots)},
     )
-    return res.json()["medication_id"]
+    return res.json()["data"]["medication_id"]
 
 
 def test_list_requires_management():
     client, elder_id = _setup(line_user_id="U-stranger")
-    assert client.get(f"/api/elders/{elder_id}/medications", headers=_auth()).status_code == 404
+    assert client.get(f"/api/v1/elders/{elder_id}/medications", headers=_auth()).status_code == 404
 
 
 def test_add_then_list():
     client, elder_id = _setup()
     res = client.post(
-        f"/api/elders/{elder_id}/medications",
+        f"/api/v1/elders/{elder_id}/medications",
         headers=_auth(),
         json={"name": "降血壓藥", "slots": ["morning", "evening"]},
     )
     assert res.status_code == 201
-    assert res.json()["slots"] == ["morning", "evening"]
-    listed = client.get(f"/api/elders/{elder_id}/medications", headers=_auth()).json()
-    assert [m["name"] for m in listed["medications"]] == ["降血壓藥"]
+    assert res.json()["data"]["slots"] == ["morning", "evening"]
+    listed = client.get(f"/api/v1/elders/{elder_id}/medications", headers=_auth()).json()
+    assert [m["name"] for m in listed["data"]] == ["降血壓藥"]
 
 
 def test_add_rejects_empty_name():
     client, elder_id = _setup()
     res = client.post(
-        f"/api/elders/{elder_id}/medications",
+        f"/api/v1/elders/{elder_id}/medications",
         headers=_auth(),
         json={"name": "  ", "slots": ["morning"]},
     )
@@ -100,10 +103,10 @@ def test_add_rejects_empty_name():
 def test_add_rejects_bad_slots():
     client, elder_id = _setup()
     empty = client.post(
-        f"/api/elders/{elder_id}/medications", headers=_auth(), json={"name": "藥", "slots": []}
+        f"/api/v1/elders/{elder_id}/medications", headers=_auth(), json={"name": "藥", "slots": []}
     )
     bogus = client.post(
-        f"/api/elders/{elder_id}/medications",
+        f"/api/v1/elders/{elder_id}/medications",
         headers=_auth(),
         json={"name": "藥", "slots": ["bogus"]},
     )
@@ -115,20 +118,20 @@ def test_update_changes_med():
     client, elder_id = _setup()
     medication_id = _add(client, elder_id, "舊", ["morning"])
     res = client.put(
-        f"/api/elders/{elder_id}/medications/{medication_id}",
+        f"/api/v1/elders/{elder_id}/medications/{medication_id}",
         headers=_auth(),
         json={"name": "新", "slots": ["evening"]},
     )
     assert res.status_code == 200
-    listed = client.get(f"/api/elders/{elder_id}/medications", headers=_auth()).json()
-    assert listed["medications"][0]["name"] == "新"
-    assert listed["medications"][0]["slots"] == ["evening"]
+    listed = client.get(f"/api/v1/elders/{elder_id}/medications", headers=_auth()).json()
+    assert listed["data"][0]["name"] == "新"
+    assert listed["data"][0]["slots"] == ["evening"]
 
 
 def test_update_rejects_med_not_under_elder():
     client, elder_id = _setup()
     res = client.put(
-        f"/api/elders/{elder_id}/medications/ghost",
+        f"/api/v1/elders/{elder_id}/medications/ghost",
         headers=_auth(),
         json={"name": "x", "slots": ["morning"]},
     )
@@ -140,22 +143,22 @@ def test_delete_removes():
     medication_id = _add(client, elder_id)
     assert (
         client.delete(
-            f"/api/elders/{elder_id}/medications/{medication_id}", headers=_auth()
+            f"/api/v1/elders/{elder_id}/medications/{medication_id}", headers=_auth()
         ).status_code
         == 204
     )
-    listed = client.get(f"/api/elders/{elder_id}/medications", headers=_auth()).json()
-    assert listed["medications"] == []
+    listed = client.get(f"/api/v1/elders/{elder_id}/medications", headers=_auth()).json()
+    assert listed["data"] == []
 
 
 def test_delete_rejects_med_not_under_elder():
     client, elder_id = _setup()
     assert (
-        client.delete(f"/api/elders/{elder_id}/medications/ghost", headers=_auth()).status_code
+        client.delete(f"/api/v1/elders/{elder_id}/medications/ghost", headers=_auth()).status_code
         == 404
     )
 
 
 def test_requires_token():
     client, elder_id = _setup()
-    assert client.get(f"/api/elders/{elder_id}/medications").status_code == 401
+    assert client.get(f"/api/v1/elders/{elder_id}/medications").status_code == 401

@@ -2,12 +2,62 @@
 
 from __future__ import annotations
 
+import contextvars
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Protocol
 
 
 class LLMError(Exception):
     """LLM 呼叫失敗。"""
+
+
+@dataclass
+class LLMUsage:
+    """一段範圍內的 token 用量累計（可變累加器）。"""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
+# 用量收集器走 contextvars（✅ D-05 戊-2）：LLMClient 協定回傳純文字、不透出
+# usage，改協定會波及所有替身與呼叫端；contextvars 讓 GeminiClient 申報用量、
+# pipeline 收集，且各執行緒／請求的 context 彼此隔離，併發回合不會互相污染。
+_usage_collector: contextvars.ContextVar[LLMUsage | None] = contextvars.ContextVar(
+    "kinsun_llm_usage", default=None
+)
+
+
+@contextmanager
+def collect_llm_usage(usage: LLMUsage) -> Iterator[None]:
+    """在範圍內把 report_llm_usage 申報的用量累加進 usage。"""
+    token = _usage_collector.set(usage)
+    try:
+        yield
+    finally:
+        _usage_collector.reset(token)
+
+
+def report_llm_usage(input_tokens: int, output_tokens: int) -> None:
+    """申報一次 LLM 呼叫的 token 用量；無收集器時靜默略過。"""
+    usage = _usage_collector.get()
+    if usage is None:
+        return
+    usage.input_tokens += input_tokens
+    usage.output_tokens += output_tokens
+
+
+def _report_usage_metadata(response) -> None:
+    """從 Gemini 回應取 usage_metadata 申報；欄位缺漏（假替身／舊 SDK）就不申報。"""
+    meta = getattr(response, "usage_metadata", None)
+    if meta is None:
+        return
+    # 輸出＝候選＋思考：thinking 模型的思考 token 也計費為輸出。
+    output = (getattr(meta, "candidates_token_count", 0) or 0) + (
+        getattr(meta, "thoughts_token_count", 0) or 0
+    )
+    report_llm_usage(getattr(meta, "prompt_token_count", 0) or 0, output)
 
 
 @dataclass(frozen=True)
@@ -107,6 +157,7 @@ class GeminiClient:
             )
         except Exception as exc:  # noqa: BLE001 - 統一轉成可辨識的 LLMError
             raise LLMError(f"Gemini 呼叫失敗：{exc}") from exc
+        _report_usage_metadata(response)
         text = response.text
         if not text:
             raise LLMError("Gemini 回應為空")
@@ -167,6 +218,7 @@ class GeminiClient:
             )
         except Exception as exc:  # noqa: BLE001 - 統一轉成可辨識的 LLMError
             raise LLMError(f"Gemini 工具呼叫失敗：{exc}") from exc
+        _report_usage_metadata(response)
         tool_calls = _extract_tool_calls(response)
         if tool_calls:
             return ToolTurn(text=None, tool_calls=tool_calls)
@@ -174,3 +226,10 @@ class GeminiClient:
         if not text:
             raise LLMError("Gemini 回應為空")
         return ToolTurn(text=text, tool_calls=[])
+
+
+def build_gemini_for(settings, model: str) -> GeminiClient:
+    """按用途建 Gemini client（✅ D-16 丁-5）：模型同主設定時呼叫端應直接共用主 client。"""
+    return GeminiClient(
+        api_key=settings.gemini_api_key, model=model, timeout=settings.gemini_timeout_seconds
+    )

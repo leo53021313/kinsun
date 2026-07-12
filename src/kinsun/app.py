@@ -25,18 +25,26 @@ from kinsun.channels.inbound import VoiceReplyDelivery
 from kinsun.channels.line.webhook import create_app
 from kinsun.composition import assemble_core, build_externals
 from kinsun.config import load_dotenv, load_settings
+from kinsun.llm import build_gemini_for
 from kinsun.medications.flow import MedicationMenu
 from kinsun.pipeline import VoicePipeline
+from kinsun.reports.summaries import PgConversationSummaryStore
 from kinsun.safety.classifier import LlmRiskClassifier
+from kinsun.safety.deliveries import PgRiskNotificationLogStore
 from kinsun.safety.detector import RiskDetector
 from kinsun.safety.events import PgRiskEventStore
 from kinsun.safety.notifier import GuardianNotifier
 from kinsun.speech.asr import build_asr_client
 from kinsun.speech.tts import build_tts_client
-from kinsun.web.admin_api import create_admin_api_router
-from kinsun.web.api import create_api_router
-from kinsun.web.app_api import create_app_api_router
 from kinsun.web.auth import LineIdTokenVerifier
+from kinsun.web.envelope import install_error_envelope
+from kinsun.web.ratelimit import SlidingWindowRateLimiter
+from kinsun.web.routers import (
+    create_admin_router,
+    create_app_auth_router,
+    create_guardian_face_router,
+)
+from kinsun.web.security import install_security_headers
 
 
 def build_app() -> FastAPI:
@@ -64,12 +72,25 @@ def build_app() -> FastAPI:
         if settings.supabase_url and settings.supabase_service_key
         else None
     )
+    # 危急分級按用途配模型（✅ D-16 丁-5）：與主模型相同時共用連線。
+    safety_llm = (
+        core.gemini
+        if settings.gemini_model_safety == settings.gemini_model
+        else build_gemini_for(settings, settings.gemini_model_safety)
+    )
     pipeline = VoicePipeline(
         asr=build_asr_client(settings),
         agent=core.agent,
         tts=build_tts_client(settings),
-        detector=RiskDetector(LlmRiskClassifier(core.gemini)),
-        notifier=GuardianNotifier(core.accounts, core.router),
+        detector=RiskDetector(
+            LlmRiskClassifier(safety_llm),
+            mid=settings.safety_confidence_mid,
+        ),
+        notifier=GuardianNotifier(
+            core.accounts,
+            core.router,
+            deliveries=PgRiskNotificationLogStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex),
+        ),
         risk_events=risk_events,
         traces=core.traces,
         model_name=settings.gemini_model,
@@ -94,7 +115,11 @@ def build_app() -> FastAPI:
         session_ttl_seconds=settings.binding_session_ttl_minutes * 60,
         on_guardian_bound=on_guardian_bound,
     )
-    gate = ConsentGate(core.accounts) if settings.binding_gate_enabled else AllowAllGate()
+    gate = (
+        ConsentGate(core.accounts)
+        if settings.binding_gate_enabled
+        else AllowAllGate(core.accounts)  # 旁路模式也解析 elder_id（✅ D-19）
+    )
     publisher = (
         build_audio_publisher(settings, clock=clock, new_id=lambda: uuid.uuid4().hex)
         if settings.tts_backend == "dgx"
@@ -117,8 +142,16 @@ def build_app() -> FastAPI:
         on_shutdown=db.close,
     )
     verifier = LineIdTokenVerifier(settings.liff_channel_id, settings.liff_timeout_seconds)
+    install_error_envelope(app)  # HTTPException → 統一信封（✅ D-23 乙-1）
+    install_security_headers(app)  # 基本安全標頭＋CSP（✅ D-57 丙-9）
+
+    @app.get("/healthz")  # 監控探針（✅ D-67 丙-13）；慣例形狀，信封豁免（06 §2.4）
+    def healthz() -> dict:
+        return {"status": "ok"}
+
+    # prefix 由此統一指定（✅ D-28 乙-4）；/api/v1 為 D-27 版本前綴。
     app.include_router(
-        create_api_router(
+        create_guardian_face_router(
             verifier=verifier,
             accounts=core.accounts,
             medications=core.medications,
@@ -126,16 +159,30 @@ def build_app() -> FastAPI:
             clock=clock,
             risk_events=risk_events,
             reminder_logs=core.reminder_logs,
-        )
+            summaries=PgConversationSummaryStore(db, clock=clock),
+        ),
+        prefix="/api/v1",
     )
     app.include_router(
-        create_admin_api_router(
+        create_admin_router(
             admin_api_key=settings.admin_api_key,
             traces=core.traces,
             clock=clock,
-        )
+            risk_events=risk_events,
+        ),
+        prefix="/api/v1/admin",
     )
-    app.include_router(create_app_api_router(accounts=core.accounts))
+    app.include_router(
+        create_app_auth_router(
+            accounts=core.accounts,
+            rate_limiter=SlidingWindowRateLimiter(
+                settings.auth_rate_limit_max_attempts,
+                settings.auth_rate_limit_window_seconds,
+            ),
+            notifications=core.notifications,
+        ),
+        prefix="/api/v1",
+    )
     # App 對講機：JSON 回應固定帶文字（include_text 與 LINE 的訊息額度考量無關）。
     app.include_router(
         create_app_turns_router(
@@ -145,7 +192,9 @@ def build_app() -> FastAPI:
             voice=VoiceReplyDelivery(publisher, include_text=True),
             traces=core.traces,
             inbound_audio=inbound_audio,
-        )
+            max_audio_bytes=settings.audio_max_upload_bytes,
+        ),
+        prefix="/api/v1",
     )
     dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     if dist.is_dir():

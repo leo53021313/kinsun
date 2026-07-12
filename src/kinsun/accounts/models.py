@@ -38,8 +38,8 @@ class ElderGuardian:
     elder_id: str
     guardian_id: str
     role: Role
+    # escalation_order 保留（✅ 己-8 決議）：升級鏈不做（D-10），但家屬通知與清單順序仍靠它。
     escalation_order: int
-    can_view_transcript: bool
 
 
 @dataclass(frozen=True)
@@ -89,6 +89,16 @@ class GuardianAccount:
 
     guardian_id: str
     email: str
+    password_hash: str
+    created_at: float
+
+
+@dataclass(frozen=True)
+class ElderAccount:
+    """長輩的 App 登入帳號（✅ D-71 己-6）：手機號碼＋密碼雜湊，由家屬代辦。"""
+
+    elder_id: str
+    phone: str
     password_hash: str
     created_at: float
 

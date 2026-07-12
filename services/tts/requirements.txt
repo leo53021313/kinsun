@@ -1,12 +1,14 @@
 # 僅在 DGX Spark（Linux + ARM64/aarch64 + GPU）安裝。
-# DGX 實機驗證（2026-07-02，GB10 / aarch64 / CUDA 13）鎖定：torch 2.12.1+cu130。
+# 版本鎖定（✅ D-56 丙-10）：torch/torchaudio 依 DGX 實機驗證（2026-07-02，cu130）；
+# fastapi/uvicorn 對齊 ASR 環境；soundfile 下限鎖定——TTS 跑在外部 CosyVoice 環境
+# （TTS_PYTHON 指定），重建環境時以該環境實測版本回填精確 pin。
 # CosyVoice 3 非 pip 套件：clone FunAudioLLM/CosyVoice repo（含 cosyvoice 套件與
 #   third_party/Matcha-TTS），以 TTS_COSY_DIR／TTS_MATCHA_DIR 加入 sys.path。
 #   其依賴（含 onnxruntime、hyperpyyaml 等）依 CosyVoice repo 的 requirements.aarch64.txt 安裝。
 # soundfile：aarch64 上 torchaudio 走 torchcodec（.so 載不起來）→ 以 soundfile 讀寫音檔。
 # 系統需 ffmpeg（wav→m4a）。
-fastapi
-uvicorn
-torch
-torchaudio
-soundfile
+fastapi==0.139.0
+uvicorn==0.49.0
+torch==2.12.1
+torchaudio==2.12.1
+soundfile>=0.12,<0.14

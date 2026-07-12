@@ -24,7 +24,7 @@ ACCOUNTS_DDL = (
     "guardian_id TEXT PRIMARY KEY, name TEXT NOT NULL);"
     "CREATE TABLE IF NOT EXISTS elder_guardians ("
     "elder_id TEXT NOT NULL, guardian_id TEXT NOT NULL, role TEXT NOT NULL, "
-    "escalation_order INTEGER NOT NULL, can_view_transcript BOOLEAN NOT NULL, "
+    "escalation_order INTEGER NOT NULL, "
     "PRIMARY KEY (elder_id, guardian_id));"
     "CREATE TABLE IF NOT EXISTS consents ("
     "elder_id TEXT PRIMARY KEY, consent_by TEXT NOT NULL, version TEXT NOT NULL, "
@@ -38,6 +38,9 @@ ACCOUNTS_DDL = (
 APP_ACCOUNTS_DDL = (
     "CREATE TABLE IF NOT EXISTS guardian_accounts ("
     "guardian_id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, "
+    "password_hash TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+    "CREATE TABLE IF NOT EXISTS elder_accounts ("
+    "elder_id TEXT PRIMARY KEY, phone TEXT NOT NULL UNIQUE, "
     "password_hash TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
     "CREATE TABLE IF NOT EXISTS api_tokens ("
     "token_hash TEXT PRIMARY KEY, principal_type TEXT NOT NULL, "
@@ -131,6 +134,25 @@ REMINDER_LOGS_DDL = (
     "ON reminder_logs (elder_id, created_at);"
 )
 
+# 危急通知送達紀錄（✅ D-36，丙-7）：每位家屬成功／失敗獨立留痕。
+RISK_NOTIFICATION_LOGS_DDL = (
+    "CREATE TABLE IF NOT EXISTS risk_notification_logs ("
+    "risk_notification_log_id TEXT PRIMARY KEY, elder_id TEXT NOT NULL, "
+    "guardian_id TEXT NOT NULL, tier INTEGER NOT NULL, delivered BOOLEAN NOT NULL, "
+    "created_at DOUBLE PRECISION NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS idx_risk_notification_logs_elder_created "
+    "ON risk_notification_logs (elder_id, created_at);"
+)
+
+# App 內通知（✅ D-12，甲-6）：App 出站 adapter 落地訊息，登入後拉取。
+APP_NOTIFICATIONS_DDL = (
+    "CREATE TABLE IF NOT EXISTS app_notifications ("
+    "app_notification_id TEXT PRIMARY KEY, external_id TEXT NOT NULL, "
+    "content TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS idx_app_notifications_external_created "
+    "ON app_notifications (external_id, created_at);"
+)
+
 CONVERSATION_SUMMARIES_DDL = (
     "CREATE TABLE IF NOT EXISTS conversation_summaries ("
     "elder_id TEXT, line_user_id TEXT, date TEXT NOT NULL, "
@@ -168,13 +190,18 @@ OBSERVABILITY_DDL = (
     "CREATE TABLE IF NOT EXISTS replies ("
     "reply_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, line_user_id TEXT NOT NULL, "
     "kind TEXT NOT NULL, status TEXT NOT NULL, latency_ms INTEGER NOT NULL, "
-    "audio_url TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+    "round_trip_ms INTEGER, audio_url TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
     "CREATE INDEX IF NOT EXISTS idx_replies_trace ON replies (trace_id);"
     "CREATE INDEX IF NOT EXISTS idx_replies_created ON replies (created_at);"
 )
 
 # risk_events 既有表補 trace_id（可空）：讓風險事件掛回該輪鏈路。
 RISK_EVENTS_TRACE_MIGRATION_DDL = "ALTER TABLE risk_events ADD COLUMN IF NOT EXISTS trace_id TEXT;"
+
+# replies 既有表補 round_trip_ms（可空，✅ D-05 戊-2）：端到端往返延遲；NULL＝未量測。
+REPLIES_ROUND_TRIP_MIGRATION_DDL = (
+    "ALTER TABLE replies ADD COLUMN IF NOT EXISTS round_trip_ms INTEGER;"
+)
 
 # 會話主鍵遷移（冪等）：turns／risk_events／conversation_summaries 加 elder_id、
 # 舊 line_user_id 欄改可空（新寫入不再填）；摘要卸下 (line_user_id, date) 主鍵、
@@ -199,6 +226,11 @@ SESSION_KEY_MIGRATION_DDL = (
 ACCOUNTS_LINE_COLUMNS_RETIRE_DDL = (
     "ALTER TABLE elders DROP COLUMN IF EXISTS line_user_id;"
     "ALTER TABLE guardians DROP COLUMN IF EXISTS line_user_id;"
+)
+
+# 死碼欄位退役（✅ 己-8，D-09）：家屬看逐字對話不開放，開關欄位無人讀取。
+ELDER_GUARDIANS_TRANSCRIPT_COLUMN_RETIRE_DDL = (
+    "ALTER TABLE elder_guardians DROP COLUMN IF EXISTS can_view_transcript;"
 )
 
 # 遷移用的交易級諮詢鎖鍵：webhook 與 scheduler 同時啟動時，讓 ensure_schema 的 DDL
@@ -228,11 +260,15 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(RAG_DDL)
         conn.execute(RISK_EVENTS_DDL)
         conn.execute(REMINDER_LOGS_DDL)
+        conn.execute(RISK_NOTIFICATION_LOGS_DDL)
+        conn.execute(APP_NOTIFICATIONS_DDL)
         conn.execute(CONVERSATION_SUMMARIES_DDL)
         conn.execute(OBSERVABILITY_DDL)
         conn.execute(RISK_EVENTS_TRACE_MIGRATION_DDL)
+        conn.execute(REPLIES_ROUND_TRIP_MIGRATION_DDL)
         conn.execute(SESSION_KEY_MIGRATION_DDL)
         conn.execute(ACCOUNTS_LINE_COLUMNS_RETIRE_DDL)
+        conn.execute(ELDER_GUARDIANS_TRANSCRIPT_COLUMN_RETIRE_DDL)
         conn.commit()
 
 

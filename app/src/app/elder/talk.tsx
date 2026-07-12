@@ -7,12 +7,13 @@ import {
 } from "expo-audio";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
+import * as Haptics from "expo-haptics";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AvatarPlaceholder, type AvatarState } from "@/components/AvatarPlaceholder";
 import { ApiError, postTurn } from "@/lib/api";
-import { clearSession, loadSession } from "@/lib/auth";
+import { useSession } from "@/lib/SessionProvider";
 import { colors, elder, spacing } from "@/lib/theme";
 
 const IDLE_HINT = "按住下面的大按鈕，跟金孫說話";
@@ -23,19 +24,26 @@ export default function ElderTalk() {
   const router = useRouter();
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const player = useAudioPlayer();
+  // 錄音提示音（✅ D-48 丁-2）：開始／結束各一聲，跟觸覺一起給體感。
+  const startBeep = useAudioPlayer(require("@/assets/sounds/record-start.wav"));
+  const stopBeep = useAudioPlayer(require("@/assets/sounds/record-stop.wav"));
   const [token, setToken] = useState("");
   const [avatar, setAvatar] = useState<AvatarState>("idle");
   const [replyText, setReplyText] = useState(IDLE_HINT);
   const [micReady, setMicReady] = useState(false);
 
+  const { loading: sessionLoading, session, signOut } = useSession();
+
   useEffect(() => {
+    if (sessionLoading) {
+      return;
+    }
+    if (!session || session.role !== "elder") {
+      router.replace("/role");
+      return;
+    }
     let alive = true;
     (async () => {
-      const session = await loadSession();
-      if (!session || session.role !== "elder") {
-        router.replace("/role");
-        return;
-      }
       if (alive) {
         setToken(session.token);
       }
@@ -51,13 +59,17 @@ export default function ElderTalk() {
     return () => {
       alive = false;
     };
-  }, [router]);
+  }, [router, sessionLoading, session]);
 
   async function startRecording() {
     if (!micReady || avatar === "thinking") {
       return;
     }
     try {
+      // 觸覺回饋（✅ D-48 丁-2）：長輩按住有「開始了」的體感；失敗不影響錄音。
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+      startBeep.seekTo(0);
+      startBeep.play();
       player.pause();
       await recorder.prepareToRecordAsync();
       recorder.record();
@@ -73,6 +85,9 @@ export default function ElderTalk() {
     if (avatar !== "listening") {
       return;
     }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+    stopBeep.seekTo(0);
+    stopBeep.play();
     setAvatar("thinking");
     setReplyText("金孫想一下…");
     try {
@@ -93,7 +108,7 @@ export default function ElderTalk() {
     } catch (exc) {
       if (exc instanceof ApiError && exc.status === 403) {
         setReplyText("這台手機的綁定失效了，請家人重新給您一組號碼。");
-        await clearSession();
+        await signOut();
       } else {
         setReplyText(FALLBACK_TEXT);
       }
@@ -117,7 +132,7 @@ export default function ElderTalk() {
         <AvatarPlaceholder state={avatar} />
       </View>
       <View style={styles.replyZone}>
-        <Text style={styles.replyText}>{replyText}</Text>
+        <Text style={styles.replyText} maxFontSizeMultiplier={2}>{replyText}</Text>
       </View>
       <Pressable
         accessibilityRole="button"
@@ -131,7 +146,7 @@ export default function ElderTalk() {
           !micReady || avatar === "thinking" ? styles.talkButtonDisabled : null,
         ]}
       >
-        <Text style={styles.talkLabel}>
+        <Text style={styles.talkLabel} maxFontSizeMultiplier={1.4}>
           {avatar === "listening" ? "放開就送出" : "按住說話"}
         </Text>
       </Pressable>

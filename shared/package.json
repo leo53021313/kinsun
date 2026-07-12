@@ -1,0 +1,9 @@
+{
+  "name": "kinsun-shared",
+  "version": "0.0.0",
+  "private": true,
+  "description": "三端共用包（✅ D-51）：信封／型別／用語字典／格式化。純 TS 原始碼，由各端 bundler 直接編譯。",
+  "exports": {
+    "./*": "./*.ts"
+  }
+}

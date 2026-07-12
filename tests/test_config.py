@@ -16,6 +16,8 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.line_channel_secret == "secret"
     assert settings.asr_backend == "mock"
     assert settings.gemini_model == "gemini-3.1-flash-lite"
+    assert settings.gemini_model_safety == "gemini-3.1-flash-lite"  # 未設＝沿用主模型
+    assert settings.gemini_model_summary == "gemini-3.1-flash-lite"
     assert settings.memory_max_turns == 200
     assert settings.timezone == "Asia/Taipei"
     assert settings.longterm_embedding_model == "gemini-embedding-001"
@@ -46,10 +48,14 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.supabase_url == ""
     assert settings.supabase_service_key == ""
     assert settings.audio_bucket == "tts-audio"
-    assert settings.audio_retention_days == 2
+    assert settings.audio_retention_days == 2  # 預設 2 天清理；0＝不清理開關保留
     assert settings.audio_upload_timeout_seconds == 10
+    assert settings.audio_max_upload_bytes == 10 * 1024 * 1024
+    assert settings.safety_confidence_mid == 0.4
+    assert settings.asr_api_key == ""
+    assert settings.tts_api_key == ""
     assert settings.asr_debug_show_transcript is False
-    assert settings.line_text_input_enabled is False
+    assert settings.line_text_input_enabled is True
     assert settings.admin_api_key == ""
     assert settings.admin_retention_days == 14
 
@@ -132,8 +138,9 @@ def test_load_settings_asr_debug_show_transcript_true():
     assert s.asr_debug_show_transcript is True
 
 
-def test_load_settings_line_text_input_default_false():
-    assert load_settings(BASE_ENV).line_text_input_enabled is False
+def test_load_settings_line_text_input_default_true():
+    """✅ D-11（甲-4）：文字輸入為正式功能，預設開。"""
+    assert load_settings(BASE_ENV).line_text_input_enabled is True
 
 
 def test_load_settings_line_text_input_enabled_values():
@@ -146,3 +153,10 @@ def test_load_settings_line_text_input_disabled_values():
     for raw in ("false", "0", "no", "False"):
         s = load_settings({**BASE_ENV, "LINE_TEXT_INPUT_ENABLED": raw})
         assert s.line_text_input_enabled is False, raw
+
+
+def test_gemini_model_per_purpose_override():
+    """✅ D-16（丁-5）：分級／摘要可各自換模型，未設沿用主模型。"""
+    s = load_settings({**BASE_ENV, "GEMINI_MODEL_SAFETY": "gemini-3.1-pro"})
+    assert s.gemini_model_safety == "gemini-3.1-pro"
+    assert s.gemini_model_summary == "gemini-3.1-flash-lite"

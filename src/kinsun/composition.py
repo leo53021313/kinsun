@@ -22,6 +22,7 @@ from kinsun.agent import CareAgent
 from kinsun.appointments.facts import AppointmentFacts
 from kinsun.appointments.service import AppointmentService
 from kinsun.appointments.store import PgAppointmentStore
+from kinsun.channels.app.outbound import AppOutboundChannel
 from kinsun.channels.line.messenger import LineApiMessenger, LineOutboundChannel
 from kinsun.channels.router import ChannelRouter
 from kinsun.config import Settings
@@ -34,6 +35,7 @@ from kinsun.memory.longterm.mem0_factory import build_mem0_memory
 from kinsun.memory.longterm.store import Mem0LongTermStore
 from kinsun.memory.recall import SessionMemory
 from kinsun.memory.shortterm import PgMemoryStore
+from kinsun.notifications.store import PgAppNotificationStore
 from kinsun.observability.store import PgTraceStore
 from kinsun.rag.embeddings import GeminiEmbeddingModel
 from kinsun.rag.retriever import HealthEducationRetriever
@@ -74,6 +76,7 @@ class Core:
     memory: PgMemoryStore
     traces: PgTraceStore
     reminder_logs: PgReminderLogStore
+    notifications: PgAppNotificationStore
     agent: CareAgent
 
 
@@ -147,14 +150,20 @@ def assemble_core(
         session,
         tools=build_tool_registry(clock=clock, rag_service=rag_service),
     )
+    notifications = PgAppNotificationStore(db, clock=clock, new_id=new_id)
     return Core(
         settings=settings,
         db=db,
         gemini=externals.gemini,
         long_term=externals.long_term,
         messenger=externals.messenger,
+        # App 出站 adapter（✅ D-12，甲-6）：訊息落 app_notifications，App 端拉取。
         router=ChannelRouter(
-            account_store, {Channel.LINE: LineOutboundChannel(externals.messenger)}
+            account_store,
+            {
+                Channel.LINE: LineOutboundChannel(externals.messenger),
+                Channel.APP: AppOutboundChannel(notifications),
+            },
         ),
         accounts=accounts,
         med_store=med_store,
@@ -164,5 +173,6 @@ def assemble_core(
         memory=memory,
         traces=PgTraceStore(db, clock=clock, new_id=new_id),
         reminder_logs=PgReminderLogStore(db, clock=clock, new_id=new_id),
+        notifications=notifications,
         agent=agent,
     )
