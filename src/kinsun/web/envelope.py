@@ -29,6 +29,7 @@ ERROR_MESSAGES: dict[str, str] = {
     "invite_not_found": "查無此邀請碼",
     "email_taken": "這個 email 已經註冊過了",
     "phone_taken": "這個手機號碼已經幫另一位長輩註冊過了",
+    "password_too_short": "密碼至少需要 8 個字元",
     "invalid_phone": "手機號碼格式不正確",
     "not_paired": "這支手機還沒完成配對，請先請家人提供綁定圖（QR）掃描一次",
     "invite_used": "邀請碼已被使用",

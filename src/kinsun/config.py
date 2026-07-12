@@ -56,6 +56,8 @@ class Settings:
     invite_ttl_hours: int
     invite_max_attempts: int
     database_url: str
+    # 每進程連線池上限（✅ 庚-26／A-55）：總量公式見 .env.example 與 14 部署文檔。
+    database_pool_max_size: int
     longterm_top_k: int
     longterm_rerank_enabled: bool
     binding_session_ttl_minutes: int
@@ -129,6 +131,7 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         invite_ttl_hours=int(env.get("INVITE_TTL_HOURS", "24")),
         invite_max_attempts=int(env.get("INVITE_MAX_ATTEMPTS", "5")),
         database_url=_require(env, "DATABASE_URL"),
+        database_pool_max_size=int(env.get("DATABASE_POOL_MAX_SIZE", "5")),
         longterm_top_k=int(env.get("LONGTERM_TOP_K", "5")),
         # 記憶檢索重排（✅ D-40 丁-4）：LLM reranker，決議預設開；額度吃緊時可關。
         longterm_rerank_enabled=_parse_bool(env.get("LONGTERM_RERANK_ENABLED", "true")),

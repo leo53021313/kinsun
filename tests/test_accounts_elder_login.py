@@ -182,3 +182,12 @@ def test_login_binding_survives_logout():
     svc.logout(token)
     svc.login_elder("0912345678", "sunsun-8888")
     assert svc.app_external_id_of_elder(elder.elder_id) == first_external
+
+
+def test_register_elder_rejects_short_password():
+    """✅ 庚-20（A-50）：長輩帳密同樣在服務層擋弱密碼。"""
+    svc = _service()
+    elder = _paired_elder(svc)
+    with pytest.raises(AppAccountError) as exc:
+        svc.register_elder_account(elder.elder_id, "0912345678", "short-7")
+    assert exc.value.reason == "password_too_short"
