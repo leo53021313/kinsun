@@ -135,13 +135,13 @@
 
 | # | 工項 | 問題 | 規模 |
 | :--- | :--- | :---: | :---: |
-| 庚-27 | admin 危急等級走共用字典：三頁改用 `shared/terms.tierLabel`（現硬編 `L{tier}`，維運看「L2」、家屬看「需留意」不一致）。 | F-10 | S |
-| 庚-28 | 家屬端 token 過期流：401 自動清 session 回登入（現僅 `elder/talk` 處理 403，家屬端只顯示錯誤文字，12 §7 所述 `token_expired` 流未落地）。 | F-11 | M |
-| 庚-29 | `POST /elders` payload 統一：App `{name}` 與 LIFF `{name, guardian_name}` 收斂契約（現後端須容忍兩形狀）。 | F-9 | S |
-| 庚-30 | 三端 fetch wrapper 收斂進共用包（現信封／ApiError 已共用，client wrapper 各寫一份；模組解析雙軌 metro／vite）。 | F-12 | M |
-| 庚-31 | 字串常數集中（D-50 未落地）：UI 文案含長輩端錯誤對照移出 inline 進共用字串檔。 | F-15 | M |
-| 庚-32 | 前端無障礙細節：`Button` 一般尺寸提到 48pt（現約 46pt）；查證 `SafeAreaProvider` 掛載。 | F-14 | S |
-| 庚-33 | 前端命名／冗餘清理：AuthProvider↔SessionProvider 對齊；`elder/talk` 冗餘 token state；LIFF `HealthReportPage` 重複型別；`TurnReply.duration_ms` 零消費。 | F-13 | S |
+| 庚-27 | ✅ 完成（2026-07-13，Leo 選並列格式）：shared/terms 加 adminTierLabel（「L2 需留意」——維運保留編號、詞彙對齊家屬端），admin 四頁換用。 | F-10 | S |
+| 庚-28 | ✅ 完成（2026-07-13）：SessionProvider 加 useSignOutOnAuthError（401→signOut→守衛導回登入；登入／註冊頁不適用），家屬五畫面 catch 全接。token_expired 本身已因 D-25 作廢，本工項處理的是「撤銷」情境。 | F-11 | M |
+| 庚-29 | ✅ 完成（2026-07-13，Leo 選統一）：LiffVerifier 改回傳 LineIdentity（sub＋name claim），家屬名由後端取 ID token 顯示名稱（比前端自送可信）；payload 三端統一 {name}，LIFF 移除 getProfile。 | F-9 | S |
+| 庚-30 | ✅ 完成（2026-07-13，Leo 選現在做）：shared/client.ts createApiClient 工廠——共同流程一份，三端差異（App baseUrl＋Bearer／LIFF ID token／admin X-Admin-Key＋401 通知）設定注入；呼叫點簽章不變。 | F-12 | M |
+| 庚-31 | ✅ 完成（2026-07-13，Leo 選全量）：三端各建 strings.ts（App 121 條含 3 動態函式／LIFF 40 條／admin 141 條含 13 動態），使用者可見文案全數集中、改文案只動字串檔；分隔標點與後端訊息刻意保留原地。D-50 就此落地。 | F-15 | M |
+| 庚-32 | ✅ 完成（2026-07-13）：Button minHeight 48；SafeAreaProvider 查證＝expo-router ExpoRoot 內建、不需自掛（根 layout 註記）。 | F-14 | S |
+| 庚-33 | ✅ 完成（2026-07-13）：12 文檔統一稱 SessionProvider；talk 冗餘 token state 移除；HealthReportPage 型別查證已於乙-5 共用化（結案註記）；duration_ms 註記保留給虛擬形象對嘴。 | F-13 | S |
 
 ### 庚5 清理與命名（LOW，可批次順手）
 

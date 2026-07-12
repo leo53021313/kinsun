@@ -2,6 +2,7 @@ import { useRouter } from "expo-router";
 import { Pressable, StyleSheet, Text } from "react-native";
 
 import { useSession } from "@/lib/SessionProvider";
+import { strings } from "@/lib/strings";
 import { colors, spacing } from "@/lib/theme";
 
 /**
@@ -16,7 +17,7 @@ export function RoleSwitcher() {
     return null;
   }
   const target = session.role === "guardian" ? "elder" : "guardian";
-  const label = target === "elder" ? "切換到長輩端（內測）" : "切換到家屬端（內測）";
+  const label = target === "elder" ? strings.role.switchToElder : strings.role.switchToGuardian;
 
   async function onPress() {
     if (otherSession) {

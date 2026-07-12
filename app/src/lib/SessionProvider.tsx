@@ -15,7 +15,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { getMeta } from "@/lib/api";
+import { ApiError, getMeta } from "@/lib/api";
 import {
   clearSession,
   loadActiveSession,
@@ -113,4 +113,22 @@ export function useSession(): SessionContextValue {
     throw new Error("useSession 必須在 SessionProvider 之內使用（見 app/_layout.tsx）");
   }
   return value;
+}
+
+/** 401 統一處理（✅ 庚-28／F-11）：token 被撤銷（如「登出所有裝置」）時自動清
+ * session——畫面既有的 session 守衛隨即導回登入，不再永遠「載入失敗」。
+ * 回傳 true＝已處理，呼叫端直接 return、不再顯示錯誤文字。
+ * 登入／註冊頁勿用（該處 401＝帳密錯誤，要顯示訊息）。 */
+export function useSignOutOnAuthError(): (exc: unknown) => Promise<boolean> {
+  const { signOut } = useSession();
+  return useCallback(
+    async (exc: unknown) => {
+      if (exc instanceof ApiError && exc.status === 401) {
+        await signOut();
+        return true;
+      }
+      return false;
+    },
+    [signOut],
+  );
 }

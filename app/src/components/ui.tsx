@@ -108,6 +108,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.l,
     alignItems: "center",
     justifyContent: "center",
+    minHeight: 48, // 無障礙可點擊目標下限（✅ 庚-32／F-14）
   },
   buttonBig: { paddingVertical: 24, borderRadius: 22 },
   buttonOutline: {

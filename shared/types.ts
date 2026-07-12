@@ -20,7 +20,12 @@ export type AppNotification = { content: string; created_at: number };
 // --- App 認證 ---
 export type GuardianSession = { guardian_id: string; name: string; token: string };
 export type ElderSession = { elder_id: string; name: string; token: string };
-export type TurnReply = { text: string; audio_url: string; duration_ms: number | null };
+export type TurnReply = {
+  text: string;
+  audio_url: string;
+  /** 回覆音檔時長；目前三端零消費，保留給虛擬形象動畫對嘴（階段 5 後）。 */
+  duration_ms: number | null;
+};
 
 // --- 觀測後台（admin） ---
 export type StageStats = {

@@ -6,6 +6,7 @@ import { AppointmentsPage } from "./pages/AppointmentsPage";
 import { EldersPage } from "./pages/EldersPage";
 import { HealthReportPage } from "./pages/HealthReportPage";
 import { MedicationsPage } from "./pages/MedicationsPage";
+import { strings } from "./strings";
 
 export function App() {
   const [ready, setReady] = useState(false);
@@ -21,13 +22,13 @@ export function App() {
         }
         setReady(true);
       } catch {
-        setError("初始化失敗，請稍後再試");
+        setError(strings.app.initFailed);
       }
     })();
   }, []);
 
   if (error) return <p>{error}</p>;
-  if (!ready) return <p>載入中…</p>;
+  if (!ready) return <p>{strings.common.loading}</p>;
   return (
     <BrowserRouter basename="/liff">
       <Routes>

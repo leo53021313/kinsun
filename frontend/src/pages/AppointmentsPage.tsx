@@ -8,6 +8,7 @@ import {
   listAppointments,
   updateAppointment,
 } from "../api";
+import { strings } from "../strings";
 
 const TODAY = new Date().toISOString().slice(0, 10);
 
@@ -23,7 +24,7 @@ export function AppointmentsPage() {
   const reload = useCallback(() => {
     listAppointments(elderId)
       .then(setAppts)
-      .catch(() => setError("載入失敗，請稍後再試"));
+      .catch(() => setError(strings.common.loadFailed));
   }, [elderId]);
 
   useEffect(reload, [reload]);
@@ -38,7 +39,7 @@ export function AppointmentsPage() {
   async function submit() {
     setError(null);
     if (!date || !label.trim()) {
-      setError("請填日期與內容");
+      setError(strings.appointments.fieldsRequired);
       return;
     }
     try {
@@ -50,7 +51,7 @@ export function AppointmentsPage() {
       resetForm();
       reload();
     } catch {
-      setError("儲存失敗，請稍後再試");
+      setError(strings.common.saveFailed);
     }
   }
 
@@ -66,17 +67,17 @@ export function AppointmentsPage() {
       await deleteAppointment(elderId, appointmentId);
       reload();
     } catch {
-      setError("刪除失敗，請稍後再試");
+      setError(strings.common.deleteFailed);
     }
   }
 
-  if (!appts) return <p>載入中…</p>;
+  if (!appts) return <p>{strings.common.loading}</p>;
   return (
     <main>
       <p>
-        <Link to="/">← 返回長輩清單</Link>
+        <Link to="/">{strings.common.backToElders}</Link>
       </p>
-      <h1>回診管理</h1>
+      <h1>{strings.appointments.title}</h1>
       {error && <p>{error}</p>}
       <ul>
         {appts.map((a) => (
@@ -84,33 +85,33 @@ export function AppointmentsPage() {
             {a.date}
             {a.time ? ` ${a.time}` : ""} {a.label}
             <button type="button" onClick={() => startEdit(a)}>
-              編輯
+              {strings.common.edit}
             </button>
             <button type="button" onClick={() => remove(a.appointment_id)}>
-              刪除
+              {strings.common.delete}
             </button>
           </li>
         ))}
       </ul>
-      <h2>{editingId ? "編輯回診" : "新增回診"}</h2>
+      <h2>{editingId ? strings.appointments.editHeading : strings.appointments.addHeading}</h2>
       <input type="date" min={TODAY} value={date} onChange={(e) => setDate(e.target.value)} />
       <input
         type="time"
         value={time}
         onChange={(e) => setTime(e.target.value)}
-        title="看診時間（選填，提醒會帶上）"
+        title={strings.appointments.timeTitle}
       />
       <input
         value={label}
         onChange={(e) => setLabel(e.target.value)}
-        placeholder="例：心臟科回診 林口長庚"
+        placeholder={strings.appointments.labelPlaceholder}
       />
       <button type="button" onClick={submit}>
-        {editingId ? "更新" : "新增"}
+        {editingId ? strings.common.update : strings.common.add}
       </button>
       {editingId && (
         <button type="button" onClick={resetForm}>
-          取消編輯
+          {strings.common.cancelEdit}
         </button>
       )}
     </main>
