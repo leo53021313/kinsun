@@ -115,3 +115,56 @@ export type TraceDetail = {
   reply: TraceReply | null;
   risk_events: TraceRiskEvent[];
 };
+
+// --- 觀測後台：長輩詳情分頁（spec 2026-07-12） ---
+export type AdminMedication = { medication_id: string; name: string; slots: string[] };
+export type AdminAppointment = { appointment_id: string; date: string; label: string };
+export type AdminReminderLog = { kind: string; content: string; created_at: number };
+export type AdminElderReminders = {
+  medications: AdminMedication[];
+  appointments: AdminAppointment[];
+  reminder_logs: AdminReminderLog[];
+};
+export type AdminMemoryItem = { text: string; provenance: string; date: string };
+export type AdminSummaryItem = { date: string; content: string; created_at: number };
+export type AdminElderMemory = { memories: AdminMemoryItem[]; summaries: AdminSummaryItem[] };
+export type AdminBinding = { channel: string; external_id: string; created_at: number };
+export type AdminInvite = {
+  code: string;
+  role: string;
+  status: string;
+  expires_at: number;
+  attempts: number;
+};
+export type AdminConsent = {
+  consent_by: string;
+  version: string;
+  granted_at: number;
+  revoked_at: number | null;
+};
+export type AdminGuardianLink = {
+  guardian_id: string;
+  name: string;
+  role: string;
+  escalation_order: number;
+};
+export type AdminElderAccount = {
+  bindings: AdminBinding[];
+  invites: AdminInvite[];
+  consent: AdminConsent | null;
+  has_password_account: boolean;
+  phone: string | null;
+  tokens: { created_at: number }[];
+  guardians: AdminGuardianLink[];
+};
+export type AdminRiskNotification = {
+  guardian_id: string;
+  guardian_name: string;
+  tier: number;
+  delivered: boolean;
+  created_at: number;
+};
+export type AdminJob = { job_name: string; cron: string; last_run_at: number | null };
+
+// --- 公開 meta（spec 2026-07-12 內測基礎建設） ---
+export type Meta = { internal_testing: boolean };
