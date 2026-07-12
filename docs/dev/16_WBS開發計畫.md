@@ -101,7 +101,7 @@
 | 庚-05 | ✅ 完成（2026-07-12，TDD）：`DELETE /api/v1/sessions/all`＋`AccountService.logout_all_devices`（撤該家屬全部 token），與長輩 `revoke_elder_device` 對稱；06 端點表同步 | A-47 | S |
 | 庚-06 | ✅ 完成（2026-07-12，TDD，含庚-13）：`run_consolidation` 改吃 `(short_term, long_term, log, now)`——掃「上次整理日之後～今日之前」每個有對話的完整日，逐日 `list_for_range` 補整理；停機跨多日重啟不再漏天。新增 `MemoryStore.list_for_range`／`day_starts_with_turns`（Pg＋Fake）。worker／CLI 皆已接線。全套 627 綠。 | A-18 | M |
 | 庚-07 | 觀測五表欄位正名：`line_user_id` → `external_id`＋`channel`（現承載所有通道識別碼，違反 AGENTS.md「line_user_id 永不混用」鐵律）；含 schema 遷移＋pipeline／observability 寫入點。 | A-8 | M |
-| 庚-08 | 多 worker 節流前置（D-20 相依）：`ratelimit` 改跨進程（DB／Redis）或明訂「多 worker 上線前不生效」；現 per-process，上線後上限×worker 數，長輩低熵手機號帳號與家屬同池同參，暴力破解面放大。 | A-54 | M |
+| 庚-08 | ✅ 完成（2026-07-12，跨進程方案）：新增 `PgRateLimiter`（Postgres 共享滑動視窗，per-key `pg_advisory_xact_lock` 串行「清舊→計數→寫入」精確計數、掛鐘可跨進程、fail-open）＋`rate_limit_hits` 表；抽 `RateLimiter` Protocol，app.py 正式組裝改注入 Pg 版（記憶體版留測試／單 worker fallback）。多 worker 上限不再×worker 數。Pg IT 測試鎖「兩實例共用計數」。沿用既有 `AUTH_RATE_LIMIT_*`，無新增 env。 | A-54 | M |
 | 庚-09 | 衛教升級旗標決策：`should_escalate_to_risk_engine` 接上確定性程式碼觸發 RiskDetector，或明文降級為 advisory（現唯一消費者是 agent prompt 文字，靠 LLM 自律）。緩解：pipeline 真風險引擎在 agent 前已獨立評估。 | A-27 | S |
 
 ### 庚2 正確性與可靠性（MEDIUM）

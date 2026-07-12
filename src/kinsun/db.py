@@ -68,6 +68,16 @@ SCHEDULER_DDL = (
     "job_name TEXT PRIMARY KEY, last_run_at DOUBLE PRECISION NOT NULL);"
 )
 
+# 認證節流共享計數（✅ 庚-08／A-54）：多 worker 共用同一滑動視窗，避免 per-process
+# 上限×worker 數放大暴力破解面。每筆＝一次嘗試（key＝scope:ip、hit_at＝掛鐘秒）；
+# 過期列於同鍵下次 hit 時清除。
+RATE_LIMIT_DDL = (
+    "CREATE TABLE IF NOT EXISTS rate_limit_hits ("
+    "key TEXT NOT NULL, hit_at DOUBLE PRECISION NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS idx_rate_limit_hits_key_time "
+    "ON rate_limit_hits (key, hit_at);"
+)
+
 MEDICATIONS_DDL = (
     "CREATE TABLE IF NOT EXISTS medications ("
     "medication_id TEXT PRIMARY KEY, elder_id TEXT NOT NULL, "
@@ -262,6 +272,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(APP_ACCOUNTS_DDL)
         conn.execute(BINDING_DDL)
         conn.execute(SCHEDULER_DDL)
+        conn.execute(RATE_LIMIT_DDL)
         conn.execute(MEDICATIONS_DDL)
         conn.execute(APPOINTMENTS_DDL)
         conn.execute(RAG_DDL)
