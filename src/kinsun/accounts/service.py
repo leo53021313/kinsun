@@ -135,19 +135,24 @@ class AccountService:
         channel: Channel = Channel.LINE,
         consent_by: ConsentBy,
     ) -> None:
-        invite = self._repo.get_invite(code)
-        if invite is None:
-            raise InviteError("not_found")
         now = self._clock()
-        if invite.used_at is not None:
-            raise InviteError("used")
-        if invite.attempts >= invite.max_attempts:
-            self._fail(invite, "too_many_attempts")
-        if now.timestamp() > invite.expires_at:
-            self._fail(invite, "expired")
-
+        # 讀碼＋檢查＋寫入同交易並列鎖該碼（✅ 庚-19／A-49）：並發同碼的第二個
+        # 請求在 FOR UPDATE 上等待，首個 commit 後看到 used_at → 正確擋下。
+        # 失敗計數（attempts+1）須存活：寫在交易內、commit 後才拋錯。
+        failure: str | None = None
         with self._repo.transaction() as tx:
-            if invite.role == InviteRole.ELDER:
+            invite = self._repo.get_invite(code, tx=tx, for_update=True)
+            if invite is None:
+                raise InviteError("not_found")
+            if invite.used_at is not None:
+                raise InviteError("used")
+            if invite.attempts >= invite.max_attempts:
+                failure = "too_many_attempts"
+            elif now.timestamp() > invite.expires_at:
+                failure = "expired"
+            if failure is not None:
+                self._record_failed_attempt(invite, tx=tx)
+            elif invite.role == InviteRole.ELDER:
                 elder = self._repo.get_elder(invite.elder_id)
                 if elder is None:
                     raise InviteError("not_found")
@@ -172,18 +177,21 @@ class AccountService:
                     ElderGuardian(invite.elder_id, guardian.guardian_id, Role.GUARDIAN, order + 1),
                     tx=tx,
                 )
-            self._repo.save_invite(
-                Invite(
-                    invite.code,
-                    invite.elder_id,
-                    invite.role,
-                    invite.expires_at,
-                    invite.max_attempts,
-                    invite.attempts + 1,
-                    now.timestamp(),
-                ),
-                tx=tx,
-            )
+            if failure is None:
+                self._repo.save_invite(
+                    Invite(
+                        invite.code,
+                        invite.elder_id,
+                        invite.role,
+                        invite.expires_at,
+                        invite.max_attempts,
+                        invite.attempts + 1,
+                        now.timestamp(),
+                    ),
+                    tx=tx,
+                )
+        if failure is not None:
+            raise InviteError(failure)
 
     def guardians_of(self, elder_id: str) -> list[ElderGuardian]:
         return self._repo.list_elder_guardians(elder_id)
@@ -417,7 +425,7 @@ class AccountService:
         guardian = self._repo.get_guardian_by_line(line_user_id)
         return [] if guardian is None else self.elders_of_guardian(guardian.guardian_id)
 
-    def _fail(self, invite: Invite, reason: str) -> None:
+    def _record_failed_attempt(self, invite: Invite, *, tx=None) -> None:
         self._repo.save_invite(
             Invite(
                 invite.code,
@@ -427,6 +435,6 @@ class AccountService:
                 invite.max_attempts,
                 invite.attempts + 1,
                 invite.used_at,
-            )
+            ),
+            tx=tx,
         )
-        raise InviteError(reason)

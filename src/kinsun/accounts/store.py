@@ -43,7 +43,9 @@ class AccountStore(Protocol):
     def save_consent(self, consent: Consent, *, tx: Executor | None = None) -> None: ...
     def get_consent(self, elder_id: str) -> Consent | None: ...
     def save_invite(self, invite: Invite, *, tx: Executor | None = None) -> None: ...
-    def get_invite(self, code: str) -> Invite | None: ...
+    def get_invite(
+        self, code: str, *, tx: Executor | None = None, for_update: bool = False
+    ) -> Invite | None: ...
     def list_invites_for_elder(self, elder_id: str) -> list[Invite]: ...
     def save_channel_binding(
         self, binding: ChannelBinding, *, tx: Executor | None = None
@@ -214,12 +216,18 @@ class PgAccountStore:
             ),
         )
 
-    def get_invite(self, code: str) -> Invite | None:
-        rows = self._db.query(
+    def get_invite(
+        self, code: str, *, tx: Executor | None = None, for_update: bool = False
+    ) -> Invite | None:
+        """for_update（✅ 庚-19）：交易內列鎖住該碼——並發同碼 redeem 的第二個
+        請求在此等待首個 commit，之後看到 used_at 被正確擋下（根治 TOCTOU）。"""
+        sql = (
             "SELECT code, elder_id, role, expires_at, max_attempts, attempts, used_at "
-            "FROM invites WHERE code = %s",
-            (code,),
+            "FROM invites WHERE code = %s"
         )
+        if for_update:
+            sql += " FOR UPDATE"
+        rows = (tx or self._db).query(sql, (code,))
         if not rows:
             return None
         c, elder, role, expires, max_a, attempts, used = rows[0]
@@ -454,7 +462,9 @@ class FakeAccountStore:
     def save_invite(self, invite: Invite, *, tx: Executor | None = None) -> None:
         self.invites[invite.code] = invite
 
-    def get_invite(self, code: str) -> Invite | None:
+    def get_invite(
+        self, code: str, *, tx: Executor | None = None, for_update: bool = False
+    ) -> Invite | None:
         return self.invites.get(code)
 
     def list_invites_for_elder(self, elder_id: str) -> list[Invite]:
