@@ -232,7 +232,8 @@ def test_list_api_tokens_for_principal_filters_and_sorts(store, ns):
     store.save_api_token(ApiToken(f"{ns}h1", PrincipalType.ELDER, f"{ns}e1", 1000.0))
     store.save_api_token(ApiToken(f"{ns}h2", PrincipalType.ELDER, f"{ns}e1", 2000.0))
     store.save_api_token(ApiToken(f"{ns}h3", PrincipalType.GUARDIAN, f"{ns}g1", 3000.0))
-    hashes = [t.token_hash for t in store.list_api_tokens_for_principal(PrincipalType.ELDER, f"{ns}e1")]
+    listed = store.list_api_tokens_for_principal(PrincipalType.ELDER, f"{ns}e1")
+    hashes = [t.token_hash for t in listed]
     assert hashes == [f"{ns}h2", f"{ns}h1"]
     assert store.list_api_tokens_for_principal(PrincipalType.ELDER, f"{ns}nobody") == []
 
