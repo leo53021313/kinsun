@@ -1,4 +1,3 @@
-import liff from "@line/liff";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -27,8 +26,8 @@ export function EldersPage() {
       return;
     }
     try {
-      const profile = await liff.getProfile();
-      const res = await createElder(newName.trim(), profile.displayName);
+      // 家屬名改由後端從 ID token 取 LINE 顯示名稱（✅ 庚-29），前端不再自送。
+      const res = await createElder(newName.trim());
       setNewName("");
       setNotice({ kind: "elder", code: res.invite_code });
       reload();

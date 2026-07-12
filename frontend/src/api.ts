@@ -103,10 +103,10 @@ export async function deleteAppointment(elderId: string, appointmentId: string):
   await apiFetch(`/api/v1/elders/${elderId}/appointments/${appointmentId}`, { method: "DELETE" });
 }
 
-export function createElder(elderName: string, guardianName: string): Promise<CreatedElder> {
+export function createElder(elderName: string): Promise<CreatedElder> {
   return apiFetch("/api/v1/elders", {
     method: "POST",
-    body: JSON.stringify({ name: elderName, guardian_name: guardianName }),
+    body: JSON.stringify({ name: elderName }),
   });
 }
 
