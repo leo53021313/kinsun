@@ -96,6 +96,7 @@ export default function AppointmentsManage() {
           if (!elderId) {
             return;
           }
+          setBusy(true);
           try {
             await deleteAppointment(elderId, appt.appointment_id, token);
             if (editingId === appt.appointment_id) {
@@ -104,6 +105,8 @@ export default function AppointmentsManage() {
             await reload();
           } catch (exc) {
             setError(exc instanceof ApiError ? exc.message : "刪除失敗，請稍後再試。");
+          } finally {
+            setBusy(false);
           }
         },
       },
@@ -126,8 +129,8 @@ export default function AppointmentsManage() {
                 {a.date}｜{a.label}
               </Text>
               <View style={styles.itemActions}>
-                <Button label="編輯" variant="outline" onPress={() => startEdit(a)} />
-                <Button label="刪除" variant="outline" onPress={() => confirmRemove(a)} />
+                <Button label="編輯" variant="outline" disabled={busy} onPress={() => startEdit(a)} />
+                <Button label="刪除" variant="outline" disabled={busy} onPress={() => confirmRemove(a)} />
               </View>
             </View>
           ))

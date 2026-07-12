@@ -91,6 +91,7 @@ export default function MedicationsManage() {
           if (!elderId) {
             return;
           }
+          setBusy(true);
           try {
             await deleteMedication(elderId, med.medication_id, token);
             if (editingId === med.medication_id) {
@@ -99,6 +100,8 @@ export default function MedicationsManage() {
             await reload();
           } catch (exc) {
             setError(exc instanceof ApiError ? exc.message : "刪除失敗，請稍後再試。");
+          } finally {
+            setBusy(false);
           }
         },
       },
@@ -121,8 +124,8 @@ export default function MedicationsManage() {
                 {m.name}（{m.slots.map(slotLabel).join("、")}）
               </Text>
               <View style={styles.itemActions}>
-                <Button label="編輯" variant="outline" onPress={() => startEdit(m)} />
-                <Button label="刪除" variant="outline" onPress={() => confirmRemove(m)} />
+                <Button label="編輯" variant="outline" disabled={busy} onPress={() => startEdit(m)} />
+                <Button label="刪除" variant="outline" disabled={busy} onPress={() => confirmRemove(m)} />
               </View>
             </View>
           ))
