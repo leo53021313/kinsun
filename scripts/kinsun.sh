@@ -149,6 +149,13 @@ launch_webhook() {
   if [ "${KINSUN_RELOAD:-0}" = "1" ]; then
     cmd+=(--reload)
     info "Webhook：已啟用 --reload（KINSUN_RELOAD=1）"
+  else
+    # 多 worker（✅ D-20 丙-3）：對講機一請求佔住 ASR→LLM→TTS 全鏈路，
+    # 單進程會整台卡住。WEB_WORKERS 為部署層鍵（不經 config.py），預設 2。
+    # 連線池評估：每 worker 池上限 5 ＋ scheduler 5 ＝ 15 連線，Supabase 額度內。
+    # 注意：--reload 與 --workers 互斥（uvicorn 限制），開發模式維持單進程。
+    cmd+=(--workers "${WEB_WORKERS:-2}")
+    info "Webhook：多 worker 啟動（WEB_WORKERS=${WEB_WORKERS:-2}）"
   fi
   _bg webhook "${cmd[@]}"
 }

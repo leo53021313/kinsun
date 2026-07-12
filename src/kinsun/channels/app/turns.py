@@ -1,4 +1,6 @@
-"""App 對講機通道：POST /api/app/turns——上傳錄音，同一回應回傳文字＋回覆音檔 URL。
+"""App 對講機通道：POST /turns——上傳錄音，同一回應回傳文字＋回覆音檔 URL。
+
+prefix 由組裝處統一指定（✅ D-28）。
 
 與 channels/line/ 平行的第二通道 adapter：HTTP 請求正規化成
 InboundMessage(Channel.APP, …) 進既有 dispatch——閘門（同意複核）、危急偵測、
@@ -9,6 +11,7 @@ InboundMessage(Channel.APP, …) 進既有 dispatch——閘門（同意複核�
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from collections.abc import Callable
 
@@ -17,10 +20,11 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from kinsun.accounts.models import Channel, PrincipalType
 from kinsun.accounts.service import AccountService
 from kinsun.channels.inbound import InboundMessage, dispatch
+from kinsun.web.envelope import ok
 
 logger = logging.getLogger("kinsun.channels.app")
 
-_MAX_AUDIO_BYTES = 10 * 1024 * 1024  # 對講機單回合上限 10MB
+_DEFAULT_MAX_AUDIO_BYTES = 10 * 1024 * 1024  # 對講機單回合上限預設 10MB（✅ D-26 env 可調）
 
 
 class _NullBinding:
@@ -57,8 +61,9 @@ def create_app_turns_router(
     traces=None,
     inbound_audio=None,
     new_id: Callable[[], str] | None = None,
+    max_audio_bytes: int = _DEFAULT_MAX_AUDIO_BYTES,
 ) -> APIRouter:
-    router = APIRouter(prefix="/api/app")
+    router = APIRouter(tags=["turns"])
     make_id = new_id or (lambda: uuid.uuid4().hex)
 
     def current_elder(authorization: str = Header(default="")) -> str:
@@ -79,12 +84,19 @@ def create_app_turns_router(
 
     @router.post("/turns", status_code=201)
     async def create_turn(request: Request, elder_id: str = Depends(current_elder)) -> dict:
+        # 往返延遲起點（✅ D-05 戊-2）：請求進入處理的時刻，與 dispatch 的預設
+        # timer（time.monotonic）同源；涵蓋收音檔、進站上傳與整段管線。
+        received_at = time.monotonic()
         # token 不代表同意：撤回或綁定消失即擋（閘門以 (channel, external_id) 複核）。
         external_id = accounts.app_external_id_of_elder(elder_id)
         if external_id is None or gate.resolve_elder(Channel.APP, external_id) is None:
             raise HTTPException(status_code=403, detail="consent_revoked")
+        # content-type 驗證（✅ D-61 丙-11）：只收音訊，擋誤傳的 JSON／文字。
+        content_type = request.headers.get("content-type", "")
+        if not content_type.startswith("audio/"):
+            raise HTTPException(status_code=415, detail="unsupported_media_type")
         audio = await request.body()
-        if len(audio) > _MAX_AUDIO_BYTES:
+        if len(audio) > max_audio_bytes:
             raise HTTPException(status_code=413, detail="audio_too_large")
         collector = _TurnCollector()
         msg = InboundMessage(
@@ -97,6 +109,7 @@ def create_app_turns_router(
             collector.reply_voice,
             trace_id=make_id(),
             audio_url=_publish_inbound(audio),
+            received_at=received_at,
         )
         dispatch(
             msg,
@@ -106,10 +119,12 @@ def create_app_turns_router(
             voice=voice,
             traces=traces,
         )
-        return {
-            "text": collector.text,
-            "audio_url": collector.audio_url,
-            "duration_ms": collector.duration_ms,
-        }
+        return ok(
+            {
+                "text": collector.text,
+                "audio_url": collector.audio_url,
+                "duration_ms": collector.duration_ms,
+            }
+        )
 
     return router

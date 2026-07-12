@@ -1,32 +1,46 @@
+/**
+ * LIFF 端 API 呼叫端（乙-5）：/api/v1＋統一信封解包；型別與錯誤來自 kinsun-shared 共用包。
+ * 認證：LIFF idToken（隨 LINE 凍結，退場時移除，ADR-009）。
+ */
+
 import liff from "@line/liff";
 
-export type Elder = { elder_id: string; name: string };
-export type Medication = { medication_id: string; name: string; slots: string[] };
+import { ApiError, type Envelope, unwrapEnvelope } from "kinsun-shared/envelope";
+import type {
+  Appointment,
+  CreatedElder,
+  Elder,
+  HealthReport,
+  Medication,
+  ReminderItem,
+  RiskEventItem,
+} from "kinsun-shared/types";
 
-export class ApiError extends Error {
-  constructor(public status: number) {
-    super(`API ${status}`);
-  }
-}
+export { ApiError };
+export type { Appointment, Elder, Medication, ReminderItem, RiskEventItem };
 
-async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = liff.getIDToken();
   const headers = new Headers(init.headers);
   if (token) headers.set("Authorization", `Bearer ${token}`);
   if (init.body) headers.set("Content-Type", "application/json");
   const res = await fetch(path, { ...init, headers });
-  if (!res.ok) throw new ApiError(res.status);
-  return res;
+  if (res.status === 204) return undefined as T;
+  let body: Envelope<T>;
+  try {
+    body = (await res.json()) as Envelope<T>;
+  } catch {
+    throw new ApiError(res.status, `http_${res.status}`);
+  }
+  return unwrapEnvelope(res.status, body);
 }
 
-export async function listElders(): Promise<Elder[]> {
-  const res = await apiFetch("/api/me/elders");
-  return ((await res.json()) as { elders: Elder[] }).elders;
+export function listElders(): Promise<Elder[]> {
+  return apiFetch("/api/v1/elders");
 }
 
-export async function listMedications(elderId: string): Promise<Medication[]> {
-  const res = await apiFetch(`/api/elders/${elderId}/medications`);
-  return ((await res.json()) as { medications: Medication[] }).medications;
+export function listMedications(elderId: string): Promise<Medication[]> {
+  return apiFetch(`/api/v1/elders/${elderId}/medications`);
 }
 
 export async function addMedication(
@@ -34,7 +48,7 @@ export async function addMedication(
   name: string,
   slots: string[],
 ): Promise<void> {
-  await apiFetch(`/api/elders/${elderId}/medications`, {
+  await apiFetch(`/api/v1/elders/${elderId}/medications`, {
     method: "POST",
     body: JSON.stringify({ name, slots }),
   });
@@ -46,21 +60,18 @@ export async function updateMedication(
   name: string,
   slots: string[],
 ): Promise<void> {
-  await apiFetch(`/api/elders/${elderId}/medications/${medicationId}`, {
+  await apiFetch(`/api/v1/elders/${elderId}/medications/${medicationId}`, {
     method: "PUT",
     body: JSON.stringify({ name, slots }),
   });
 }
 
 export async function deleteMedication(elderId: string, medicationId: string): Promise<void> {
-  await apiFetch(`/api/elders/${elderId}/medications/${medicationId}`, { method: "DELETE" });
+  await apiFetch(`/api/v1/elders/${elderId}/medications/${medicationId}`, { method: "DELETE" });
 }
 
-export type Appointment = { appointment_id: string; date: string; label: string };
-
-export async function listAppointments(elderId: string): Promise<Appointment[]> {
-  const res = await apiFetch(`/api/elders/${elderId}/appointments`);
-  return ((await res.json()) as { appointments: Appointment[] }).appointments;
+export function listAppointments(elderId: string): Promise<Appointment[]> {
+  return apiFetch(`/api/v1/elders/${elderId}/appointments`);
 }
 
 export async function addAppointment(
@@ -68,7 +79,7 @@ export async function addAppointment(
   date: string,
   label: string,
 ): Promise<void> {
-  await apiFetch(`/api/elders/${elderId}/appointments`, {
+  await apiFetch(`/api/v1/elders/${elderId}/appointments`, {
     method: "POST",
     body: JSON.stringify({ date, label }),
   });
@@ -80,40 +91,27 @@ export async function updateAppointment(
   date: string,
   label: string,
 ): Promise<void> {
-  await apiFetch(`/api/elders/${elderId}/appointments/${appointmentId}`, {
+  await apiFetch(`/api/v1/elders/${elderId}/appointments/${appointmentId}`, {
     method: "PUT",
     body: JSON.stringify({ date, label }),
   });
 }
 
 export async function deleteAppointment(elderId: string, appointmentId: string): Promise<void> {
-  await apiFetch(`/api/elders/${elderId}/appointments/${appointmentId}`, { method: "DELETE" });
+  await apiFetch(`/api/v1/elders/${elderId}/appointments/${appointmentId}`, { method: "DELETE" });
 }
 
-export async function createElder(
-  elderName: string,
-  guardianName: string,
-): Promise<{ elder_id: string; name: string; invite_code: string }> {
-  const res = await apiFetch("/api/elders", {
+export function createElder(elderName: string, guardianName: string): Promise<CreatedElder> {
+  return apiFetch("/api/v1/elders", {
     method: "POST",
     body: JSON.stringify({ name: elderName, guardian_name: guardianName }),
   });
-  return (await res.json()) as { elder_id: string; name: string; invite_code: string };
 }
 
-export async function generateGuardianInvite(
-  elderId: string,
-): Promise<{ invite_code: string }> {
-  const res = await apiFetch(`/api/elders/${elderId}/guardian-invites`, { method: "POST" });
-  return (await res.json()) as { invite_code: string };
+export function generateGuardianInvite(elderId: string): Promise<{ invite_code: string }> {
+  return apiFetch(`/api/v1/elders/${elderId}/guardian-invites`, { method: "POST" });
 }
 
-export type RiskEventItem = { tier: number; reason: string; created_at: number };
-export type ReminderItem = { kind: string; content: string; created_at: number };
-
-export async function getHealthReport(
-  elderId: string,
-): Promise<{ risk_events: RiskEventItem[]; reminders: ReminderItem[] }> {
-  const res = await apiFetch(`/api/elders/${elderId}/health-report`);
-  return (await res.json()) as { risk_events: RiskEventItem[]; reminders: ReminderItem[] };
+export function getHealthReport(elderId: string): Promise<HealthReport> {
+  return apiFetch(`/api/v1/elders/${elderId}/health-report`);
 }

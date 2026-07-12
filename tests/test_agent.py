@@ -71,7 +71,11 @@ def test_proactive_composes_with_memory_and_writes_back():
     assert reply == "金孫回您：好的"
     assert llm.system_prompt == SYSTEM_PROMPT + "【記憶】"
     assert "早安問候" in llm.messages[-1].content
-    assert session.recorded == [("u1", (Message("assistant", "金孫回您：好的"),))]
+    # ✅ D-39（丙-8）：留存的記憶帶主動關懷標記——隔日 recall 不再看到憑空開場；
+    # 回傳給長輩的 reply 本身不帶標記。
+    assert session.recorded == [
+        ("u1", (Message("assistant", "【主動關懷｜早安問候】金孫回您：好的"),))
+    ]
 
 
 class ScriptedToolLLM:

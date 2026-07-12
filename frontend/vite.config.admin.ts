@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
@@ -6,6 +8,9 @@ export default defineConfig({
   root: "admin",
   base: "/admin/",
   plugins: [react()],
+  resolve: {
+    alias: { "kinsun-shared": path.resolve(__dirname, "../shared") },
+  },
   build: {
     outDir: "../dist-admin",
     emptyOutDir: true,

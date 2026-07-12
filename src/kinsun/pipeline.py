@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 
 from kinsun.agent import CareAgent
+from kinsun.llm import LLMUsage, collect_llm_usage
 from kinsun.observability.store import TraceStore, safe_record
 from kinsun.safety.detector import RiskDetector
 from kinsun.safety.events import RiskEventStore
@@ -68,7 +69,7 @@ class VoicePipeline:
     def process_text(
         self, text: str, *, elder_id: str, line_user_id: str = "", trace_id: str = ""
     ) -> TtsResult:
-        """文字輸入路徑（Debug）：跳過 ASR，直接以輸入文字進入對話核心。"""
+        """文字輸入路徑（✅ D-11 正式）：跳過 ASR，其餘與語音同管線（危急偵測＋回覆＋記憶）。"""
         return self._process_transcribed(
             text, elder_id=elder_id, line_user_id=line_user_id, trace_id=trace_id
         )
@@ -80,11 +81,14 @@ class VoicePipeline:
         assessment = self._detector.assess(user_text)
         # 危急通知須獨立於回覆生成：先落庫＋通知家屬，才產生回覆。
         # 否則 agent 生成回覆時若丟例外，會讓已偵測到的危急漏通知。
-        if assessment.tier >= RiskTier.L2:
+        # 落庫門檻＝L1：一般 L1（小訊號）是每日摘要的資料來源（✅ D-10 己-5，庚-01），
+        # fail-safe L1（✅ D-31）留痕供 admin 告警——兩者都只落庫、不通知；通知門檻維持 L2。
+        if assessment.tier >= RiskTier.L1:
             try:
                 self._risk_events.record(elder_id, assessment, trace_id=trace_id or None)
             except Exception:  # noqa: BLE001 - 落庫失敗不可中斷對話
                 logger.warning("危急事件落庫失敗")
+        if assessment.tier >= RiskTier.L2:
             self._notifier.notify(elder_id, assessment)
         reply_text = self._generate(
             elder_id, user_text, line_user_id=line_user_id, trace_id=trace_id
@@ -143,9 +147,11 @@ class VoicePipeline:
         return text
 
     def _generate(self, elder_id: str, user_text: str, *, line_user_id: str, trace_id: str) -> str:
-        # 現階段每輪記一筆（涵蓋整個 agent 含工具迴圈）；token 由 Gemini usage
-        # 尚未透出，先記 NULL——見規格「未來工作」。
+        # 每輪記一筆（涵蓋整個 agent 含工具迴圈）；token 用量由收集器彙總本輪
+        # 所有 Gemini 呼叫（✅ D-05 戊-2）。零申報（假 LLM／無 usage_metadata）
+        # 記 NULL＝「未量測」，與量測到 0 區隔。
         reply = ""
+        usage = LLMUsage()
         with self._span(
             lambda traces, status, latency_ms, error_message: traces.record_llm_call(
                 trace_id=trace_id,
@@ -153,13 +159,14 @@ class VoicePipeline:
                 status=status,
                 latency_ms=latency_ms,
                 model_name=self._model_name,
-                input_tokens=None,
-                output_tokens=None,
+                input_tokens=usage.input_tokens or None,
+                output_tokens=usage.output_tokens or None,
                 content=reply,
                 error_message=error_message,
             )
         ):
-            reply = self._agent.handle(elder_id, user_text)
+            with collect_llm_usage(usage):
+                reply = self._agent.handle(elder_id, user_text)
         return reply
 
     def _synthesize(self, reply_text: str, *, line_user_id: str, trace_id: str) -> TtsResult:

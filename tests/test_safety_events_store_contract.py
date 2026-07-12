@@ -34,7 +34,7 @@ def store(request, ns):
             clock=lambda: FIXED_CLOCK,
             new_id=lambda: next(ids),
         )
-    return FakeRiskEventStore()
+    return FakeRiskEventStore(clock=lambda: FIXED_CLOCK.timestamp())
 
 
 def test_record_then_list_returns_matching_tier_and_reason(store, ns):
@@ -50,10 +50,27 @@ def test_list_is_scoped_to_line_user(store, ns):
     elder_id_1 = f"{ns}U1"
     elder_id_2 = f"{ns}U2"
     store.record(elder_id_1, RiskAssessment(RiskTier.L2, 0.9, "頭暈"))
-    store.record(elder_id_2, RiskAssessment(RiskTier.L3, 0.95, "昏倒"))
+    store.record(elder_id_2, RiskAssessment(RiskTier.L2, 0.95, "昏倒"))
     reasons = {e.reason for e in store.list_for_elder(elder_id_1)}
     assert "頭暈" in reasons
     assert "昏倒" not in reasons
+
+
+def test_count_failsafe_since_counts_only_failsafe_in_window(store, ns):
+    """✅ D-31（甲-5）：fail-safe 留痕事件可依時間窗計數，供 admin 告警門檻判斷。
+
+    兩個 adapter 用同一固定時鐘：cutoff 在時鐘之前 → 數得到；之後 → 數不到。
+    一般事件（reason 非 fail-safe 常數）不列入。
+    """
+    from kinsun.safety.tiers import FAILSAFE_EVENT_REASON
+
+    elder_id = f"{ns}U1"
+    store.record(elder_id, RiskAssessment(RiskTier.L1, 0.0, FAILSAFE_EVENT_REASON))
+    store.record(elder_id, RiskAssessment(RiskTier.L1, 0.0, FAILSAFE_EVENT_REASON))
+    store.record(elder_id, RiskAssessment(RiskTier.L2, 0.9, "頭暈"))
+    ts = FIXED_CLOCK.timestamp()
+    assert store.count_failsafe_since(ts - 1) >= 2  # 共用真庫可能有他組殘留，用下界斷言
+    assert store.count_failsafe_since(ts + 1) == 0
 
 
 def test_record_accepts_trace_id_and_event_stays_retrievable(store, ns):

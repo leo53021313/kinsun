@@ -4,11 +4,12 @@ import { KeyboardAvoidingView, Platform, StyleSheet, Text, View } from "react-na
 
 import { Button, ErrorText, Field } from "@/components/ui";
 import { ApiError, loginGuardian } from "@/lib/api";
-import { saveSession } from "@/lib/auth";
+import { useSession } from "@/lib/SessionProvider";
 import { colors, spacing } from "@/lib/theme";
 
 export default function GuardianLogin() {
   const router = useRouter();
+  const { signIn } = useSession();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -19,7 +20,7 @@ export default function GuardianLogin() {
     setBusy(true);
     try {
       const session = await loginGuardian(email, password);
-      await saveSession({ role: "guardian", token: session.token, display_name: session.name });
+      await signIn({ role: "guardian", token: session.token, display_name: session.name });
       router.replace("/guardian/home");
     } catch (exc) {
       if (exc instanceof ApiError && exc.status === 401) {

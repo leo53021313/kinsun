@@ -36,7 +36,8 @@ class MemoryStore(Protocol):
 class PgMemoryStore:
     """短期記憶的 Postgres（Supabase）實作；介面同 MemoryStore。"""
 
-    def __init__(self, db: Database, clock: Callable[[], datetime], max_turns: int = 20) -> None:
+    # 預設對齊 config 的 MEMORY_MAX_TURNS=200（✅ D-35 丙-5）；正式組裝一律由 settings 注入。
+    def __init__(self, db: Database, clock: Callable[[], datetime], max_turns: int = 200) -> None:
         self._db = _Errors(db, lambda m: MemoryError(f"記憶存取失敗：{m}"))
         self._clock = clock
         self._max_turns = max_turns
@@ -97,7 +98,7 @@ class FakeMemoryStore:
     recent 回「今日最近 N 輪、由舊到新」，previous_day 回「前一天前 N 輪、由舊到新」。
     """
 
-    def __init__(self, now: datetime | None = None, max_turns: int = 20) -> None:
+    def __init__(self, now: datetime | None = None, max_turns: int = 200) -> None:
         self._now = now or _FAKE_DEFAULT_NOW
         self._max_turns = max_turns
         self._turns: dict[str, list[tuple[float, Message]]] = {}

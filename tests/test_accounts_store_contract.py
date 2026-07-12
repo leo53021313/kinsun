@@ -18,6 +18,7 @@ from kinsun.accounts.models import (
     Consent,
     ConsentBy,
     Elder,
+    ElderAccount,
     ElderGuardian,
     Guardian,
     GuardianAccount,
@@ -62,8 +63,8 @@ def test_guardian_roundtrip_and_by_line(store, ns):
 def test_elder_guardians_ordered_by_escalation(store, ns):
     elder_id = f"{ns}e1"
     # 存入順序刻意與 escalation_order 相反，證明回傳依 escalation_order 排序而非存入順序。
-    store.save_elder_guardian(ElderGuardian(elder_id, f"{ns}g2", Role.GUARDIAN, 2, False))
-    store.save_elder_guardian(ElderGuardian(elder_id, f"{ns}g1", Role.PRIMARY, 1, True))
+    store.save_elder_guardian(ElderGuardian(elder_id, f"{ns}g2", Role.GUARDIAN, 2))
+    store.save_elder_guardian(ElderGuardian(elder_id, f"{ns}g1", Role.PRIMARY, 1))
     egs = store.list_elder_guardians(elder_id)
     assert [e.guardian_id for e in egs] == [f"{ns}g1", f"{ns}g2"]
     assert [e.escalation_order for e in egs] == [1, 2]
@@ -151,6 +152,26 @@ def test_guardian_account_roundtrip_by_email(store, ns):
     )
 
 
+def test_elder_account_roundtrip_by_phone(store, ns):
+    """✅ D-71（己-6）：長輩帳號以手機號碼為帳號；save 為 upsert（家屬可重設密碼／換號碼）。"""
+    store.save_elder_account(
+        ElderAccount(f"{ns}e1", f"{ns}0912345678", "scrypt$16384$8$1$00$00", 1000.0)
+    )
+    got = store.get_elder_account_by_phone(f"{ns}0912345678")
+    assert got is not None
+    assert got.elder_id == f"{ns}e1"
+    assert got.password_hash == "scrypt$16384$8$1$00$00"
+    assert store.get_elder_account_by_phone(f"{ns}0900000000") is None
+    # upsert：同長輩重設密碼＋換手機號碼，舊號碼查不到。
+    store.save_elder_account(
+        ElderAccount(f"{ns}e1", f"{ns}0987654321", "scrypt$16384$8$1$11$11", 2000.0)
+    )
+    assert store.get_elder_account_by_phone(f"{ns}0912345678") is None
+    assert store.get_elder_account_by_phone(f"{ns}0987654321").password_hash == (
+        "scrypt$16384$8$1$11$11"
+    )
+
+
 def test_api_token_roundtrip(store, ns):
     store.save_api_token(ApiToken(f"{ns}hash1", PrincipalType.GUARDIAN, f"{ns}g1", 1000.0))
     got = store.get_api_token(f"{ns}hash1")
@@ -158,3 +179,39 @@ def test_api_token_roundtrip(store, ns):
     assert got.principal_type == PrincipalType.GUARDIAN
     assert got.principal_id == f"{ns}g1"
     assert store.get_api_token(f"{ns}nope") is None
+
+
+def test_remove_api_token_revokes_single(store, ns):
+    """✅ D-25 修訂（乙-3）：登出＝撤銷單一 token。"""
+    store.save_api_token(ApiToken(f"{ns}h1", PrincipalType.GUARDIAN, f"{ns}g1", 1000.0))
+    store.save_api_token(ApiToken(f"{ns}h2", PrincipalType.GUARDIAN, f"{ns}g1", 1000.0))
+    store.remove_api_token(f"{ns}h1")
+    assert store.get_api_token(f"{ns}h1") is None
+    assert store.get_api_token(f"{ns}h2") is not None
+
+
+def test_remove_api_tokens_for_principal_revokes_all(store, ns):
+    """✅ D-25 修訂（乙-3）：裝置作廢＝撤銷本人全部 token，不波及他人。"""
+    store.save_api_token(ApiToken(f"{ns}h1", PrincipalType.ELDER, f"{ns}e1", 1000.0))
+    store.save_api_token(ApiToken(f"{ns}h2", PrincipalType.ELDER, f"{ns}e1", 1000.0))
+    store.save_api_token(ApiToken(f"{ns}h3", PrincipalType.ELDER, f"{ns}e2", 1000.0))
+    store.remove_api_tokens_for_principal(PrincipalType.ELDER, f"{ns}e1")
+    assert store.get_api_token(f"{ns}h1") is None
+    assert store.get_api_token(f"{ns}h2") is None
+    assert store.get_api_token(f"{ns}h3") is not None
+
+
+def test_remove_channel_bindings_for_principal_scoped_by_channel(store, ns):
+    """✅ D-25 修訂（乙-3）：作廢只拆 App 通道綁定，LINE 綁定不動。"""
+    store.save_channel_binding(
+        ChannelBinding(Channel.APP, f"{ns}ext1", PrincipalType.ELDER, f"{ns}e1", 1000.0)
+    )
+    store.save_channel_binding(
+        ChannelBinding(Channel.LINE, f"{ns}U1", PrincipalType.ELDER, f"{ns}e1", 1000.0)
+    )
+    store.remove_channel_bindings_for_principal(Channel.APP, PrincipalType.ELDER, f"{ns}e1")
+    channels = {
+        b.channel for b in store.list_channel_bindings_for_principal(PrincipalType.ELDER, f"{ns}e1")
+    }
+    assert Channel.APP not in channels
+    assert Channel.LINE in channels

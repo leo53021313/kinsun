@@ -64,6 +64,8 @@ class Reply:
     kind: str  # "voice" | "text"
     status: str
     latency_ms: int
+    # 端到端往返（通道收件 → 回覆送達，✅ D-05 戊-2）；NULL＝該輪未量測。
+    round_trip_ms: int | None
     audio_url: str
     created_at: float
 
@@ -127,10 +129,11 @@ class ElderActivity:
 
 @dataclass(frozen=True)
 class StageStats:
-    stage: str  # "asr" | "llm" | "tts"
+    stage: str  # "asr" | "llm" | "tts" | "round_trip"
     call_count: int
     error_count: int
     avg_latency_ms: float
+    p50_latency_ms: float
     p95_latency_ms: float
 
 
