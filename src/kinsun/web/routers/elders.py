@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from kinsun.accounts.models import InviteRole
 from kinsun.accounts.service import AccountService, AppAccountError
 from kinsun.web.envelope import ok
+from kinsun.web.errors import ErrorCode
 from kinsun.web.routers.deps import GuardianAuth, GuardianScope
 
 
@@ -41,7 +42,7 @@ def create_elders_router(
     def create_elder(body: CreateElderIn, auth: GuardianAuth = Depends(current_guardian)) -> dict:
         name = body.name.strip()
         if not name:
-            raise HTTPException(status_code=400, detail="name_required")
+            raise HTTPException(status_code=400, detail=ErrorCode.NAME_REQUIRED)
         if auth.guardian_id is not None:
             elder = accounts.create_elder_for_guardian(auth.guardian_id, name)
         else:

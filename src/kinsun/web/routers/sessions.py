@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from kinsun.accounts.models import PrincipalType
 from kinsun.accounts.service import AccountService, AppAccountError
 from kinsun.web.envelope import ok
+from kinsun.web.errors import ErrorCode
 from kinsun.web.ratelimit import RateLimiter, throttle_or_429
 
 
@@ -52,7 +53,7 @@ def create_sessions_router(*, accounts: AccountService, rate_limiter: RateLimite
         token = authorization.removeprefix("Bearer ").strip()
         auth = accounts.authenticate_token(token) if token else None
         if auth is None or auth.principal_type is not PrincipalType.GUARDIAN:
-            raise HTTPException(status_code=401, detail="invalid_token")
+            raise HTTPException(status_code=401, detail=ErrorCode.INVALID_TOKEN)
         accounts.logout(token)
 
     @router.delete("/sessions/all", status_code=204)
@@ -61,7 +62,7 @@ def create_sessions_router(*, accounts: AccountService, rate_limiter: RateLimite
         token = authorization.removeprefix("Bearer ").strip()
         auth = accounts.authenticate_token(token) if token else None
         if auth is None or auth.principal_type is not PrincipalType.GUARDIAN:
-            raise HTTPException(status_code=401, detail="invalid_token")
+            raise HTTPException(status_code=401, detail=ErrorCode.INVALID_TOKEN)
         accounts.logout_all_devices(auth.principal_id)
 
     return router

@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from kinsun.appointments.service import AppointmentService
 from kinsun.web.envelope import ok
+from kinsun.web.errors import ErrorCode
 from kinsun.web.routers.deps import GuardianAuth, GuardianScope
 
 
@@ -39,15 +40,15 @@ def create_appointments_router(
 
     def assert_appointment_under_elder(elder_id: str, appointment_id: str) -> None:
         if appointment_id not in {a.appointment_id for a in appointments.list_for_elder(elder_id)}:
-            raise HTTPException(status_code=404, detail="appointment_not_found")
+            raise HTTPException(status_code=404, detail=ErrorCode.APPOINTMENT_NOT_FOUND)
 
     def parse_appt_date(raw: str) -> str:
         try:
             parsed = datetime.strptime(raw.strip(), "%Y-%m-%d").date()
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail="invalid_date") from exc
+            raise HTTPException(status_code=400, detail=ErrorCode.INVALID_DATE) from exc
         if parsed < clock().date():
-            raise HTTPException(status_code=400, detail="date_in_past")
+            raise HTTPException(status_code=400, detail=ErrorCode.DATE_IN_PAST)
         return parsed.isoformat()
 
     def parse_appt_time(raw: str) -> str:
@@ -58,7 +59,7 @@ def create_appointments_router(
         try:
             return datetime.strptime(cleaned, "%H:%M").strftime("%H:%M")
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail="invalid_time") from exc
+            raise HTTPException(status_code=400, detail=ErrorCode.INVALID_TIME) from exc
 
     @router.get("/elders/{elder_id}/appointments")
     def list_appointments(elder_id: str, auth: GuardianAuth = Depends(current_guardian)) -> dict:
@@ -72,7 +73,7 @@ def create_appointments_router(
         scope.assert_manages(auth, elder_id)
         label = body.label.strip()
         if not label:
-            raise HTTPException(status_code=400, detail="label_required")
+            raise HTTPException(status_code=400, detail=ErrorCode.LABEL_REQUIRED)
         date = parse_appt_date(body.date)
         time = parse_appt_time(body.time)
         return ok(_appointment_json(appointments.save(elder_id, date, label, time)))
@@ -88,7 +89,7 @@ def create_appointments_router(
         assert_appointment_under_elder(elder_id, appointment_id)
         label = body.label.strip()
         if not label:
-            raise HTTPException(status_code=400, detail="label_required")
+            raise HTTPException(status_code=400, detail=ErrorCode.LABEL_REQUIRED)
         date = parse_appt_date(body.date)
         time = parse_appt_time(body.time)
         return ok(
