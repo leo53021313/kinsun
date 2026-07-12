@@ -19,6 +19,7 @@ _INVITE_STATUS = {
     "used": (409, "invite_used"),
     "expired": (409, "invite_expired"),
     "too_many_attempts": (409, "too_many_attempts"),
+    "wrong_role": (409, "invite_wrong_role"),  # 家屬邀請碼誤走裝置綁定（庚-04／A-46）
 }
 
 

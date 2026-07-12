@@ -269,6 +269,39 @@ def test_bind_elder_device_issues_token_and_app_binding():
         svc.bind_elder_device(inv.code, consent_by=ConsentBy.PROXY)
 
 
+def test_bind_elder_device_rejects_guardian_invite():
+    """庚-04（A-46）：家屬邀請碼不可經 /device-bindings 換出長輩裝置 token。
+
+    修復前 bind_elder_device 不看 invite.role，GUARDIAN 碼會走 redeem 的 guardian
+    分支（建空名 Guardian＋消耗邀請碼）卻仍發長輩 token——權限邊界破口。
+    """
+    repo = FakeAccountStore()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    guardian_invite = svc.generate_invite(elder.elder_id, InviteRole.GUARDIAN)
+    with pytest.raises(InviteError) as exc:
+        svc.bind_elder_device(guardian_invite.code, consent_by=ConsentBy.PROXY)
+    assert exc.value.reason == "wrong_role"
+    # 邀請碼未被消耗（仍可正常給家屬用）、未發任何 token、未建綁定。
+    assert repo.get_invite(guardian_invite.code).used_at is None
+    assert repo.list_channel_bindings_for_principal(PrincipalType.ELDER, elder.elder_id) == []
+
+
+def test_logout_all_devices_revokes_every_guardian_token():
+    """庚-05（A-47）：家屬「登出所有裝置」撤銷該家屬全部 token（永久 token 外洩補救）。"""
+    repo = FakeAccountStore()
+    svc = _service(repo)
+    guardian = svc.register_guardian_account("a@example.com", "correct-horse-8", "兒子")[0]
+    # 同一家屬多裝置登入 → 多顆 token。
+    _, t1 = svc.login_guardian("a@example.com", "correct-horse-8")
+    _, t2 = svc.login_guardian("a@example.com", "correct-horse-8")
+    assert svc.authenticate_token(t1) is not None
+    assert svc.authenticate_token(t2) is not None
+    svc.logout_all_devices(guardian.guardian_id)
+    assert svc.authenticate_token(t1) is None
+    assert svc.authenticate_token(t2) is None
+
+
 def test_authenticate_token_rejects_unknown():
     svc = _service(FakeAccountStore())
     assert svc.authenticate_token("not-a-real-token") is None

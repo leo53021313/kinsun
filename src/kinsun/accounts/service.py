@@ -319,8 +319,16 @@ class AccountService:
         ]
 
     def bind_elder_device(self, code: str, *, consent_by: ConsentBy) -> tuple[Elder, str]:
-        """長輩裝置綁定：綁定碼換 App 通道綁定＋裝置 token。InviteError 原樣上拋。"""
+        """長輩裝置綁定：綁定碼換 App 通道綁定＋裝置 token。InviteError 原樣上拋。
+
+        僅接受長輩綁定碼（InviteRole.ELDER）：家屬邀請碼走此路徑會發出長輩 token
+        （權限邊界破口，庚-04／A-46），故先驗角色再 redeem。
+        """
         invite = self._repo.get_invite(code)
+        if invite is None:
+            raise InviteError("not_found")
+        if invite.role is not InviteRole.ELDER:
+            raise InviteError("wrong_role")
         app_account_id = self._new_id()
         self.redeem_invite(code, app_account_id, channel=Channel.APP, consent_by=consent_by)
         elder = self._repo.get_elder(invite.elder_id)  # redeem 成功即存在
@@ -332,6 +340,11 @@ class AccountService:
     def logout(self, token: str) -> None:
         """撤銷單一 token（✅ D-25 修訂：token 永久記住＋可主動登出）。"""
         self._repo.remove_api_token(hashlib.sha256(token.encode()).hexdigest())
+
+    def logout_all_devices(self, guardian_id: str) -> None:
+        """撤銷該家屬全部 token（庚-05／A-47）：永久 token 外洩時的「登出所有裝置」補救，
+        與長輩的 revoke_elder_device 對稱。"""
+        self._repo.remove_api_tokens_for_principal(PrincipalType.GUARDIAN, guardian_id)
 
     def revoke_elder_device(self, elder_id: str) -> Invite:
         """作廢長輩裝置並重發綁定碼（✅ D-25 修訂）：

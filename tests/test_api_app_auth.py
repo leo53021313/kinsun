@@ -192,6 +192,30 @@ def test_logout_requires_valid_token():
     assert res.status_code == 401
 
 
+def test_logout_all_revokes_every_device_token():
+    """庚-05（A-47）：DELETE /sessions/all 撤銷該家屬全部 token，非只當前一顆。"""
+    svc = _service()
+    client = _client(svc, notifications=FakeAppNotificationStore())
+    guardian_id, token_a = _guardian_with_token(svc)
+    # 第二次登入拿到另一顆 token（模擬第二台裝置）。
+    token_b = client.post(
+        "/api/v1/sessions",
+        json={"email": "son@example.com", "password": "correct-horse-8"},
+    ).json()["data"]["token"]
+    res = client.delete("/api/v1/sessions/all", headers={"Authorization": f"Bearer {token_a}"})
+    assert res.status_code == 204
+    # 兩顆 token 都失效。
+    for token in (token_a, token_b):
+        probe = client.get("/api/v1/notifications", headers={"Authorization": f"Bearer {token}"})
+        assert probe.status_code == 401
+
+
+def test_logout_all_requires_guardian_token():
+    assert _client().delete("/api/v1/sessions/all").status_code == 401
+    res = _client().delete("/api/v1/sessions/all", headers={"Authorization": "Bearer nope"})
+    assert res.status_code == 401
+
+
 def test_login_unknown_email_still_runs_password_verify(monkeypatch):
     """✅ D-60（丙-11）：查無帳號也跑一次假雜湊驗證，補平計時信號。"""
     import kinsun.accounts.service as service_module

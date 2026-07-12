@@ -97,8 +97,8 @@
 | 庚-01 | ✅ 完成（2026-07-12，TDD）：pipeline 落庫門檻放寬至 ≥L1（通知維持 ≥L2），D-10 己-5「L1 小訊號進每日摘要」生產路徑生效；契約測試改寫＋全套 591 綠。已知副作用：健康報告出現「關注」級事件（本無 tier 過濾，接受；不想顯示另開工項） | A-39 | M |
 | 庚-02 | 危急通知失敗可觀測：L2 通知 `delivered=False` 時重試／落死信／或 admin 告警（現 admin 只看分級器故障）。**家屬漏收警報＝最嚴重產品失敗卻無感知**。 | A-40 | M |
 | 庚-03 | ⏸ **擱置（Leo 2026-07-12：著作權相關先不處理）**——RAG 來源著作權把關：`SourceValidator` 補查 `copyright_status`，或撤 `ntuh_epaper`／`cgmh`（DISALLOWED）的 `approved_for_rag`。 | A-26 | S |
-| 庚-04 | 邀請碼角色守門：`bind_elder_device` 在 redeem 前先驗 `invite.role == ELDER`，堵住「家屬邀請碼換出長輩裝置 token」的權限錯配。 | A-46 | S |
-| 庚-05 | 家屬 token 批次撤銷：加「登出所有裝置」端點呼叫既有 `remove_api_tokens_for_principal`（現只有長輩有 `revoke_elder_device`，家屬永久 token 外洩無救）。 | A-47 | S |
+| 庚-04 | ✅ 完成（2026-07-12，TDD）：`bind_elder_device` redeem 前驗 `invite.role is ELDER`，家屬邀請碼回 409 `invite_wrong_role`（未消耗碼、未發 token）；06 端點表＋錯誤碼表同步 | A-46 | S |
+| 庚-05 | ✅ 完成（2026-07-12，TDD）：`DELETE /api/v1/sessions/all`＋`AccountService.logout_all_devices`（撤該家屬全部 token），與長輩 `revoke_elder_device` 對稱；06 端點表同步 | A-47 | S |
 | 庚-06 | 記憶整理漏天修復：worker 停機跨多日重啟時，`run_consolidation` 改吃「上次整理→now」日範圍迴圈補整理（現只抓 previous_day、補跑一次→中間天數 turns 永不進長期記憶）。**唯一永久資料遺失風險**。 | A-18 | M |
 | 庚-07 | 觀測五表欄位正名：`line_user_id` → `external_id`＋`channel`（現承載所有通道識別碼，違反 AGENTS.md「line_user_id 永不混用」鐵律）；含 schema 遷移＋pipeline／observability 寫入點。 | A-8 | M |
 | 庚-08 | 多 worker 節流前置（D-20 相依）：`ratelimit` 改跨進程（DB／Redis）或明訂「多 worker 上線前不生效」；現 per-process，上線後上限×worker 數，長輩低熵手機號帳號與家屬同池同參，暴力破解面放大。 | A-54 | M |

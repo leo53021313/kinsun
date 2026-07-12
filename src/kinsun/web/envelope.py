@@ -33,6 +33,7 @@ ERROR_MESSAGES: dict[str, str] = {
     "not_paired": "這支手機還沒完成配對，請先請家人提供綁定圖（QR）掃描一次",
     "invite_used": "邀請碼已被使用",
     "invite_expired": "邀請碼已過期",
+    "invite_wrong_role": "這是家屬邀請碼，請改用長輩綁定碼",
     "too_many_attempts": "嘗試次數過多，請稍後再試",
     "too_many_requests": "操作太頻繁，請稍後再試",
     "name_required": "請輸入名稱",
