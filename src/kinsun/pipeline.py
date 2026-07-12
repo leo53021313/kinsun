@@ -50,7 +50,8 @@ class VoicePipeline:
         audio: bytes,
         *,
         elder_id: str,
-        line_user_id: str = "",
+        external_id: str = "",
+        channel: str = "",
         content_type: str = "audio/m4a",
         trace_id: str = "",
         audio_url: str = "",
@@ -58,26 +59,37 @@ class VoicePipeline:
         user_text = self._transcribe(
             audio,
             content_type=content_type,
-            line_user_id=line_user_id,
+            external_id=external_id,
+            channel=channel,
             trace_id=trace_id,
             audio_url=audio_url,
         )
         return self._process_transcribed(
-            user_text, elder_id=elder_id, line_user_id=line_user_id, trace_id=trace_id
+            user_text,
+            elder_id=elder_id,
+            external_id=external_id,
+            channel=channel,
+            trace_id=trace_id,
         )
 
     def process_text(
-        self, text: str, *, elder_id: str, line_user_id: str = "", trace_id: str = ""
+        self,
+        text: str,
+        *,
+        elder_id: str,
+        external_id: str = "",
+        channel: str = "",
+        trace_id: str = "",
     ) -> TtsResult:
         """文字輸入路徑（✅ D-11 正式）：跳過 ASR，其餘與語音同管線（危急偵測＋回覆＋記憶）。"""
         return self._process_transcribed(
-            text, elder_id=elder_id, line_user_id=line_user_id, trace_id=trace_id
+            text, elder_id=elder_id, external_id=external_id, channel=channel, trace_id=trace_id
         )
 
     def _process_transcribed(
-        self, user_text: str, *, elder_id: str, line_user_id: str, trace_id: str
+        self, user_text: str, *, elder_id: str, external_id: str, channel: str, trace_id: str
     ) -> TtsResult:
-        """會話鍵為 elder_id；line_user_id 僅供觀測五表標記（可為空字串）。"""
+        """會話鍵為 elder_id；external_id＋channel 僅供觀測五表標記（可為空字串）。"""
         assessment = self._detector.assess(user_text)
         # 危急通知須獨立於回覆生成：先落庫＋通知家屬，才產生回覆。
         # 否則 agent 生成回覆時若丟例外，會讓已偵測到的危急漏通知。
@@ -91,9 +103,11 @@ class VoicePipeline:
         if assessment.tier >= RiskTier.L2:
             self._notifier.notify(elder_id, assessment)
         reply_text = self._generate(
-            elder_id, user_text, line_user_id=line_user_id, trace_id=trace_id
+            elder_id, user_text, external_id=external_id, channel=channel, trace_id=trace_id
         )
-        result = self._synthesize(reply_text, line_user_id=line_user_id, trace_id=trace_id)
+        result = self._synthesize(
+            reply_text, external_id=external_id, channel=channel, trace_id=trace_id
+        )
         # 附上本輪的使用者原話（語音為 ASR 辨識、文字為輸入），供 debug 顯示。
         return replace(result, transcript=user_text)
 
@@ -127,7 +141,8 @@ class VoicePipeline:
         audio: bytes,
         *,
         content_type: str,
-        line_user_id: str,
+        external_id: str,
+        channel: str,
         trace_id: str,
         audio_url: str,
     ) -> str:
@@ -135,7 +150,8 @@ class VoicePipeline:
         with self._span(
             lambda traces, status, latency_ms, error_message: traces.record_asr_call(
                 trace_id=trace_id,
-                line_user_id=line_user_id,
+                external_id=external_id,
+                channel=channel,
                 status=status,
                 latency_ms=latency_ms,
                 transcript=text,
@@ -146,7 +162,9 @@ class VoicePipeline:
             text = self._asr.transcribe(audio, content_type=content_type)
         return text
 
-    def _generate(self, elder_id: str, user_text: str, *, line_user_id: str, trace_id: str) -> str:
+    def _generate(
+        self, elder_id: str, user_text: str, *, external_id: str, channel: str, trace_id: str
+    ) -> str:
         # 每輪記一筆（涵蓋整個 agent 含工具迴圈）；token 用量由收集器彙總本輪
         # 所有 Gemini 呼叫（✅ D-05 戊-2）。零申報（假 LLM／無 usage_metadata）
         # 記 NULL＝「未量測」，與量測到 0 區隔。
@@ -155,7 +173,8 @@ class VoicePipeline:
         with self._span(
             lambda traces, status, latency_ms, error_message: traces.record_llm_call(
                 trace_id=trace_id,
-                line_user_id=line_user_id,
+                external_id=external_id,
+                channel=channel,
                 status=status,
                 latency_ms=latency_ms,
                 model_name=self._model_name,
@@ -169,12 +188,15 @@ class VoicePipeline:
                 reply = self._agent.handle(elder_id, user_text)
         return reply
 
-    def _synthesize(self, reply_text: str, *, line_user_id: str, trace_id: str) -> TtsResult:
+    def _synthesize(
+        self, reply_text: str, *, external_id: str, channel: str, trace_id: str
+    ) -> TtsResult:
         try:
             with self._span(
                 lambda traces, status, latency_ms, error_message: traces.record_tts_call(
                     trace_id=trace_id,
-                    line_user_id=line_user_id,
+                    external_id=external_id,
+                    channel=channel,
                     status=status,
                     latency_ms=latency_ms,
                     content=reply_text,

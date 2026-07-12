@@ -1,17 +1,17 @@
 from tests.fakes import FakeTraceStore
 
 
-def _record_full_trace(store, trace_id="t1", line_user_id="U1"):
+def _record_full_trace(store, trace_id="t1", external_id="U1"):
     store.record_webhook_event(
         trace_id=trace_id,
-        line_user_id=line_user_id,
+        external_id=external_id,
         event_type="message",
         message_type="audio",
         payload={"k": "v"},
     )
     store.record_asr_call(
         trace_id=trace_id,
-        line_user_id=line_user_id,
+        external_id=external_id,
         status="ok",
         latency_ms=120,
         transcript="阿公早安",
@@ -20,7 +20,7 @@ def _record_full_trace(store, trace_id="t1", line_user_id="U1"):
     )
     store.record_llm_call(
         trace_id=trace_id,
-        line_user_id=line_user_id,
+        external_id=external_id,
         status="ok",
         latency_ms=800,
         model_name="gemini-3.1-flash-lite",
@@ -31,7 +31,7 @@ def _record_full_trace(store, trace_id="t1", line_user_id="U1"):
     )
     store.record_tts_call(
         trace_id=trace_id,
-        line_user_id=line_user_id,
+        external_id=external_id,
         status="ok",
         latency_ms=300,
         content="早安，睡得好嗎？",
@@ -39,7 +39,7 @@ def _record_full_trace(store, trace_id="t1", line_user_id="U1"):
     )
     store.record_reply(
         trace_id=trace_id,
-        line_user_id=line_user_id,
+        external_id=external_id,
         kind="voice",
         status="ok",
         latency_ms=150,
@@ -64,7 +64,7 @@ def test_created_at_follows_fake_clock():
     store.now = 42.0
     store.record_reply(
         trace_id="t3",
-        line_user_id="U1",
+        external_id="U1",
         kind="text",
         status="ok",
         latency_ms=1,
@@ -114,7 +114,7 @@ def test_list_timeline_includes_voice_cards_in_time_order():
     store.now = 10.0
     store.record_asr_call(
         trace_id="t1",
-        line_user_id="U1",
+        external_id="U1",
         status="ok",
         latency_ms=1,
         transcript="早安",
@@ -126,7 +126,7 @@ def test_list_timeline_includes_voice_cards_in_time_order():
     store.now = 13.0
     store.record_reply(
         trace_id="t1",
-        line_user_id="U1",
+        external_id="U1",
         kind="voice",
         status="ok",
         latency_ms=1,
@@ -164,7 +164,7 @@ def test_overview_stats_counts_and_stage_errors():
     store.now = 110.0
     store.record_asr_call(
         trace_id="t1",
-        line_user_id="U1",
+        external_id="U1",
         status="ok",
         latency_ms=100,
         transcript="a",
@@ -173,7 +173,7 @@ def test_overview_stats_counts_and_stage_errors():
     )
     store.record_asr_call(
         trace_id="t2",
-        line_user_id="U2",
+        external_id="U2",
         status="error",
         latency_ms=300,
         transcript="",
@@ -198,7 +198,7 @@ def test_overview_stats_round_trip_stage_p50_p95():
     for ms in (700, 900, 1400):
         store.record_reply(
             trace_id="t",
-            line_user_id="U1",
+            external_id="U1",
             kind="voice",
             status="ok",
             latency_ms=100,
@@ -207,7 +207,7 @@ def test_overview_stats_round_trip_stage_p50_p95():
         )
     store.record_reply(
         trace_id="t",
-        line_user_id="U1",
+        external_id="U1",
         kind="text",
         status="ok",
         latency_ms=5,
@@ -226,11 +226,11 @@ def test_purge_only_removes_old_observability_rows():
     store = FakeTraceStore()
     store.now = 10.0
     store.record_reply(
-        trace_id="t1", line_user_id="U1", kind="text", status="ok", latency_ms=1, audio_url=""
+        trace_id="t1", external_id="U1", kind="text", status="ok", latency_ms=1, audio_url=""
     )
     store.now = 90.0
     store.record_reply(
-        trace_id="t2", line_user_id="U1", kind="text", status="ok", latency_ms=1, audio_url=""
+        trace_id="t2", external_id="U1", kind="text", status="ok", latency_ms=1, audio_url=""
     )
     store.seed_turn("U1", "user", "對話不清", 10.0)
     store.purge_older_than(50.0)
