@@ -40,17 +40,20 @@ def build_appointment_reminder_job(
             return
         when_word = "今天" if when == "today" else "明天"
         # 出站不查同意（✅ D-30 己-1）：長輩提醒一律照發。
-        router.send_text(
+        sent = router.send_text(
             PrincipalType.ELDER,
             appt.elder_id,
             f"{elder.name}，{when_word}要回診囉：{appt.label}。記得準時，需要的話請家人陪您去。",
         )
+        # 家屬通知不受長輩可達性影響——收到可口頭轉告。
         for eg in guardians_of(appt.elder_id):
             router.send_text(
                 PrincipalType.GUARDIAN,
                 eg.guardian_id,
                 f"【金孫提醒】{elder.name} {when_word}要回診——{appt.label}。",
             )
+        if sent == 0:
+            return  # 長輩無任何綁定通道：不記，否則健康報告顯示沒收到的提醒（✅ 庚-14）
         safe_record(record, appt.elder_id, "appointment", f"{when_word}回診：{appt.label}")
 
     return fanout_job(
