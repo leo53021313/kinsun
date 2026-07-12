@@ -43,10 +43,15 @@ def test_record_then_list_scoped_to_elder(store, ns):
 
 
 def test_count_failed_since_counts_undelivered_across_elders(store, ns):
-    """✅ 庚-02（A-40）：送達失敗（delivered=False）跨長輩全域計數，供 admin 告警。"""
+    """✅ 庚-02（A-40）：送達失敗（delivered=False）跨長輩全域計數，供 admin 告警。
+
+    計數刻意不分長輩（admin 告警看全站），共用測試庫會累積他測資料，
+    故以「記錄前後差值」斷言而非絕對值。
+    """
+    ts = FIXED_CLOCK.timestamp()
+    before = store.count_failed_since(ts - 1)
     store.record(f"{ns}e1", f"{ns}g1", RiskTier.L2, delivered=True)
     store.record(f"{ns}e1", f"{ns}g2", RiskTier.L2, delivered=False)
     store.record(f"{ns}e2", f"{ns}g3", RiskTier.L2, delivered=False)
-    ts = FIXED_CLOCK.timestamp()
-    assert store.count_failed_since(ts - 1) == 2  # 兩筆失敗（跨長輩），成功不計
-    assert store.count_failed_since(ts + 1) == 0  # 視窗之後無
+    assert store.count_failed_since(ts - 1) == before + 2  # 兩筆失敗（跨長輩），成功不計
+    assert store.count_failed_since(ts + 1) == 0  # 視窗之後無（全部記錄都落在 ts）
