@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from collections.abc import Callable
 
@@ -47,6 +48,9 @@ class LineChannel:
         source = getattr(event, "source", None)
         line_user_id = getattr(source, "user_id", None) or "unknown"
         mtype = getattr(message, "type", None)
+        # 往返延遲起點（✅ D-05 戊-2）：webhook 事件開始處理的時刻，與 dispatch 的
+        # 預設 timer（time.monotonic）同源；涵蓋後續的音檔下載與整段管線。
+        received_at = time.monotonic()
         trace_id = self._new_id()
         self._record_event(event, trace_id, line_user_id, mtype)
 
@@ -66,6 +70,7 @@ class LineChannel:
                 reply,
                 reply_voice,
                 trace_id=trace_id,
+                received_at=received_at,
             )
         if mtype == "audio":
             audio = self._messenger.get_audio(message.id)
@@ -79,6 +84,7 @@ class LineChannel:
                 reply_voice,
                 trace_id=trace_id,
                 audio_url=self._publish_inbound(audio),
+                received_at=received_at,
             )
         return InboundMessage(
             Channel.LINE, line_user_id, "other", "", b"", reply, reply_voice, trace_id=trace_id

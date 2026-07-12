@@ -4,8 +4,8 @@ from kinsun.safety.tiers import RiskTier
 
 
 def test_parse_valid_json():
-    a = _parse_classification('{"tier": 3, "confidence": 0.9, "reason": "求救"}')
-    assert a.tier == RiskTier.L3
+    a = _parse_classification('{"tier": 2, "confidence": 0.9, "reason": "求救"}')
+    assert a.tier == RiskTier.L2
     assert a.confidence == 0.9
     assert a.reason == "求救"
     assert a.signals == ["llm"]
@@ -24,9 +24,17 @@ def test_parse_bad_json_is_failsafe():
 
 
 def test_parse_clamps_out_of_range():
+    """✅ D-72（己-4）：三級制上限 L2——模型若照舊制吐 3 也夾回 L2。"""
     a = _parse_classification('{"tier": 7, "confidence": 2.5, "reason": "x"}')
-    assert a.tier == RiskTier.L3
+    assert a.tier == RiskTier.L2
     assert a.confidence == 1.0
+
+
+def test_prompt_only_offers_three_tiers():
+    from kinsun.safety.classifier import CLASSIFY_SYSTEM_PROMPT
+
+    assert "0-2" in CLASSIFY_SYSTEM_PROMPT
+    assert "3 立即" not in CLASSIFY_SYSTEM_PROMPT
 
 
 class _BoomLLM:

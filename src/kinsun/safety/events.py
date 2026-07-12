@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Protocol
 
 from kinsun.db import Database, _Errors
-from kinsun.safety.tiers import RiskAssessment, RiskTier
+from kinsun.safety.tiers import FAILSAFE_EVENT_REASON, RiskAssessment, RiskTier, tier_from_db
 
 
 @dataclass(frozen=True)
@@ -29,6 +29,7 @@ class RiskEventStore(Protocol):
         self, elder_id: str, assessment: RiskAssessment, *, trace_id: str | None = None
     ) -> None: ...
     def list_for_elder(self, elder_id: str) -> list[RiskEvent]: ...
+    def count_failsafe_since(self, cutoff: float) -> int: ...
 
 
 class PgRiskEventStore:
@@ -62,7 +63,15 @@ class PgRiskEventStore:
             "WHERE elder_id = %s ORDER BY created_at DESC",
             (elder_id,),
         )
-        return [RiskEvent(r[0], r[1], RiskTier(r[2]), r[3], r[4]) for r in rows]
+        return [RiskEvent(r[0], r[1], tier_from_db(r[2]), r[3], r[4]) for r in rows]
+
+    def count_failsafe_since(self, cutoff: float) -> int:
+        """近期 fail-safe 留痕事件數（✅ D-31）——以固定理由字串辨識，供 admin 告警門檻。"""
+        row = self._db.query_one(
+            "SELECT count(*) FROM risk_events WHERE reason = %s AND created_at >= %s",
+            (FAILSAFE_EVENT_REASON, cutoff),
+        )
+        return int(row[0]) if row else 0
 
 
 class FakeRiskEventStore:
@@ -75,16 +84,30 @@ class FakeRiskEventStore:
     對外揭露。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, clock: Callable[[], float] | None = None) -> None:
         self.recorded: list[tuple[str, RiskAssessment]] = []
         self.recorded_trace_ids: list[str | None] = []
+        self._clock = clock
+        self._created_at: list[float] = []
 
     def record(
         self, elder_id: str, assessment: RiskAssessment, *, trace_id: str | None = None
     ) -> None:
         self.recorded.append((elder_id, assessment))
         self.recorded_trace_ids.append(trace_id)
+        # 未注入 clock 時沿用合成時間戳（記錄序號），與既有測試相容。
+        self._created_at.append(self._clock() if self._clock else float(len(self.recorded) - 1))
 
     def list_for_elder(self, elder_id: str) -> list[RiskEvent]:
         rows = [(i, s, a) for i, (s, a) in enumerate(self.recorded) if s == elder_id]
-        return [RiskEvent(str(i), s, a.tier, a.reason, float(i)) for i, s, a in reversed(rows)]
+        return [
+            RiskEvent(str(i), s, a.tier, a.reason, self._created_at[i])
+            for i, s, a in reversed(rows)
+        ]
+
+    def count_failsafe_since(self, cutoff: float) -> int:
+        return sum(
+            1
+            for i, (_, a) in enumerate(self.recorded)
+            if a.reason == FAILSAFE_EVENT_REASON and self._created_at[i] >= cutoff
+        )

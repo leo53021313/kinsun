@@ -9,7 +9,11 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "kinsun-shared/*": ["../shared/*"]
+    }
   },
-  "include": ["src"]
+  "include": ["src", "admin", "../shared"]
 }

@@ -1,4 +1,4 @@
-"""開發團隊觀測後台 REST API（唯讀）：共用金鑰驗證，供 /admin 前端查詢。"""
+"""觀測後台資源（唯讀）：共用金鑰驗證，供 /admin 前端查詢。"""
 
 from __future__ import annotations
 
@@ -16,25 +16,48 @@ from kinsun.observability.models import (
     Trace,
 )
 from kinsun.observability.store import TraceStore
+from kinsun.safety.events import RiskEventStore
+from kinsun.web.envelope import ok
+
+# 分級器故障告警（✅ D-31＋D-66 admin 半邊）：近 60 分鐘 fail-safe 留痕事件達門檻即回告警。
+# 門檻與視窗暫為常數；隨丙-6（危急門檻 env 化）一併調整。
+FAILSAFE_ALERT_WINDOW_MINUTES = 60
+FAILSAFE_ALERT_THRESHOLD = 3
 
 
-def create_admin_api_router(
+def create_admin_router(
     *,
     admin_api_key: str,
     traces: TraceStore,
     clock: Callable[[], datetime],
+    risk_events: RiskEventStore | None = None,
 ) -> APIRouter:
-    router = APIRouter(prefix="/api/admin")
+    router = APIRouter(tags=["admin"])
 
     def require_admin(x_admin_key: str = Header(default="", alias="X-Admin-Key")) -> None:
         if not admin_api_key:
-            raise HTTPException(status_code=503, detail="admin api disabled")
+            raise HTTPException(status_code=503, detail="admin_disabled")
         if not hmac.compare_digest(x_admin_key.encode(), admin_api_key.encode()):
-            raise HTTPException(status_code=401, detail="invalid admin key")
+            raise HTTPException(status_code=401, detail="invalid_admin_key")
 
     def _today_start() -> float:
         now = clock()
         return now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+
+    def _alerts(now: datetime) -> list[dict]:
+        if risk_events is None:
+            return []
+        cutoff = (now - timedelta(minutes=FAILSAFE_ALERT_WINDOW_MINUTES)).timestamp()
+        n = risk_events.count_failsafe_since(cutoff)
+        if n < FAILSAFE_ALERT_THRESHOLD:
+            return []
+        return [
+            {
+                "kind": "risk_classifier_failure",
+                "count": n,
+                "window_minutes": FAILSAFE_ALERT_WINDOW_MINUTES,
+            }
+        ]
 
     @router.get("/overview", dependencies=[Depends(require_admin)])
     def overview() -> dict:
@@ -43,11 +66,11 @@ def create_admin_api_router(
             today_start=_today_start(),
             hourly_start=(now - timedelta(hours=24)).timestamp(),
         )
-        return _overview_json(stats, generated_at=now.timestamp())
+        return ok({**_overview_json(stats, generated_at=now.timestamp()), "alerts": _alerts(now)})
 
     @router.get("/elders", dependencies=[Depends(require_admin)])
     def list_elders() -> dict:
-        return {"elders": [_elder_json(e) for e in traces.list_elders_with_last_active()]}
+        return ok([_elder_json(e) for e in traces.list_elders_with_last_active()])
 
     def _find_elder(elder_id: str) -> ElderActivity:
         elder = next(
@@ -55,15 +78,28 @@ def create_admin_api_router(
             None,
         )
         if elder is None:
-            raise HTTPException(status_code=404, detail="elder not found")
+            raise HTTPException(status_code=404, detail="elder_not_found")
         return elder
 
     @router.get("/messages", dependencies=[Depends(require_admin)])
     def list_messages(
         after: float = Query(default=0.0, ge=0.0),
+        before: float | None = Query(default=None, ge=0.0),
         limit: int = Query(default=100, ge=1, le=500),
     ) -> dict:
-        return {"messages": [_feed_json(m) for m in traces.list_feed(after=after, limit=limit)]}
+        """游標分頁（✅ D-29 乙-6）：after 取更新、before 回翻歷史；游標值＝created_at。"""
+        items = traces.list_feed(after=after, before=before, limit=limit + 1)
+        has_more = len(items) > limit
+        items = items[:limit]
+        return ok(
+            [_feed_json(m) for m in items],
+            meta={
+                "limit": limit,
+                "before": before,
+                "after": after or None,
+                "has_more": has_more,
+            },
+        )
 
     @router.get("/elders/{elder_id}/timeline", dependencies=[Depends(require_admin)])
     def elder_timeline(elder_id: str, date: str = Query(default="")) -> dict:
@@ -72,7 +108,7 @@ def create_admin_api_router(
             try:
                 day = datetime.strptime(date, "%Y-%m-%d").date()
             except ValueError as exc:
-                raise HTTPException(status_code=400, detail="invalid date") from exc
+                raise HTTPException(status_code=400, detail="invalid_date") from exc
         else:
             day = clock().date()
         # 台灣無日光節約時間，一天固定 86400 秒。
@@ -82,19 +118,21 @@ def create_admin_api_router(
             start=start,
             end=start + 86400.0,
         )
-        return {
-            "elder_id": elder.elder_id,
-            "name": elder.name,
-            "date": day.isoformat(),
-            "items": [_timeline_json(i) for i in items],
-        }
+        return ok(
+            {
+                "elder_id": elder.elder_id,
+                "name": elder.name,
+                "date": day.isoformat(),
+                "items": [_timeline_json(i) for i in items],
+            }
+        )
 
     @router.get("/traces/{trace_id}", dependencies=[Depends(require_admin)])
     def trace_detail(trace_id: str) -> dict:
         trace = traces.get_trace(trace_id)
         if trace is None:
-            raise HTTPException(status_code=404, detail="trace not found")
-        return _trace_json(trace)
+            raise HTTPException(status_code=404, detail="trace_not_found")
+        return ok(_trace_json(trace))
 
     return router
 
@@ -113,6 +151,7 @@ def _overview_json(stats: OverviewStats, *, generated_at: float) -> dict:
                 "call_count": s.call_count,
                 "error_count": s.error_count,
                 "avg_latency_ms": s.avg_latency_ms,
+                "p50_latency_ms": s.p50_latency_ms,
                 "p95_latency_ms": s.p95_latency_ms,
             }
             for s in stats.stages
@@ -208,6 +247,7 @@ def _trace_json(t: Trace) -> dict:
             "kind": t.reply.kind,
             "status": t.reply.status,
             "latency_ms": t.reply.latency_ms,
+            "round_trip_ms": t.reply.round_trip_ms,
             "audio_url": t.reply.audio_url,
             "created_at": t.reply.created_at,
         },

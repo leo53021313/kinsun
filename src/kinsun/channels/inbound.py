@@ -28,7 +28,9 @@ class InboundMessage:
     """通道中立的入站訊息。kind ∈ text/audio/other；reply 為綁定好的回覆 handle，
     reply_voice 為語音回覆 handle（url、duration_ms、text）。
     channel＋external_id 為來源通道與其帳號識別（如 LINE userId），分派時解析成本人。
-    trace_id／audio_url 供觀測鏈路與音檔回放（無觀測時為空字串）。"""
+    trace_id／audio_url 供觀測鏈路與音檔回放（無觀測時為空字串）。
+    received_at 為通道收件時刻的單調時鐘值（與 dispatch 的 timer 同源，✅ D-05 戊-2
+    往返延遲起點）；0＝未知，該輪 round_trip_ms 記 NULL。"""
 
     channel: Channel
     external_id: str
@@ -39,6 +41,7 @@ class InboundMessage:
     reply_voice: Callable[[str, int, str | None], None] | None = None
     trace_id: str = ""
     audio_url: str = ""
+    received_at: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -92,7 +95,7 @@ def dispatch(
     gate,
     voice=None,
     traces: TraceStore | None = None,
-    text_input_enabled: bool = False,
+    text_input_enabled: bool = True,
     timer: Callable[[], float] = time.monotonic,
 ) -> None:
     if msg.kind == "text":
@@ -100,7 +103,8 @@ def dispatch(
         if reply is not None:
             msg.reply(reply)
             return
-        # 非綁定自由文字：旗標關維持只收語音；旗標開才轉進對話管線（Debug）。
+        # 非綁定自由文字走完整對話管線（危急偵測＋回覆＋記憶，✅ D-11 與語音同等對待）；
+        # 旗標關為維運逃生口，回到只收語音提示。
         if not text_input_enabled:
             msg.reply(NON_AUDIO_PROMPT)
             return
@@ -177,7 +181,10 @@ def _record_reply(
 ) -> None:
     if traces is None or not msg.trace_id:
         return
-    latency_ms = int((timer() - started) * 1000)
+    ended = timer()
+    latency_ms = int((ended - started) * 1000)
+    # 往返延遲（✅ D-05 戊-2）：通道收件 → 回覆送達的端到端耗時；起點未知記 NULL。
+    round_trip_ms = int((ended - msg.received_at) * 1000) if msg.received_at else None
     safe_record(
         lambda: traces.record_reply(
             trace_id=msg.trace_id,
@@ -185,6 +192,7 @@ def _record_reply(
             kind=outcome.kind,
             status="ok",
             latency_ms=latency_ms,
+            round_trip_ms=round_trip_ms,
             audio_url=outcome.audio_url,
         )
     )

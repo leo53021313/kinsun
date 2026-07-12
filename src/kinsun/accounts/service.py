@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets
 import uuid
 from collections.abc import Callable
@@ -16,6 +17,7 @@ from kinsun.accounts.models import (
     Consent,
     ConsentBy,
     Elder,
+    ElderAccount,
     ElderGuardian,
     Guardian,
     GuardianAccount,
@@ -27,7 +29,18 @@ from kinsun.accounts.models import (
 from kinsun.accounts.passwords import hash_password, verify_password
 from kinsun.accounts.store import AccountStore
 
-CONSENT_VERSION = "1.0"
+# 2.0（✅ 己-2，2026-07-10）：明示資料去向＋永久保留＋團隊可讀；D-62 改版不重新徵求。
+CONSENT_VERSION = "2.0"
+
+# 登入時間差防護（✅ D-60 丙-11）：帳號不存在時仍對此假雜湊跑一次驗證，
+# 讓「查無帳號」與「密碼錯誤」耗時相近，降低帳號枚舉的計時信號。
+_TIMING_DUMMY_HASH = hash_password("kinsun-timing-dummy")
+
+
+def _normalize_phone(phone: str) -> str | None:
+    """手機號碼正規化：去空白與連字號後需為 8–15 位數字，否則 None。"""
+    digits = re.sub(r"[\s\-]", "", phone)
+    return digits if re.fullmatch(r"\d{8,15}", digits) else None
 
 
 class InviteError(Exception):
@@ -90,7 +103,7 @@ class AccountService:
     def _save_new_elder(self, elder: Elder, guardian_id: str, tx) -> None:
         self._repo.save_elder(elder, tx=tx)
         self._repo.save_elder_guardian(
-            ElderGuardian(elder.elder_id, guardian_id, Role.PRIMARY, 1, True), tx=tx
+            ElderGuardian(elder.elder_id, guardian_id, Role.PRIMARY, 1), tx=tx
         )
 
     def create_elder_for_guardian(self, guardian_id: str, elder_name: str) -> Elder:
@@ -156,9 +169,7 @@ class AccountService:
                 egs = self._repo.list_elder_guardians(invite.elder_id)
                 order = max((eg.escalation_order for eg in egs), default=0)
                 self._repo.save_elder_guardian(
-                    ElderGuardian(
-                        invite.elder_id, guardian.guardian_id, Role.GUARDIAN, order + 1, False
-                    ),
+                    ElderGuardian(invite.elder_id, guardian.guardian_id, Role.GUARDIAN, order + 1),
                     tx=tx,
                 )
             self._repo.save_invite(
@@ -173,20 +184,6 @@ class AccountService:
                 ),
                 tx=tx,
             )
-
-    def revoke_consent(self, elder_id: str) -> None:
-        consent = self._repo.get_consent(elder_id)
-        if consent is None:
-            return
-        self._repo.save_consent(
-            Consent(
-                consent.elder_id,
-                consent.consent_by,
-                consent.version,
-                consent.granted_at,
-                self._clock().timestamp(),
-            )
-        )
 
     def guardians_of(self, elder_id: str) -> list[ElderGuardian]:
         return self._repo.list_elder_guardians(elder_id)
@@ -223,22 +220,115 @@ class AccountService:
                 ),
                 tx=tx,
             )
+            # App 通道綁定（✅ D-12，甲-6）：讓出站路由（危急通知等）能觸達 App 家屬。
+            self._repo.save_channel_binding(
+                ChannelBinding(
+                    Channel.APP,
+                    self._new_id(),
+                    PrincipalType.GUARDIAN,
+                    guardian.guardian_id,
+                    self._clock().timestamp(),
+                ),
+                tx=tx,
+            )
             token = self._issue_token(PrincipalType.GUARDIAN, guardian.guardian_id, tx=tx)
         return guardian, token
+
+    def register_elder_account(self, elder_id: str, phone: str, password: str) -> None:
+        """長輩帳密由家屬代辦（✅ D-71 己-6）：手機號碼為帳號；同長輩重呼＝重設。"""
+        normalized = _normalize_phone(phone)
+        if normalized is None:
+            raise AppAccountError("invalid_phone")
+        existing = self._repo.get_elder_account_by_phone(normalized)
+        if existing is not None and existing.elder_id != elder_id:
+            raise AppAccountError("phone_taken")
+        self._repo.save_elder_account(
+            ElderAccount(elder_id, normalized, hash_password(password), self._clock().timestamp())
+        )
+
+    def login_elder(self, phone: str, password: str) -> tuple[Elder, str]:
+        """長輩帳密登入（✅ D-71 己-6）：只管「重登」——首次一定要掃碼配對
+        （同意留痕由配對建立，登入不建）；查無帳號或密碼錯一律 invalid_credentials。"""
+        normalized = _normalize_phone(phone)
+        account = (
+            self._repo.get_elder_account_by_phone(normalized) if normalized is not None else None
+        )
+        if account is None:
+            verify_password(password, _TIMING_DUMMY_HASH)  # 補時間差（✅ D-60）
+            raise AppAccountError("invalid_credentials")
+        if not verify_password(password, account.password_hash):
+            raise AppAccountError("invalid_credentials")
+        elder = self._repo.get_elder(account.elder_id)
+        if elder is None:
+            raise AppAccountError("invalid_credentials")
+        if not self.has_valid_consent(elder.elder_id):
+            raise AppAccountError("not_paired")
+        self._ensure_elder_app_binding(elder.elder_id)
+        return elder, self._issue_token(PrincipalType.ELDER, elder.elder_id)
+
+    def _ensure_elder_app_binding(self, elder_id: str) -> None:
+        """換機重登：裝置作廢後 APP 綁定已拆，登入時補回（既有綁定不動）。"""
+        if self.app_external_id_of_elder(elder_id) is not None:
+            return
+        self._repo.save_channel_binding(
+            ChannelBinding(
+                Channel.APP,
+                self._new_id(),
+                PrincipalType.ELDER,
+                elder_id,
+                self._clock().timestamp(),
+            ),
+        )
 
     def login_guardian(self, email: str, password: str) -> tuple[Guardian, str]:
         """家屬登入：查無帳號或密碼錯一律 invalid_credentials（不洩漏帳號存在性）。"""
         account = self._repo.get_guardian_account_by_email(email.strip().lower())
-        if account is None or not verify_password(password, account.password_hash):
+        if account is None:
+            verify_password(password, _TIMING_DUMMY_HASH)  # 補時間差（✅ D-60）
+            raise AppAccountError("invalid_credentials")
+        if not verify_password(password, account.password_hash):
             raise AppAccountError("invalid_credentials")
         guardian = self._repo.get_guardian(account.guardian_id)
         if guardian is None:
             raise AppAccountError("invalid_credentials")
+        self._ensure_guardian_app_binding(guardian.guardian_id)
         return guardian, self._issue_token(PrincipalType.GUARDIAN, guardian.guardian_id)
 
+    def _ensure_guardian_app_binding(self, guardian_id: str) -> None:
+        """存量帳號回填：D-12 之前註冊的家屬沒有 App 通道綁定，登入時補上。"""
+        if self.app_external_ids_of_guardian(guardian_id):
+            return
+        self._repo.save_channel_binding(
+            ChannelBinding(
+                Channel.APP,
+                self._new_id(),
+                PrincipalType.GUARDIAN,
+                guardian_id,
+                self._clock().timestamp(),
+            ),
+        )
+
+    def app_external_ids_of_guardian(self, guardian_id: str) -> list[str]:
+        """家屬的全部 App 通道帳號識別（App 內通知查詢用）。"""
+        return [
+            b.external_id
+            for b in self._repo.list_channel_bindings_for_principal(
+                PrincipalType.GUARDIAN, guardian_id
+            )
+            if b.channel is Channel.APP
+        ]
+
     def bind_elder_device(self, code: str, *, consent_by: ConsentBy) -> tuple[Elder, str]:
-        """長輩裝置綁定：綁定碼換 App 通道綁定＋裝置 token。InviteError 原樣上拋。"""
+        """長輩裝置綁定：綁定碼換 App 通道綁定＋裝置 token。InviteError 原樣上拋。
+
+        僅接受長輩綁定碼（InviteRole.ELDER）：家屬邀請碼走此路徑會發出長輩 token
+        （權限邊界破口，庚-04／A-46），故先驗角色再 redeem。
+        """
         invite = self._repo.get_invite(code)
+        if invite is None:
+            raise InviteError("not_found")
+        if invite.role is not InviteRole.ELDER:
+            raise InviteError("wrong_role")
         app_account_id = self._new_id()
         self.redeem_invite(code, app_account_id, channel=Channel.APP, consent_by=consent_by)
         elder = self._repo.get_elder(invite.elder_id)  # redeem 成功即存在
@@ -246,6 +336,22 @@ class AccountService:
 
     def authenticate_token(self, token: str) -> ApiToken | None:
         return self._repo.get_api_token(hashlib.sha256(token.encode()).hexdigest())
+
+    def logout(self, token: str) -> None:
+        """撤銷單一 token（✅ D-25 修訂：token 永久記住＋可主動登出）。"""
+        self._repo.remove_api_token(hashlib.sha256(token.encode()).hexdigest())
+
+    def logout_all_devices(self, guardian_id: str) -> None:
+        """撤銷該家屬全部 token（庚-05／A-47）：永久 token 外洩時的「登出所有裝置」補救，
+        與長輩的 revoke_elder_device 對稱。"""
+        self._repo.remove_api_tokens_for_principal(PrincipalType.GUARDIAN, guardian_id)
+
+    def revoke_elder_device(self, elder_id: str) -> Invite:
+        """作廢長輩裝置並重發綁定碼（✅ D-25 修訂）：
+        撤銷該長輩全部 token＋拆 App 通道綁定（LINE 綁定不動），回新的長輩綁定碼。"""
+        self._repo.remove_api_tokens_for_principal(PrincipalType.ELDER, elder_id)
+        self._repo.remove_channel_bindings_for_principal(Channel.APP, PrincipalType.ELDER, elder_id)
+        return self.generate_invite(elder_id, InviteRole.ELDER)
 
     def app_external_id_of_elder(self, elder_id: str) -> str | None:
         """長輩的 App 通道帳號識別（無 App 綁定回 None；多裝置取排序第一筆）。"""
@@ -255,6 +361,13 @@ class AccountService:
             if binding.channel is Channel.APP:
                 return binding.external_id
         return None
+
+    def bound_elder_id(self, channel: Channel, external_id: str) -> str | None:
+        """查綁定不查同意（✅ D-19，AllowAllGate 旁路用）：綁的是長輩才回 elder_id。"""
+        binding = self._repo.get_channel_binding(channel, external_id)
+        if binding is None or binding.principal_type is not PrincipalType.ELDER:
+            return None
+        return binding.principal_id
 
     def consented_elder_id(self, channel: Channel, external_id: str) -> str | None:
         """解析「已同意的長輩」：該通道帳號綁的是長輩且同意有效才回 elder_id，否則 None。"""
@@ -292,10 +405,6 @@ class AccountService:
     def elders_managed_by(self, line_user_id: str) -> list[Elder]:
         guardian = self._repo.get_guardian_by_line(line_user_id)
         return [] if guardian is None else self.elders_of_guardian(guardian.guardian_id)
-
-    def can_view_transcript(self, elder_id: str, guardian_id: str) -> bool:
-        eg = self._repo.get_elder_guardian(elder_id, guardian_id)
-        return eg is not None and eg.can_view_transcript
 
     def _fail(self, invite: Invite, reason: str) -> None:
         self._repo.save_invite(
