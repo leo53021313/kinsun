@@ -4,6 +4,8 @@ import { SessionProvider } from "@/lib/SessionProvider";
 import { colors } from "@/lib/theme";
 
 export default function RootLayout() {
+  // SafeAreaProvider 不需自掛：expo-router 的 ExpoRoot 已內建（查證 ✅ 庚-32／F-14），
+  // 各畫面的 SafeAreaView（react-native-safe-area-context）直接可用。
   return (
     <SessionProvider>
       <RootStack />
