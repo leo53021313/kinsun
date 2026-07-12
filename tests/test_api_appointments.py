@@ -90,6 +90,42 @@ def test_add_then_list():
     assert [a["label"] for a in listed["data"]] == ["心臟科回診"]
 
 
+def test_add_with_time_roundtrips():
+    """✅ 庚-15（A-35）：回診時刻入欄（選填 HH:MM）——提醒可帶時間、不再藏在自由文字。"""
+    client, elder_id = _setup()
+    res = client.post(
+        f"/api/v1/elders/{elder_id}/appointments",
+        headers=_auth(),
+        json={"date": "2026-08-01", "label": "心臟科回診", "time": "10:30"},
+    )
+    assert res.status_code == 201
+    assert res.json()["data"]["time"] == "10:30"
+    listed = client.get(f"/api/v1/elders/{elder_id}/appointments", headers=_auth()).json()
+    assert listed["data"][0]["time"] == "10:30"
+
+
+def test_add_without_time_defaults_empty():
+    client, elder_id = _setup()
+    res = client.post(
+        f"/api/v1/elders/{elder_id}/appointments",
+        headers=_auth(),
+        json={"date": "2026-08-01", "label": "回診"},
+    )
+    assert res.status_code == 201
+    assert res.json()["data"]["time"] == ""
+
+
+def test_add_rejects_bad_time():
+    client, elder_id = _setup()
+    res = client.post(
+        f"/api/v1/elders/{elder_id}/appointments",
+        headers=_auth(),
+        json={"date": "2026-08-01", "label": "回診", "time": "早上十點"},
+    )
+    assert res.status_code == 400
+    assert res.json()["detail"] == "invalid_time"
+
+
 def test_add_rejects_past_date():
     client, elder_id = _setup()
     res = client.post(

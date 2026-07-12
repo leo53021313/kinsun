@@ -41,13 +41,20 @@ class ChannelRouter:
 
     def send_text(self, principal_type: PrincipalType, principal_id: str, text: str) -> int:
         """對本人的每個可達通道各送一次文字；回傳成功送出的通道數。"""
-        sent = 0
+        return len(self.send_text_channels(principal_type, principal_id, text))
+
+    def send_text_channels(
+        self, principal_type: PrincipalType, principal_id: str, text: str
+    ) -> list[str]:
+        """同 send_text，但回傳實際成功的通道名（✅ 庚-16）——供送達留痕標註語意
+        （如 App 僅為落庫待拉取、非真送達）。"""
+        succeeded: list[str] = []
         for binding in self._routes(principal_type, principal_id):
             try:
                 self._channels[binding.channel].send_text(binding.external_id, text)
-                sent += 1
+                succeeded.append(binding.channel.value)
             except Exception:  # noqa: BLE001 - 單一通道失敗不可中斷其他通道
                 logger.exception(
                     "出站通道送出失敗 channel=%s principal=%s", binding.channel, principal_id
                 )
-        return sent
+        return succeeded

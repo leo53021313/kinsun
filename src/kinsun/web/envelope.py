@@ -41,6 +41,7 @@ ERROR_MESSAGES: dict[str, str] = {
     "slots_required": "請至少選擇一個提醒時段",
     "invalid_slot": "提醒時段格式不正確",
     "invalid_date": "日期格式不正確（YYYY-MM-DD）",
+    "invalid_time": "時間格式不正確（HH:MM）",
     "date_in_past": "日期不可早於今天",
     "validation_error": "輸入資料格式不正確",
     "audio_too_large": "音檔太大，請縮短錄音再試一次",

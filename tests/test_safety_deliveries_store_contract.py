@@ -42,6 +42,13 @@ def test_record_then_list_scoped_to_elder(store, ns):
     assert all(d.tier == RiskTier.L2 for d in got)
 
 
+def test_record_channels_roundtrip(store, ns):
+    """✅ 庚-16（A-41）：實際走的通道隨留痕保存——admin 據此區分「真送達」與「入匣待拉取」。"""
+    store.record(f"{ns}e9", f"{ns}g1", RiskTier.L2, delivered=True, channels="app")
+    got = store.list_for_elder(f"{ns}e9")
+    assert got[0].channels == "app"
+
+
 def test_count_failed_since_counts_undelivered_across_elders(store, ns):
     """✅ 庚-02（A-40）：送達失敗（delivered=False）跨長輩全域計數，供 admin 告警。
 

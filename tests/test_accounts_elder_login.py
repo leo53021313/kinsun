@@ -32,6 +32,63 @@ def _paired_elder(svc):
     return elder
 
 
+class _TokenSaveBoomStore(FakeAccountStore):
+    """發 token 那步爆炸（可武裝）的替身——驗證交易原子性（✅ 庚-18）。"""
+
+    def __init__(self):
+        super().__init__()
+        self.boom_on_save_token = False
+
+    def save_api_token(self, token, *, tx=None):
+        if self.boom_on_save_token:
+            raise RuntimeError("db down")
+        super().save_api_token(token, tx=tx)
+
+
+def test_login_atomic_no_binding_left_when_token_save_fails():
+    """✅ 庚-18（A-48）：換機重登的「補綁定＋發 token」須同交易——
+    token 那步失敗時，補建的 APP 綁定不得留下（全成功或全不動）。"""
+    repo = _TokenSaveBoomStore()
+    svc = _service(repo)
+    elder = _paired_elder(svc)
+    svc.register_elder_account(elder.elder_id, "0912345678", "sunsun-8888")
+    svc.revoke_elder_device(elder.elder_id)  # 拆 APP 綁定，登入時會補
+    repo.boom_on_save_token = True
+    bindings_before = dict(repo.channel_bindings)
+    with pytest.raises(RuntimeError):
+        svc.login_elder("0912345678", "sunsun-8888")
+    assert repo.channel_bindings == bindings_before  # 補綁定已回滾
+
+
+class _InviteSaveBoomStore(FakeAccountStore):
+    """重發邀請碼那步爆炸的替身。"""
+
+    def __init__(self):
+        super().__init__()
+        self.boom_on_save_invite = False
+
+    def save_invite(self, invite, *, tx=None):
+        if self.boom_on_save_invite:
+            raise RuntimeError("db down")
+        super().save_invite(invite, tx=tx)
+
+
+def test_revoke_atomic_tokens_kept_when_invite_save_fails():
+    """✅ 庚-18：作廢裝置的「撤 token＋拆綁定＋發新碼」須同交易——
+    發碼失敗時長輩不得被登出（否則無碼可重綁、又已斷線）。"""
+    repo = _InviteSaveBoomStore()
+    svc = _service(repo)
+    elder = _paired_elder(svc)
+    svc.register_elder_account(elder.elder_id, "0912345678", "sunsun-8888")
+    _, token = svc.login_elder("0912345678", "sunsun-8888")
+    repo.boom_on_save_invite = True
+    tokens_before = dict(repo.api_tokens)
+    with pytest.raises(RuntimeError):
+        svc.revoke_elder_device(elder.elder_id)
+    assert repo.api_tokens == tokens_before  # token 未被撤（回滾）
+    assert svc.authenticate_token(token) is not None  # 舊裝置仍可用
+
+
 def test_register_then_login_returns_elder_token():
     svc = _service()
     elder = _paired_elder(svc)

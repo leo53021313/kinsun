@@ -97,7 +97,10 @@ def dispatch(
     traces: TraceStore | None = None,
     text_input_enabled: bool = True,
     timer: Callable[[], float] = time.monotonic,
+    elder_id: str | None = None,
 ) -> None:
+    """elder_id：呼叫端已解析過本人時傳入（✅ 庚-12），dispatch 不再重查閘門；
+    未傳（LINE webhook 路徑）照舊經 gate 解析。"""
     if msg.kind == "text":
         reply = binding.handle(msg.external_id, msg.text)
         if reply is not None:
@@ -108,7 +111,7 @@ def dispatch(
         if not text_input_enabled:
             msg.reply(NON_AUDIO_PROMPT)
             return
-        elder_id = gate.resolve_elder(msg.channel, msg.external_id)
+        elder_id = elder_id or gate.resolve_elder(msg.channel, msg.external_id)
         if elder_id is None:
             msg.reply(BIND_FIRST_PROMPT)
             return
@@ -129,7 +132,7 @@ def dispatch(
     if msg.kind != "audio":
         msg.reply(NON_AUDIO_PROMPT)
         return
-    elder_id = gate.resolve_elder(msg.channel, msg.external_id)
+    elder_id = elder_id or gate.resolve_elder(msg.channel, msg.external_id)
     if elder_id is None:
         msg.reply(BIND_FIRST_PROMPT)
         return
