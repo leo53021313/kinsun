@@ -14,6 +14,12 @@ export function tierLabel(tier: number): string {
   return TIER_LABELS[tier] ?? `L${tier}`;
 }
 
+/** 觀測後台用（✅ 庚-27／F-10）：保留 L 編號給維運精確溝通，並列家屬端詞彙。 */
+export function adminTierLabel(tier: number): string {
+  const label = TIER_LABELS[tier];
+  return label ? `L${tier} ${label}` : `L${tier}`;
+}
+
 export const SLOTS = [
   { value: "morning", label: "早上" },
   { value: "noon", label: "中午" },

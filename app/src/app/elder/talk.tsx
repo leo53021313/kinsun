@@ -15,10 +15,8 @@ import { AvatarPlaceholder, type AvatarState } from "@/components/AvatarPlacehol
 import { RoleSwitcher } from "@/components/RoleSwitcher";
 import { ApiError, postTurn } from "@/lib/api";
 import { useSession } from "@/lib/SessionProvider";
+import { strings } from "@/lib/strings";
 import { colors, elder, spacing } from "@/lib/theme";
-
-const IDLE_HINT = "按住下面的大按鈕，跟金孫說話";
-const FALLBACK_TEXT = "金孫沒聽清楚，再說一次好嗎？";
 
 /** 對講機：按住說話 → 放開送出 → 金孫回覆（文字放大＋自動播放語音）。 */
 export default function ElderTalk() {
@@ -28,9 +26,8 @@ export default function ElderTalk() {
   // 錄音提示音（✅ D-48 丁-2）：開始／結束各一聲，跟觸覺一起給體感。
   const startBeep = useAudioPlayer(require("@/assets/sounds/record-start.wav"));
   const stopBeep = useAudioPlayer(require("@/assets/sounds/record-stop.wav"));
-  const [token, setToken] = useState("");
   const [avatar, setAvatar] = useState<AvatarState>("idle");
-  const [replyText, setReplyText] = useState(IDLE_HINT);
+  const [replyText, setReplyText] = useState<string>(strings.talk.idleHint);
   const [micReady, setMicReady] = useState(false);
 
   const { loading: sessionLoading, session, signOut } = useSession();
@@ -45,15 +42,12 @@ export default function ElderTalk() {
     }
     let alive = true;
     (async () => {
-      if (alive) {
-        setToken(session.token);
-      }
       const permission = await AudioModule.requestRecordingPermissionsAsync();
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
       if (alive) {
         setMicReady(permission.granted);
         if (!permission.granted) {
-          setReplyText("需要麥克風權限才能跟金孫說話，請到設定開啟。");
+          setReplyText(strings.talk.micPermission);
         }
       }
     })();
@@ -75,9 +69,9 @@ export default function ElderTalk() {
       await recorder.prepareToRecordAsync();
       recorder.record();
       setAvatar("listening");
-      setReplyText("金孫在聽…");
+      setReplyText(strings.talk.listening);
     } catch {
-      setReplyText(FALLBACK_TEXT);
+      setReplyText(strings.talk.fallback);
       setAvatar("idle");
     }
   }
@@ -90,14 +84,14 @@ export default function ElderTalk() {
     stopBeep.seekTo(0);
     stopBeep.play();
     setAvatar("thinking");
-    setReplyText("金孫想一下…");
+    setReplyText(strings.talk.thinking);
     try {
       await recorder.stop();
       const uri = recorder.uri;
       if (!uri) {
         throw new Error("no recording");
       }
-      const reply = await postTurn(uri, token);
+      const reply = await postTurn(uri, session?.token ?? "");
       setReplyText(reply.text);
       if (reply.audio_url) {
         setAvatar("speaking");
@@ -108,10 +102,10 @@ export default function ElderTalk() {
       }
     } catch (exc) {
       if (exc instanceof ApiError && exc.status === 403) {
-        setReplyText("這台手機的綁定失效了，請家人重新給您一組號碼。");
+        setReplyText(strings.talk.bindingLost);
         await signOut();
       } else {
-        setReplyText(FALLBACK_TEXT);
+        setReplyText(strings.talk.fallback);
       }
       setAvatar("idle");
     }
@@ -138,7 +132,7 @@ export default function ElderTalk() {
       </View>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="按住說話"
+        accessibilityLabel={strings.talk.pressToTalk}
         onPressIn={startRecording}
         onPressOut={stopAndSend}
         disabled={!micReady || avatar === "thinking"}
@@ -149,7 +143,7 @@ export default function ElderTalk() {
         ]}
       >
         <Text style={styles.talkLabel} maxFontSizeMultiplier={1.4}>
-          {avatar === "listening" ? "放開就送出" : "按住說話"}
+          {avatar === "listening" ? strings.talk.releaseToSend : strings.talk.pressToTalk}
         </Text>
       </Pressable>
     </SafeAreaView>

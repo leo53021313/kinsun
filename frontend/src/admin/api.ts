@@ -3,7 +3,8 @@
  * 認證：X-Admin-Key 共用金鑰（401 即清除，App 殼層導回輸入頁）。
  */
 
-import { ApiError, type Envelope, unwrapEnvelope } from "kinsun-shared/envelope";
+import { createApiClient } from "kinsun-shared/client";
+import { ApiError } from "kinsun-shared/envelope";
 import type {
   AdminElder,
   AdminElderAccount,
@@ -62,29 +63,23 @@ export function setOnUnauthorized(callback: (() => void) | null): void {
   onUnauthorized = callback;
 }
 
-async function apiFetch<T>(
-  path: string,
-  init: RequestInit = {},
-): Promise<{ data: T; meta: Record<string, unknown> | null }> {
-  const headers = new Headers(init.headers);
-  const key = getAdminKey();
-  if (key) headers.set("X-Admin-Key", key);
-  if (init.body !== undefined && !headers.has("Content-Type")) {
-    headers.set("Content-Type", "application/json");
-  }
-  const res = await fetch(path, { ...init, headers });
-  if (res.status === 401) {
+// 共同流程住共用包（✅ 庚-30）；admin 差異＝X-Admin-Key＋401 時清金鑰通知殼層。
+const client = createApiClient({
+  authHeaders: () => {
+    const headers: Record<string, string> = {};
+    const key = getAdminKey();
+    if (key) {
+      headers["X-Admin-Key"] = key;
+    }
+    return headers;
+  },
+  onUnauthorized: () => {
     clearAdminKey();
     onUnauthorized?.();
-  }
-  let body: Envelope<T>;
-  try {
-    body = (await res.json()) as Envelope<T>;
-  } catch {
-    throw new ApiError(res.status, `http_${res.status}`);
-  }
-  return { data: unwrapEnvelope(res.status, body), meta: body.meta };
-}
+  },
+});
+
+const apiFetch = client.requestWithMeta;
 
 export async function getOverview(): Promise<Overview> {
   return (await apiFetch<Overview>("/api/v1/admin/overview")).data;

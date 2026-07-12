@@ -3,13 +3,9 @@ import { Link } from "react-router-dom";
 
 import { type FeedMessage, listMessages, listMessagesBefore } from "../api";
 import { formatTime } from "../format";
+import { strings } from "../strings";
 import { usePolling } from "../usePolling";
-
-const KIND_LABEL: Record<string, string> = {
-  turn: "對話",
-  reminder: "推播",
-  risk: "風險",
-};
+import { adminTierLabel } from "kinsun-shared/terms";
 
 function messageKey(m: FeedMessage): string {
   return `${m.kind}-${m.created_at}-${m.elder_id}-${m.content}`;
@@ -59,25 +55,34 @@ export function MessagesPage() {
 
   return (
     <section>
-      <h2>全域訊息流</h2>
-      {disconnected && <p className="error-banner">連線中斷，重試中…</p>}
-      {messages.length === 0 && !disconnected && <p>目前沒有訊息。</p>}
+      <h2>{strings.messages.title}</h2>
+      {disconnected && <p className="error-banner">{strings.common.disconnected}</p>}
+      {messages.length === 0 && !disconnected && <p>{strings.messages.noMessages}</p>}
       {messages.map((m) => (
         <div className="card feed-item" key={messageKey(m)}>
           <span className="feed-time">{formatTime(m.created_at)}</span>
-          <span className={`badge badge-${m.kind}`}>{KIND_LABEL[m.kind] ?? m.kind}</span>
+          <span className={`badge badge-${m.kind}`}>
+            {strings.messages.kindLabel[m.kind] ?? m.kind}
+          </span>
           <span>
             <strong>{m.elder_name || m.elder_id}</strong>
-            {m.role && <em>（{m.role === "user" ? "長輩" : "金孫"}）</em>}
+            {m.role && (
+              <em>（{m.role === "user" ? strings.common.roleElder : strings.common.roleAssistant}）</em>
+            )}
             ：{m.content}
-            {m.tier !== null && <span> 等級 L{m.tier}</span>}
-            {m.trace_id && <Link to={`/traces/${m.trace_id}`}>　檢視鏈路</Link>}
+            {m.tier !== null && (
+              <span>
+                {" "}
+                {strings.messages.tierPrefix} {adminTierLabel(m.tier)}
+              </span>
+            )}
+            {m.trace_id && <Link to={`/traces/${m.trace_id}`}>　{strings.common.viewTrace}</Link>}
           </span>
         </div>
       ))}
       {messages.length > 0 && hasOlder && (
         <button type="button" className="load-older" onClick={loadOlder} disabled={loadingOlder}>
-          {loadingOlder ? "載入中…" : "載入更早的訊息"}
+          {loadingOlder ? strings.common.loading : strings.messages.loadOlder}
         </button>
       )}
     </section>

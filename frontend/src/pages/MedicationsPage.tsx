@@ -9,6 +9,7 @@ import {
   updateMedication,
 } from "../api";
 import { SLOTS, slotLabel } from "../medicationSlots";
+import { strings } from "../strings";
 
 export function MedicationsPage() {
   const { elderId = "" } = useParams();
@@ -21,7 +22,7 @@ export function MedicationsPage() {
   const reload = useCallback(() => {
     listMedications(elderId)
       .then(setMeds)
-      .catch(() => setError("載入失敗，請稍後再試"));
+      .catch(() => setError(strings.common.loadFailed));
   }, [elderId]);
 
   useEffect(reload, [reload]);
@@ -39,7 +40,7 @@ export function MedicationsPage() {
   async function submit() {
     setError(null);
     if (!name.trim() || slots.length === 0) {
-      setError("請填藥名並至少選一個時段");
+      setError(strings.medications.slotRequired);
       return;
     }
     try {
@@ -51,7 +52,7 @@ export function MedicationsPage() {
       resetForm();
       reload();
     } catch {
-      setError("儲存失敗，請稍後再試");
+      setError(strings.common.saveFailed);
     }
   }
 
@@ -66,33 +67,37 @@ export function MedicationsPage() {
       await deleteMedication(elderId, medicationId);
       reload();
     } catch {
-      setError("刪除失敗，請稍後再試");
+      setError(strings.common.deleteFailed);
     }
   }
 
-  if (!meds) return <p>載入中…</p>;
+  if (!meds) return <p>{strings.common.loading}</p>;
   return (
     <main>
       <p>
-        <Link to="/">← 返回長輩清單</Link>
+        <Link to="/">{strings.common.backToElders}</Link>
       </p>
-      <h1>用藥管理</h1>
+      <h1>{strings.medications.title}</h1>
       {error && <p>{error}</p>}
       <ul>
         {meds.map((m) => (
           <li key={m.medication_id}>
             {m.name}（{m.slots.map(slotLabel).join("、")}）
             <button type="button" onClick={() => startEdit(m)}>
-              編輯
+              {strings.common.edit}
             </button>
             <button type="button" onClick={() => remove(m.medication_id)}>
-              刪除
+              {strings.common.delete}
             </button>
           </li>
         ))}
       </ul>
-      <h2>{editingId ? "編輯用藥" : "新增用藥"}</h2>
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="藥名" />
+      <h2>{editingId ? strings.medications.editHeading : strings.medications.addHeading}</h2>
+      <input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder={strings.medications.namePlaceholder}
+      />
       <div>
         {SLOTS.map((s) => (
           <label key={s.value}>
@@ -106,11 +111,11 @@ export function MedicationsPage() {
         ))}
       </div>
       <button type="button" onClick={submit}>
-        {editingId ? "更新" : "新增"}
+        {editingId ? strings.common.update : strings.common.add}
       </button>
       {editingId && (
         <button type="button" onClick={resetForm}>
-          取消編輯
+          {strings.common.cancelEdit}
         </button>
       )}
     </main>
