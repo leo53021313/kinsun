@@ -16,10 +16,16 @@ from kinsun.web.routers.deps import GuardianAuth, GuardianScope
 class AppointmentIn(BaseModel):
     date: str
     label: str
+    time: str = ""  # 看診時刻 HH:MM（✅ 庚-15，選填）
 
 
 def _appointment_json(appt) -> dict:
-    return {"appointment_id": appt.appointment_id, "date": appt.date, "label": appt.label}
+    return {
+        "appointment_id": appt.appointment_id,
+        "date": appt.date,
+        "label": appt.label,
+        "time": appt.time,
+    }
 
 
 def create_appointments_router(
@@ -44,6 +50,16 @@ def create_appointments_router(
             raise HTTPException(status_code=400, detail="date_in_past")
         return parsed.isoformat()
 
+    def parse_appt_time(raw: str) -> str:
+        """選填看診時刻（✅ 庚-15）：空＝未指定；非空須為 HH:MM。"""
+        cleaned = raw.strip()
+        if not cleaned:
+            return ""
+        try:
+            return datetime.strptime(cleaned, "%H:%M").strftime("%H:%M")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="invalid_time") from exc
+
     @router.get("/elders/{elder_id}/appointments")
     def list_appointments(elder_id: str, auth: GuardianAuth = Depends(current_guardian)) -> dict:
         scope.assert_manages(auth, elder_id)
@@ -58,7 +74,8 @@ def create_appointments_router(
         if not label:
             raise HTTPException(status_code=400, detail="label_required")
         date = parse_appt_date(body.date)
-        return ok(_appointment_json(appointments.save(elder_id, date, label)))
+        time = parse_appt_time(body.time)
+        return ok(_appointment_json(appointments.save(elder_id, date, label, time)))
 
     @router.put("/elders/{elder_id}/appointments/{appointment_id}")
     def update_appointment(
@@ -73,7 +90,10 @@ def create_appointments_router(
         if not label:
             raise HTTPException(status_code=400, detail="label_required")
         date = parse_appt_date(body.date)
-        return ok(_appointment_json(appointments.update(appointment_id, elder_id, date, label)))
+        time = parse_appt_time(body.time)
+        return ok(
+            _appointment_json(appointments.update(appointment_id, elder_id, date, label, time))
+        )
 
     @router.delete("/elders/{elder_id}/appointments/{appointment_id}", status_code=204)
     def delete_appointment(

@@ -108,16 +108,16 @@
 
 | # | 工項 | 問題 | 規模 |
 | :--- | :--- | :---: | :---: |
-| 庚-10 | 危急分級 LLM 納入觀測：`RiskDetector.assess` 的 Gemini 呼叫移進 `collect_llm_usage` 範圍並補 trace row（現系統性漏計 token、安全模型延遲不可觀測——即 A-7 的殘缺項）。 | A-9 | S |
-| 庚-11 | 錯誤路徑語音化：pipeline 級 fallback 與 TTS 降級改走 TTS 或 App 端語音提示（現純文字，語音優先長輩「有字無聲」）。 | A-10 | M |
-| 庚-12 | 免除閘門重複解析：App 回合把 `turns.py` 已解析的 elder_id 傳入 `dispatch`，省掉 `inbound.py` 內第二趟 DB 查詢。 | A-11 | S |
+| 庚-10 | ✅ 完成（2026-07-12，TDD）：pipeline 新增 `_assess`——分級呼叫包進 token 收集器並補記 llm_call trace（model_name＝`GEMINI_MODEL_SAFETY`、fail-safe 以 `llm:error` 訊號記 error）。每輪 llm_calls 1→2 筆，分級 token 與生成筆分離（測試鎖定）。 | A-9 | S |
+| 庚-11 | ⏸ **不改（Leo 2026-07-12：現狀可接受）**——錯誤情境頻率低、螢幕有字；曾評估 expo-speech 裝置語音與預錄提示音兩案。 | A-10 | M |
+| 庚-12 | ✅ 完成（2026-07-12，TDD）：`dispatch` 加可選 `elder_id`，App turns 傳入已解析結果即跳過重查；LINE 路徑照舊。每輪省一趟 DGX→Supabase 往返。 | A-11 | S |
 | 庚-13 | ✅ 完成（2026-07-12，TDD，隨庚-06）：新增 `memory_consolidations` 表（PK `(elder_id, day)`）＋`ConsolidationLogStore` 三件套（`record` 用 `ON CONFLICT DO NOTHING`）；`run_consolidation` 跳過已標記日 → 同日重跑（含 admin 手動觸發）不重覆 `mem0.add`。合約測試 Fake＋Pg。 | A-19 | S |
-| 庚-14 | 回診提醒紀錄對齊：`appointments/jobs.py` 比照用藥 job 加 `sent==0` 守門（現無條件記錄→家屬健康報告顯示長輩實際沒收到的提醒）。 | A-34 | S |
-| 庚-15 | 回診時間粒度：`Appointment` 加時刻欄位（現只有日期、實際時刻藏在 label 自由文字，無法做「前 N 小時」精準提醒）。 | A-35 | M |
-| 庚-16 | 送達語意精確化：`delivered` 對 App 通道區分「落庫待拉取」與「真送達」（現 App 落庫即記 True，稀釋 D-36 可信度）。 | A-41 | S |
-| 庚-17 | scheduler 單例保護：加 leader election／advisory lock（現無鎖，誤起雙 worker 重複提醒；與庚-08 多 worker 同源）。 | A-42 | M |
-| 庚-18 | 交易包裹三處：`revoke_elder_device`、`login_elder`／`login_guardian` 的補綁定＋發 token 包進 `transaction()`（現部分失敗留半完成狀態；並補 Fake transaction 使合約測試涵蓋）。 | A-48 | S |
-| 庚-19 | 邀請碼並發防護：redeem 加 `SELECT FOR UPDATE` 列鎖（現 TOCTOU，並發同碼可重複綁定）。 | A-49 | S |
+| 庚-14 | ✅ 完成（2026-07-12，TDD）：回診 job 接住長輩送達數，0 即不記 reminder_logs（家屬通知照發、可口頭轉告）。 | A-34 | S |
+| 庚-15 | ✅ 完成（2026-07-12，TDD，Leo 選「時刻入欄＋提醒帶時間」層級）：`Appointment.time`（選填 HH:MM）全鏈——DDL 冪等遷移、store／service／API（`invalid_time` 400）、提醒訊息帶時間（「今天 10:30 要回診囉」）、App 表單時間選擇器＋LIFF `type=time`＋admin 顯示、shared 型別。「前 N 小時」排程另議。 | A-35 | M |
+| 庚-16 | ✅ 完成（2026-07-12，TDD，誠實標註方案）：`ChannelRouter.send_text_channels` 回傳成功通道名；`risk_notification_logs` 加 `channels` 欄；admin 危急通知頁對僅走 App 的成功顯示「已入通知匣（待開啟）」。真送達（讀取回條）留待階段 5 推播。 | A-41 | S |
+| 庚-17 | ✅ 完成（2026-07-12，TDD）：`ScheduleStateStore.try_claim` 條件式 UPDATE 原子先搶先贏——執行前搶占，輸家跳過；不持長 DB 鎖。交錯競態測試＋合約測試（Fake＋Pg）。 | A-42 | M |
+| 庚-18 | ✅ 完成（2026-07-12，TDD）：三處包 `transaction()`（store 補 tx 參數）；`FakeAccountStore.transaction` 改快照回滾與 Pg 對齊，原子性可離線驗證。 | A-48 | S |
+| 庚-19 | ✅ 完成（2026-07-12，TDD）：`get_invite` 加 `for_update`，redeem 讀碼＋檢查＋寫入同交易列鎖；失敗計數 commit 後才拋（行為不變）。Pg IT 並發測試：兩執行緒同碼恰一成功。 | A-49 | S |
 
 ### 庚3 安全與檢索強化（MEDIUM）
 

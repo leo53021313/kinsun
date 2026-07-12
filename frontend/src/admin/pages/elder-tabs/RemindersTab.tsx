@@ -72,7 +72,11 @@ export function RemindersTab() {
       {data.appointments.length === 0 && <p>尚未設定回診。</p>}
       {data.appointments.map((a) => (
         <div className="card" key={a.appointment_id}>
-          <strong>{a.date}</strong>　{a.label}
+          <strong>
+            {a.date}
+            {a.time ? ` ${a.time}` : ""}
+          </strong>
+          　{a.label}
         </div>
       ))}
       {testing && data.appointments.length > 0 && (

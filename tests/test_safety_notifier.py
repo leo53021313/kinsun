@@ -16,15 +16,16 @@ def test_log_notifier_logs_warning(caplog):
 class _SpyRouter:
     """ChannelRouter 替身：記錄 (principal_type, principal_id, text)，可指定失敗對象。"""
 
-    def __init__(self, fail_on=None):
+    def __init__(self, fail_on=None, channels=("line",)):
         self.sent = []
         self._fail_on = fail_on
+        self._channels = list(channels)
 
-    def send_text(self, principal_type, principal_id, text):
+    def send_text_channels(self, principal_type, principal_id, text):
         if principal_id == self._fail_on:
-            return 0  # 該家屬無可達通道／全數失敗
+            return []  # 該家屬無可達通道／全數失敗
         self.sent.append((principal_type, principal_id, text))
-        return 1
+        return list(self._channels)
 
 
 def _eg(guardian_id, order):
@@ -65,6 +66,22 @@ def test_delivery_log_records_success_and_failure_per_guardian():
     ]
     assert deliveries.recorded[0].elder_id == "e-elder"
     assert deliveries.recorded[0].tier == RiskTier.L2
+
+
+def test_delivery_log_records_channels():
+    """✅ 庚-16（A-41）：留痕記實際走的通道——App 落庫≠真送達，語意由通道還原。"""
+    router = _SpyRouter(channels=("app",))
+    deliveries = FakeRiskNotificationLogStore()
+    notifier = GuardianNotifier(_StubDirectory(["g1"]), router, deliveries=deliveries)
+    notifier.notify("e-elder", RiskAssessment(RiskTier.L2, 0.8, "胸口悶", ["symptom"]))
+    assert deliveries.recorded[0].channels == "app"
+
+    router2 = _SpyRouter(channels=("line", "app"))
+    deliveries2 = FakeRiskNotificationLogStore()
+    GuardianNotifier(_StubDirectory(["g1"]), router2, deliveries=deliveries2).notify(
+        "e-elder", RiskAssessment(RiskTier.L2, 0.8, "胸口悶", [])
+    )
+    assert deliveries2.recorded[0].channels == "line,app"
 
 
 def test_delivery_log_failure_does_not_break_notify():

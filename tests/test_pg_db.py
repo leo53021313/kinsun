@@ -127,3 +127,29 @@ def test_session_key_schema_supports_elder_keys(pg_database, pg_url, ns):
         (f"{ns}e-mig", "2026-07-07"),
     )
     assert rows == [("v2",)]
+
+
+def test_transaction_lets_domain_exceptions_pass_through(pg_database, ns):
+    """✅ 庚-19 修訂：交易本體拋出的業務例外須原樣穿透（不得被誤包成 StoreError）——
+    否則 redeem 在交易內拋的 InviteError 會被 _Errors 再翻成 AccountError，
+    呼叫端接不到正確錯誤型別。回滾仍須發生。"""
+
+    class _DomainError(Exception):
+        pass
+
+    pg_database.execute(
+        "INSERT INTO scheduler_state (job_name, last_run_at) VALUES (%s, %s) "
+        "ON CONFLICT (job_name) DO UPDATE SET last_run_at = EXCLUDED.last_run_at",
+        (f"{ns}tx-job", 1000.0),
+    )
+    with pytest.raises(_DomainError):
+        with pg_database.transaction() as tx:
+            tx.execute(
+                "UPDATE scheduler_state SET last_run_at = %s WHERE job_name = %s",
+                (2000.0, f"{ns}tx-job"),
+            )
+            raise _DomainError("業務錯誤")
+    row = pg_database.query_one(
+        "SELECT last_run_at FROM scheduler_state WHERE job_name = %s", (f"{ns}tx-job",)
+    )
+    assert row == (1000.0,)  # 已回滾
