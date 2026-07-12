@@ -15,6 +15,7 @@ class ScheduleStateError(Exception):
 class ScheduleStateStore(Protocol):
     def get_last_run(self, job_name: str) -> datetime | None: ...
     def set_last_run(self, job_name: str, when: datetime) -> None: ...
+    def try_claim(self, job_name: str, *, expected: datetime, now: datetime) -> bool: ...
 
 
 class PgScheduleStateStore:
@@ -40,6 +41,20 @@ class PgScheduleStateStore:
             (job_name, when.timestamp()),
         )
 
+    def try_claim(self, job_name: str, *, expected: datetime, now: datetime) -> bool:
+        """原子先搶先贏（✅ 庚-17／A-42）：現值仍為 expected 才更新成 now 並回 True。
+
+        誤起雙 worker 時，兩邊都判定到期、拿同一個 expected 來搶——條件式
+        UPDATE 保證只有一個成功，輸家跳過該 job，長輩不會收到雙重提醒。
+        expected 為 get_last_run 讀回的值，epoch 秒往返無精度損失，等值比較安全。
+        """
+        rows = self._db.query(
+            "UPDATE scheduler_state SET last_run_at = %s "
+            "WHERE job_name = %s AND last_run_at = %s RETURNING job_name",
+            (now.timestamp(), job_name, expected.timestamp()),
+        )
+        return bool(rows)
+
 
 class FakeScheduleStateStore:
     """ScheduleStateStore 的記憶體替身（測試用，不碰 DB）。
@@ -58,3 +73,10 @@ class FakeScheduleStateStore:
 
     def set_last_run(self, job_name: str, when: datetime) -> None:
         self._last[job_name] = when
+
+    def try_claim(self, job_name: str, *, expected: datetime, now: datetime) -> bool:
+        current = self._last.get(job_name)
+        if current is None or current.timestamp() != expected.timestamp():
+            return False
+        self._last[job_name] = now
+        return True

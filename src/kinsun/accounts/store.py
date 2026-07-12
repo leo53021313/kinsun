@@ -43,7 +43,9 @@ class AccountStore(Protocol):
     def save_consent(self, consent: Consent, *, tx: Executor | None = None) -> None: ...
     def get_consent(self, elder_id: str) -> Consent | None: ...
     def save_invite(self, invite: Invite, *, tx: Executor | None = None) -> None: ...
-    def get_invite(self, code: str) -> Invite | None: ...
+    def get_invite(
+        self, code: str, *, tx: Executor | None = None, for_update: bool = False
+    ) -> Invite | None: ...
     def list_invites_for_elder(self, elder_id: str) -> list[Invite]: ...
     def save_channel_binding(
         self, binding: ChannelBinding, *, tx: Executor | None = None
@@ -66,10 +68,15 @@ class AccountStore(Protocol):
     ) -> list[ApiToken]: ...
     def remove_api_token(self, token_hash: str) -> None: ...
     def remove_api_tokens_for_principal(
-        self, principal_type: PrincipalType, principal_id: str
+        self, principal_type: PrincipalType, principal_id: str, *, tx: Executor | None = None
     ) -> None: ...
     def remove_channel_bindings_for_principal(
-        self, channel: Channel, principal_type: PrincipalType, principal_id: str
+        self,
+        channel: Channel,
+        principal_type: PrincipalType,
+        principal_id: str,
+        *,
+        tx: Executor | None = None,
     ) -> None: ...
     def transaction(self) -> object: ...
 
@@ -209,12 +216,18 @@ class PgAccountStore:
             ),
         )
 
-    def get_invite(self, code: str) -> Invite | None:
-        rows = self._db.query(
+    def get_invite(
+        self, code: str, *, tx: Executor | None = None, for_update: bool = False
+    ) -> Invite | None:
+        """for_update（✅ 庚-19）：交易內列鎖住該碼——並發同碼 redeem 的第二個
+        請求在此等待首個 commit，之後看到 used_at 被正確擋下（根治 TOCTOU）。"""
+        sql = (
             "SELECT code, elder_id, role, expires_at, max_attempts, attempts, used_at "
-            "FROM invites WHERE code = %s",
-            (code,),
+            "FROM invites WHERE code = %s"
         )
+        if for_update:
+            sql += " FOR UPDATE"
+        rows = (tx or self._db).query(sql, (code,))
         if not rows:
             return None
         c, elder, role, expires, max_a, attempts, used = rows[0]
@@ -339,17 +352,22 @@ class PgAccountStore:
         self._db.execute("DELETE FROM api_tokens WHERE token_hash = %s", (token_hash,))
 
     def remove_api_tokens_for_principal(
-        self, principal_type: PrincipalType, principal_id: str
+        self, principal_type: PrincipalType, principal_id: str, *, tx: Executor | None = None
     ) -> None:
-        self._db.execute(
+        (tx or self._db).execute(
             "DELETE FROM api_tokens WHERE principal_type = %s AND principal_id = %s",
             (principal_type.value, principal_id),
         )
 
     def remove_channel_bindings_for_principal(
-        self, channel: Channel, principal_type: PrincipalType, principal_id: str
+        self,
+        channel: Channel,
+        principal_type: PrincipalType,
+        principal_id: str,
+        *,
+        tx: Executor | None = None,
     ) -> None:
-        self._db.execute(
+        (tx or self._db).execute(
             "DELETE FROM channel_bindings "
             "WHERE channel = %s AND principal_type = %s AND principal_id = %s",
             (channel.value, principal_type.value, principal_id),
@@ -359,9 +377,21 @@ class PgAccountStore:
 class FakeAccountStore:
     """AccountStore 的記憶體替身（測試用，不碰 DB）。
 
-    `transaction()` 為 no-op（僅 yield None）、`tx` 參數一律忽略，故本替身
-    不模擬交易回滾語意，相關行為不在合約範圍內。
+    `transaction()` 與 Pg 對齊回滾語意（✅ 庚-18）：交易內任何例外 → 還原全部
+    狀態後重拋。`tx` 參數在本替身仍被忽略（寫入直接進 dict），原子性由快照達成。
     """
+
+    _STATE_DICTS = (
+        "elders",
+        "guardians",
+        "elder_guardians",
+        "consents",
+        "invites",
+        "channel_bindings",
+        "guardian_accounts",
+        "elder_accounts",
+        "api_tokens",
+    )
 
     def __init__(self) -> None:
         self.elders: dict[str, Elder] = {}
@@ -376,7 +406,14 @@ class FakeAccountStore:
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
-        yield None
+        # 淺複製快照即可：值皆為 frozen dataclass，不會就地變異。
+        snapshot = {name: dict(getattr(self, name)) for name in self._STATE_DICTS}
+        try:
+            yield None
+        except Exception:
+            for name, value in snapshot.items():
+                setattr(self, name, value)
+            raise
 
     def save_elder(self, elder: Elder, *, tx: Executor | None = None) -> None:
         self.elders[elder.elder_id] = elder
@@ -425,7 +462,9 @@ class FakeAccountStore:
     def save_invite(self, invite: Invite, *, tx: Executor | None = None) -> None:
         self.invites[invite.code] = invite
 
-    def get_invite(self, code: str) -> Invite | None:
+    def get_invite(
+        self, code: str, *, tx: Executor | None = None, for_update: bool = False
+    ) -> Invite | None:
         return self.invites.get(code)
 
     def list_invites_for_elder(self, elder_id: str) -> list[Invite]:
@@ -497,7 +536,7 @@ class FakeAccountStore:
         self.api_tokens.pop(token_hash, None)
 
     def remove_api_tokens_for_principal(
-        self, principal_type: PrincipalType, principal_id: str
+        self, principal_type: PrincipalType, principal_id: str, *, tx: Executor | None = None
     ) -> None:
         self.api_tokens = {
             h: t
@@ -506,7 +545,12 @@ class FakeAccountStore:
         }
 
     def remove_channel_bindings_for_principal(
-        self, channel: Channel, principal_type: PrincipalType, principal_id: str
+        self,
+        channel: Channel,
+        principal_type: PrincipalType,
+        principal_id: str,
+        *,
+        tx: Executor | None = None,
     ) -> None:
         self.channel_bindings = {
             key: b

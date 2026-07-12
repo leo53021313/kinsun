@@ -118,6 +118,7 @@ def create_app_turns_router(
             gate=gate,
             voice=voice,
             traces=traces,
+            elder_id=elder_id,  # 入口已解析並複核同意，dispatch 不再重查（✅ 庚-12）
         )
         return ok(
             {

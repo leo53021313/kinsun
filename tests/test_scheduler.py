@@ -103,3 +103,30 @@ def test_one_job_failure_does_not_block_others():
     assert sched.run_due() == ["boom", "ok"]
     assert calls == ["ok"]
     assert state.get_last_run("boom") == clock.dt  # 失敗仍標記
+
+
+def test_two_workers_shared_state_run_job_once():
+    """✅ 庚-17（A-42）：誤起雙 worker（共用同一狀態表）時，同一到期 job
+    只有搶到的那個執行——長輩不再收到雙重提醒。
+
+    模擬最壞交錯：w1 正在跑 job（尚未寫回狀態的舊實作窗口），w2 同時
+    醒來檢查同一 job。修復後 w1 於執行前先原子搶占，w2 看到的已是新
+    狀態 → 不再重跑。"""
+    runs = []
+    state = FakeScheduleStateStore()
+    seed = datetime(2026, 7, 12, 7, 0, tzinfo=TPE)
+    now = datetime(2026, 7, 12, 8, 0, tzinfo=TPE)
+    holder = {}
+
+    def w1_run():
+        runs.append("w1")
+        holder["w2"].run_due()  # w1 執行中，w2 的 tick 同時發生
+
+    w1 = Scheduler([Job("greet", "0 8 * * *", w1_run)], clock=lambda: now, state=state)
+    w2 = Scheduler(
+        [Job("greet", "0 8 * * *", lambda: runs.append("w2"))], clock=lambda: now, state=state
+    )
+    holder["w2"] = w2
+    state.set_last_run("greet", seed)
+    w1.run_due()
+    assert runs == ["w1"]

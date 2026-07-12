@@ -16,6 +16,7 @@ export function AppointmentsPage() {
   const [appts, setAppts] = useState<Appointment[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [date, setDate] = useState("");
+  const [time, setTime] = useState("");
   const [label, setLabel] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -29,6 +30,7 @@ export function AppointmentsPage() {
 
   function resetForm() {
     setDate("");
+    setTime("");
     setLabel("");
     setEditingId(null);
   }
@@ -41,9 +43,9 @@ export function AppointmentsPage() {
     }
     try {
       if (editingId) {
-        await updateAppointment(elderId, editingId, date, label.trim());
+        await updateAppointment(elderId, editingId, date, label.trim(), time);
       } else {
-        await addAppointment(elderId, date, label.trim());
+        await addAppointment(elderId, date, label.trim(), time);
       }
       resetForm();
       reload();
@@ -55,6 +57,7 @@ export function AppointmentsPage() {
   function startEdit(appt: Appointment) {
     setEditingId(appt.appointment_id);
     setDate(appt.date);
+    setTime(appt.time);
     setLabel(appt.label);
   }
 
@@ -78,7 +81,8 @@ export function AppointmentsPage() {
       <ul>
         {appts.map((a) => (
           <li key={a.appointment_id}>
-            {a.date} {a.label}
+            {a.date}
+            {a.time ? ` ${a.time}` : ""} {a.label}
             <button type="button" onClick={() => startEdit(a)}>
               編輯
             </button>
@@ -91,9 +95,15 @@ export function AppointmentsPage() {
       <h2>{editingId ? "編輯回診" : "新增回診"}</h2>
       <input type="date" min={TODAY} value={date} onChange={(e) => setDate(e.target.value)} />
       <input
+        type="time"
+        value={time}
+        onChange={(e) => setTime(e.target.value)}
+        title="看診時間（選填，提醒會帶上）"
+      />
+      <input
         value={label}
         onChange={(e) => setLabel(e.target.value)}
-        placeholder="例：上午10點 心臟科回診 林口長庚"
+        placeholder="例：心臟科回診 林口長庚"
       />
       <button type="button" onClick={submit}>
         {editingId ? "更新" : "新增"}

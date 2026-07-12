@@ -60,6 +60,17 @@ def test_has_route_true_only_with_adapter():
     assert router.has_route(PrincipalType.ELDER, "e1") is False
 
 
+def test_send_text_channels_returns_succeeded_channel_names():
+    """✅ 庚-16（A-41）：回傳實際成功的通道名，供送達留痕標註語意。"""
+    line = FakeOutboundChannel()
+    app = FakeOutboundChannel()
+    router = ChannelRouter(
+        _Directory([_binding(Channel.LINE, "U-1"), _binding(Channel.APP, "dev-1")]),
+        {Channel.LINE: line, Channel.APP: app},
+    )
+    assert router.send_text_channels(PrincipalType.ELDER, "e1", "哈囉") == ["line", "app"]
+
+
 class _BoomChannel:
     def send_text(self, external_id, text):
         raise RuntimeError("channel down")

@@ -140,7 +140,7 @@ def test_turn_records_trace_chain():
     res = _post_audio(_client(svc, traces=traces), token)
     assert res.status_code == 201
     assert len(traces.asr_calls) == 1
-    assert len(traces.llm_calls) == 1
+    assert len(traces.llm_calls) == 2  # 危急分級＋回覆生成（✅ 庚-10）
     assert len(traces.replies) == 1
 
 

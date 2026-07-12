@@ -61,8 +61,10 @@ class _Gate:
 
     def __init__(self, allow):
         self._allow = allow
+        self.resolve_calls = 0
 
     def resolve_elder(self, channel, external_id):
+        self.resolve_calls += 1
         return "e-1" if self._allow else None
 
 
@@ -123,6 +125,35 @@ def test_pipeline_receives_external_id_and_channel_for_observability():
         gate=_Gate(True),
     )
     assert pipe.obs_marks == [("U-9", "line")]  # channel 取自 InboundMessage.channel
+
+
+def test_dispatch_skips_resolve_when_elder_id_provided():
+    """✅ 庚-12（A-11）：呼叫端（App turns）已解析過本人時傳入 elder_id，
+    dispatch 不再重查閘門——省掉每輪一趟重複 DB 往返。"""
+    gate = _Gate(True)
+    pipe = _Pipeline(text="回覆")
+    dispatch(
+        _msg("audio", audio=b"\x01", reply=_Replies()),
+        pipeline=pipe,
+        binding=_Binding(None),
+        gate=gate,
+        elder_id="e-pre",
+    )
+    assert gate.resolve_calls == 0
+    assert pipe.calls == [(b"\x01", "e-pre")]
+
+
+def test_dispatch_resolves_when_elder_id_not_provided():
+    gate = _Gate(True)
+    pipe = _Pipeline(text="回覆")
+    dispatch(
+        _msg("audio", audio=b"\x01", reply=_Replies()),
+        pipeline=pipe,
+        binding=_Binding(None),
+        gate=gate,
+    )
+    assert gate.resolve_calls == 1
+    assert pipe.calls == [(b"\x01", "e-1")]
 
 
 def test_text_flag_off_falls_back_to_prompt():
