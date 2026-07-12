@@ -78,10 +78,11 @@ export async function addAppointment(
   elderId: string,
   date: string,
   label: string,
+  time: string,
 ): Promise<void> {
   await apiFetch(`/api/v1/elders/${elderId}/appointments`, {
     method: "POST",
-    body: JSON.stringify({ date, label }),
+    body: JSON.stringify({ date, label, time }),
   });
 }
 
@@ -90,10 +91,11 @@ export async function updateAppointment(
   appointmentId: string,
   date: string,
   label: string,
+  time: string,
 ): Promise<void> {
   await apiFetch(`/api/v1/elders/${elderId}/appointments/${appointmentId}`, {
     method: "PUT",
-    body: JSON.stringify({ date, label }),
+    body: JSON.stringify({ date, label, time }),
   });
 }
 

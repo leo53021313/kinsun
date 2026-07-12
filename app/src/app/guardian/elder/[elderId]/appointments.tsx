@@ -22,6 +22,12 @@ function toDateString(d: Date): string {
   return `${d.getFullYear()}-${month}-${day}`;
 }
 
+function toTimeString(d: Date): string {
+  const hours = `${d.getHours()}`.padStart(2, "0");
+  const minutes = `${d.getMinutes()}`.padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
 /** 回診管理：清單＋編輯／刪除＋同頁表單；日期用系統選擇器、最早選今天。 */
 export default function AppointmentsManage() {
   const { elderId } = useLocalSearchParams<{ elderId: string }>();
@@ -29,9 +35,11 @@ export default function AppointmentsManage() {
   const token = session?.token ?? "";
   const [appointments, setAppointments] = useState<Appointment[] | null>(null);
   const [date, setDate] = useState("");
+  const [time, setTime] = useState("");
   const [label, setLabel] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showPicker, setShowPicker] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -52,9 +60,11 @@ export default function AppointmentsManage() {
 
   function resetForm() {
     setDate("");
+    setTime("");
     setLabel("");
     setEditingId(null);
     setShowPicker(false);
+    setShowTimePicker(false);
   }
 
   async function submit() {
@@ -66,9 +76,9 @@ export default function AppointmentsManage() {
     setBusy(true);
     try {
       if (editingId) {
-        await updateAppointment(elderId, editingId, date, trimmed, token);
+        await updateAppointment(elderId, editingId, date, trimmed, time, token);
       } else {
-        await createAppointment(elderId, date, trimmed, token);
+        await createAppointment(elderId, date, trimmed, time, token);
       }
       resetForm();
       await reload();
@@ -82,12 +92,14 @@ export default function AppointmentsManage() {
   function startEdit(appt: Appointment) {
     setEditingId(appt.appointment_id);
     setDate(appt.date);
+    setTime(appt.time);
     setLabel(appt.label);
     setError("");
   }
 
   function confirmRemove(appt: Appointment) {
-    Alert.alert("刪除回診", `確定要刪除「${appt.date}｜${appt.label}」嗎？`, [
+    const shown = appt.time ? `${appt.date} ${appt.time}` : appt.date;
+    Alert.alert("刪除回診", `確定要刪除「${shown}｜${appt.label}」嗎？`, [
       { text: "取消", style: "cancel" },
       {
         text: "刪除",
@@ -126,7 +138,8 @@ export default function AppointmentsManage() {
           appointments.map((a) => (
             <View key={a.appointment_id} style={styles.item}>
               <Text style={styles.itemText} maxFontSizeMultiplier={1.6}>
-                {a.date}｜{a.label}
+                {a.date}
+                {a.time ? ` ${a.time}` : ""}｜{a.label}
               </Text>
               <View style={styles.itemActions}>
                 <Button label="編輯" variant="outline" disabled={busy} onPress={() => startEdit(a)} />
@@ -169,11 +182,41 @@ export default function AppointmentsManage() {
             }}
           />
         ) : null}
+        <View style={styles.dateField}>
+          <Text style={styles.dateLabel} maxFontSizeMultiplier={1.6}>
+            看診時間（選填）
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setShowTimePicker((cur) => !cur)}
+            style={styles.dateInput}
+          >
+            <Text
+              maxFontSizeMultiplier={1.6}
+              style={[styles.dateText, time ? null : styles.datePlaceholder]}
+            >
+              {time || "點這裡選時間（提醒會帶上）"}
+            </Text>
+          </Pressable>
+        </View>
+        {showTimePicker ? (
+          <DateTimePicker
+            value={time ? new Date(`2000-01-01T${time}:00`) : new Date()}
+            mode="time"
+            display={Platform.OS === "ios" ? "spinner" : "default"}
+            onChange={(event, selected) => {
+              setShowTimePicker(false);
+              if (event.type === "set" && selected) {
+                setTime(toTimeString(selected));
+              }
+            }}
+          />
+        ) : null}
         <Field
           label="回診內容"
           value={label}
           onChangeText={setLabel}
-          placeholder="例：上午10點 心臟科回診 林口長庚"
+          placeholder="例：心臟科回診 林口長庚"
         />
         <Button
           label={editingId ? "更新" : "新增"}
