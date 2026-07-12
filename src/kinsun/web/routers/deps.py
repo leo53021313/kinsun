@@ -19,6 +19,8 @@ class GuardianAuth:
 
     guardian_id: str | None
     line_user_id: str | None
+    # LIFF 路徑的 LINE 顯示名稱（✅ 庚-29）：首次建家屬檔命名用；App 路徑為空。
+    display_name: str = ""
 
 
 def build_current_guardian(
@@ -36,7 +38,8 @@ def build_current_guardian(
                 raise HTTPException(status_code=401, detail=ErrorCode.INVALID_TOKEN)
             return GuardianAuth(api_token.principal_id, None)
         try:
-            return GuardianAuth(None, verifier.verify(token))
+            identity = verifier.verify(token)
+            return GuardianAuth(None, identity.line_user_id, identity.display_name)
         except AuthError as exc:
             raise HTTPException(status_code=401, detail=ErrorCode.INVALID_TOKEN) from exc
 

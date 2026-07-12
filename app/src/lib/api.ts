@@ -3,7 +3,8 @@
  * 所有 JSON 欄位 snake_case，與後端完全同鍵名。base URL 由 EXPO_PUBLIC_API_URL 提供。
  */
 
-import { ApiError, type Envelope, unwrapEnvelope } from "kinsun-shared/envelope";
+import { createApiClient } from "kinsun-shared/client";
+import { ApiError } from "kinsun-shared/envelope";
 import type {
   AppNotification,
   Appointment,
@@ -35,34 +36,28 @@ export type {
 
 const BASE_URL = (process.env.EXPO_PUBLIC_API_URL ?? "").replace(/\/$/, "");
 
-async function request<T>(
-  path: string,
-  init: RequestInit & { token?: string } = {},
-): Promise<T> {
-  if (!BASE_URL) {
-    throw new ApiError(0, "missing_base_url", "尚未設定 EXPO_PUBLIC_API_URL（見 app/.env.example）");
-  }
-  const headers: Record<string, string> = {
-    ...(init.body !== undefined && !(init.headers as Record<string, string>)?.["Content-Type"]
-      ? { "Content-Type": "application/json" }
-      : {}),
-    ...((init.headers as Record<string, string>) ?? {}),
-  };
-  if (init.token) {
-    headers.Authorization = `Bearer ${init.token}`;
-  }
-  const res = await fetch(`${BASE_URL}${path}`, { ...init, headers });
-  if (res.status === 204) {
-    return undefined as T;
-  }
-  let body: Envelope<T>;
-  try {
-    body = (await res.json()) as Envelope<T>;
-  } catch {
-    throw new ApiError(res.status, `http_${res.status}`, `HTTP ${res.status}`);
-  }
-  return unwrapEnvelope(res.status, body);
-}
+// 共同流程（信封／204／錯誤）住共用包（✅ 庚-30）；此處只注入 App 端差異。
+const client = createApiClient({
+  baseUrl: () => {
+    if (!BASE_URL) {
+      throw new ApiError(
+        0,
+        "missing_base_url",
+        "尚未設定 EXPO_PUBLIC_API_URL（見 app/.env.example）",
+      );
+    }
+    return BASE_URL;
+  },
+  authHeaders: (token) => {
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+    return headers;
+  },
+});
+
+const request = client.request;
 
 // --- App 認證 ---
 
