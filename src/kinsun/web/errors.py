@@ -1,0 +1,63 @@
+"""API 錯誤碼中央註冊（✅ 庚-25／A-56）：對外錯誤碼的唯一出處。
+
+新增錯誤碼三步：
+1. 此處加成員；
+2. `envelope.ERROR_MESSAGES` 配繁中文案——有測試強制，漏配 CI 會紅；
+3. `docs/dev/06_API設計規範.md` §3 錯誤碼表補列。
+
+服務層例外（`InviteError`／`AppAccountError`）的 reason 屬領域內部詞彙，
+在路由邊界翻成本表成員（如 `used` → `INVITE_USED`），不直接外流。
+"""
+
+from __future__ import annotations
+
+from enum import StrEnum
+
+
+class ErrorCode(StrEnum):
+    # --- 認證與授權 ---
+    MISSING_TOKEN = "missing_token"
+    INVALID_TOKEN = "invalid_token"
+    INVALID_CREDENTIALS = "invalid_credentials"
+    INVALID_ADMIN_KEY = "invalid_admin_key"
+    CONSENT_REVOKED = "consent_revoked"
+
+    # --- 資源不存在 ---
+    ELDER_NOT_FOUND = "elder_not_found"
+    MEDICATION_NOT_FOUND = "medication_not_found"
+    APPOINTMENT_NOT_FOUND = "appointment_not_found"
+    TRACE_NOT_FOUND = "trace_not_found"
+    JOB_NOT_FOUND = "job_not_found"
+
+    # --- 帳號 ---
+    EMAIL_TAKEN = "email_taken"
+    PHONE_TAKEN = "phone_taken"
+    PASSWORD_TOO_SHORT = "password_too_short"
+    INVALID_PHONE = "invalid_phone"
+    NOT_PAIRED = "not_paired"
+
+    # --- 邀請碼 ---
+    INVITE_NOT_FOUND = "invite_not_found"
+    INVITE_USED = "invite_used"
+    INVITE_EXPIRED = "invite_expired"
+    INVITE_WRONG_ROLE = "invite_wrong_role"
+    TOO_MANY_ATTEMPTS = "too_many_attempts"
+
+    # --- 輸入驗證 ---
+    NAME_REQUIRED = "name_required"
+    LABEL_REQUIRED = "label_required"
+    SLOTS_REQUIRED = "slots_required"
+    INVALID_SLOT = "invalid_slot"
+    INVALID_DATE = "invalid_date"
+    INVALID_TIME = "invalid_time"
+    DATE_IN_PAST = "date_in_past"
+    VALIDATION_ERROR = "validation_error"
+
+    # --- 請求限制 ---
+    TOO_MANY_REQUESTS = "too_many_requests"
+    AUDIO_TOO_LARGE = "audio_too_large"
+    UNSUPPORTED_MEDIA_TYPE = "unsupported_media_type"
+
+    # --- 維運 ---
+    INTERNAL_TESTING_DISABLED = "internal_testing_disabled"
+    ADMIN_DISABLED = "admin_disabled"

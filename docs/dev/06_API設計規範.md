@@ -72,22 +72,31 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | 錯誤碼 | HTTP | 語意 |
 | :--- | :---: | :--- |
 | `missing_token` | 401 | 未帶 Authorization |
+| `missing_token` | 401 | 未帶 Authorization header |
 | `invalid_token` | 401 | token 無效／型別不符（取代 as-is 的 `"invalid token"`／`"missing bearer token"`） |
-| `token_expired` | 401 | 家屬 token 過期（D-25 新增） |
+| ~~`token_expired`~~ | — | **作廢**（D-25 修訂：全 token 永久記住，無過期） |
 | `invalid_credentials` | 401 | 帳密錯誤（不洩露帳號存在性，維持現行良好實務） |
 | `invalid_admin_key` | 401 | admin 金鑰錯誤 |
 | `consent_revoked` | 403 | 同意已撤回 |
 | `elder_not_found`／`medication_not_found`／`appointment_not_found`／`trace_not_found`／`invite_not_found` | 404 | 資源不存在（`not_found` 細分化） |
 | `email_taken` | 409 | 註冊 email 已存在 |
-| `invite_used`／`invite_expired`／`too_many_attempts` | 409 | 邀請碼狀態錯誤 |
+| `phone_taken` | 409 | 手機號碼已綁另一位長輩（己-6） |
+| `invalid_phone` | 409 | 手機號碼格式不正確（己-6） |
+| `password_too_short` | 409 | 密碼不足 8 字元（服務層驗證，✅ 庚-20） |
+| `not_paired` | 409 | 長輩帳密登入但未掃碼配對（己-6：首次一定掃碼） |
+| `invite_used`／`invite_expired`／`too_many_attempts`／`invite_wrong_role` | 409 | 邀請碼狀態錯誤（wrong_role＝家屬碼誤走裝置綁定，✅ 庚-04） |
 | `name_required`／`label_required`／`slots_required`／`invalid_slot`／`invalid_date`／`invalid_time`／`date_in_past` | 400 | 欄位業務驗證失敗 |
 | `validation_error` | 422 | pydantic 欄位驗證失敗（統一改寫，§2.3） |
 | `audio_too_large` | 413 | 音檔超過上限（上限值 env 可調，✅ D-26） |
-| `invalid_signature` | 400 | LINE webhook 驗簽失敗 |
+| `unsupported_media_type` | 415 | 對講機收到非音訊 content-type（✅ D-61 丙-11） |
+| `too_many_requests` | 429 | 認證節流（✅ D-20 甲-3；跨進程共享，✅ 庚-08） |
 | `job_not_found` | 404 | admin 手動觸發：查無此排程任務（spec 2026-07-12） |
 | `internal_testing_disabled` | 403 | admin 手動觸發：內測模式未開（`INTERNAL_TESTING_ENABLED=false`，spec 2026-07-12） |
 | `admin_disabled` | 503 | admin 未設金鑰（fail-closed；措辭是否洩組態 → 13 循環） |
-| `overloaded` | 503 | DGX 服務過載（信號量滿） |
+| `overloaded` | 503 | ⚠️ 死碼待清（庚-43）：文案表殘留、無拋出點 |
+
+> **中央註冊（✅ 庚-25）**：以上錯誤碼的唯一出處為 `src/kinsun/web/errors.py` 的 `ErrorCode`；
+> `tests/test_web_errors.py` 強制「每碼必有繁中文案、文案表無孤兒」雙向對齊。新增錯誤碼三步見該模組 docstring。
 
 ---
 

@@ -21,6 +21,7 @@ from kinsun.accounts.models import Channel, PrincipalType
 from kinsun.accounts.service import AccountService
 from kinsun.channels.inbound import InboundMessage, dispatch
 from kinsun.web.envelope import ok
+from kinsun.web.errors import ErrorCode
 
 logger = logging.getLogger("kinsun.channels.app")
 
@@ -70,7 +71,7 @@ def create_app_turns_router(
         token = authorization.removeprefix("Bearer ").strip()
         auth = accounts.authenticate_token(token) if token else None
         if auth is None or auth.principal_type is not PrincipalType.ELDER:
-            raise HTTPException(status_code=401, detail="invalid_token")
+            raise HTTPException(status_code=401, detail=ErrorCode.INVALID_TOKEN)
         return auth.principal_id
 
     def _publish_inbound(audio: bytes) -> str:
@@ -90,14 +91,14 @@ def create_app_turns_router(
         # token 不代表同意：撤回或綁定消失即擋（閘門以 (channel, external_id) 複核）。
         external_id = accounts.app_external_id_of_elder(elder_id)
         if external_id is None or gate.resolve_elder(Channel.APP, external_id) is None:
-            raise HTTPException(status_code=403, detail="consent_revoked")
+            raise HTTPException(status_code=403, detail=ErrorCode.CONSENT_REVOKED)
         # content-type 驗證（✅ D-61 丙-11）：只收音訊，擋誤傳的 JSON／文字。
         content_type = request.headers.get("content-type", "")
         if not content_type.startswith("audio/"):
-            raise HTTPException(status_code=415, detail="unsupported_media_type")
+            raise HTTPException(status_code=415, detail=ErrorCode.UNSUPPORTED_MEDIA_TYPE)
         audio = await request.body()
         if len(audio) > max_audio_bytes:
-            raise HTTPException(status_code=413, detail="audio_too_large")
+            raise HTTPException(status_code=413, detail=ErrorCode.AUDIO_TOO_LARGE)
         collector = _TurnCollector()
         msg = InboundMessage(
             Channel.APP,
