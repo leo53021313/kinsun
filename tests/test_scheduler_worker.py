@@ -103,6 +103,9 @@ def _fake_core(
         ),
         traces=SimpleNamespace(purge_older_than=lambda cutoff: None),
         reminder_logs=reminder_logs or _SpyReminderLogs(),
+        # 兩根共用收進 Core（✅ 庚-44）。
+        risk_events=SimpleNamespace(list_for_elder=lambda elder_id: []),
+        summaries=SimpleNamespace(save=lambda *a, **k: None),
         notifications=object(),
         agent=SimpleNamespace(proactive=lambda elder_id, intent: f"主動：{intent}"),
     )

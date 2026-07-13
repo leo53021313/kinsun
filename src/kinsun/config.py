@@ -59,6 +59,7 @@ class Settings:
     # 每進程連線池上限（✅ 庚-26／A-55）：總量公式見 .env.example 與 14 部署文檔。
     database_pool_max_size: int
     longterm_top_k: int
+    longterm_health_top_k: int
     longterm_rerank_enabled: bool
     binding_session_ttl_minutes: int
     medication_morning_hour: int
@@ -123,7 +124,7 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         memory_max_turns=int(env.get("MEMORY_MAX_TURNS", "200")),
         timezone=env.get("TIMEZONE", "Asia/Taipei"),
         longterm_embedding_model=env.get("LONGTERM_EMBEDDING_MODEL", "gemini-embedding-001"),
-        longterm_consolidation_hour=int(env.get("LONGTERM_CONSOLIDATION_HOUR", "3")),
+        longterm_consolidation_hour=int(env.get("LONGTERM_CONSOLIDATION_HOUR", "0")),
         scheduler_tick_seconds=int(env.get("SCHEDULER_TICK_SECONDS", "60")),
         proactive_greeting_hour=int(env.get("PROACTIVE_GREETING_HOUR", "8")),
         proactive_inactivity_hour=int(env.get("PROACTIVE_INACTIVITY_HOUR", "10")),
@@ -133,6 +134,7 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         database_url=_require(env, "DATABASE_URL"),
         database_pool_max_size=int(env.get("DATABASE_POOL_MAX_SIZE", "5")),
         longterm_top_k=int(env.get("LONGTERM_TOP_K", "5")),
+        longterm_health_top_k=int(env.get("LONGTERM_HEALTH_TOP_K", "3")),
         # 記憶檢索重排（✅ D-40 丁-4）：LLM reranker，決議預設開；額度吃緊時可關。
         longterm_rerank_enabled=_parse_bool(env.get("LONGTERM_RERANK_ENABLED", "true")),
         binding_session_ttl_minutes=int(env.get("BINDING_SESSION_TTL_MINUTES", "10")),

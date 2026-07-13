@@ -21,7 +21,7 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.memory_max_turns == 200
     assert settings.timezone == "Asia/Taipei"
     assert settings.longterm_embedding_model == "gemini-embedding-001"
-    assert settings.longterm_consolidation_hour == 3
+    assert settings.longterm_consolidation_hour == 0  # ✅ 庚-48：00:05 整理，盲窗 5 分
     assert settings.scheduler_tick_seconds == 60
     assert settings.proactive_greeting_hour == 8
     assert settings.proactive_inactivity_hour == 10
@@ -178,3 +178,9 @@ def test_database_pool_max_size_default_and_override():
     assert settings.database_pool_max_size == 5
     settings = load_settings({**BASE_ENV, "DATABASE_POOL_MAX_SIZE": "3"})
     assert settings.database_pool_max_size == 3
+
+
+def test_longterm_health_top_k_default_and_override():
+    """✅ 庚-38（A-22）：健康記憶檢索條數接 settings（原硬編建構子預設）。"""
+    assert load_settings(BASE_ENV).longterm_health_top_k == 3
+    assert load_settings({**BASE_ENV, "LONGTERM_HEALTH_TOP_K": "6"}).longterm_health_top_k == 6

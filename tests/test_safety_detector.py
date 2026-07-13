@@ -72,3 +72,13 @@ def test_classifier_error_symptom_keyword_keeps_l2():
     det = RiskDetector(_BoomClassifier())
     got = det.assess("我一直痛")
     assert got.tier == RiskTier.L2
+
+
+def test_symptom_keyword_with_llm_error_reason_reflects_keyword():
+    """✅ 庚-41（A-44）：症狀詞撐住的 L2 遇分級器故障，reason 不得寫「分級器例外」
+    ——家屬通知文案取 reason，應反映真正觸發原因（關鍵詞）。"""
+    detector = RiskDetector(_BoomClassifier())
+    got = detector.assess("我今天一直吐")
+    assert got.tier is RiskTier.L2
+    assert "分級器例外" not in got.reason
+    assert "症狀" in got.reason

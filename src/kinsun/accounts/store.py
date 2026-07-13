@@ -37,7 +37,6 @@ class AccountStore(Protocol):
     def get_guardian(self, guardian_id: str) -> Guardian | None: ...
     def get_elder_by_line(self, line_user_id: str) -> Elder | None: ...
     def save_elder_guardian(self, eg: ElderGuardian, *, tx: Executor | None = None) -> None: ...
-    def get_elder_guardian(self, elder_id: str, guardian_id: str) -> ElderGuardian | None: ...
     def list_elder_guardians(self, elder_id: str) -> list[ElderGuardian]: ...
     def elder_ids_of_guardian(self, guardian_id: str) -> list[str]: ...
     def save_consent(self, consent: Consent, *, tx: Executor | None = None) -> None: ...
@@ -111,7 +110,7 @@ class PgAccountStore:
         )
 
     def get_guardian_by_line(self, line_user_id: str) -> Guardian | None:
-        # 讀取端已切經 channel_bindings（1C）；欄位 guardians.line_user_id 僅剩雙寫，1D 退役。
+        # 讀取端經 channel_bindings（1C）；guardians.line_user_id 欄位已於 1D 退役 DROP。
         binding = self.get_channel_binding(Channel.LINE, line_user_id)
         if binding is None or binding.principal_type is not PrincipalType.GUARDIAN:
             return None
@@ -124,7 +123,7 @@ class PgAccountStore:
         return Guardian(*rows[0]) if rows else None
 
     def get_elder_by_line(self, line_user_id: str) -> Elder | None:
-        # 讀取端已切經 channel_bindings（1C）；欄位 elders.line_user_id 僅剩雙寫，1D 退役。
+        # 讀取端經 channel_bindings（1C）；elders.line_user_id 欄位已於 1D 退役 DROP。
         binding = self.get_channel_binding(Channel.LINE, line_user_id)
         if binding is None or binding.principal_type is not PrincipalType.ELDER:
             return None
@@ -147,14 +146,6 @@ class PgAccountStore:
     def _to_eg(self, row: tuple) -> ElderGuardian:
         elder_id, guardian_id, role, order = row
         return ElderGuardian(elder_id, guardian_id, Role(role), order)
-
-    def get_elder_guardian(self, elder_id: str, guardian_id: str) -> ElderGuardian | None:
-        rows = self._db.query(
-            "SELECT elder_id, guardian_id, role, escalation_order "
-            "FROM elder_guardians WHERE elder_id = %s AND guardian_id = %s",
-            (elder_id, guardian_id),
-        )
-        return self._to_eg(rows[0]) if rows else None
 
     def list_elder_guardians(self, elder_id: str) -> list[ElderGuardian]:
         rows = self._db.query(
@@ -442,9 +433,6 @@ class FakeAccountStore:
 
     def save_elder_guardian(self, eg: ElderGuardian, *, tx: Executor | None = None) -> None:
         self.elder_guardians[(eg.elder_id, eg.guardian_id)] = eg
-
-    def get_elder_guardian(self, elder_id: str, guardian_id: str) -> ElderGuardian | None:
-        return self.elder_guardians.get((elder_id, guardian_id))
 
     def list_elder_guardians(self, elder_id: str) -> list[ElderGuardian]:
         rows = [v for (e, _), v in self.elder_guardians.items() if e == elder_id]
