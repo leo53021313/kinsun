@@ -62,7 +62,7 @@
   * 一段文字內容欄位統一用 `content`，如 LLM Message 的 `role`／`content`。
 * 模組與檔案：
   * 模組目錄用複數（集合語意），如 `accounts/`、`medications/`；key-value 狀態表或單例概念可例外，如 `scheduler_state`。
-  * 持久層固定三件套：檔名 `store.py`＋`<領域>Store`（Protocol）＋`Pg<領域>Store`（Postgres 實作）＋`Fake<領域>Store`（測試替身），如 `PgMedicationStore`。例外（D-42，2026-07-08 核定）：事件流水帳或單一狀態表可依語意命名檔案（如 `safety/events.py`、`binding/session.py`、`scheduler/state.py`、`reports/reminders.py`、`reports/summaries.py`），但三件套結構不變、類別名必帶 `Store` 字尾。
+  * 持久層固定三件套：檔名 `store.py`＋`<領域>Store`（Protocol）＋`Pg<領域>Store`（Postgres 實作）＋`Fake<領域>Store`（測試替身），如 `PgMedicationStore`。例外（D-42，2026-07-08 核定）：事件流水帳或單一狀態表可依語意命名檔案（如 `safety/events.py`、`safety/deliveries.py`、`binding/session.py`、`scheduler/state.py`、`reports/reminders.py`、`reports/summaries.py`），但三件套結構不變、類別名必帶 `Store` 字尾。
   * 領域模型檔名固定為 `models.py`，如 `medications/models.py`。
   * 記憶子系統分三層：`memory/shortterm.py`（今日對話）、`memory/longterm/`（Mem0 長期記憶，子套件）、`memory/recall.py`（情境聚合）；共用資料模型放 `memory/models.py`（D-43，2026-07-08 描述對齊現實）。
   * `speech/` 為 ASR／TTS 模型服務呼叫端（client）、`audio/` 為音檔上傳託管、`services/` 為 DGX 端可獨立部署伺服器實作，三者跨層同名（如 `speech/asr.py` 對 `services/asr/`）為合理設計，不需合併。
