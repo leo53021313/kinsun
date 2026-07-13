@@ -90,7 +90,11 @@ def build_externals(settings: Settings) -> Externals:
         model=settings.gemini_model,
         timeout=settings.gemini_timeout_seconds,
     )
-    long_term = Mem0LongTermStore(build_mem0_memory(settings), top_k=settings.longterm_top_k)
+    long_term = Mem0LongTermStore(
+        build_mem0_memory(settings),
+        top_k=settings.longterm_top_k,
+        health_top_k=settings.longterm_health_top_k,
+    )
     messenger = LineApiMessenger(settings.line_channel_access_token)
     return Externals(db=db, gemini=gemini, long_term=long_term, messenger=messenger)
 
