@@ -13,7 +13,7 @@ from psycopg_pool import ConnectionPool
 # 該遷移（於 ensure_schema 最後執行）已含同名冪等索引，新庫舊庫皆適用。
 MEMORY_DDL = (
     "CREATE TABLE IF NOT EXISTS turns ("
-    "id BIGSERIAL PRIMARY KEY, elder_id TEXT, line_user_id TEXT, role TEXT NOT NULL, "
+    "id BIGSERIAL PRIMARY KEY, elder_id TEXT, role TEXT NOT NULL, "
     "content TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
 )
 
@@ -134,7 +134,7 @@ RAG_DDL = (
 
 RISK_EVENTS_DDL = (
     "CREATE TABLE IF NOT EXISTS risk_events ("
-    "risk_event_id TEXT PRIMARY KEY, elder_id TEXT, line_user_id TEXT, "
+    "risk_event_id TEXT PRIMARY KEY, elder_id TEXT, "
     "tier INTEGER NOT NULL, reason TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
 )
 
@@ -177,7 +177,7 @@ MEMORY_CONSOLIDATIONS_DDL = (
 
 CONVERSATION_SUMMARIES_DDL = (
     "CREATE TABLE IF NOT EXISTS conversation_summaries ("
-    "elder_id TEXT, line_user_id TEXT, date TEXT NOT NULL, "
+    "elder_id TEXT, date TEXT NOT NULL, "
     "content TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
 )
 
@@ -247,22 +247,23 @@ REPLIES_ROUND_TRIP_MIGRATION_DDL = (
 )
 
 # 會話主鍵遷移（冪等）：turns／risk_events／conversation_summaries 加 elder_id、
-# 舊 line_user_id 欄改可空（新寫入不再填）；摘要卸下 (line_user_id, date) 主鍵、
-# 改掛 (elder_id, date) 部分唯一索引。既有孤兒列（對不到 elders）保留原樣。
-# 歷史回填（UPDATE … FROM elders）已於共用庫執行完畢，並隨帳號欄位退役一併移除。
+# 摘要卸下舊主鍵改掛 (elder_id, date) 部分唯一索引；line_user_id 死欄已於
+# 遷移末段 DROP（✅ 庚-45——1B 證實孤兒列全為測試資料，Leo 核定收縮）。
 SESSION_KEY_MIGRATION_DDL = (
     "ALTER TABLE turns ADD COLUMN IF NOT EXISTS elder_id TEXT;"
-    "ALTER TABLE turns ALTER COLUMN line_user_id DROP NOT NULL;"
     "CREATE INDEX IF NOT EXISTS idx_turns_elder_created ON turns (elder_id, created_at);"
     "ALTER TABLE risk_events ADD COLUMN IF NOT EXISTS elder_id TEXT;"
-    "ALTER TABLE risk_events ALTER COLUMN line_user_id DROP NOT NULL;"
     "CREATE INDEX IF NOT EXISTS idx_risk_events_elder_created "
     "ON risk_events (elder_id, created_at);"
     "ALTER TABLE conversation_summaries ADD COLUMN IF NOT EXISTS elder_id TEXT;"
     "ALTER TABLE conversation_summaries DROP CONSTRAINT IF EXISTS conversation_summaries_pkey;"
-    "ALTER TABLE conversation_summaries ALTER COLUMN line_user_id DROP NOT NULL;"
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_conversation_summaries_elder_date "
     "ON conversation_summaries (elder_id, date) WHERE elder_id IS NOT NULL;"
+    # 死欄收縮（✅ 庚-45／A-25、A-37；Leo 核定 DROP）：1B 已證實舊資料 100% 孤兒
+    # 測試資料，觀測五表已於庚-07 正名——三表 line_user_id 僅剩混淆價值。
+    "ALTER TABLE turns DROP COLUMN IF EXISTS line_user_id;"
+    "ALTER TABLE risk_events DROP COLUMN IF EXISTS line_user_id;"
+    "ALTER TABLE conversation_summaries DROP COLUMN IF EXISTS line_user_id;"
 )
 
 # 帳號欄位退役（收縮步，冪等）：LINE 識別已全面遷入 channel_bindings。
