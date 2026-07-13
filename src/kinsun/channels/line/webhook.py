@@ -35,7 +35,7 @@ def _handle_events(
     gate,
     voice,
     traces=None,
-    text_input_enabled: bool = False,
+    text_input_enabled: bool = True,
 ) -> None:
     for event in events:
         try:
@@ -66,7 +66,7 @@ def create_app(
     voice=None,
     traces=None,
     inbound_audio=None,
-    text_input_enabled: bool = False,
+    text_input_enabled: bool = True,
     on_shutdown: Callable[[], None] | None = None,
 ) -> FastAPI:
     channel = LineChannel(messenger, traces=traces, inbound_audio=inbound_audio)

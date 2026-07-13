@@ -1,6 +1,6 @@
 # WBS 開發計畫（一次性重構）- 金孫 KinSun
 
-> **版本:** v1.6 | **更新:** 2026-07-12 | **狀態:** 甲～己批全數完成；**新增庚批 56 工項**（2026-07-10 架構文檔深化發現，未排時程、待定優先序）；內測基礎建設（D-73，批次外插單）✅ 完工；**新增辛批**（Leo 逐項指示的發表前功能補強） 
+> **版本:** v1.6 | **更新:** 2026-07-12 | **狀態:** 甲～庚批全數完成（**庚批 56 項 2026-07-13 全數結案**：50 完成＋5 擱置 RAG／著作權＋1 不改）；內測基礎建設（D-73，批次外插單）✅ 完工；**新增辛批**（Leo 逐項指示的發表前功能補強） 
 > **總工期**：2026-07-09 ～ 2026-08-20（6 週，✅ D-04 硬里程碑倒排）
 > **施工順序**：甲→乙→丙→丁→戊→己（✅ Leo 核准 2026-07-08）；**分工：全批由 Leo 一人施工**（✅ 會-16，2026-07-09）。
 > 每個工項出處文件都有細節；規模：S＝半天內、M＝1–3 天、L＝3 天以上。
@@ -147,39 +147,39 @@
 
 | # | 工項 | 問題 | 規模 |
 | :--- | :--- | :---: | :---: |
-| 庚-34 | RAG 死碼死表清理：`InMemoryVectorStore`（零引用）、`rag_crawl_jobs`（無寫入者）、`document_loader.py`（生產未接線）。 | A-31 | S |
-| 庚-35 | 工具迴圈末輪修復：`agent.py` 第 `max_tool_iters` 輪的工具結果應回傳模型消化（現直接回 fallback，工具成功卻回退）。 | A-14 | S |
-| 庚-36 | 例外命名：自訂 `MemoryError` → `MemoryStoreError`（遮蔽 Python 內建）。 | A-15 | S |
-| 庚-37 | 群 1 小項三件：`text_input_enabled` 預設值統一；`VoiceReplyDelivery` docstring 去「LINE」；`FALLBACK_PROMPT`／`FALLBACK_REPLY` 合併。 | A-16 | S |
-| 庚-38 | 記憶群小項：provenance 三值僅 self_claimed 流動（另兩值決定移除或接線）；`health_top_k` 接 settings；`LongTermStore.search` 簽章預設值對齊。 | A-22 | S |
-| 庚-39 | RAG 小項四件：`ingestion.py:143` 冗餘 except；citation 對位；稽核補 document_id／url。 | A-33 | S |
-| 庚-40 | 健康領域小項：`health-report` window_days 開放 query 參數；reminder kind 集中列舉。 | A-36 | S |
-| 庚-41 | 安全群小項五件：症狀詞＋LLM 故障時 reason 誤導；proactive 參數名 `line_user_id`；evaluation docstring L3 殘留；deliveries.py 補進 AGENTS.md D-42 例外清單；risk_events.line_user_id 死欄。 | A-44 | S |
-| 庚-42 | 帳號群小項五件：死碼 `get_elder_guardian`；長輩自助登出端點；`bind_elder_device` 重複讀 invite；store 註解滯後 DDL；AGENTS.md:76 布林命名範例對齊。 | A-52 | S |
-| 庚-43 | 底座小項五件：`.env.example:70` 門檻註解去舊四級；`ERROR_MESSAGES["overloaded"]` 死碼；`web/envelope.py` 補單元測試；`Executor` Protocol 補 `transaction()`；`.env.example` 標「app 不讀」鍵。 | A-58 | S |
-| 庚-44 | 兩組裝根重複接線：`PgRiskEventStore`／`PgConversationSummaryStore` 收進 Core（現兩根各 new，邊界與 traces 不一致）。 | A-57 | S |
-| 庚-45 | 死欄與殘留清理：`turns`／`conversation_summaries`／`risk_events` 的 `line_user_id` 收縮；`__pycache__` 改名前 .pyc；recency 設計文件過時註記。 | A-25、A-37 | S |
-| 庚-46 | 命名例外載明：短期記憶三件套住 `shortterm.py`（A-23）、RAG 持久層非三件套（A-32）、`FakeLongTermStore` 位置與測試替身命名（A-24）——載明為刻意例外或收斂。 | A-23／A-24／A-32 | S |
+| 庚-34 | ✅ 完成（2026-07-13）：InMemoryVectorStore／document_loader.py（含測試）刪除；rag_crawl_jobs DROP TABLE 退役。 | A-31 | S |
+| 庚-35 | ✅ 完成（2026-07-13，TDD）：迭代上限後補一次消化呼叫——工具結果送回模型產文字，仍要工具才回退。 | A-14 | S |
+| 庚-36 | ✅ 完成（2026-07-13）：MemoryError → MemoryStoreError，不再遮蔽內建。 | A-15 | S |
+| 庚-37 | ✅ 完成（2026-07-13）：webhook 預設對齊 True；docstring 通道中立；回退話術統一單一出處（agent.FALLBACK_REPLY）。 | A-16 | S |
+| 庚-38 | ✅ 完成（2026-07-13）：LONGTERM_HEALTH_TOP_K 入 settings；Protocol 簽章對齊；provenance 依 D-37 載明。 | A-22 | S |
+| 庚-39 | ✅ 完成（2026-07-13）：冗餘 except 收斂；citation 兩路徑對位（fallback [:2] 同源／LLM 全列重組）；稽核補 document_id／url。 | A-33 | S |
+| 庚-40 | ✅ 完成（2026-07-13）：health-report ?window_days=1..90；REMINDER_KINDS 集中列舉、四寫入端換常數。 | A-36 | S |
+| 庚-41 | ✅ 完成（2026-07-13，TDD）：症狀詞＋LLM 故障 reason 改「命中症狀詞」；proactive 參數正名；L3 殘留清；D-42 清單補 deliveries.py（第五件死欄併庚-45）。 | A-44 | S |
+| 庚-42 | ✅ 完成（2026-07-13）：長輩自助登出（DELETE /sessions 開放長輩 token＋對講機頁登出鈕，Leo 拍板）；redeem 加 expect_role 免重讀；死碼 get_elder_guardian 刪；store 註解對齊；AGENTS.md 布林範例改 has_valid_consent。 | A-52 | S |
+| 庚-43 | ✅ 完成（2026-07-13）：門檻註解三級制；overloaded 死碼刪；test_web_envelope 5 測試；Executor 補 transaction() 拔 type:ignore；RAG ingest 鍵標「app 不讀」。 | A-58 | S |
+| 庚-44 | ✅ 完成（2026-07-13）：PgRiskEventStore／PgConversationSummaryStore 收進 Core，兩根接線單一出處。 | A-57 | S |
+| 庚-45 | ✅ 完成（2026-07-13，Leo 核定 DROP）：三表 line_user_id 死欄收縮（冪等 DROP，序在回填後）；recency 設計文件過時註記；__pycache__ 殘留清理。 | A-25、A-37 | S |
+| 庚-46 | ✅ 完成（2026-07-13，Leo 選載明）：AGENTS.md 例外清單補三條（shortterm.py／RAG 持久層／FakeLongTermStore）。 | A-23／A-24／A-32 | S |
 
 ### 庚6 需 Leo 決策（非純工項）
 
 | # | 事項 | 問題 |
 | :--- | :--- | :---: |
-| 庚-47 | keywords 詞表定稿：現為 placeholder（絕對 6＋症狀 5 詞），召回率受限——依會-6「實測滾動加」，需照護專業投入。 | A-43 |
-| 庚-48 | 凌晨盲窗（00:00–03:00 昨日對話暫時檢索不到）：接受現況或調整整理時點——影響低但語意可見。 | A-21 |
-| 庚-49 | 同意撤回：D-13 決議不做入口，`revoked_at` 為休眠欄位——確認維持，並注意 `login_elder` 以 `has_valid_consent` 代理「已配對」的語意副作用（未來若補撤回會誤擋登入）。 | A-51 |
+| 庚-47 | ✅ 完成（2026-07-13，Leo 拍板全數納入）：D-32 候選 35 詞全收（11→46 詞）；標注集評測 P 61.1→66.7%、R 40.7→51.9%、誤報持平——純提升。 | A-43 |
+| 庚-48 | ✅ 完成（2026-07-13，Leo 選提前）：整理改 00:05（cron 5 0 * * *），凌晨盲窗 3 小時→5 分鐘；掛同鍵的清理 jobs 隨移離峰 0 時段。 | A-21 |
+| 庚-49 | ✅ 完成（2026-07-13，Leo 選維持）：不做撤回；login_elder 註記「同意代理配對」語意地雷與未來改法。 | A-51 |
 
 ### 庚7 範圍外文檔更正（非 05／09／10／12／17，深潛只登記未改）
 
 | # | 文檔 | 需更正 |
 | :--- | :--- | :--- |
-| 庚-50 | CONTEXT.md | §52「長輩不設帳密」已被己-6 推翻（`elder_accounts` 存在）、缺 ElderAccount 詞條；§94 危急分級仍寫「L0–L3 四級」（D-72 已三級）（A-45／A-53） |
-| 庚-51 | 06 API 設計規範 | §3 錯誤碼表補 `phone_taken`／`invalid_phone`／`not_paired`／`too_many_requests`／`unsupported_media_type`；`consent_revoked` 標「僅資料層預留」；`token_expired` 因 D-25 作廢（A-53／A-56） |
-| 庚-52 | 07 模組規格與測試 | 「rag 8 檔」過期（實際 17 模組，A-33） |
-| 庚-53 | 08 專案結構指南 | §4「service.py 建構子注入 store＋clock」與現實不符（實為 store＋new_id，A-38） |
-| 庚-54 | 04_adr/ADR-003 | reranker 描述過時（現 rerank=True＋預設啟用）；provenance 描述不完整（inferred 也無寫入路徑）（A-20） |
-| 庚-55 | 13 安全與就緒檢查 | §43「告警：無」應改「僅被動 admin 橫幅」；scrypt N=16384 標 ✅ 未註低於 OWASP 2024（A-45／A-50） |
-| 庚-56 | 群 1／群 4 文檔清理 | CONTEXT.md turns 路徑；13 檢查表與 evaluation KPI 未交叉引用；notifications router 無專屬測試（A-17／A-45） |
+| 庚-50 | CONTEXT.md | ✅ 完成（2026-07-13）：己-6 長輩帳密＋D-72 三級＋turns 路徑更正 |
+| 庚-51 | 06 API 設計規範 | ✅ 完成（2026-07-13，於庚-25 兼辦）：錯誤碼表全面同步（補 8 碼、token_expired 作廢、invalid_signature 移除） |
+| 庚-52 | 07 模組規格與測試 | ✅ 完成（2026-07-13）：rag 16 模組（庚-34 退役後） |
+| 庚-53 | 08 專案結構指南 | ✅ 完成（2026-07-13）：注入描述對齊 store＋new_id |
+| 庚-54 | 04_adr/ADR-003 | ✅ 完成（2026-07-13）：reranker 丁-4 已啟用＋provenance 補述 |
+| 庚-55 | 13 安全與就緒檢查 | ✅ 完成（2026-07-13）：告警兩則橫幅＋scrypt 2**17（庚-20） |
+| 庚-56 | 群 1／群 4 文檔清理 | ✅ 完成（2026-07-13）：turns 路徑＋13 補 evaluation KPI 交叉引用；notifications router 測試查證已有（test_api_app_auth 三測試） |
 
 **已於深化過程解決、無需工項**：A-12（`tools/health_rag.py` 無測試——實為誤判，handler 測試已存在於 `tests/rag/test_service_and_tool.py`，真缺口併入庚-09）；F-8（17 §3 全景圖補第 10 頁——階段 F 已完成）。
 

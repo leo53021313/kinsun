@@ -8,7 +8,7 @@ from collections.abc import Callable
 from kinsun.accounts.models import PrincipalType
 from kinsun.channels.router import ChannelRouter
 from kinsun.medications.models import SLOT_LABELS, Medication, MedicationSlot
-from kinsun.reports.reminders import safe_record
+from kinsun.reports.reminders import REMINDER_KIND_MEDICATION, safe_record
 from kinsun.scheduler.fanout import fanout_job
 from kinsun.scheduler.scheduler import Job
 
@@ -45,7 +45,7 @@ def build_medication_slot_job(
         )
         if sent == 0:
             return  # 無任何綁定通道：不送也不記
-        safe_record(record, elder_id, "medication", f"{label}用藥：{'、'.join(names)}")
+        safe_record(record, elder_id, REMINDER_KIND_MEDICATION, f"{label}用藥：{'、'.join(names)}")
 
     return fanout_job(
         name=name,
