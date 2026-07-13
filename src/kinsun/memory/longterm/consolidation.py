@@ -85,10 +85,10 @@ def main(argv: list[str] | None = None) -> int:
             max_turns=settings.memory_max_turns,
         )
         long_term = Mem0LongTermStore(
-        build_mem0_memory(settings),
-        top_k=settings.longterm_top_k,
-        health_top_k=settings.longterm_health_top_k,
-    )
+            build_mem0_memory(settings),
+            top_k=settings.longterm_top_k,
+            health_top_k=settings.longterm_health_top_k,
+        )
         log = PgConsolidationLogStore(db, clock=lambda: datetime.now(tz))
         written = run_consolidation(
             elder_id,
