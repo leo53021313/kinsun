@@ -338,3 +338,18 @@ def test_elder_login_throttled_429():
     res = client.post("/api/v1/elder-sessions", json=payload)
     assert res.status_code == 429
     assert res.json()["error"]["code"] == "too_many_requests"
+
+
+def test_elder_token_can_logout_self():
+    """✅ 庚-42（A-52）：長輩自助登出——DELETE /sessions 也收長輩 token
+    （與家屬對稱）；登出後 token 即失效。"""
+    from kinsun.accounts.models import ConsentBy
+
+    svc = _service()
+    client = _client(svc)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    invite = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
+    _, token = svc.bind_elder_device(invite.code, consent_by=ConsentBy.PROXY)
+    res = client.delete("/api/v1/sessions", headers={"Authorization": f"Bearer {token}"})
+    assert res.status_code == 204
+    assert svc.authenticate_token(token) is None

@@ -31,13 +31,19 @@ def create_reports_router(
     router = APIRouter(tags=["reports"])
 
     @router.get("/elders/{elder_id}/health-report")
-    def health_report(elder_id: str, auth: GuardianAuth = Depends(current_guardian)) -> dict:
+    def health_report(
+        elder_id: str,
+        window_days: int = Query(default=30, ge=1, le=90),
+        auth: GuardianAuth = Depends(current_guardian),
+    ) -> dict:
+        """window_days 開放查詢參數（✅ 庚-40／A-36）：預設近 30 天、上限 90。"""
         scope.assert_manages(auth, elder_id)
         report = build_health_report(
             elder_id=elder_id,
             risk_events=risk_events,
             reminder_logs=reminder_logs,
             now=clock(),
+            window_days=window_days,
         )
         return ok(
             {

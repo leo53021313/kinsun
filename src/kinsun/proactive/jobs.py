@@ -39,10 +39,10 @@ def build_inactivity_job(
     minute: int = 0,
     name: str = "inactivity-care",
 ) -> Job:
-    def action(line_user_id: str) -> None:
-        last = last_active(line_user_id)
+    def action(elder_id: str) -> None:  # 會話主鍵已通道中立（✅ 庚-41 正名）
+        last = last_active(elder_id)
         if last is not None and clock().timestamp() - last >= threshold_seconds:
-            care_one(line_user_id)
+            care_one(elder_id)
 
     return fanout_job(
         name=name, hour=hour, minute=minute, population=sessions, action=action, logger=logger

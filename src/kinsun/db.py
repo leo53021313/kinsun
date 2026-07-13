@@ -13,7 +13,7 @@ from psycopg_pool import ConnectionPool
 # 該遷移（於 ensure_schema 最後執行）已含同名冪等索引，新庫舊庫皆適用。
 MEMORY_DDL = (
     "CREATE TABLE IF NOT EXISTS turns ("
-    "id BIGSERIAL PRIMARY KEY, elder_id TEXT, line_user_id TEXT, role TEXT NOT NULL, "
+    "id BIGSERIAL PRIMARY KEY, elder_id TEXT, role TEXT NOT NULL, "
     "content TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
 )
 
@@ -122,19 +122,21 @@ RAG_DDL = (
     "CREATE INDEX IF NOT EXISTS idx_rag_chunks_source_topic ON rag_chunks (source_id, topic);"
     "CREATE INDEX IF NOT EXISTS idx_rag_chunks_embedding "
     "ON rag_chunks USING hnsw (embedding vector_cosine_ops);"
-    "CREATE TABLE IF NOT EXISTS rag_crawl_jobs ("
-    "job_id TEXT PRIMARY KEY, source_id TEXT NOT NULL, started_at DOUBLE PRECISION NOT NULL, "
-    "finished_at DOUBLE PRECISION, status TEXT NOT NULL, page_count INTEGER NOT NULL, "
-    "error_message TEXT);"
+    # rag_crawl_jobs 死表已退役（✅ 庚-34／A-31：無寫入者）。
+    "DROP TABLE IF EXISTS rag_crawl_jobs;"
     "CREATE TABLE IF NOT EXISTS rag_ingestion_audit_logs ("
     "id BIGSERIAL PRIMARY KEY, source_id TEXT NOT NULL, fetched_at DOUBLE PRECISION NOT NULL, "
     "content_hash TEXT NOT NULL, chunk_count INTEGER NOT NULL, parser_used TEXT NOT NULL, "
-    "status TEXT NOT NULL, error_message TEXT, operator_or_job_id TEXT NOT NULL);"
+    "status TEXT NOT NULL, error_message TEXT, operator_or_job_id TEXT NOT NULL, "
+    "document_id TEXT NOT NULL DEFAULT '', url TEXT NOT NULL DEFAULT '');"
+    "ALTER TABLE rag_ingestion_audit_logs "
+    "ADD COLUMN IF NOT EXISTS document_id TEXT NOT NULL DEFAULT '';"
+    "ALTER TABLE rag_ingestion_audit_logs ADD COLUMN IF NOT EXISTS url TEXT NOT NULL DEFAULT '';"
 )
 
 RISK_EVENTS_DDL = (
     "CREATE TABLE IF NOT EXISTS risk_events ("
-    "risk_event_id TEXT PRIMARY KEY, elder_id TEXT, line_user_id TEXT, "
+    "risk_event_id TEXT PRIMARY KEY, elder_id TEXT, "
     "tier INTEGER NOT NULL, reason TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
 )
 
@@ -177,7 +179,7 @@ MEMORY_CONSOLIDATIONS_DDL = (
 
 CONVERSATION_SUMMARIES_DDL = (
     "CREATE TABLE IF NOT EXISTS conversation_summaries ("
-    "elder_id TEXT, line_user_id TEXT, date TEXT NOT NULL, "
+    "elder_id TEXT, date TEXT NOT NULL, "
     "content TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
 )
 
@@ -247,22 +249,23 @@ REPLIES_ROUND_TRIP_MIGRATION_DDL = (
 )
 
 # 會話主鍵遷移（冪等）：turns／risk_events／conversation_summaries 加 elder_id、
-# 舊 line_user_id 欄改可空（新寫入不再填）；摘要卸下 (line_user_id, date) 主鍵、
-# 改掛 (elder_id, date) 部分唯一索引。既有孤兒列（對不到 elders）保留原樣。
-# 歷史回填（UPDATE … FROM elders）已於共用庫執行完畢，並隨帳號欄位退役一併移除。
+# 摘要卸下舊主鍵改掛 (elder_id, date) 部分唯一索引；line_user_id 死欄已於
+# 遷移末段 DROP（✅ 庚-45——1B 證實孤兒列全為測試資料，Leo 核定收縮）。
 SESSION_KEY_MIGRATION_DDL = (
     "ALTER TABLE turns ADD COLUMN IF NOT EXISTS elder_id TEXT;"
-    "ALTER TABLE turns ALTER COLUMN line_user_id DROP NOT NULL;"
     "CREATE INDEX IF NOT EXISTS idx_turns_elder_created ON turns (elder_id, created_at);"
     "ALTER TABLE risk_events ADD COLUMN IF NOT EXISTS elder_id TEXT;"
-    "ALTER TABLE risk_events ALTER COLUMN line_user_id DROP NOT NULL;"
     "CREATE INDEX IF NOT EXISTS idx_risk_events_elder_created "
     "ON risk_events (elder_id, created_at);"
     "ALTER TABLE conversation_summaries ADD COLUMN IF NOT EXISTS elder_id TEXT;"
     "ALTER TABLE conversation_summaries DROP CONSTRAINT IF EXISTS conversation_summaries_pkey;"
-    "ALTER TABLE conversation_summaries ALTER COLUMN line_user_id DROP NOT NULL;"
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_conversation_summaries_elder_date "
     "ON conversation_summaries (elder_id, date) WHERE elder_id IS NOT NULL;"
+    # 死欄收縮（✅ 庚-45／A-25、A-37；Leo 核定 DROP）：1B 已證實舊資料 100% 孤兒
+    # 測試資料，觀測五表已於庚-07 正名——三表 line_user_id 僅剩混淆價值。
+    "ALTER TABLE turns DROP COLUMN IF EXISTS line_user_id;"
+    "ALTER TABLE risk_events DROP COLUMN IF EXISTS line_user_id;"
+    "ALTER TABLE conversation_summaries DROP COLUMN IF EXISTS line_user_id;"
 )
 
 # 帳號欄位退役（收縮步，冪等）：LINE 識別已全面遷入 channel_bindings。
@@ -323,11 +326,15 @@ class StoreError(Exception):
 
 
 class Executor(Protocol):
-    """可執行 SQL 的對象：Database 本身或交易內的單一連線。"""
+    """可執行 SQL 的對象：Database 本身或交易內的單一連線。
+
+    transaction() 宣告於此（✅ 庚-43／A-58）：_Errors 包裝時不再 type: ignore；
+    交易內的 _ConnExecutor 不支援巢狀交易、呼叫即拋。"""
 
     def execute(self, sql: str, params: tuple = ()) -> None: ...
     def query(self, sql: str, params: tuple = ()) -> list[tuple]: ...
     def query_one(self, sql: str, params: tuple = ()) -> tuple | None: ...
+    def transaction(self) -> object: ...
 
 
 class _ConnExecutor:
@@ -341,6 +348,9 @@ class _ConnExecutor:
 
     def query(self, sql: str, params: tuple = ()) -> list[tuple]:
         return self._conn.execute(sql, params).fetchall()
+
+    def transaction(self):  # pragma: no cover - 防呆
+        raise StoreError("交易內不支援巢狀交易")
 
     def query_one(self, sql: str, params: tuple = ()) -> tuple | None:
         return self._conn.execute(sql, params).fetchone()
@@ -430,7 +440,7 @@ class _Errors:
     def transaction(self) -> Iterator[Executor]:
         try:
             # _Errors 只用來包 Database（有 transaction()）；Executor Protocol 僅涵蓋三個基本操作
-            with self._inner.transaction() as tx:  # type: ignore[attr-defined]
+            with self._inner.transaction() as tx:
                 yield _Errors(tx, self._wrap)
         except StoreError as exc:
             raise self._wrap(str(exc)) from exc

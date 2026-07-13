@@ -50,7 +50,6 @@ ERROR_MESSAGES: dict[str, str] = {
     "job_not_found": "找不到這個排程任務",
     "internal_testing_disabled": "內部測試模式未開啟",
     "admin_disabled": "服務未開放",
-    "overloaded": "服務忙碌中，請稍後再試",
 }
 
 

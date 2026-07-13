@@ -8,12 +8,12 @@ import {
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import * as Haptics from "expo-haptics";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AvatarPlaceholder, type AvatarState } from "@/components/AvatarPlaceholder";
 import { RoleSwitcher } from "@/components/RoleSwitcher";
-import { ApiError, postTurn } from "@/lib/api";
+import { ApiError, logoutSession, postTurn } from "@/lib/api";
 import { useSession } from "@/lib/SessionProvider";
 import { strings } from "@/lib/strings";
 import { colors, elder, spacing } from "@/lib/theme";
@@ -121,9 +121,32 @@ export default function ElderTalk() {
     return () => sub.remove();
   }, [player]);
 
+  function confirmLogout() {
+    Alert.alert(strings.talk.logoutConfirmTitle, strings.talk.logoutConfirmBody, [
+      { text: strings.talk.logoutCancel, style: "cancel" },
+      {
+        text: strings.talk.logout,
+        style: "destructive",
+        onPress: async () => {
+          // 先撤伺服器端 token（✅ 庚-42 長輩自助登出）；離線也不擋本機登出。
+          await logoutSession(session?.token ?? "").catch(() => undefined);
+          await signOut();
+          router.replace("/role");
+        },
+      },
+    ]);
+  }
+
   return (
     <SafeAreaView style={styles.container}>
-      <RoleSwitcher />
+      <View style={styles.topRow}>
+        <RoleSwitcher />
+        <Pressable accessibilityRole="button" onPress={confirmLogout} style={styles.logoutButton}>
+          <Text style={styles.logoutText} maxFontSizeMultiplier={1.6}>
+            {strings.talk.logout}
+          </Text>
+        </Pressable>
+      </View>
       <View style={styles.avatarZone}>
         <AvatarPlaceholder state={avatar} />
       </View>
@@ -157,6 +180,9 @@ const styles = StyleSheet.create({
     padding: spacing.l,
     gap: spacing.l,
   },
+  topRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  logoutButton: { paddingVertical: 8, paddingHorizontal: spacing.m, minHeight: 48, justifyContent: "center" },
+  logoutText: { fontSize: 16, color: colors.textSoft },
   avatarZone: { alignItems: "center", marginTop: spacing.xl },
   replyZone: { flex: 1, justifyContent: "center" },
   replyText: {

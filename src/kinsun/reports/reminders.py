@@ -13,11 +13,25 @@ from kinsun.db import Database, _Errors
 logger = logging.getLogger("kinsun.reports.reminders")
 
 
+# 提醒種類集中列舉（✅ 庚-40／A-36）：寫入端（medications／appointments jobs、
+# proactive 推播）與讀取端（健康報告、admin）共用；新增種類先加這裡。
+REMINDER_KIND_MEDICATION = "medication"
+REMINDER_KIND_APPOINTMENT = "appointment"
+REMINDER_KIND_PROACTIVE_GREETING = "proactive-greeting"
+REMINDER_KIND_PROACTIVE_CARE = "proactive-care"
+REMINDER_KINDS = (
+    REMINDER_KIND_MEDICATION,
+    REMINDER_KIND_APPOINTMENT,
+    REMINDER_KIND_PROACTIVE_GREETING,
+    REMINDER_KIND_PROACTIVE_CARE,
+)
+
+
 @dataclass(frozen=True)
 class ReminderLog:
     reminder_log_id: str
     elder_id: str
-    kind: str
+    kind: str  # ∈ REMINDER_KINDS
     content: str
     created_at: float
 

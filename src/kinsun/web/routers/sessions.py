@@ -49,10 +49,11 @@ def create_sessions_router(*, accounts: AccountService, rate_limiter: RateLimite
 
     @router.delete("/sessions", status_code=204)
     def logout(authorization: str = Header(default="")) -> None:
-        """登出＝撤銷當前 token（被盜或換機時的主動撤銷手段）。"""
+        """登出＝撤銷當前 token（被盜或換機時的主動撤銷手段）。
+        家屬與長輩 token 皆可（✅ 庚-42：長輩自助登出）；「登出所有裝置」仍限家屬。"""
         token = authorization.removeprefix("Bearer ").strip()
         auth = accounts.authenticate_token(token) if token else None
-        if auth is None or auth.principal_type is not PrincipalType.GUARDIAN:
+        if auth is None:
             raise HTTPException(status_code=401, detail=ErrorCode.INVALID_TOKEN)
         accounts.logout(token)
 

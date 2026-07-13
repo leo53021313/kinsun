@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 SELF_CLAIMED = "self_claimed"  # 長者自述
+# ⚠️ 載明（✅ 庚-38／A-22，依 D-37 決議「保留定義、暫不做蓋章流程」）：
+# 下列兩值目前無寫入路徑（consolidation 恆寫 self_claimed），為未來
+# 家屬確認／推測標記預留；隨 D-09 家屬可見性再議接線。
 INFERRED = "inferred"  # 推測
 FAMILY_CONFIRMED = "family_confirmed"  # 家屬確認
 

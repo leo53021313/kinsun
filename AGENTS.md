@@ -62,7 +62,7 @@
   * 一段文字內容欄位統一用 `content`，如 LLM Message 的 `role`／`content`。
 * 模組與檔案：
   * 模組目錄用複數（集合語意），如 `accounts/`、`medications/`；key-value 狀態表或單例概念可例外，如 `scheduler_state`。
-  * 持久層固定三件套：檔名 `store.py`＋`<領域>Store`（Protocol）＋`Pg<領域>Store`（Postgres 實作）＋`Fake<領域>Store`（測試替身），如 `PgMedicationStore`。例外（D-42，2026-07-08 核定）：事件流水帳或單一狀態表可依語意命名檔案（如 `safety/events.py`、`binding/session.py`、`scheduler/state.py`、`reports/reminders.py`、`reports/summaries.py`），但三件套結構不變、類別名必帶 `Store` 字尾。
+  * 持久層固定三件套：檔名 `store.py`＋`<領域>Store`（Protocol）＋`Pg<領域>Store`（Postgres 實作）＋`Fake<領域>Store`（測試替身），如 `PgMedicationStore`。例外（D-42，2026-07-08 核定）：事件流水帳或單一狀態表可依語意命名檔案（如 `safety/events.py`、`safety/deliveries.py`、`binding/session.py`、`scheduler/state.py`、`reports/reminders.py`、`reports/summaries.py`），但三件套結構不變、類別名必帶 `Store` 字尾。另三處刻意例外（✅ 庚-46，2026-07-13 載明）：`memory/shortterm.py` 三件套住此檔非 `store.py`（記憶子系統分層 D-43 優先）；RAG 持久層（`rag/vector_store.py`）非三件套（外部向量庫 adapter，無 Fake 對應）；`FakeLongTermStore` 住 `tests/fakes.py` 非與 Pg 同檔（Mem0 為外部服務、僅測試替身）。
   * 領域模型檔名固定為 `models.py`，如 `medications/models.py`。
   * 記憶子系統分三層：`memory/shortterm.py`（今日對話）、`memory/longterm/`（Mem0 長期記憶，子套件）、`memory/recall.py`（情境聚合）；共用資料模型放 `memory/models.py`（D-43，2026-07-08 描述對齊現實）。
   * `speech/` 為 ASR／TTS 模型服務呼叫端（client）、`audio/` 為音檔上傳託管、`services/` 為 DGX 端可獨立部署伺服器實作，三者跨層同名（如 `speech/asr.py` 對 `services/asr/`）為合理設計，不需合併。
@@ -73,7 +73,7 @@
   * `save` 為 upsert 語意（`ON CONFLICT DO UPDATE`），`record` 為 append-only 事件日誌；資料寫入不用 `add`／`upsert` 命名；例外：鏡射外部函式庫 API 的薄包裝（如 Mem0 介面的 `add`）維持外部詞彙。
   * 查詢動詞分工：`get_*` 取單筆、`list_for_<維度>` 取清單、`query`／`query_one` 為原生 SQL 執行器、`search` 為檢索、`load` 為載入外部內容，如 `list_for_elder`。
   * API handler 建立資源用 `create_*`，如 `create_medication`；HTTP 層刪除對應 REST 動詞用 `delete_*`，Service／Store 層用 `remove`——此為刻意的跨層分工，不需統一。
-  * 布林命名一律 `is_`／`has_`／`can_` 前綴且語意完整，如 `is_consented_elder`（不用 `is_consented`）。
+  * 布林命名一律 `is_`／`has_`／`can_` 前綴且語意完整，如 `has_valid_consent`（不用 `valid`）。
 * 環境變數：
   * `Settings` 欄位名＝環境變數鍵的小寫，100% 一一對應、不設別名，如 `gemini_timeout_seconds` 對應 `GEMINI_TIMEOUT_SECONDS`。
   * 鍵一律掛子系統前綴：`GEMINI_`、`LONGTERM_`、`PROACTIVE_`、`SCHEDULER_`、`ASR_`、`TTS_`、`AUDIO_`、`SUPABASE_`（專案層憑證）、`LIFF_`、`LINE_`、`INTERNAL_TESTING_`（內測模式旗標）。

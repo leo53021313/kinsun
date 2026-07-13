@@ -8,7 +8,7 @@ from collections.abc import Callable
 from kinsun.accounts.models import ElderGuardian, PrincipalType
 from kinsun.appointments.models import Appointment
 from kinsun.channels.router import ChannelRouter
-from kinsun.reports.reminders import safe_record
+from kinsun.reports.reminders import REMINDER_KIND_APPOINTMENT, safe_record
 from kinsun.scheduler.fanout import fanout_job
 from kinsun.scheduler.scheduler import Job
 
@@ -56,7 +56,9 @@ def build_appointment_reminder_job(
             )
         if sent == 0:
             return  # 長輩無任何綁定通道：不記，否則健康報告顯示沒收到的提醒（✅ 庚-14）
-        safe_record(record, appt.elder_id, "appointment", f"{when_word}回診：{appt.label}")
+        safe_record(
+            record, appt.elder_id, REMINDER_KIND_APPOINTMENT, f"{when_word}回診：{appt.label}"
+        )
 
     return fanout_job(
         name=name,
