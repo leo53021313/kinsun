@@ -260,28 +260,55 @@ launch_app() {
   fi
 
   info "啟動 App Expo dev server（tunnel 模式，對外可連，port ${PORT[app]})…"
-  _bg app npm --prefix "$ROOT/app" run start -- --tunnel
-  info "App：等待 tunnel 建立（exp.direct，約 20～40 秒）…"
-  if _wait_expo_tunnel; then
-    ok "App：tunnel 就緒"
-    return 0
-  fi
-  warn "App：tunnel 建立失敗（exp.direct 偶發故障），重試一次…"
-  stop_one app >/dev/null 2>&1
-  _bg app npm --prefix "$ROOT/app" run start -- --tunnel
-  if _wait_expo_tunnel; then
-    ok "App：tunnel 就緒（第二次）"
-  else
-    warn "App：tunnel 仍建立不起來。稍後重試 scripts/kinsun.sh restart app，"
-    warn "     或改走區網（僅同網段可用）：KINSUN_EXPO_TUNNEL=0 scripts/kinsun.sh restart app"
-  fi
+  local tries="${KINSUN_EXPO_TUNNEL_RETRIES:-8}" attempt
+  for attempt in $(seq 1 "$tries"); do
+    _bg app npm --prefix "$ROOT/app" run start -- --tunnel
+    if _wait_expo_tunnel; then
+      ok "App：tunnel 就緒（第 ${attempt}／${tries} 次嘗試）"
+      return 0
+    fi
+    _reap_app  # 收乾淨再重來，否則下一次會撞上「埠已被占用」而跳過（見 _reap_app）
+    if [ "$attempt" -lt "$tries" ]; then
+      warn "App：tunnel 建立失敗（exp.direct 抽風），第 $((attempt + 1))／${tries} 次重試…"
+      sleep 3
+    fi
+  done
+  err "App：tunnel 連試 ${tries} 次都失敗——exp.direct 可能正在故障。"
+  err "     稍後重試：scripts/kinsun.sh restart app"
+  err "     或改走區網（僅手機與 DGX 同網段可用）：KINSUN_EXPO_TUNNEL=0 scripts/kinsun.sh restart app"
+  return 0
+}
+
+# tunnel 失敗後的殘骸清理。為何不能只用 stop_one：tunnel 失敗時 Expo 主進程（PID 檔記的
+# 那個）會自己退出，但 Metro 子進程可能還占著 8081；stop_one 見 leader 已死就只清 PID 檔、
+# 不送 group 訊號，殘骸於是留下，下一次重試撞上「埠已被占用」直接跳過——重試等於白做。
+# 這裡對整個 process group 補一刀，再從埠反查漏網的占用者（Expo 的 node 進程會把執行緒名
+# 改成 MainThread，pkill -f 抓不到，只能靠埠反查）。
+_reap_app() {
+  local pidfile="$RUN_DIR/app.pid" pid owner i
+  pid="$(cat "$pidfile" 2>/dev/null)"
+  [ -n "$pid" ] && kill -KILL -- -"$pid" 2>/dev/null
+  rm -f "$pidfile"
+  for i in 1 2 3 4 5; do
+    _port_open "${PORT[app]}" || return 0
+    owner="$(ss -ltnp 2>/dev/null | grep ":${PORT[app]} " |
+      grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)"
+    [ -n "$owner" ] && kill -KILL "$owner" 2>/dev/null
+    sleep 1
+  done
 }
 
 # 等 Expo 的 tunnel 就緒：成功回 0；明確失敗或逾時回 1。
+#
+# exp.direct 的失敗是「秒級即答」（remote gone away，約 4 秒內），成功也只要數秒——
+# 實測單次成功率僅約四成，但因為判定極快，重試的成本很低：預設連試 8 次，理論上
+# 全軍覆沒的機率不到 2%，最壞情況約一分鐘。這是不引入第三方隧道的前提下，讓 App
+# 每次 start／restart 都能起來的關鍵。
+#
 # 只讀本輪 log（_last_run_log），避免撞到上一輪殘留的 "Tunnel ready"。
 _wait_expo_tunnel() {
   local i log
-  for i in $(seq 1 45); do
+  for i in $(seq 1 30); do
     log="$(_last_run_log "$LOG_DIR/app.log")"
     case "$log" in
       *"Tunnel ready"*) return 0 ;;
