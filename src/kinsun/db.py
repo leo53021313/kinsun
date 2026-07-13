@@ -323,11 +323,15 @@ class StoreError(Exception):
 
 
 class Executor(Protocol):
-    """可執行 SQL 的對象：Database 本身或交易內的單一連線。"""
+    """可執行 SQL 的對象：Database 本身或交易內的單一連線。
+
+    transaction() 宣告於此（✅ 庚-43／A-58）：_Errors 包裝時不再 type: ignore；
+    交易內的 _ConnExecutor 不支援巢狀交易、呼叫即拋。"""
 
     def execute(self, sql: str, params: tuple = ()) -> None: ...
     def query(self, sql: str, params: tuple = ()) -> list[tuple]: ...
     def query_one(self, sql: str, params: tuple = ()) -> tuple | None: ...
+    def transaction(self) -> object: ...
 
 
 class _ConnExecutor:
@@ -341,6 +345,9 @@ class _ConnExecutor:
 
     def query(self, sql: str, params: tuple = ()) -> list[tuple]:
         return self._conn.execute(sql, params).fetchall()
+
+    def transaction(self):  # pragma: no cover - 防呆
+        raise StoreError("交易內不支援巢狀交易")
 
     def query_one(self, sql: str, params: tuple = ()) -> tuple | None:
         return self._conn.execute(sql, params).fetchone()
@@ -430,7 +437,7 @@ class _Errors:
     def transaction(self) -> Iterator[Executor]:
         try:
             # _Errors 只用來包 Database（有 transaction()）；Executor Protocol 僅涵蓋三個基本操作
-            with self._inner.transaction() as tx:  # type: ignore[attr-defined]
+            with self._inner.transaction() as tx:
                 yield _Errors(tx, self._wrap)
         except StoreError as exc:
             raise self._wrap(str(exc)) from exc
