@@ -143,7 +143,11 @@ class AccountService:
         *,
         channel: Channel = Channel.LINE,
         consent_by: ConsentBy,
-    ) -> None:
+        expect_role: InviteRole | None = None,
+    ) -> str:
+        """expect_role：呼叫端限定碼的角色（✅ 庚-42 併 04）——鎖內驗證、
+        不消耗嘗試次數；不符拋 wrong_role。None＝不限定（LINE 綁定雙用途路徑）。
+        回傳該碼的 elder_id（呼叫端免重讀 invite）。"""
         now = self._clock()
         # 讀碼＋檢查＋寫入同交易並列鎖該碼（✅ 庚-19／A-49）：並發同碼的第二個
         # 請求在 FOR UPDATE 上等待，首個 commit 後看到 used_at → 正確擋下。
@@ -153,6 +157,8 @@ class AccountService:
             invite = self._repo.get_invite(code, tx=tx, for_update=True)
             if invite is None:
                 raise InviteError("not_found")
+            if expect_role is not None and invite.role is not expect_role:
+                raise InviteError("wrong_role")  # 未消耗碼、未發 token（庚-04）
             if invite.used_at is not None:
                 raise InviteError("used")
             if invite.attempts >= invite.max_attempts:
@@ -201,6 +207,7 @@ class AccountService:
                 )
         if failure is not None:
             raise InviteError(failure)
+        return invite.elder_id
 
     def guardians_of(self, elder_id: str) -> list[ElderGuardian]:
         return self._repo.list_elder_guardians(elder_id)
@@ -351,16 +358,18 @@ class AccountService:
         """長輩裝置綁定：綁定碼換 App 通道綁定＋裝置 token。InviteError 原樣上拋。
 
         僅接受長輩綁定碼（InviteRole.ELDER）：家屬邀請碼走此路徑會發出長輩 token
-        （權限邊界破口，庚-04／A-46），故先驗角色再 redeem。
+        （權限邊界破口，庚-04／A-46）——角色由 redeem 鎖內驗證（✅ 庚-42）。
         """
-        invite = self._repo.get_invite(code)
-        if invite is None:
-            raise InviteError("not_found")
-        if invite.role is not InviteRole.ELDER:
-            raise InviteError("wrong_role")
         app_account_id = self._new_id()
-        self.redeem_invite(code, app_account_id, channel=Channel.APP, consent_by=consent_by)
-        elder = self._repo.get_elder(invite.elder_id)  # redeem 成功即存在
+        # 角色驗證改由 redeem 鎖內執行（✅ 庚-42：免除重複讀 invite 的第二趟 DB）。
+        elder_id = self.redeem_invite(
+            code,
+            app_account_id,
+            channel=Channel.APP,
+            consent_by=consent_by,
+            expect_role=InviteRole.ELDER,
+        )
+        elder = self._repo.get_elder(elder_id)  # redeem 成功即存在
         return elder, self._issue_token(PrincipalType.ELDER, elder.elder_id)
 
     def authenticate_token(self, token: str) -> ApiToken | None:
