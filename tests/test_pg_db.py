@@ -1,9 +1,11 @@
-"""ensure_schema 的併發遷移防護（諮詢鎖）整合測試。
+"""ensure_schema 的遷移整合測試（併發防護、既有庫升級）。
 
 需連獨立測試庫：設定 ``KINSUN_IT=1`` 與 ``KINSUN_TEST_DATABASE_URL`` 才會啟用
 （✅ D-69：不再直連 DATABASE_URL 正式庫）。
 驗證 webhook 與 scheduler 同時啟動時，兩者的 ensure_schema 不會併發跑 DDL
 互搶 AccessExclusiveLock 而死結——改以交易級諮詢鎖串行化。
+另驗證帶著舊資料的既有庫（庚-07 之前的 line_user_id 觀測表）能就地升級——
+空庫路徑（CREATE TABLE 直接建新欄）測不到這條，得先造出舊 schema 才會踩到。
 """
 
 import os
@@ -127,6 +129,95 @@ def test_session_key_schema_supports_elder_keys(pg_database, pg_url, ns):
         (f"{ns}e-mig", "2026-07-07"),
     )
     assert rows == [("v2",)]
+
+
+# 庚-07 正名前的觀測五表 schema（取自 commit e7ec9d0）：欄位還叫 line_user_id、
+# 沒有 channel。正式庫就是長這樣，用來重現「既有庫升級」路徑。
+_LEGACY_OBSERVABILITY_DDL = (
+    "CREATE TABLE webhook_events ("
+    "webhook_event_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, "
+    "line_user_id TEXT NOT NULL, event_type TEXT NOT NULL, message_type TEXT NOT NULL, "
+    "payload JSONB NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+    "CREATE TABLE asr_calls ("
+    "asr_call_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, line_user_id TEXT NOT NULL, "
+    "status TEXT NOT NULL, latency_ms INTEGER NOT NULL, transcript TEXT NOT NULL, "
+    "source_audio_url TEXT NOT NULL, error_message TEXT NOT NULL, "
+    "created_at DOUBLE PRECISION NOT NULL);"
+    "CREATE INDEX idx_asr_calls_line_user_created ON asr_calls (line_user_id, created_at);"
+    "CREATE TABLE llm_calls ("
+    "llm_call_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, line_user_id TEXT NOT NULL, "
+    "status TEXT NOT NULL, latency_ms INTEGER NOT NULL, model_name TEXT NOT NULL, "
+    "input_tokens INTEGER, output_tokens INTEGER, content TEXT NOT NULL, "
+    "error_message TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+    "CREATE TABLE tts_calls ("
+    "tts_call_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, line_user_id TEXT NOT NULL, "
+    "status TEXT NOT NULL, latency_ms INTEGER NOT NULL, content TEXT NOT NULL, "
+    "error_message TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+    "CREATE TABLE replies ("
+    "reply_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, line_user_id TEXT NOT NULL, "
+    "kind TEXT NOT NULL, status TEXT NOT NULL, latency_ms INTEGER NOT NULL, "
+    "round_trip_ms INTEGER, audio_url TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+)
+
+_OBSERVABILITY_TABLE_NAMES = ("webhook_events", "asr_calls", "llm_calls", "tts_calls", "replies")
+
+
+def _columns_of(conn, table: str) -> set[str]:
+    rows = conn.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
+        (table,),
+    ).fetchall()
+    return {row[0] for row in rows}
+
+
+def test_ensure_schema_upgrades_legacy_line_user_id_observability_tables(pg_url):
+    """既有庫升級（✅ 庚-07 正名）：觀測五表原本是 line_user_id，ensure_schema 須能就地
+    改名為 external_id、補上 channel，且不得掉資料。
+
+    空庫路徑測不到這條——CREATE TABLE 一開始就建 external_id，改名遷移自動略過。
+    只有帶著舊表的既有庫會走到「建索引時 external_id 還不存在」。
+    """
+    from kinsun.db import connect, ensure_schema
+
+    # 造出庚-07 之前的既有庫：五表帶 line_user_id、無 external_id／channel，且有既存資料。
+    with connect(pg_url) as conn:
+        conn.execute(f"DROP TABLE IF EXISTS {', '.join(_OBSERVABILITY_TABLE_NAMES)} CASCADE;")
+        conn.execute(_LEGACY_OBSERVABILITY_DDL)
+        conn.execute(
+            "INSERT INTO asr_calls (asr_call_id, trace_id, line_user_id, status, latency_ms, "
+            "transcript, source_audio_url, error_message, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            ("legacy-asr-1", "trace-1", "U-legacy", "ok", 120, "早安", "", "", 1000.0),
+        )
+        conn.commit()
+
+    # 舊庫升級不得拋 UndefinedColumn（線上 webhook／scheduler 就是死在這裡）。
+    ensure_schema(pg_url)
+
+    with connect(pg_url) as conn:
+        for table in _OBSERVABILITY_TABLE_NAMES:
+            cols = _columns_of(conn, table)
+            assert "external_id" in cols, f"{table} 未改名出 external_id"
+            assert "channel" in cols, f"{table} 未補上 channel"
+            assert "line_user_id" not in cols, f"{table} 仍留著舊欄 line_user_id"
+        # 改名須保住原資料（不得以 DROP＋ADD 重建欄位）。
+        row = conn.execute(
+            "SELECT external_id, channel, transcript FROM asr_calls WHERE asr_call_id = %s",
+            ("legacy-asr-1",),
+        ).fetchone()
+        assert row == ("U-legacy", "", "早安")
+        # 改名殘骸須清掉：舊索引改名後與 idx_asr_calls_external_created 定義相同，
+        # 兩份同內容的 btree 只是白白拖慢寫入。
+        indexes = {
+            r[0]
+            for r in conn.execute(
+                "SELECT indexname FROM pg_indexes WHERE tablename = 'asr_calls'"
+            ).fetchall()
+        }
+        assert "idx_asr_calls_line_user_created" not in indexes, "舊索引未清除（與新索引重複）"
+        assert "idx_asr_calls_external_created" in indexes
+
+    ensure_schema(pg_url)  # 冪等：升級後再跑一次仍須成功
 
 
 def test_transaction_lets_domain_exceptions_pass_through(pg_database, ns):
