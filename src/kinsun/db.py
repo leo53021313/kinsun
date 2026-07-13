@@ -122,14 +122,16 @@ RAG_DDL = (
     "CREATE INDEX IF NOT EXISTS idx_rag_chunks_source_topic ON rag_chunks (source_id, topic);"
     "CREATE INDEX IF NOT EXISTS idx_rag_chunks_embedding "
     "ON rag_chunks USING hnsw (embedding vector_cosine_ops);"
-    "CREATE TABLE IF NOT EXISTS rag_crawl_jobs ("
-    "job_id TEXT PRIMARY KEY, source_id TEXT NOT NULL, started_at DOUBLE PRECISION NOT NULL, "
-    "finished_at DOUBLE PRECISION, status TEXT NOT NULL, page_count INTEGER NOT NULL, "
-    "error_message TEXT);"
+    # rag_crawl_jobs 死表已退役（✅ 庚-34／A-31：無寫入者）。
+    "DROP TABLE IF EXISTS rag_crawl_jobs;"
     "CREATE TABLE IF NOT EXISTS rag_ingestion_audit_logs ("
     "id BIGSERIAL PRIMARY KEY, source_id TEXT NOT NULL, fetched_at DOUBLE PRECISION NOT NULL, "
     "content_hash TEXT NOT NULL, chunk_count INTEGER NOT NULL, parser_used TEXT NOT NULL, "
-    "status TEXT NOT NULL, error_message TEXT, operator_or_job_id TEXT NOT NULL);"
+    "status TEXT NOT NULL, error_message TEXT, operator_or_job_id TEXT NOT NULL, "
+    "document_id TEXT NOT NULL DEFAULT '', url TEXT NOT NULL DEFAULT '');"
+    "ALTER TABLE rag_ingestion_audit_logs "
+    "ADD COLUMN IF NOT EXISTS document_id TEXT NOT NULL DEFAULT '';"
+    "ALTER TABLE rag_ingestion_audit_logs ADD COLUMN IF NOT EXISTS url TEXT NOT NULL DEFAULT '';"
 )
 
 RISK_EVENTS_DDL = (

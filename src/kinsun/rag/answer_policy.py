@@ -61,7 +61,10 @@ class AnswerPolicy:
                 reason="沒有足夠可信來源可支撐回答。",
             )
 
-        citations = assemble_citations(evidence)
+        # citation 對位（✅ 庚-39／A-33）：非 LLM 回答只引用前兩段——citation 與
+        # 引文同源；LLM 改寫路徑消化全部 evidence，由 service 以全列重組 citation。
+        quoted = evidence[:2]
+        citations = assemble_citations(quoted)
         if not citations:
             return RagAnswer(
                 answer=_UNSUPPORTED_ANSWER,
@@ -71,7 +74,7 @@ class AnswerPolicy:
                 reason="無法組出完整 citation。",
             )
 
-        snippets = " ".join(_compact(result.chunk.text) for result in evidence[:2])
+        snippets = " ".join(_compact(result.chunk.text) for result in quoted)
         answer = f"我查到的衛教資料重點是：{snippets}"
         return RagAnswer(
             answer=answer,
