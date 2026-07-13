@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from kinsun.accounts.models import Channel
+from kinsun.agent import FALLBACK_REPLY
 from kinsun.llm import LLMError
 from kinsun.memory.shortterm import MemoryStoreError
 from kinsun.observability.store import TraceStore, safe_record
@@ -17,7 +18,8 @@ from kinsun.speech.tts import TtsResult
 logger = logging.getLogger("kinsun.inbound")
 
 NON_AUDIO_PROMPT = "金孫現在聽得懂語音喔，您可以按住麥克風跟我說說話。"
-FALLBACK_PROMPT = "金孫剛剛沒聽清楚，您可以再說一次嗎？"
+# 回退話術與 agent 層共用單一出處（✅ 庚-37：FALLBACK_PROMPT／FALLBACK_REPLY 合併）。
+FALLBACK_PROMPT = FALLBACK_REPLY
 BIND_FIRST_PROMPT = (
     "金孫需要先完成綁定才能陪您聊天喔。請把家人給您的邀請碼貼到這裡，或回覆「設定」開始。"
 )
@@ -53,7 +55,8 @@ class DeliveryOutcome:
 
 
 class VoiceReplyDelivery:
-    """把 TtsResult 發成 LINE 回覆：有音檔→上傳→語音（可附文字）；否則→文字泡泡。
+    """把 TtsResult 發成回覆（通道中立，✅ 庚-37）：有音檔→上傳→語音（可附文字）；
+    否則→文字泡泡。
     上傳或語音回覆失敗一律退回文字，絕不讓回覆消失。
     show_transcript：debug 用，在文字泡泡最前面附上本輪 ASR 辨識到的長者原話
     （只進文字泡泡、不進語音合成）。"""

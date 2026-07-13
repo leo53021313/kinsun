@@ -26,7 +26,8 @@ _PROACTIVE_DIRECTIVE = (
     "（系統提示，非長者發話）請主動關心長者：{intent}。用一句溫暖、口語、簡短的話開啟對話。"
 )
 
-FALLBACK_REPLY = "金孫剛剛想了一下沒講清楚，您可以再說一次嗎？"
+# 統一回退話術（✅ 庚-37）：管線失敗與 LLM 空回覆共用；inbound.FALLBACK_PROMPT 為別名。
+FALLBACK_REPLY = "金孫剛剛沒聽清楚，您可以再說一次嗎？"
 
 
 class CareAgent:
