@@ -185,43 +185,52 @@ CONVERSATION_SUMMARIES_DDL = (
 
 # 觀測五表以 external_id＋channel 記來源（✅ 庚-07／A-8）：欄位承載任一通道的外部
 # 識別碼（非僅 LINE），故正名為 external_id 並加 channel 標明來源通道。
-OBSERVABILITY_DDL = (
+#
+# ⚠️ 建表與建索引「必須」拆成兩段常數，中間夾 OBSERVABILITY_EXTERNAL_ID_MIGRATION_DDL
+# （見 ensure_schema）。既有庫的表早已存在，CREATE TABLE IF NOT EXISTS 對它是 no-op、
+# 不會生出 external_id；若索引緊接著建，就會在還叫 line_user_id 的舊表上找不到欄位而
+# 炸 UndefinedColumn。順序必須是：建表 → 改名遷移 → 建索引。
+OBSERVABILITY_TABLES_DDL = (
     "CREATE TABLE IF NOT EXISTS webhook_events ("
     "webhook_event_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, "
     "external_id TEXT NOT NULL, channel TEXT NOT NULL DEFAULT '', "
     "event_type TEXT NOT NULL, message_type TEXT NOT NULL, "
     "payload JSONB NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
-    "CREATE INDEX IF NOT EXISTS idx_webhook_events_trace ON webhook_events (trace_id);"
-    "CREATE INDEX IF NOT EXISTS idx_webhook_events_created ON webhook_events (created_at);"
     "CREATE TABLE IF NOT EXISTS asr_calls ("
     "asr_call_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, external_id TEXT NOT NULL, "
     "channel TEXT NOT NULL DEFAULT '', "
     "status TEXT NOT NULL, latency_ms INTEGER NOT NULL, transcript TEXT NOT NULL, "
     "source_audio_url TEXT NOT NULL, error_message TEXT NOT NULL, "
     "created_at DOUBLE PRECISION NOT NULL);"
-    "CREATE INDEX IF NOT EXISTS idx_asr_calls_trace ON asr_calls (trace_id);"
-    "CREATE INDEX IF NOT EXISTS idx_asr_calls_external_created "
-    "ON asr_calls (external_id, created_at);"
     "CREATE TABLE IF NOT EXISTS llm_calls ("
     "llm_call_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, external_id TEXT NOT NULL, "
     "channel TEXT NOT NULL DEFAULT '', "
     "status TEXT NOT NULL, latency_ms INTEGER NOT NULL, model_name TEXT NOT NULL, "
     "input_tokens INTEGER, output_tokens INTEGER, content TEXT NOT NULL, "
     "error_message TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
-    "CREATE INDEX IF NOT EXISTS idx_llm_calls_trace ON llm_calls (trace_id);"
-    "CREATE INDEX IF NOT EXISTS idx_llm_calls_created ON llm_calls (created_at);"
     "CREATE TABLE IF NOT EXISTS tts_calls ("
     "tts_call_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, external_id TEXT NOT NULL, "
     "channel TEXT NOT NULL DEFAULT '', "
     "status TEXT NOT NULL, latency_ms INTEGER NOT NULL, content TEXT NOT NULL, "
     "error_message TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
-    "CREATE INDEX IF NOT EXISTS idx_tts_calls_trace ON tts_calls (trace_id);"
-    "CREATE INDEX IF NOT EXISTS idx_tts_calls_created ON tts_calls (created_at);"
     "CREATE TABLE IF NOT EXISTS replies ("
     "reply_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, external_id TEXT NOT NULL, "
     "channel TEXT NOT NULL DEFAULT '', "
     "kind TEXT NOT NULL, status TEXT NOT NULL, latency_ms INTEGER NOT NULL, "
     "round_trip_ms INTEGER, audio_url TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+)
+
+# 觀測五表索引：須在改名遷移之後才建（idx_asr_calls_external_created 引用 external_id）。
+OBSERVABILITY_INDEXES_DDL = (
+    "CREATE INDEX IF NOT EXISTS idx_webhook_events_trace ON webhook_events (trace_id);"
+    "CREATE INDEX IF NOT EXISTS idx_webhook_events_created ON webhook_events (created_at);"
+    "CREATE INDEX IF NOT EXISTS idx_asr_calls_trace ON asr_calls (trace_id);"
+    "CREATE INDEX IF NOT EXISTS idx_asr_calls_external_created "
+    "ON asr_calls (external_id, created_at);"
+    "CREATE INDEX IF NOT EXISTS idx_llm_calls_trace ON llm_calls (trace_id);"
+    "CREATE INDEX IF NOT EXISTS idx_llm_calls_created ON llm_calls (created_at);"
+    "CREATE INDEX IF NOT EXISTS idx_tts_calls_trace ON tts_calls (trace_id);"
+    "CREATE INDEX IF NOT EXISTS idx_tts_calls_created ON tts_calls (created_at);"
     "CREATE INDEX IF NOT EXISTS idx_replies_trace ON replies (trace_id);"
     "CREATE INDEX IF NOT EXISTS idx_replies_created ON replies (created_at);"
 )
@@ -238,6 +247,11 @@ OBSERVABILITY_EXTERNAL_ID_MIGRATION_DDL = "".join(
     f"THEN ALTER TABLE {t} RENAME COLUMN line_user_id TO external_id; END IF; END $$;"
     f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT '';"
     for t in _OBSERVABILITY_TABLES
+) + (
+    # 改名殘骸：RENAME COLUMN 會讓舊索引 idx_asr_calls_line_user_created 自動改指
+    # external_id，定義與新建的 idx_asr_calls_external_created 完全相同——留著只是
+    # 讓每次寫入多維護一份同內容的 btree。新庫沒有這個索引，IF EXISTS 自動略過。
+    "DROP INDEX IF EXISTS idx_asr_calls_line_user_created;"
 )
 
 # risk_events 既有表補 trace_id（可空）：讓風險事件掛回該輪鏈路。
@@ -311,8 +325,11 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(APP_NOTIFICATIONS_DDL)
         conn.execute(MEMORY_CONSOLIDATIONS_DDL)
         conn.execute(CONVERSATION_SUMMARIES_DDL)
-        conn.execute(OBSERVABILITY_DDL)
+        # 三段順序不可調換：建表（既有庫 no-op）→ 舊欄改名／補 channel → 建索引。
+        # 索引引用 external_id，既有庫要先改完名才建得起來。
+        conn.execute(OBSERVABILITY_TABLES_DDL)
         conn.execute(OBSERVABILITY_EXTERNAL_ID_MIGRATION_DDL)
+        conn.execute(OBSERVABILITY_INDEXES_DDL)
         conn.execute(RISK_EVENTS_TRACE_MIGRATION_DDL)
         conn.execute(REPLIES_ROUND_TRIP_MIGRATION_DDL)
         conn.execute(SESSION_KEY_MIGRATION_DDL)
