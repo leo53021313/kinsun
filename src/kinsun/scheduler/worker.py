@@ -36,8 +36,7 @@ from kinsun.reports.reminders import (
     REMINDER_KIND_PROACTIVE_GREETING,
     safe_record,
 )
-from kinsun.reports.summaries import PgConversationSummaryStore, summarize_day
-from kinsun.safety.events import PgRiskEventStore
+from kinsun.reports.summaries import summarize_day
 from kinsun.scheduler.jobs import build_audio_cleanup_job, build_consolidation_job
 from kinsun.scheduler.scheduler import Job, Scheduler
 from kinsun.scheduler.state import PgScheduleStateStore
@@ -63,9 +62,9 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
     agent = core.agent
     router = core.router
     traces = core.traces
-    summaries = PgConversationSummaryStore(db, clock=clock)
+    summaries = core.summaries
     # 摘要納 L1 小訊號（✅ D-10 己-5）：worker 自組 risk_events 讀取端。
-    risk_events = PgRiskEventStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex)
+    risk_events = core.risk_events
     # 整理進度標記（✅ 庚-06／庚-13）：逐日補齊＋冪等，避免停機漏天與重覆寫入。
     consolidation_log = PgConsolidationLogStore(db, clock=clock)
 

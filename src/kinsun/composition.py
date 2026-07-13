@@ -42,6 +42,8 @@ from kinsun.rag.retriever import HealthEducationRetriever
 from kinsun.rag.service import HealthEducationRagService
 from kinsun.rag.vector_store import PgVectorStore
 from kinsun.reports.reminders import PgReminderLogStore
+from kinsun.reports.summaries import PgConversationSummaryStore
+from kinsun.safety.events import PgRiskEventStore
 from kinsun.tools.clock import CURRENT_TIME_SPEC, build_current_time_handler
 from kinsun.tools.health_rag import HEALTH_RAG_SPEC, build_health_rag_handler
 from kinsun.tools.registry import ToolRegistry
@@ -77,6 +79,10 @@ class Core:
     memory: PgMemoryStore
     traces: PgTraceStore
     reminder_logs: PgReminderLogStore
+    # 兩根共用收進 Core（✅ 庚-44／A-57）：先前 app.py 與 worker 各自 new，
+    # clock／new_id 接線不一致的風險就此消除。
+    risk_events: PgRiskEventStore
+    summaries: PgConversationSummaryStore
     notifications: PgAppNotificationStore
     agent: CareAgent
 
@@ -156,6 +162,8 @@ def assemble_core(
         tools=build_tool_registry(clock=clock, rag_service=rag_service),
     )
     notifications = PgAppNotificationStore(db, clock=clock, new_id=new_id)
+    risk_events = PgRiskEventStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex)
+    summaries = PgConversationSummaryStore(db, clock=clock)
     return Core(
         settings=settings,
         db=db,
@@ -177,6 +185,8 @@ def assemble_core(
         medications=medications,
         appointments=appointments,
         memory=memory,
+        risk_events=risk_events,
+        summaries=summaries,
         traces=PgTraceStore(db, clock=clock, new_id=new_id),
         reminder_logs=PgReminderLogStore(db, clock=clock, new_id=new_id),
         notifications=notifications,
