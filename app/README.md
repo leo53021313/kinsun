@@ -7,9 +7,24 @@
 1. 手機安裝「Expo Go」（App Store／Play 商店，免費）。
 2. 後端跑起來並對外（DGX 上的 kinsun 服務，開發常用 ngrok）。
 3. 設定 API 位址：`cp .env.example .env`，填 `EXPO_PUBLIC_API_URL=https://xxxx.ngrok-free.app`。
-4. `npm install`（首次）→ `npx expo start`。
-5. 手機掃終端機的 QR code（iOS 用相機、Android 用 Expo Go 內掃碼）；電腦與手機需同網段，
-   不同網段改跑 `npx expo start --tunnel`。
+4. `npm install`（首次）。
+5. 啟動 dev server（DGX 上的常用做法）：`scripts/kinsun.sh start app`
+   —— **預設走 tunnel**，手機在任何網路都連得到，不必和 DGX 同一個 Wi-Fi。
+6. `scripts/kinsun.sh status` 的 `app` 那列直接給你 Expo Go 要掃的位址，形如
+   `exp://xxx-anonymous-8081.exp.direct`（背景啟動時 Expo 不印 QR code，故由腳本問 Metro 取得）。
+   手機掃它即可：iOS 用相機、Android 用 Expo Go 內建掃碼。
+
+其他常用指令：
+
+| 指令 | 用途 |
+| :--- | :--- |
+| `scripts/kinsun.sh restart app` | 重啟（改了原生設定、或 tunnel 斷線時） |
+| `scripts/kinsun.sh stop app` | 停止 |
+| `KINSUN_EXPO_TUNNEL=0 scripts/kinsun.sh restart app` | 改走區網（**僅限手機與 DGX 同網段**，啟動較快） |
+| `npx expo start`（在 `app/`） | 不經腳本、單獨起，掃終端機印出的 QR code |
+
+> `exp.direct`（Expo 的 tunnel 服務）偶爾會 `remote gone away` 起不來，腳本已內建自動重試一次。
+> 若兩次都失敗，稍後再 `restart app` 即可。
 
 ## 角色測試流程（不再需要兩個 LINE 帳號）
 
