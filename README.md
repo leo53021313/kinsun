@@ -108,11 +108,19 @@ uv run pre-commit install   # 啟用 commit 前自動檢查（ruff lint/format�
 > ⚠️ **一次性設定**：需先在 [Supabase 後台](https://supabase.com/dashboard) 手動建立一個名為 `tts-audio`
 > （或對應 `AUDIO_BUCKET` 設定值）的**公開（Public）Storage bucket**，音檔才能以公開 URL 供 LINE 播放。
 
-執行測試（全離線、不需 GPU/金鑰；雲端整合測試需 `KINSUN_IT=1` + 真金鑰才會跑）：
+執行測試：
 
 ```bash
-uv run pytest
+scripts/test_db.sh up   # 起本機測試庫（Docker／pgvector，只需第一次；重開機會自動回來）
+uv run pytest           # 單元測試全離線；Pg 整合測試自動連上面那個測試庫
 ```
+
+`.env` 的 `KINSUN_IT=1` 與 `KINSUN_TEST_DATABASE_URL` 讓整合測試預設就跑（設定見 `.env.example`）。
+測試庫沒起著時，Pg 測試會**直接紅並提示**——刻意不 skip：整合測試靜默跳過，正是 `ensure_schema`
+遷移缺陷溜到正式庫才爆的原因。要暫時關掉整批 Pg 測試，把 `.env` 的 `KINSUN_IT` 改成 `0`。
+測試庫是拋棄式的，與正式庫無關；`scripts/test_db.sh down`／`reset` 可隨時丟棄重來。
+
+> 雲端整合測試（Gemini／Mem0 等真金鑰）另需對應金鑰才會跑，否則自動 skip。
 
 ## 衛教 RAG ingestion
 
