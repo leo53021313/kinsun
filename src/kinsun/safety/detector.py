@@ -33,6 +33,10 @@ class RiskDetector:
         final = max(kw_tier, llm.tier)
         if final == RiskTier.L2 and llm.confidence < self._mid and kw_tier < RiskTier.L2:
             final = RiskTier.L1
+        # 症狀詞撐住的等級遇分級器故障（✅ 庚-41／A-44）：reason 反映真正觸發原因
+        # ——家屬通知文案取 reason，寫「分級器例外」會誤導。
+        if "llm:error" in llm.signals and kw_tier >= final > RiskTier.L0:
+            return RiskAssessment(final, llm.confidence, "命中症狀詞（分級器故障期間）", signals)
         # ✅ D-31（甲-5）fail-safe：分級器故障（例外或回傳無法解析）且句子非空時，
         # 不再靜默 L0——保守記 L1 供留痕（pipeline 落庫不通知）。關鍵詞命中者不受影響。
         if "llm:error" in llm.signals and text.strip() and final < RiskTier.L1:

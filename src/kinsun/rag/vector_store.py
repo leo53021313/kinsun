@@ -37,51 +37,6 @@ class HybridVectorStore(Protocol):
     def keyword_search(self, query: str, *, top_k: int = 5) -> tuple[SearchResult, ...]: ...
 
 
-class InMemoryVectorStore:
-    def __init__(self) -> None:
-        self._entries: list[tuple[DocumentChunk, tuple[float, ...]]] = []
-
-    def add(self, chunk: DocumentChunk, vector: tuple[float, ...]) -> None:
-        self._entries.append((chunk, vector))
-
-    def search(
-        self,
-        query_vector: tuple[float, ...],
-        *,
-        top_k: int = 5,
-    ) -> tuple[SearchResult, ...]:
-        scored = [
-            SearchResult(
-                chunk=chunk,
-                score=_cosine(query_vector, vector),
-                retrieval_method="vector",
-            )
-            for chunk, vector in self._entries
-        ]
-        scored.sort(key=lambda result: result.score, reverse=True)
-        return tuple(scored[:top_k])
-
-    def keyword_search(self, query: str, *, top_k: int = 5) -> tuple[SearchResult, ...]:
-        terms = extract_keyword_terms(query)
-        results: list[SearchResult] = []
-        for chunk, _ in self._entries:
-            searchable_text = f"{chunk.metadata.title} {chunk.metadata.topic} {chunk.text}".lower()
-            matched = tuple(term for term in terms if term.lower() in searchable_text)
-            if not matched:
-                continue
-            score = len(matched) / max(len(terms), 1)
-            results.append(
-                SearchResult(
-                    chunk=chunk,
-                    score=score,
-                    matched_terms=matched,
-                    retrieval_method="keyword",
-                )
-            )
-        results.sort(key=lambda result: result.score, reverse=True)
-        return tuple(results[:top_k])
-
-
 class PgVectorStore:
     def __init__(self, db: Executor) -> None:
         self._db = db
@@ -228,6 +183,8 @@ class PgVectorStore:
         *,
         source_id: str,
         fetched_at: float,
+        document_id: str = "",
+        url: str = "",
         content_hash: str,
         chunk_count: int,
         parser_used: str,
@@ -239,8 +196,8 @@ class PgVectorStore:
             """
             INSERT INTO rag_ingestion_audit_logs (
                 source_id, fetched_at, content_hash, chunk_count, parser_used,
-                status, error_message, operator_or_job_id
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                status, error_message, operator_or_job_id, document_id, url
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """,
             (
                 source_id,
@@ -251,12 +208,13 @@ class PgVectorStore:
                 status,
                 error_message,
                 operator_or_job_id,
+                document_id,
+                url,
             ),
         )
 
     def reset(self) -> None:
         self._execute("DELETE FROM rag_ingestion_audit_logs")
-        self._execute("DELETE FROM rag_crawl_jobs")
         self._execute("DELETE FROM rag_chunks")
         self._execute("DELETE FROM rag_documents")
         self._execute("DELETE FROM rag_sources")
