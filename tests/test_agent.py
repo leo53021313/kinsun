@@ -121,10 +121,23 @@ def test_handle_runs_tool_loop_then_returns_text():
     assert llm.calls == [0, 1]  # 第二輪帶入 1 筆 tool_result
 
 
-def test_tool_loop_caps_iterations():
+def test_tool_loop_last_round_digests_results_instead_of_fallback():
+    """✅ 庚-35（A-14）：迭代上限用盡但工具已成功執行——末輪多一次消化呼叫，
+    模型基於工具結果產出文字，不再把成功的工具工作丟掉直接回退。"""
     always_tool = ToolTurn(text=None, tool_calls=[ToolCall("get_weather", {})])
-    llm = ScriptedToolLLM([always_tool, always_tool, always_tool])
+    digest = ToolTurn(text="查到台北是晴天喔", tool_calls=[])
+    llm = ScriptedToolLLM([always_tool, always_tool, always_tool, digest])
+    agent = CareAgent(llm, SpySession(), tools=_registry_with_weather(), max_tool_iters=3)
+    reply = agent.handle("u1", "天氣")
+    assert reply == "查到台北是晴天喔"
+    assert len(llm.calls) == 4  # 3 輪工具＋1 輪消化
+    assert llm.calls[-1] == 3  # 消化輪帶著全部 3 筆工具結果
+
+
+def test_tool_loop_falls_back_when_digest_still_wants_tools():
+    """消化輪模型仍堅持呼叫工具（無文字）→ 才回退。"""
+    always_tool = ToolTurn(text=None, tool_calls=[ToolCall("get_weather", {})])
+    llm = ScriptedToolLLM([always_tool] * 4)
     agent = CareAgent(llm, SpySession(), tools=_registry_with_weather(), max_tool_iters=3)
     reply = agent.handle("u1", "天氣")
     assert reply == FALLBACK_REPLY
-    assert len(llm.calls) == 3

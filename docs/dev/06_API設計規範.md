@@ -125,8 +125,8 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | `POST /api/elders/{elder_id}/guardian-invites` | `POST /api/v1/elders/{elder_id}/guardian-invites` | 產家屬邀請碼 |
 | `GET|POST /api/elders/{elder_id}/medications`、`PUT|DELETE .../{medication_id}` | 同路徑掛 `/api/v1/` | 用藥 CRUD |
 | `GET|POST /api/elders/{elder_id}/appointments`、`PUT|DELETE .../{appointment_id}` | 同路徑掛 `/api/v1/` | 回診 CRUD；payload `{date, label, time}`，`time` 選填 HH:MM（✅ 庚-15，空＝未指定、提醒不帶時間） |
-| `GET /api/elders/{elder_id}/health-report` | `GET /api/v1/elders/{elder_id}/health-report` | 聚合單數（規範允許）；✅ D-09 已新增 `GET /api/v1/elders/{elder_id}/daily-summaries`（己-3，2026-07-10：列表資源、`limit` 1–90 預設 30、meta 帶 limit） |
-| — | `DELETE /api/v1/sessions` | **新增**：登出（撤銷當前 token，D-25） |
+| `GET /api/elders/{elder_id}/health-report` | `GET /api/v1/elders/{elder_id}/health-report` | 聚合單數（規範允許）；✅ D-09 已新增 `GET /api/v1/elders/{elder_id}/daily-summaries`（己-3，2026-07-10：列表資源、`limit` 1–90 預設 30、meta 帶 limit）；`?window_days=1..90` 選填、預設 30（✅ 庚-40） |
+| — | `DELETE /api/v1/sessions` | **新增**：登出（撤銷當前 token，D-25）；家屬與長輩 token 皆可（✅ 庚-42 長輩自助登出） |
 | — | `DELETE /api/v1/sessions/all` | **新增**：登出所有裝置（撤銷該家屬全部 token，庚-05／A-47，2026-07-12） |
 | — | `DELETE /api/v1/elders/{elder_id}/device-bindings` | **新增**：作廢長輩裝置重綁（D-25） |
 

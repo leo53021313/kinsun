@@ -80,6 +80,11 @@ export function loginGuardian(email: string, password: string): Promise<Guardian
 }
 
 /** 登出＝撤銷當前 token（✅ D-25 修訂）；失敗不擋本機登出，呼叫端自行忽略錯誤。 */
+/** 家屬與長輩共用（✅ 庚-42：長輩自助登出）：撤銷當前 token。 */
+export function logoutSession(token: string): Promise<void> {
+  return request("/api/v1/sessions", { method: "DELETE", token });
+}
+
 export function logoutGuardian(token: string): Promise<void> {
   return request("/api/v1/sessions", { method: "DELETE", token });
 }
