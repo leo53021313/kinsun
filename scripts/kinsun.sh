@@ -9,9 +9,10 @@
 #
 # 設計文件：docs/superpowers/specs/2026-07-03-全功能啟停腳本-design.md
 #
-# 管理的程序：ASR(8001)、TTS(8002)、Webhook(8000)、Scheduler、前端 LIFF(5173)、ngrok。
+# 管理的程序：ASR(8001)、TTS(8002)、Webhook(8000)、Scheduler、前端 LIFF(5173)、
+#             App Expo dev server(8081)、ngrok。
 # 每個程序以 setsid 起在獨立 process group，log 寫 logs/<name>.log、PID 寫 .run/<name>.pid。
-# 可選元件（TTS/前端/ngrok）缺依賴時只警告並跳過，不中斷整體。
+# 可選元件（TTS/前端/App/ngrok）缺依賴時只警告並跳過，不中斷整體。
 
 set -o pipefail
 
@@ -22,10 +23,10 @@ LOG_DIR="$ROOT/logs"
 RUN_DIR="$ROOT/.run"
 
 # 啟動順序（GPU 服務先起、載模型較慢）；停止則反序。
-START_ORDER=(asr tts webhook scheduler frontend ngrok)
-STOP_ORDER=(ngrok frontend scheduler webhook tts asr)
+START_ORDER=(asr tts webhook scheduler frontend app ngrok)
+STOP_ORDER=(ngrok app frontend scheduler webhook tts asr)
 
-declare -A PORT=([asr]=8001 [tts]=8002 [webhook]=8000 [frontend]=5173)
+declare -A PORT=([asr]=8001 [tts]=8002 [webhook]=8000 [frontend]=5173 [app]=8081)
 
 # ── 輸出小工具 ────────────────────────────────────────────────────────
 if [ -t 1 ]; then
@@ -73,6 +74,20 @@ _port_open() {
 }
 
 _http_ok() { command -v curl >/dev/null 2>&1 && curl -fsS --max-time 2 "$1" >/dev/null 2>&1; }
+
+# 本機區網 IP（Expo Go 掃的 exp:// 位址要用它）。取預設路由的來源位址，
+# 避開 docker 橋接（172.17.x）與 Tailscale（100.x）等非區網介面。
+_lan_ip() {
+  ip route get 1.1.1.1 2>/dev/null |
+    awk '{for (i = 1; i <= NF; i++) if ($i == "src") { print $(i + 1); exit }}'
+}
+
+# 取 log 檔「最後一次啟動」之後的內容——避免抓到上一輪殘留的網址。
+_last_run_log() {
+  local f="$1"
+  [ -f "$f" ] || return 0
+  awk '/^=== .* start /{buf = ""} {buf = buf $0 ORS} END{printf "%s", buf}' "$f"
+}
 
 # ── 背景啟動：setsid 起在新 process group、log 導向、寫 PID ─────────────
 # 由 session leader 自行把 $$ 寫進 PID 檔——不倚賴 $!。因為 setsid 在啟用
@@ -190,6 +205,42 @@ launch_frontend() {
   _bg frontend npm --prefix "$ROOT/frontend" run dev
 }
 
+# App（Expo dev server）：手機裝 Expo Go 掃 status 顯示的 exp:// 位址即可開發，免簽章。
+# 預設 LAN 模式（手機與 DGX 同一個 Wi-Fi）；不同網段時 KINSUN_EXPO_TUNNEL=1 走 tunnel。
+launch_app() {
+  _precheck app "${PORT[app]}" || return 0
+  if ! command -v npm >/dev/null 2>&1; then
+    warn "App：找不到 npm，跳過"
+    return 0
+  fi
+  if [ ! -d "$ROOT/app/node_modules" ]; then
+    warn "App：app/node_modules 不存在，請先 npm --prefix app install，跳過"
+    return 0
+  fi
+  [ -f "$ROOT/app/.env" ] ||
+    warn "App：app/.env 不存在（EXPO_PUBLIC_API_URL 未設，App 呼叫後端會失敗），仍照常啟動"
+  info "啟動 App Expo dev server (port ${PORT[app]})…"
+  (
+    local args=()
+    if [ "${KINSUN_EXPO_TUNNEL:-0}" = "1" ]; then
+      # tunnel：手機與 DGX 不同網段時用（走 @expo/ngrok，啟動較慢、需連外）。
+      args=(-- --tunnel)
+      info "App：tunnel 模式（KINSUN_EXPO_TUNNEL=1）——網址較慢出現，見 logs/app.log"
+    else
+      # LAN：明確釘住 packager hostname，否則 Expo 可能在多網卡（docker／Tailscale）上挑錯 IP，
+      # 手機掃到的 bundle 位址會連不上。
+      local ip
+      ip="$(_lan_ip)"
+      if [ -n "$ip" ]; then
+        export REACT_NATIVE_PACKAGER_HOSTNAME="$ip"
+      else
+        warn "App：抓不到區網 IP，Expo 將自行挑選介面（手機掃不到時改用 KINSUN_EXPO_TUNNEL=1）"
+      fi
+    fi
+    _bg app npm --prefix "$ROOT/app" run start "${args[@]}"
+  )
+}
+
 launch_ngrok() {
   _precheck ngrok || return 0
   if ! command -v ngrok >/dev/null 2>&1; then
@@ -288,6 +339,21 @@ _health_note() {
       else echo "—"; fi ;;
     webhook|frontend)
       if _port_open "$port"; then echo "listening :${port}"; else echo "—"; fi ;;
+    app)
+      # 背景啟動（非互動終端）時 Expo 不印 QR code，這裡把 Expo Go 要掃的位址算出來。
+      # tunnel 模式的位址只會出現在 log，優先採用；否則組 LAN 位址。
+      if _port_open "$port"; then
+        local url ip
+        url="$(_last_run_log "$LOG_DIR/app.log" |
+          grep -oE 'exp(\+[a-z0-9-]+)?://[^[:space:]]+' | tail -n1)"
+        if [ -z "$url" ]; then
+          ip="$(_lan_ip)"
+          [ -n "$ip" ] && url="exp://${ip}:${port}"
+        fi
+        echo "${url:-listening :${port}}"
+      else
+        echo "—"
+      fi ;;
     scheduler)
       echo "（無對外埠）" ;;
     ngrok)
@@ -323,13 +389,17 @@ usage() {
 用法：scripts/kinsun.sh <指令>
 
 指令：
-  start     背景啟動全部服務（ASR、TTS、Webhook、Scheduler、前端、ngrok）
+  start     背景啟動全部服務（ASR、TTS、Webhook、Scheduler、前端、App、ngrok）
   stop      關閉全部服務
-  status    檢視各服務狀態（PID／埠／健康）
+  status    檢視各服務狀態（PID／埠／健康；App 那列即 Expo Go 要掃的 exp:// 位址）
   restart   先 stop 再 start
 
 環境變數：
-  KINSUN_RELOAD=1   Webhook 啟用 --reload（開發用；預設關）
+  KINSUN_RELOAD=1        Webhook 啟用 --reload（開發用；預設關）
+  KINSUN_EXPO_TUNNEL=1   App 走 tunnel（手機與 DGX 不同網段時用；預設 LAN，啟動較快）
+
+App（Expo Go）：手機裝 Expo Go → 掃 status 的 exp:// 位址（iOS 用相機、Android 用
+Expo Go 內建掃碼）。手機需與 DGX 同一個 Wi-Fi；不同網段就改用 KINSUN_EXPO_TUNNEL=1。
 
 log：logs/<service>.log　PID：.run/<service>.pid
 EOF

@@ -7,9 +7,14 @@
 1. 手機安裝「Expo Go」（App Store／Play 商店，免費）。
 2. 後端跑起來並對外（DGX 上的 kinsun 服務，開發常用 ngrok）。
 3. 設定 API 位址：`cp .env.example .env`，填 `EXPO_PUBLIC_API_URL=https://xxxx.ngrok-free.app`。
-4. `npm install`（首次）→ `npx expo start`。
-5. 手機掃終端機的 QR code（iOS 用相機、Android 用 Expo Go 內掃碼）；電腦與手機需同網段，
-   不同網段改跑 `npx expo start --tunnel`。
+4. `npm install`（首次）。
+5. 啟動 dev server，二選一：
+   - **連同後端一起起**（DGX 上的常用做法）：`scripts/kinsun.sh start`，App 會一起啟動；
+     `scripts/kinsun.sh status` 的 `app` 那列**直接顯示 Expo Go 要掃的 `exp://` 位址**
+     （背景啟動時 Expo 不印 QR code，故由腳本算出）。
+   - **只起 App**：`npx expo start`，掃終端機印出的 QR code。
+6. 手機掃該位址（iOS 用相機、Android 用 Expo Go 內掃碼）；手機與電腦需同網段。
+   不同網段時：`KINSUN_EXPO_TUNNEL=1 scripts/kinsun.sh start`，或直接 `npx expo start --tunnel`。
 
 ## 角色測試流程（不再需要兩個 LINE 帳號）
 
