@@ -28,11 +28,9 @@ from kinsun.config import load_dotenv, load_settings
 from kinsun.llm import build_gemini_for
 from kinsun.medications.flow import MedicationMenu
 from kinsun.pipeline import VoicePipeline
-from kinsun.reports.summaries import PgConversationSummaryStore
 from kinsun.safety.classifier import LlmRiskClassifier
 from kinsun.safety.deliveries import PgRiskNotificationLogStore
 from kinsun.safety.detector import RiskDetector
-from kinsun.safety.events import PgRiskEventStore
 from kinsun.safety.notifier import GuardianNotifier
 from kinsun.scheduler.state import PgScheduleStateStore
 from kinsun.scheduler.worker import build_jobs
@@ -64,7 +62,7 @@ def build_app() -> FastAPI:
     db = core.db
 
     # --- web 專屬接線 ---
-    risk_events = PgRiskEventStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex)
+    risk_events = core.risk_events
     # 進站音檔託管：有 Supabase 憑證就啟用（獨立於 TTS 後端選擇）。
     inbound_audio = (
         build_audio_publisher(
@@ -157,7 +155,7 @@ def build_app() -> FastAPI:
         return {"status": "ok"}
 
     # 對話摘要：guardian 面與 admin 觀測共用同一實例。
-    summaries = PgConversationSummaryStore(db, clock=clock)
+    summaries = core.summaries
     # prefix 由此統一指定（✅ D-28 乙-4）；/api/v1 為 D-27 版本前綴。
     app.include_router(
         create_guardian_face_router(

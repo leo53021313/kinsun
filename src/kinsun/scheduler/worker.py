@@ -31,9 +31,12 @@ from kinsun.proactive.jobs import (
     build_greeting_job,
     build_inactivity_job,
 )
-from kinsun.reports.reminders import safe_record
-from kinsun.reports.summaries import PgConversationSummaryStore, summarize_day
-from kinsun.safety.events import PgRiskEventStore
+from kinsun.reports.reminders import (
+    REMINDER_KIND_PROACTIVE_CARE,
+    REMINDER_KIND_PROACTIVE_GREETING,
+    safe_record,
+)
+from kinsun.reports.summaries import summarize_day
 from kinsun.scheduler.jobs import build_audio_cleanup_job, build_consolidation_job
 from kinsun.scheduler.scheduler import Job, Scheduler
 from kinsun.scheduler.state import PgScheduleStateStore
@@ -59,9 +62,9 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
     agent = core.agent
     router = core.router
     traces = core.traces
-    summaries = PgConversationSummaryStore(db, clock=clock)
+    summaries = core.summaries
     # 摘要納 L1 小訊號（✅ D-10 己-5）：worker 自組 risk_events 讀取端。
-    risk_events = PgRiskEventStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex)
+    risk_events = core.risk_events
     # 整理進度標記（✅ 庚-06／庚-13）：逐日補齊＋冪等，避免停機漏天與重覆寫入。
     consolidation_log = PgConsolidationLogStore(db, clock=clock)
 
@@ -96,16 +99,19 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
         safe_record(reminder_logs.record, elder_id, kind, content)
 
     def greet_one(elder_id: str) -> None:
-        _push_to_elder(elder_id, GREETING_INTENT, "proactive-greeting")
+        _push_to_elder(elder_id, GREETING_INTENT, REMINDER_KIND_PROACTIVE_GREETING)
 
     def care_one(elder_id: str) -> None:
-        _push_to_elder(elder_id, INACTIVITY_INTENT, "proactive-care")
+        _push_to_elder(elder_id, INACTIVITY_INTENT, REMINDER_KIND_PROACTIVE_CARE)
 
     jobs = [
         build_consolidation_job(
             sessions=memory.sessions,
             run_one=run_one,
             hour=settings.longterm_consolidation_hour,
+            # ✅ 庚-48（A-21）：xx:05 執行——「昨日對話短長期兩不著」的凌晨盲窗
+            # 由三小時縮到 5 分鐘（短期只裝今天、長期要等整理）。
+            minute=5,
         ),
         build_greeting_job(
             sessions=memory.sessions, greet_one=greet_one, hour=settings.proactive_greeting_hour
@@ -205,7 +211,7 @@ def main() -> int:
     scheduler, db = build_scheduler(settings, clock=lambda: datetime.now(tz))
     print(
         f"排程器啟動：每 {settings.scheduler_tick_seconds}s 檢查；"
-        f"整理 {settings.longterm_consolidation_hour}:00、"
+        f"整理 {settings.longterm_consolidation_hour}:05、"
         f"問候 {settings.proactive_greeting_hour}:00、"
         f"失聯關心 {settings.proactive_inactivity_hour}:00"
         f"（{settings.proactive_inactivity_days} 天門檻）。"

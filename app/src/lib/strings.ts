@@ -70,6 +70,10 @@ export const strings = {
     bindingLost: "這台手機的綁定失效了，請家人重新給您一組號碼。",
     pressToTalk: "按住說話",
     releaseToSend: "放開就送出",
+    logout: "登出",
+    logoutConfirmTitle: "登出",
+    logoutConfirmBody: "確定要登出嗎？下次要用手機號碼和密碼再登入。",
+    logoutCancel: "取消",
   },
   guardianLogin: {
     wrongCredentials: "帳號或密碼不對，請再試一次。",

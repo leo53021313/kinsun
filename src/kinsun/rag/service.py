@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from kinsun.llm import LLMClient, Message
 from kinsun.rag.answer_policy import AnswerPolicy
+from kinsun.rag.citation import assemble_citations
 from kinsun.rag.schemas import RagAnswer, SafetyLevel, SearchResult
 
 _GROUNDING_PROMPT = (
@@ -39,7 +40,8 @@ class HealthEducationRagService:
         return RagAnswer(
             answer=rewritten,
             safety_level=answer.safety_level,
-            citations=answer.citations,
+            # LLM 消化的是全部 evidence——citation 以同一範圍重組對位（✅ 庚-39）。
+            citations=assemble_citations(evidence[: self._top_k]),
             should_escalate_to_risk_engine=answer.should_escalate_to_risk_engine,
             reason=answer.reason,
         )
