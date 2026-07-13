@@ -121,6 +121,10 @@ _Avoid_: 容器、context、god object
 一份行為斷言，同時參數化跑一個 seam 的兩個 adapter——`Fake<領域>Store`（離線、每次都跑）與 `Pg<領域>Store`（連真庫、`KINSUN_IT=1` 才跑）——用以證明兩個 adapter 對同一情境給出相同結果。檔名 `test_<領域>_store_contract.py`。
 _Avoid_: 整合測試（僅指 Pg 那半）、單元測試
 
+**測試庫（Test database）**：
+`scripts/test_db.sh` 起的拋棄式 Postgres＋pgvector（port 5433，與 CI 的 integration job 同一組設定）。`.env` 的 `KINSUN_IT=1`＋`KINSUN_TEST_DATABASE_URL` 讓 Pg 測試預設就跑；連不上時**故意讓測試紅、不 skip**（庚-07 的遷移缺陷正是靠靜默 skip 溜到正式庫）。嚴禁與 `DATABASE_URL` 相同（✅ D-69，conftest 有防呆）。
+_Avoid_: 正式庫、開發庫
+
 ### 傳輸（Transport）
 
 **傳輸（Transport）**：
