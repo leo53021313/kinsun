@@ -3,11 +3,14 @@ from kinsun.scheduler.jobs import build_audio_cleanup_job, build_consolidation_j
 
 def test_runs_for_each_session():
     done = []
-    job = build_consolidation_job(sessions=lambda: ["u1", "u2"], run_one=done.append, hour=3)
+    # ✅ 庚-48（A-21）：整理提前到 00:05——凌晨盲窗（昨日對話短長期兩不著）縮到 5 分鐘。
+    job = build_consolidation_job(
+        sessions=lambda: ["u1", "u2"], run_one=done.append, hour=0, minute=5
+    )
     job.run()
     assert done == ["u1", "u2"]
     assert job.name == "daily-consolidation"
-    assert job.cron == "0 3 * * *"
+    assert job.cron == "5 0 * * *"
 
 
 def test_one_session_failure_does_not_block_others():

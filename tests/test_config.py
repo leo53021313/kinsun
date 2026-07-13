@@ -21,7 +21,7 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.memory_max_turns == 200
     assert settings.timezone == "Asia/Taipei"
     assert settings.longterm_embedding_model == "gemini-embedding-001"
-    assert settings.longterm_consolidation_hour == 3
+    assert settings.longterm_consolidation_hour == 0  # ✅ 庚-48：00:05 整理，盲窗 5 分
     assert settings.scheduler_tick_seconds == 60
     assert settings.proactive_greeting_hour == 8
     assert settings.proactive_inactivity_hour == 10

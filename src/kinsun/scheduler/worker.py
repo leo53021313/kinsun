@@ -106,6 +106,9 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
             sessions=memory.sessions,
             run_one=run_one,
             hour=settings.longterm_consolidation_hour,
+            # ✅ 庚-48（A-21）：xx:05 執行——「昨日對話短長期兩不著」的凌晨盲窗
+            # 由三小時縮到 5 分鐘（短期只裝今天、長期要等整理）。
+            minute=5,
         ),
         build_greeting_job(
             sessions=memory.sessions, greet_one=greet_one, hour=settings.proactive_greeting_hour
@@ -205,7 +208,7 @@ def main() -> int:
     scheduler, db = build_scheduler(settings, clock=lambda: datetime.now(tz))
     print(
         f"排程器啟動：每 {settings.scheduler_tick_seconds}s 檢查；"
-        f"整理 {settings.longterm_consolidation_hour}:00、"
+        f"整理 {settings.longterm_consolidation_hour}:05、"
         f"問候 {settings.proactive_greeting_hour}:00、"
         f"失聯關心 {settings.proactive_inactivity_hour}:00"
         f"（{settings.proactive_inactivity_days} 天門檻）。"

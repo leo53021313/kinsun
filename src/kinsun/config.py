@@ -123,7 +123,7 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         memory_max_turns=int(env.get("MEMORY_MAX_TURNS", "200")),
         timezone=env.get("TIMEZONE", "Asia/Taipei"),
         longterm_embedding_model=env.get("LONGTERM_EMBEDDING_MODEL", "gemini-embedding-001"),
-        longterm_consolidation_hour=int(env.get("LONGTERM_CONSOLIDATION_HOUR", "3")),
+        longterm_consolidation_hour=int(env.get("LONGTERM_CONSOLIDATION_HOUR", "0")),
         scheduler_tick_seconds=int(env.get("SCHEDULER_TICK_SECONDS", "60")),
         proactive_greeting_hour=int(env.get("PROACTIVE_GREETING_HOUR", "8")),
         proactive_inactivity_hour=int(env.get("PROACTIVE_INACTIVITY_HOUR", "10")),
