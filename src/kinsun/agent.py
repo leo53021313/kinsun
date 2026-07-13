@@ -72,7 +72,15 @@ class CareAgent:
                 return turn.text or FALLBACK_REPLY
             for call in turn.tool_calls:
                 results.append(ToolResult(call, self._tools.dispatch(call.name, call.arguments)))
-        return FALLBACK_REPLY
+        # 末輪修復（✅ 庚-35／A-14）：迭代上限用盡但工具結果已在手——再讓模型
+        # 消化一次產出文字，不把成功的工具工作丟掉；仍堅持要工具（無文字）才回退。
+        turn = self._llm.generate_tool_turn(
+            system_prompt=system_prompt,
+            messages=base,
+            tools=self._tools.specs(),
+            tool_results=results,
+        )
+        return turn.text or FALLBACK_REPLY
 
     def proactive(self, elder_id: str, intent: str) -> str:
         system_prompt, history = self._envelope(elder_id, intent)
