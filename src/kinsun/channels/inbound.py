@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from kinsun.accounts.models import Channel
 from kinsun.llm import LLMError
-from kinsun.memory.shortterm import MemoryError
+from kinsun.memory.shortterm import MemoryStoreError
 from kinsun.observability.store import TraceStore, safe_record
 from kinsun.speech.asr import ASRError
 from kinsun.speech.tts import TtsResult
@@ -163,7 +163,7 @@ def _run_pipeline(
     """執行對話管線並發送回覆：語音與文字共用。任一階段失敗回退提示。"""
     try:
         result = produce()
-    except (ASRError, LLMError, MemoryError) as exc:
+    except (ASRError, LLMError, MemoryStoreError) as exc:
         logger.warning("對話管線失敗（回退提示）：%s: %s", type(exc).__name__, exc)
         msg.reply(FALLBACK_PROMPT)
         return
