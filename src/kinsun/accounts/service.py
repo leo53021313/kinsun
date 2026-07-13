@@ -280,6 +280,10 @@ class AccountService:
         elder = self._repo.get_elder(account.elder_id)
         if elder is None:
             raise AppAccountError("invalid_credentials")
+        # ⚠️ 語意地雷（✅ 庚-49／A-51 載明）：此處以「同意有效」代理「已配對」——
+        # 現行唯一寫入 consent 的路徑是掃碼配對，語意等價。但 D-13 決議不做撤回、
+        # revoked_at 為休眠欄位；未來若補撤回入口，撤回會連登入一起擋（應只擋
+        # 對話），屆時請改以「配對事實」（如 consent 列存在與否）判斷。
         if not self.has_valid_consent(elder.elder_id):
             raise AppAccountError("not_paired")
         # 補綁定＋發 token 同交易（✅ 庚-18／A-48）：token 那步失敗不得留半完成綁定。
