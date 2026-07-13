@@ -10,7 +10,7 @@ from kinsun.db import Database, _Errors
 from kinsun.llm import Message
 
 
-class MemoryError(Exception):
+class MemoryStoreError(Exception):
     """短期記憶讀寫失敗。"""
 
 
@@ -42,7 +42,7 @@ class PgMemoryStore:
 
     # 預設對齊 config 的 MEMORY_MAX_TURNS=200（✅ D-35 丙-5）；正式組裝一律由 settings 注入。
     def __init__(self, db: Database, clock: Callable[[], datetime], max_turns: int = 200) -> None:
-        self._db = _Errors(db, lambda m: MemoryError(f"記憶存取失敗：{m}"))
+        self._db = _Errors(db, lambda m: MemoryStoreError(f"記憶存取失敗：{m}"))
         self._clock = clock
         self._max_turns = max_turns
 

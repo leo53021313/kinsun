@@ -12,7 +12,7 @@ from typing import Protocol
 
 from kinsun.rag.chunker import chunk_text
 from kinsun.rag.crawler import ParsedPage
-from kinsun.rag.embeddings import EmbeddingError, QueryEmbeddingModel
+from kinsun.rag.embeddings import QueryEmbeddingModel
 from kinsun.rag.schemas import (
     Audience,
     ChunkMetadata,
@@ -132,6 +132,8 @@ class IngestionPipeline:
                     self._store.add(chunk, vector)
                 self._store.log_ingestion(
                     source_id=source.source_id,
+                    document_id=document.document_id,
+                    url=document.url,
                     fetched_at=self._clock().timestamp(),
                     content_hash=document.content_hash,
                     chunk_count=len(chunks),
@@ -140,9 +142,11 @@ class IngestionPipeline:
                     error_message=None,
                     operator_or_job_id=operator_or_job_id,
                 )
-            except (EmbeddingError, Exception) as exc:  # noqa: BLE001 - 單篇失敗不中斷整批
+            except Exception as exc:  # noqa: BLE001 - 單篇失敗不中斷整批（✅ 庚-39 冗餘 union 收斂）
                 self._store.log_ingestion(
                     source_id=source.source_id,
+                    document_id=document.document_id,
+                    url=document.url,
                     fetched_at=self._clock().timestamp(),
                     content_hash=document.content_hash,
                     chunk_count=0,

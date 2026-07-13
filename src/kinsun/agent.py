@@ -26,7 +26,8 @@ _PROACTIVE_DIRECTIVE = (
     "（系統提示，非長者發話）請主動關心長者：{intent}。用一句溫暖、口語、簡短的話開啟對話。"
 )
 
-FALLBACK_REPLY = "金孫剛剛想了一下沒講清楚，您可以再說一次嗎？"
+# 統一回退話術（✅ 庚-37）：管線失敗與 LLM 空回覆共用；inbound.FALLBACK_PROMPT 為別名。
+FALLBACK_REPLY = "金孫剛剛沒聽清楚，您可以再說一次嗎？"
 
 
 class CareAgent:
@@ -71,7 +72,15 @@ class CareAgent:
                 return turn.text or FALLBACK_REPLY
             for call in turn.tool_calls:
                 results.append(ToolResult(call, self._tools.dispatch(call.name, call.arguments)))
-        return FALLBACK_REPLY
+        # 末輪修復（✅ 庚-35／A-14）：迭代上限用盡但工具結果已在手——再讓模型
+        # 消化一次產出文字，不把成功的工具工作丟掉；仍堅持要工具（無文字）才回退。
+        turn = self._llm.generate_tool_turn(
+            system_prompt=system_prompt,
+            messages=base,
+            tools=self._tools.specs(),
+            tool_results=results,
+        )
+        return turn.text or FALLBACK_REPLY
 
     def proactive(self, elder_id: str, intent: str) -> str:
         system_prompt, history = self._envelope(elder_id, intent)

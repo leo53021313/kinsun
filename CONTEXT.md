@@ -49,7 +49,7 @@ _Avoid_: dispatcher、broadcaster
 _Avoid_: mapping、link、account_binding
 
 **App 帳號（GuardianAccount）**：
-家屬的 App 登入身分（email＋scrypt 密碼雜湊，`guardian_accounts` 表）；與 LINE 綁定並存，同一位家屬可同時有兩種入口。長輩不設帳密——以家屬產生的綁定碼換**裝置 token** 永久登入。
+家屬的 App 登入身分（email＋scrypt 密碼雜湊，`guardian_accounts` 表）；與 LINE 綁定並存，同一位家屬可同時有兩種入口。長輩首次以家屬產生的綁定碼掃碼配對換**裝置 token** 永久登入；另有家屬代辦的手機號碼＋密碼帳號（`elder_accounts` 表，✅ 己-6 D-71）——帳密只管「重登」（換機／作廢後），首次一定掃碼。
 _Avoid_: user、account（泛稱）
 
 **API token（ApiToken）**：
@@ -57,7 +57,7 @@ App 呼叫 REST 的不透明憑證：發放時回明文一次，DB 僅存 SHA-25
 _Avoid_: JWT、session id
 
 **對講機回合（App Turn）**：
-App 長輩端的一次語音互動（`POST /api/app/turns`）：上傳錄音、同一 HTTP 回應回文字＋回覆音檔 URL。是 `channels/app/` 通道的入站形態——正規化成 `InboundMessage(Channel.APP, …)` 進共用 `dispatch`，與 LINE 的 webhook／reply 兩段式對稱。
+App 長輩端的一次語音互動（`POST /api/v1/turns`）：上傳錄音、同一 HTTP 回應回文字＋回覆音檔 URL。是 `channels/app/` 通道的入站形態——正規化成 `InboundMessage(Channel.APP, …)` 進共用 `dispatch`，與 LINE 的 webhook／reply 兩段式對稱。
 _Avoid_: 語音訊息（LINE 用語）、對話 API
 
 **會話（Session）**：
@@ -92,7 +92,7 @@ _Avoid_: 藥單、處方
 ### 安全與關懷
 
 **危急分級（RiskTier／RiskAssessment）**：
-L0–L3 四級危急程度與其評估結果；融合關鍵詞與 LLM 分級，後端複核。
+L0–L2 三級危急程度與其評估結果（✅ D-72 己-4：L3 已刪，L2 為頂級）；融合關鍵詞與 LLM 分級，後端複核。
 _Avoid_: 警報等級、嚴重度
 
 **主動關懷（Proactive care）**：
