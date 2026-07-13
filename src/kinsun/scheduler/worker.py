@@ -31,7 +31,11 @@ from kinsun.proactive.jobs import (
     build_greeting_job,
     build_inactivity_job,
 )
-from kinsun.reports.reminders import safe_record
+from kinsun.reports.reminders import (
+    REMINDER_KIND_PROACTIVE_CARE,
+    REMINDER_KIND_PROACTIVE_GREETING,
+    safe_record,
+)
 from kinsun.reports.summaries import PgConversationSummaryStore, summarize_day
 from kinsun.safety.events import PgRiskEventStore
 from kinsun.scheduler.jobs import build_audio_cleanup_job, build_consolidation_job
@@ -96,10 +100,10 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
         safe_record(reminder_logs.record, elder_id, kind, content)
 
     def greet_one(elder_id: str) -> None:
-        _push_to_elder(elder_id, GREETING_INTENT, "proactive-greeting")
+        _push_to_elder(elder_id, GREETING_INTENT, REMINDER_KIND_PROACTIVE_GREETING)
 
     def care_one(elder_id: str) -> None:
-        _push_to_elder(elder_id, INACTIVITY_INTENT, "proactive-care")
+        _push_to_elder(elder_id, INACTIVITY_INTENT, REMINDER_KIND_PROACTIVE_CARE)
 
     jobs = [
         build_consolidation_job(
