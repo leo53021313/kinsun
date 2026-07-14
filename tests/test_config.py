@@ -184,3 +184,13 @@ def test_longterm_health_top_k_default_and_override():
     """✅ 庚-38（A-22）：健康記憶檢索條數接 settings（原硬編建構子預設）。"""
     assert load_settings(BASE_ENV).longterm_health_top_k == 3
     assert load_settings({**BASE_ENV, "LONGTERM_HEALTH_TOP_K": "6"}).longterm_health_top_k == 6
+
+
+def test_tavily_api_key_defaults_to_empty():
+    # 留空＝不註冊 web_search 工具（優雅降級），見 composition.build_tool_registry。
+    assert load_settings(BASE_ENV).tavily_api_key == ""
+
+
+def test_tavily_api_key_read_from_env():
+    settings = load_settings({**BASE_ENV, "TAVILY_API_KEY": "tvly-abc"})
+    assert settings.tavily_api_key == "tvly-abc"

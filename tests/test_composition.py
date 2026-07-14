@@ -17,6 +17,7 @@ from kinsun.medications.facts import MedicationFacts
 from kinsun.tools.clock import CURRENT_TIME_SPEC
 from kinsun.tools.health_rag import HEALTH_RAG_SPEC
 from kinsun.tools.weather import WEATHER_SPEC
+from kinsun.tools.web_search import WEB_SEARCH_SPEC
 
 _ENV = {
     "LINE_CHANNEL_SECRET": "secret",
@@ -54,6 +55,17 @@ def test_assemble_core_injects_two_fact_providers_in_order():
 def test_build_tool_registry_registers_three_tools():
     registry = build_tool_registry(clock=_clock, rag_service=object())
     assert len(registry.specs()) == 3
+
+
+def test_build_tool_registry_registers_web_search_when_key_present():
+    registry = build_tool_registry(clock=_clock, rag_service=object(), tavily_api_key="tvly-key")
+    assert WEB_SEARCH_SPEC.name in {spec.name for spec in registry.specs()}
+
+
+def test_build_tool_registry_skips_web_search_without_key():
+    # 優雅降級（spec 2026-07-14）：金鑰未設時金孫少一個工具，其餘功能照常運作。
+    registry = build_tool_registry(clock=_clock, rag_service=object(), tavily_api_key="")
+    assert WEB_SEARCH_SPEC.name not in {spec.name for spec in registry.specs()}
 
 
 def test_care_agent_constructed_only_in_composition():

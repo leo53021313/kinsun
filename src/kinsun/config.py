@@ -68,6 +68,7 @@ class Settings:
     medication_bedtime_hour: int
     appointment_reminder_hour: int
     rag_top_k: int
+    tavily_api_key: str
     liff_channel_id: str
     liff_timeout_seconds: float
     rich_menu_id: str
@@ -144,6 +145,8 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         medication_bedtime_hour=int(env.get("MEDICATION_BEDTIME_HOUR", "21")),
         appointment_reminder_hour=int(env.get("APPOINTMENT_REMINDER_HOUR", "8")),
         rag_top_k=int(env.get("RAG_TOP_K", "5")),
+        # 上網查證金鑰（spec 2026-07-14）：留空＝不註冊 web_search 工具（優雅降級）。
+        tavily_api_key=env.get("TAVILY_API_KEY", ""),
         liff_channel_id=env.get("LIFF_CHANNEL_ID", ""),
         liff_timeout_seconds=float(env.get("LIFF_TIMEOUT_SECONDS", "10")),
         rich_menu_id=env.get("RICH_MENU_ID", ""),
