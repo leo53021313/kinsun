@@ -101,8 +101,19 @@ class Settings:
     reflection_max_turns: int
 
 
+# 讀成 False 的值。`off` 與空值（含純空白）必須在列：布林旗標裡有緊急關閉開關
+# （`REFLECTION_ENABLED` 之於每晚反思——自動生效、無人審、每晚自動跑），把 `off` 或
+# `REFLECTION_ENABLED=`（值被刪掉）讀成 True，等於在半夜要關功能的人面前給他一個
+# 「已關閉」的錯覺，而它照跑。
+#
+# 刻意維持黑名單、不改成白名單（只列真值）：白名單會把所有未列舉的值從 True 翻成
+# False，靜默改掉 rerank 等旗標的既有行為。這裡只擴大「假」的集合，修正目前被誤讀成
+# True 的值，不動任何一個現行正確的語意。
+_FALSE_VALUES = frozenset({"", "0", "false", "no", "n", "off"})
+
+
 def _parse_bool(raw: str) -> bool:
-    return raw.strip().lower() not in {"0", "false", "no"}
+    return raw.strip().lower() not in _FALSE_VALUES
 
 
 def _require(env: Mapping[str, str], key: str) -> str:

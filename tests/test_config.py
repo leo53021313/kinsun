@@ -211,6 +211,24 @@ def test_reflection_can_be_switched_off():
     assert settings.reflection_enabled is False
 
 
+@pytest.mark.parametrize("raw", ["off", "OFF", "Off", "n", "N", "", "   "])
+def test_reflection_kill_switch_honours_off_and_blank(raw):
+    """`off`／空值必須真的關掉——這是反思唯一的緊急關閉開關，不能給假的安全感。
+
+    反思自動生效、無人審、每晚自動跑。凌晨三點發現守則學歪、要立刻關掉的人打了
+    `REFLECTION_ENABLED=off`，若這裡把它讀成 True，他會得到「已關閉」的錯覺，而它照跑。
+    空值（`REFLECTION_ENABLED=`）同理——那是「我把值刪掉了」的意思，不是「請開著」。
+    """
+    settings = load_settings({**BASE_ENV, "REFLECTION_ENABLED": raw})
+    assert settings.reflection_enabled is False, raw
+
+
+@pytest.mark.parametrize("raw", ["true", "TRUE", "1", "yes", "y", "on"])
+def test_reflection_stays_on_for_truthy_values(raw):
+    settings = load_settings({**BASE_ENV, "REFLECTION_ENABLED": raw})
+    assert settings.reflection_enabled is True, raw
+
+
 def test_reflection_min_observed_days_must_not_exceed_lookback():
     """證據門檻大於回顧視野＝沒有守則能通過門檻，反思每晚空轉卻不報錯（fail-fast 攔下）。"""
     env = {**BASE_ENV, "REFLECTION_MIN_OBSERVED_DAYS": "30", "REFLECTION_LOOKBACK_DAYS": "7"}
