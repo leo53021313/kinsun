@@ -208,3 +208,58 @@ def test_reflection_settings_have_defaults():
 def test_reflection_can_be_switched_off():
     settings = load_settings({**BASE_ENV, "REFLECTION_ENABLED": "false"})
     assert settings.reflection_enabled is False
+
+
+def test_reflection_min_observed_days_must_not_exceed_lookback():
+    """證據門檻大於回顧視野＝沒有守則能通過門檻，反思每晚空轉卻不報錯（fail-fast 攔下）。"""
+    env = {**BASE_ENV, "REFLECTION_MIN_OBSERVED_DAYS": "30", "REFLECTION_LOOKBACK_DAYS": "7"}
+    with pytest.raises(ConfigError) as exc:
+        load_settings(env)
+    message = str(exc.value)
+    assert "REFLECTION_MIN_OBSERVED_DAYS" in message
+    assert "REFLECTION_LOOKBACK_DAYS" in message
+    assert "30" in message  # 訊息要自解釋：含實際數值
+    assert "7" in message
+
+
+def test_reflection_min_observed_days_equal_lookback_is_allowed():
+    """邊界：門檻＝回顧視野仍可成立（守則需每天都被觀察到），不該被擋。"""
+    env = {**BASE_ENV, "REFLECTION_MIN_OBSERVED_DAYS": "7", "REFLECTION_LOOKBACK_DAYS": "7"}
+    settings = load_settings(env)
+    assert settings.reflection_min_observed_days == 7
+    assert settings.reflection_lookback_days == 7
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "REFLECTION_LOOKBACK_DAYS",
+        "REFLECTION_MIN_OBSERVED_DAYS",
+        "REFLECTION_MAX_STRATEGIES",
+        "REFLECTION_RESPONSE_WINDOW_MINUTES",
+    ],
+)
+@pytest.mark.parametrize("raw", ["0", "-1"])
+def test_reflection_numeric_settings_must_be_at_least_one(key: str, raw: str):
+    """0 或負數會讓反思靜默失效或行為未定義；啟動時就要擋。"""
+    with pytest.raises(ConfigError) as exc:
+        load_settings({**BASE_ENV, key: raw})
+    message = str(exc.value)
+    assert key in message
+    assert raw in message
+
+
+def test_reflection_numeric_settings_accept_legal_overrides():
+    """合法覆寫不受驗證影響。"""
+    env = {
+        **BASE_ENV,
+        "REFLECTION_LOOKBACK_DAYS": "14",
+        "REFLECTION_MIN_OBSERVED_DAYS": "1",
+        "REFLECTION_MAX_STRATEGIES": "1",
+        "REFLECTION_RESPONSE_WINDOW_MINUTES": "1",
+    }
+    settings = load_settings(env)
+    assert settings.reflection_lookback_days == 14
+    assert settings.reflection_min_observed_days == 1
+    assert settings.reflection_max_strategies == 1
+    assert settings.reflection_response_window_minutes == 1

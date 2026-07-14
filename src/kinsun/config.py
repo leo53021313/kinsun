@@ -111,7 +111,25 @@ def _require(env: Mapping[str, str], key: str) -> str:
     return value
 
 
+def _require_positive_int(env: Mapping[str, str], key: str, default: str) -> int:
+    """讀取整數設定並確保 ≥ 1；0 或負數會讓對應功能靜默失效或行為未定義。"""
+    value = int(env.get(key, default))
+    if value < 1:
+        raise ConfigError(f"{key}（{value}）必須大於或等於 1。")
+    return value
+
+
 def load_settings(env: Mapping[str, str]) -> Settings:
+    # 反思設定的不變量在啟動時就檢查（fail-fast）：反思是夜間批次，設定矛盾若留到凌晨的
+    # job 才浮現，只會表現成「今晚沒找到模式」——沒有錯誤、沒有告警，可能潛伏數週。
+    reflection_lookback_days = _require_positive_int(env, "REFLECTION_LOOKBACK_DAYS", "7")
+    reflection_min_observed_days = _require_positive_int(env, "REFLECTION_MIN_OBSERVED_DAYS", "3")
+    if reflection_min_observed_days > reflection_lookback_days:
+        raise ConfigError(
+            f"REFLECTION_MIN_OBSERVED_DAYS（{reflection_min_observed_days}）不得大於 "
+            f"REFLECTION_LOOKBACK_DAYS（{reflection_lookback_days}）："
+            "證據門檻超出回顧視野時，沒有守則能通過門檻，反思會每晚空轉卻不報錯。"
+        )
     return Settings(
         line_channel_secret=_require(env, "LINE_CHANNEL_SECRET"),
         line_channel_access_token=_require(env, "LINE_CHANNEL_ACCESS_TOKEN"),
@@ -184,12 +202,14 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         internal_testing_enabled=_parse_bool(env.get("INTERNAL_TESTING_ENABLED", "false")),
         # 每晚反思（spec 2026-07-14）：預設開——反思是自動主線行為，此旗標為緊急關閉開關。
         reflection_enabled=_parse_bool(env.get("REFLECTION_ENABLED", "true")),
-        # 回顧天數：證據門檻要求「跨多天重複出現」，反思就必須看得到多天。
-        reflection_lookback_days=int(env.get("REFLECTION_LOOKBACK_DAYS", "7")),
+        # 回顧天數：證據門檻要求「跨多天重複出現」，反思就必須看得到多天（上方已驗證）。
+        reflection_lookback_days=reflection_lookback_days,
         # 證據門檻：一條守則至少要在幾天中被觀察到才成立（擋掉單日噪音）。
-        reflection_min_observed_days=int(env.get("REFLECTION_MIN_OBSERVED_DAYS", "3")),
+        reflection_min_observed_days=reflection_min_observed_days,
         # 守則上限＝注入 prompt 的條數上限；滿了必須指定取代對象。
-        reflection_max_strategies=int(env.get("REFLECTION_MAX_STRATEGIES", "15")),
+        reflection_max_strategies=_require_positive_int(env, "REFLECTION_MAX_STRATEGIES", "15"),
         # 提醒發出後多久內長輩有發言即算「已回應」。
-        reflection_response_window_minutes=int(env.get("REFLECTION_RESPONSE_WINDOW_MINUTES", "60")),
+        reflection_response_window_minutes=_require_positive_int(
+            env, "REFLECTION_RESPONSE_WINDOW_MINUTES", "60"
+        ),
     )
