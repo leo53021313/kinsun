@@ -89,6 +89,18 @@ _Avoid_: prompt、bundle
 長輩當前用藥清單，作為注入情境的一部分每輪固定帶；以 `elder_id` 直查。
 _Avoid_: 藥單、處方
 
+**守則（Strategy）**：
+金孫從過去互動歸納出的「與這位長輩的相處之道」（`strategies/`）。只有四類白名單：稱呼（address，不愛被叫阿婆）、語氣（tone，講太長會沒反應）、作息（routine，早上八點還在睡）、話題（topic，不愛聊孫子）。**反思只學相處風格；安全與用藥規則永遠由人設定，金孫碰不到**——用藥、就醫、危急判斷不是可學習的對象，且守則不得凌駕任何安全提醒與用藥提醒（注入時段首即以警語言明）。守則**自動生效、無人工審核**，故無 pending 狀態，只有 adopted（生效中）／revoked（後台人工撤銷）／superseded（被新守則取代）。每位長輩上限 15 條（`REFLECTION_MAX_STRATEGIES`），亦即注入 prompt 的條數上限；額滿時新守則必須指定取代對象，新舊汰換於同一交易內完成。
+_Avoid_: 規則、偏好、人設、記憶
+
+**每晚反思（Reflection）**：
+每晚沉澱守則的批次（`strategies/reflection.py` 的 `reflect_days`）：讀過去七天的逐字稿與提醒回應紀錄，請 LLM 歸納候選守則，過濾後寫入。掛在既有的夜間 consolidation job 上，未新增 cron。與 `reports/summaries.py` 的 `summarize_day` 是姊妹批次，差別在**摘要是報告**（寫給家屬看、只讀昨天），**反思是學習**（寫回系統自己、需跨多天視野才撐得起證據門檻）。失敗模式必須是「今晚少學一條」而非「今晚整批長輩的反思都掛掉」：回傳格式不合整批丟棄，單條被擋只丟該條。總開關 `REFLECTION_ENABLED` 預設開，僅供異常時緊急停用。
+_Avoid_: 自我學習、訓練、進化
+
+**守則濾網（Strategy policy）**：
+守則自動生效，`strategies/policy.py` 便是唯一擋住壞守則的地方——反思的 prompt 雖已明文禁止越界，但**不能信任模型會聽話，程式碼必須自己再擋一次**。六道關卡：結構驗證（非空、可列印、60 字上限，擋 prompt 注入）、醫療／危急詞黑名單（與 `safety/keywords.py` 的危急詞表取**聯集**，故 safety 詞表日後擴充會自動跟上）、輕蔑意圖（擋「她抱怨時只是想撒嬌，不用理會」這類一個醫療詞都沒有、卻教金孫淡化長輩求助的守則）、分類白名單、證據門檻（`REFLECTION_MIN_OBSERVED_DAYS`，須 ≤ `REFLECTION_LOOKBACK_DAYS`）、上限汰換。濾網只檢查 `content`，其成立前提是 `evidence` **永不進 prompt**（證據本就會提到長輩身體狀況，過濾它會誤殺合法守則）——此為整套防線的地基，有測試釘死。
+_Avoid_: 審核、人審、guardrail
+
 ### 安全與關懷
 
 **危急分級（RiskTier／RiskAssessment）**：
