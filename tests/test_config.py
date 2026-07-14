@@ -194,3 +194,17 @@ def test_tavily_api_key_defaults_to_empty():
 def test_tavily_api_key_read_from_env():
     settings = load_settings({**BASE_ENV, "TAVILY_API_KEY": "tvly-abc"})
     assert settings.tavily_api_key == "tvly-abc"
+
+
+def test_reflection_settings_have_defaults():
+    settings = load_settings(BASE_ENV)
+    assert settings.reflection_enabled is True
+    assert settings.reflection_lookback_days == 7
+    assert settings.reflection_min_observed_days == 3
+    assert settings.reflection_max_strategies == 15
+    assert settings.reflection_response_window_minutes == 60
+
+
+def test_reflection_can_be_switched_off():
+    settings = load_settings({**BASE_ENV, "REFLECTION_ENABLED": "false"})
+    assert settings.reflection_enabled is False

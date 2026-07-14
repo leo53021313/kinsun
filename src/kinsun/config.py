@@ -93,6 +93,11 @@ class Settings:
     admin_api_key: str
     admin_retention_days: int
     internal_testing_enabled: bool
+    reflection_enabled: bool
+    reflection_lookback_days: int
+    reflection_min_observed_days: int
+    reflection_max_strategies: int
+    reflection_response_window_minutes: int
 
 
 def _parse_bool(raw: str) -> bool:
@@ -177,4 +182,14 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         admin_retention_days=int(env.get("ADMIN_RETENTION_DAYS", "14")),
         # 內測模式總開關（spec 2026-07-12）：App 切換身分＋後台手動觸發；正式環境務必 false。
         internal_testing_enabled=_parse_bool(env.get("INTERNAL_TESTING_ENABLED", "false")),
+        # 每晚反思（spec 2026-07-14）：預設開——反思是自動主線行為，此旗標為緊急關閉開關。
+        reflection_enabled=_parse_bool(env.get("REFLECTION_ENABLED", "true")),
+        # 回顧天數：證據門檻要求「跨多天重複出現」，反思就必須看得到多天。
+        reflection_lookback_days=int(env.get("REFLECTION_LOOKBACK_DAYS", "7")),
+        # 證據門檻：一條守則至少要在幾天中被觀察到才成立（擋掉單日噪音）。
+        reflection_min_observed_days=int(env.get("REFLECTION_MIN_OBSERVED_DAYS", "3")),
+        # 守則上限＝注入 prompt 的條數上限；滿了必須指定取代對象。
+        reflection_max_strategies=int(env.get("REFLECTION_MAX_STRATEGIES", "15")),
+        # 提醒發出後多久內長輩有發言即算「已回應」。
+        reflection_response_window_minutes=int(env.get("REFLECTION_RESPONSE_WINDOW_MINUTES", "60")),
     )
