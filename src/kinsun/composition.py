@@ -44,6 +44,8 @@ from kinsun.rag.vector_store import PgVectorStore
 from kinsun.reports.reminders import PgReminderLogStore
 from kinsun.reports.summaries import PgConversationSummaryStore
 from kinsun.safety.events import PgRiskEventStore
+from kinsun.strategies.facts import StrategyFacts
+from kinsun.strategies.store import PgStrategyStore
 from kinsun.tools.clock import CURRENT_TIME_SPEC, build_current_time_handler
 from kinsun.tools.health_rag import HEALTH_RAG_SPEC, build_health_rag_handler
 from kinsun.tools.lookups import PgWebSearchLookupStore, WebSearchLookupStore
@@ -86,6 +88,8 @@ class Core:
     risk_events: PgRiskEventStore
     summaries: PgConversationSummaryStore
     notifications: PgAppNotificationStore
+    # 反思寫入（worker）與後台檢視／撤銷都需要同一個 store，故收進 Core。
+    strategies: PgStrategyStore
     agent: CareAgent
 
 
@@ -146,12 +150,15 @@ def assemble_core(
     appt_store = PgAppointmentStore(db)
     medications = MedicationService(med_store)
     appointments = AppointmentService(appt_store)
+    strategies = PgStrategyStore(db, clock=clock, new_id=new_id)
     session = SessionMemory(
         memory,
         externals.long_term,
         facts=[
             MedicationFacts(medications),
             AppointmentFacts(appointments, clock=clock),
+            # 閉環的最後一哩：反思學到的守則由此進入下一輪對話的 system prompt。
+            StrategyFacts(strategies, max_strategies=settings.reflection_max_strategies),
         ],
     )
     rag_service = HealthEducationRagService(
@@ -205,5 +212,6 @@ def assemble_core(
         traces=PgTraceStore(db, clock=clock, new_id=new_id),
         reminder_logs=PgReminderLogStore(db, clock=clock, new_id=new_id),
         notifications=notifications,
+        strategies=strategies,
         agent=agent,
     )

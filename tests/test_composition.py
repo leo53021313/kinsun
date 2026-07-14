@@ -14,6 +14,7 @@ from kinsun.appointments.facts import AppointmentFacts
 from kinsun.composition import Externals, assemble_core, build_tool_registry
 from kinsun.config import load_settings
 from kinsun.medications.facts import MedicationFacts
+from kinsun.strategies.facts import StrategyFacts
 from kinsun.tools.clock import CURRENT_TIME_SPEC
 from kinsun.tools.health_rag import HEALTH_RAG_SPEC
 from kinsun.tools.weather import WEATHER_SPEC
@@ -46,10 +47,10 @@ def test_assemble_core_agent_has_all_three_tools():
     assert names == {WEATHER_SPEC.name, CURRENT_TIME_SPEC.name, HEALTH_RAG_SPEC.name}
 
 
-def test_assemble_core_injects_two_fact_providers_in_order():
+def test_assemble_core_injects_three_fact_providers_in_order():
     core = _core()
     facts = core.agent._session._facts
-    assert [type(f) for f in facts] == [MedicationFacts, AppointmentFacts]
+    assert [type(f) for f in facts] == [MedicationFacts, AppointmentFacts, StrategyFacts]
 
 
 def test_build_tool_registry_registers_three_tools():
