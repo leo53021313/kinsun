@@ -26,7 +26,8 @@
   不可信；寧可今晚不學，不可學進垃圾。
 * **單條被濾網擋下** → 只丟該條，其餘照寫。拒絕理由**逐條**記 warning：這是我們
   唯一能觀測「詞表誤殺了什麼」與「模型多常試圖越界」的訊號，揉成一句聚合日誌
-  就再也分不出醫療攔截、注入攔截、證據不足、撞上限各發生幾次。
+  就再也分不出醫療攔截、輕蔑攔截、注入攔截、證據不足、撞上限各發生幾次。其中
+  「輕蔑攔截」的計數就是「模型多常試圖教金孫忽視長輩」——它自成一桶，別跟醫療混。
 * **寫入時 store 丟 StrategyError** → 跳過該條、繼續其餘。這在實務上會發生：反思讀
   完生效中守則、寫入前，家屬剛好在後台撤銷了那條取代對象（濾網看的是舊快照）。
 
@@ -68,10 +69,14 @@ _REQUIRED_FIELDS = ("content", "category", "evidence", "observed_days")
 #
 # 第 4 條是第 3 條的必要配套，不可拆開看：「把醫療字眼改寫掉」的指令同時開了一條路，
 # 讓「她說胸口很痛通常只是想撒嬌，不用理會」能改寫成「她抱怨的時候通常只是想撒嬌，
-# 不用理會」——沒有醫療詞、單行、夠短、分類合法，**四道濾網全部放行**，然後永久注入
-# system prompt。而這正是 policy.py docstring 點名的真正傷害：金孫當著長輩的面把危急
-# 訊號正常化。第 2 條擋不住它（它字面上是 tone／topic，不涉用藥就醫），濾網也擋不住
-# （改寫後無詞可命中），只能在這裡明文堵死「靠改寫規避」這條路。
+# 不用理會」——沒有醫療詞、單行、夠短、分類合法，然後永久注入 system prompt。而這正是
+# policy.py docstring 點名的真正傷害：金孫當著長輩的面把危急訊號正常化。第 2 條擋不住它
+# （它字面上是 tone／topic，不涉用藥就醫），醫療詞表也擋不住（改寫後無詞可命中）。
+#
+# 第 4、5 條**不是**防線——`policy._dismissive_hit` 才是。這裡的第 4 條要求模型自我判定
+# 「我的本意是不是忽視」，而「她講話比較誇張，不用每句都當真」這種句子，模型並不覺得
+# 自己違規（它甚至正面否定了第 4 條的收尾句）。第 5 條因此改用**列舉句式**而非要求判定
+# 意圖：目的是讓模型少產出無謂的候選，攔截仍交給程式。prompt 不是防線，程式碼才是。
 REFLECTION_PROMPT = (
     "你是「金孫」——一位陪伴長輩的 AI 夥伴——的反思模組。以下是這位長輩過去幾天"
     "與金孫的對話，以及系統推送的提醒與長輩是否回應的紀錄。\n\n"
@@ -84,15 +89,20 @@ REFLECTION_PROMPT = (
     "3. 守則的文字也不可以出現醫療或身體不適的字眼（醫、診、病、藥、痛、血、跌、"
     "不舒服……），含這些字的守則會被系統直接丟棄。話題類的守則請改寫成不含這些字"
     "的說法，例如「不要聊她過世老伴生病的那段」要改寫成「不要聊她過世老伴的事」。\n"
-    "4. 但若一條守則的本意是要金孫忽視、淡化或不理會長輩說的不適、疼痛或求助，一律"
-    "不要產出，也不可改寫成不含上述字眼的說法來規避第 3 條——例如「她說胸口很痛通常"
-    "只是想撒嬌，不用理會」不合法，改寫成「她抱怨的時候通常只是想撒嬌，不用理會」"
+    "4. 但若一條守則的本意是要金孫忽視、淡化或不理會長輩說的不適、疼痛、情緒或求助，"
+    "一律不要產出，也不可改寫成不含上述字眼的說法來規避第 3 條——例如「她說胸口很痛"
+    "通常只是想撒嬌，不用理會」不合法，改寫成「她抱怨的時候通常只是想撒嬌，不用理會」"
     "同樣不合法。這類守則永遠不合法：長輩喊不舒服時，金孫必須當真。\n"
-    f"5. 每條守則都是一句話，不超過 {MAX_CONTENT_CHARS} 個字；不可換行、不可分點、"
+    "5. 具體地說，以下寫法一律不要產出（系統會直接丟棄並另行記錄）：把長輩的抱怨、"
+    "情緒或求助說成「不用當真」「不用理會」「不用管她」「不用在意」「聽聽就好」"
+    "「當作沒聽到」；或把她的訴求歸因成「只是想撒嬌」「討拍」「裝出來的」「在演戲」"
+    "「誇大」「小題大作」。她的個性可以寫（「她講話比較直」「她講話慢」），她的訴求"
+    "不可以被打折。\n"
+    f"6. 每條守則都是一句話，不超過 {MAX_CONTENT_CHARS} 個字；不可換行、不可分點、"
     "不可加標題。\n"
-    "6. 每條守則必須有跨多天、重複出現的證據。單一天的一次觀察不算數"
+    "7. 每條守則必須有跨多天、重複出現的證據。單一天的一次觀察不算數"
     "（長輩可能只是那天心情不好），此類一律不要產出。\n"
-    "7. 已經生效的守則不要重複產出。\n\n"
+    "8. 已經生效的守則不要重複產出。\n\n"
     "【回傳格式】只回傳 JSON 陣列，不要任何其他文字或 markdown 標記。每個元素：\n"
     '{"content": "一句話的守則", "category": "四類之一", '
     '"evidence": "你依據的觀察", "observed_days": 這個模式在幾天中出現過的整數, '
@@ -140,7 +150,7 @@ def reflect_days(
 
     logs = reminder_logs.list_for_range(elder_id, start=start, end=end)
     adopted = strategies.list_for_elder(elder_id, status=STRATEGY_STATUS_ADOPTED)
-    system_prompt = _build_prompt(logs, adopted, min_observed_days, max_strategies)
+    system_prompt = _build_prompt(logs, adopted, lookback_days, min_observed_days, max_strategies)
     reply = reflector.generate(system_prompt=system_prompt, messages=turns)
 
     candidates = _parse(reply)
@@ -158,8 +168,8 @@ def reflect_days(
         adopted_ids={row.strategy_id for row in adopted},
     )
     for candidate, reason in [*forged, *rejected]:
-        # 逐條記錄、理由原文照登：理由字串本身就是拒絕分類（醫療攔截／結構驗證／證據
-        # 不足／證據捏造／撞上限），聚合成一句就失去可分類統計的價值。
+        # 逐條記錄、理由原文照登：理由字串本身就是拒絕分類（醫療攔截／輕蔑攔截／結構
+        # 驗證／證據不足／證據捏造／撞上限），聚合成一句就失去可分類統計的價值。
         # 「守則分類」是模型自填的 category（address／tone／…），**不是**拒絕分類——欄位
         # 名若只寫「分類」，後人拿它分桶會分到完全不同的東西。
         logger.warning(
@@ -228,11 +238,17 @@ def _record(strategies: StrategyStore, elder_id: str, candidate: Candidate) -> N
 def _build_prompt(
     logs: list[ReminderLog],
     adopted: list[Strategy],
+    lookback_days: int,
     min_observed_days: int,
     max_strategies: int,
 ) -> str:
+    # 回看天數必須明講：模型看得到對話、卻不知道這扇窗有多長。少了這一句，一個誠實但
+    # 估錯的 observed_days=10 會被 `_split_forged_evidence` 判成「證據捏造」而丟掉——那是
+    # 我們沒告訴它上界，不是它想繞過門檻。上下界要一起講，否則模型只知道下界（門檻）。
     return (
         REFLECTION_PROMPT
+        + f"\n【回看範圍】本次回看 {lookback_days} 天的對話。"
+        + f"observed_days 不得大於 {lookback_days}，超過者會被視為捏造證據而丟棄。\n"
         + f"\n【證據門檻】observed_days 少於 {min_observed_days} 的守則會被系統丟棄。\n"
         + "\n【這段期間的提醒與回應】\n"
         + _format_reminders(logs)

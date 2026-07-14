@@ -295,6 +295,35 @@ def test_the_prompt_forbids_rewriting_a_dismissive_rule_past_the_filters():
     assert "不可改寫" in REFLECTION_PROMPT
 
 
+def test_a_dismissive_candidate_is_filtered_out():
+    """醫療詞表擋字眼、擋不住意圖：這句沒有任何醫療詞，但教金孫把長輩的抱怨當噪音。"""
+    strategies, _ = _run(_one_candidate(content="她抱怨的時候通常只是想撒嬌，不用理會"))
+    assert strategies.list_for_elder("e1") == []
+
+
+def test_a_dismissive_rejection_is_logged_in_its_own_bucket(caplog):
+    """「模型多常試圖教金孫忽視長輩」是要觀測的指標，不可混進醫療桶。"""
+    with caplog.at_level(logging.WARNING, logger="kinsun.strategies.reflection"):
+        _run(_one_candidate(content="她講話比較誇張，不用每句都當真"))
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("輕蔑" in m and "她講話比較誇張" in m for m in messages)
+    assert not any("醫療" in m for m in messages)
+
+
+def test_the_prompt_spells_out_the_lookback_window():
+    """模型不知道窗有多長，一個誠實但估錯的 observed_days 會被當成捏造證據丟掉。"""
+    _, reflector = _run(_one_candidate())
+    assert "回看 7 天" in reflector.system_prompt
+    assert "不得大於 7" in reflector.system_prompt
+
+
+def test_the_prompt_names_the_dismissive_phrasings_it_must_not_produce():
+    """程式防線擋得住，但先在 prompt 講清楚可以少掉一堆無謂的候選。"""
+    assert "當真" in REFLECTION_PROMPT
+    assert "撒嬌" in REFLECTION_PROMPT
+    assert "誇大" in REFLECTION_PROMPT
+
+
 def test_observed_days_beyond_the_lookback_window_is_rejected(caplog):
     """observed_days=999 在七天的窗下是物理上不可能的觀察——這是捏造證據。
 
