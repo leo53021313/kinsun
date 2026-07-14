@@ -19,6 +19,7 @@ from kinsun.reports.reminders import FakeReminderLogStore as FakeReminderLogStor
 from kinsun.reports.summaries import FakeConversationSummaryStore as FakeConversationSummaryStore
 from kinsun.safety.events import FakeRiskEventStore as FakeRiskEventStore
 from kinsun.scheduler.state import FakeScheduleStateStore as FakeScheduleStateStore
+from kinsun.strategies.store import FakeStrategyStore as FakeStrategyStore
 
 
 class FakeLongTermStore:

@@ -148,6 +148,18 @@ REMINDER_LOGS_DDL = (
     "ON reminder_logs (elder_id, created_at);"
 )
 
+# 策略記憶（spec 2026-07-14）：金孫每晚反思學到的「相處之道」守則。
+# 全新表、無舊欄位要遷移，故建表與建索引可同批（既有庫首次跑時一起建起來）。
+STRATEGIES_DDL = (
+    "CREATE TABLE IF NOT EXISTS strategies ("
+    "strategy_id TEXT PRIMARY KEY, elder_id TEXT NOT NULL, content TEXT NOT NULL, "
+    "category TEXT NOT NULL, evidence TEXT NOT NULL, observed_days INTEGER NOT NULL, "
+    "status TEXT NOT NULL, supersedes_strategy_id TEXT, "
+    "created_at DOUBLE PRECISION NOT NULL, revoked_at DOUBLE PRECISION);"
+    "CREATE INDEX IF NOT EXISTS idx_strategies_elder_status "
+    "ON strategies (elder_id, status);"
+)
+
 # 危急通知送達紀錄（✅ D-36，丙-7）：每位家屬成功／失敗獨立留痕。
 # channels 記實際走的通道（✅ 庚-16，逗號串接）；App＝落庫待拉取、非真送達。
 RISK_NOTIFICATION_LOGS_DDL = (
@@ -331,6 +343,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(RAG_DDL)
         conn.execute(RISK_EVENTS_DDL)
         conn.execute(REMINDER_LOGS_DDL)
+        conn.execute(STRATEGIES_DDL)
         conn.execute(RISK_NOTIFICATION_LOGS_DDL)
         conn.execute(APP_NOTIFICATIONS_DDL)
         conn.execute(WEB_SEARCH_LOOKUPS_DDL)
