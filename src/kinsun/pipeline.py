@@ -98,8 +98,6 @@ class VoicePipeline:
         self, user_text: str, *, elder_id: str, external_id: str, channel: str, trace_id: str
     ) -> TtsResult:
         """會話鍵為 elder_id；external_id＋channel 僅供觀測五表標記（可為空字串）。"""
-        # 語音（process）與文字（process_text）都流經此處，故標記一次即涵蓋兩條路徑。
-        self._mark_reminder_responded(elder_id)
         assessment = self._assess(
             user_text, external_id=external_id, channel=channel, trace_id=trace_id
         )
@@ -114,6 +112,10 @@ class VoicePipeline:
                 logger.warning("危急事件落庫失敗")
         if assessment.tier >= RiskTier.L2:
             self._notifier.notify(elder_id, assessment)
+        # ⚠️ 位置有意義，請勿上移：反思的觀測訊號絕不可排在家屬通報之前（見
+        # _mark_reminder_responded 的 docstring）。語音（process）與文字（process_text）
+        # 都流經此處，故標記一次即涵蓋兩條路徑。
+        self._mark_reminder_responded(elder_id)
         reply_text = self._generate(
             elder_id, user_text, external_id=external_id, channel=channel, trace_id=trace_id
         )
@@ -127,6 +129,15 @@ class VoicePipeline:
         """長輩開口＝可能在回應剛推的提醒（時間窗判定，不做內容比對）。
 
         這是反思的行為訊號來源；標記失敗不可影響對話。
+
+        ⚠️ 呼叫點必須排在危急落庫＋家屬通報**之後**，不可上移到本輪開頭。下方的
+        try/except 擋得住這個 UPDATE 的**錯誤**，擋不住它的**延遲**：全庫沒有任何
+        statement_timeout／lock_timeout，撞到鎖就是無限期阻塞。部署時 `ensure_schema`
+        以非 CONCURRENTLY 方式建 reminder_logs 的索引，對該表持 ShareLock、擋住所有
+        寫入；若此時長輩傳來「我喘不過氣」，而標記排在通報之前，家屬通報就會跟著卡在
+        鎖上，直到索引建完。一個純粹給反思用的觀測訊號，不該擋在長輩的求救前面。
+        時間窗語意與本輪中的位置無關（now 取的是牆鐘時間），故後移零成本。
+        順序由 test_critical_notification_precedes_the_reminder_signal_marking 守住。
 
         ⚠️ now 用 time.time()（epoch 秒），不可用 self._timer——後者預設 time.monotonic，
         只能量延遲、不是牆鐘時間，拿去跟 reminder_logs.created_at 比較會得到垃圾。

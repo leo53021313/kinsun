@@ -441,6 +441,49 @@ def test_marking_uses_wall_clock_and_configured_window():
     assert before <= now <= after  # monotonic（開機以來秒數）會落在這個區間外
 
 
+class _OrderedNotifier:
+    """與 reminder store 共用同一個呼叫序列 list，用來釘死兩者的先後。"""
+
+    def __init__(self, calls: list[str]) -> None:
+        self._calls = calls
+
+    def notify(self, elder_id: str, assessment: RiskAssessment) -> None:
+        self._calls.append("notify")
+
+
+class _OrderedReminderLogs:
+    def __init__(self, calls: list[str]) -> None:
+        self._calls = calls
+
+    def mark_responded(self, elder_id: str, *, now: float, within_seconds: int) -> None:
+        self._calls.append("mark_responded")
+
+
+def test_critical_notification_precedes_the_reminder_signal_marking():
+    """家屬通報必須發生在提醒回應標記之前——這個順序是安全屬性，不是風格偏好。
+
+    `mark_responded` 是一個 DB UPDATE，且純粹是反思用的觀測訊號（長輩開口＝可能在回應
+    剛推的提醒）。管線裡的 try/except 擋得住它的**錯誤**，擋不住它的**延遲**：全庫沒有
+    任何 statement_timeout／lock_timeout，撞到鎖就是無限期阻塞。真實情境——部署時
+    `ensure_schema` 以非 CONCURRENTLY 方式建 reminder_logs 的索引，對該表持 ShareLock、
+    擋住所有寫入；此時長輩傳來「我喘不過氣」，標記卡在鎖上，**家屬通報跟著卡住**，直到
+    索引建完為止。一個給反思用的觀測訊號，不該擋在長輩的求救前面。
+
+    時間窗語意與本輪中的位置無關（`mark_responded` 用 time.time() 判斷提醒發出後 N 秒內
+    長輩有沒有發言），所以搬到通報之後零成本。⚠️ 請不要「順手優化」把它搬回開頭。
+    """
+    calls: list[str] = []
+    pipeline = _text_pipeline(
+        StubDetector(RiskTier.L2),
+        _OrderedNotifier(calls),
+        reminder_logs=_OrderedReminderLogs(calls),
+    )
+
+    pipeline.process_text("我喘不過氣", elder_id="u1")
+
+    assert calls.index("notify") < calls.index("mark_responded")
+
+
 class _ExplodingReminderLogs:
     def mark_responded(self, elder_id, *, now, within_seconds):
         raise RuntimeError("db down")
