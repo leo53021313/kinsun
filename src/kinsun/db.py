@@ -183,6 +183,16 @@ CONVERSATION_SUMMARIES_DDL = (
     "content TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
 )
 
+# 上網查證來源紀錄（spec 2026-07-14）：金孫每次 web_search 的關鍵字、主題與來源清單。
+# 全新表、無舊欄位要遷移，故建表與建索引可同批（既有庫首次跑時一起建起來）。
+WEB_SEARCH_LOOKUPS_DDL = (
+    "CREATE TABLE IF NOT EXISTS web_search_lookups ("
+    "web_search_lookup_id TEXT PRIMARY KEY, query TEXT NOT NULL, topic TEXT NOT NULL, "
+    "status TEXT NOT NULL, sources JSONB NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS idx_web_search_lookups_created "
+    "ON web_search_lookups (created_at);"
+)
+
 # 觀測五表以 external_id＋channel 記來源（✅ 庚-07／A-8）：欄位承載任一通道的外部
 # 識別碼（非僅 LINE），故正名為 external_id 並加 channel 標明來源通道。
 #
@@ -323,6 +333,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(REMINDER_LOGS_DDL)
         conn.execute(RISK_NOTIFICATION_LOGS_DDL)
         conn.execute(APP_NOTIFICATIONS_DDL)
+        conn.execute(WEB_SEARCH_LOOKUPS_DDL)
         conn.execute(MEMORY_CONSOLIDATIONS_DDL)
         conn.execute(CONVERSATION_SUMMARIES_DDL)
         # 三段順序不可調換：建表（既有庫 no-op）→ 舊欄改名／補 channel → 建索引。
