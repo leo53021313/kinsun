@@ -160,6 +160,16 @@ STRATEGIES_DDL = (
     "ON strategies (elder_id, status);"
 )
 
+# 提醒回應訊號（spec 2026-07-14）：長輩在提醒發出後的時間窗內有發言即標記。
+# ⚠️ 既有庫的 reminder_logs 早已存在，CREATE TABLE IF NOT EXISTS 對它是 no-op、
+# 不會生出 responded_at；故本遷移必須獨立成一段，排在 REMINDER_LOGS_DDL 之後、
+# 索引之前（見 ensure_schema）。NULL＝未回應，既有列自動為 NULL，語意正確。
+REMINDER_LOGS_RESPONDED_MIGRATION_DDL = (
+    "ALTER TABLE reminder_logs ADD COLUMN IF NOT EXISTS responded_at DOUBLE PRECISION;"
+    "CREATE INDEX IF NOT EXISTS idx_reminder_logs_elder_responded "
+    "ON reminder_logs (elder_id, responded_at);"
+)
+
 # 危急通知送達紀錄（✅ D-36，丙-7）：每位家屬成功／失敗獨立留痕。
 # channels 記實際走的通道（✅ 庚-16，逗號串接）；App＝落庫待拉取、非真送達。
 RISK_NOTIFICATION_LOGS_DDL = (
@@ -344,6 +354,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(RISK_EVENTS_DDL)
         conn.execute(REMINDER_LOGS_DDL)
         conn.execute(STRATEGIES_DDL)
+        conn.execute(REMINDER_LOGS_RESPONDED_MIGRATION_DDL)
         conn.execute(RISK_NOTIFICATION_LOGS_DDL)
         conn.execute(APP_NOTIFICATIONS_DDL)
         conn.execute(WEB_SEARCH_LOOKUPS_DDL)

@@ -3,8 +3,9 @@
 Fake 每次都跑；Pg 需 `KINSUN_IT=1`（連真庫）。斷言一律以 `ns` 前綴 scope 到
 本測試自己的資料，才能在共用真庫上以「成員／排除」關係斷言而互不干擾。
 
-reminder_log_id 與 created_at 兩欄由各 adapter 自行產生（Pg 用 new_id／clock，
-Fake 用索引虛構），故合約只斷言雙方都會產生的欄位：elder_id／kind／content。
+reminder_log_id 由各 adapter 自行產生（Pg 用 new_id、Fake 用索引虛構），故合約不
+斷言它。created_at 兩邊都走注入的固定時鐘（FIXED），因回應時間窗的判定需要真實的
+時間語意；其餘斷言集中在雙方都會產生的欄位：elder_id／kind／content／responded_at。
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ def store(request, ns):
             clock=lambda: FIXED,
             new_id=lambda: next(ids),
         )
-    return FakeReminderLogStore()
+    return FakeReminderLogStore(clock=lambda: FIXED)
 
 
 def test_record_then_list_returns_matching_log(store, ns):
@@ -54,3 +55,34 @@ def test_multiple_records_for_same_elder_all_returned(store, ns):
     got = {(r.kind, r.content) for r in store.list_for_elder(f"{ns}e1")}
     assert ("medication", "早上用藥：A") in got
     assert ("appointment", "明天回診：B") in got
+
+
+def test_mark_responded_flags_a_reminder_inside_the_window(store, ns):
+    store.record(f"{ns}e1", "medication", "早上用藥：A")
+    logged_at = FIXED.timestamp()
+
+    store.mark_responded(f"{ns}e1", now=logged_at + 600, within_seconds=3600)
+
+    rows = [r for r in store.list_for_elder(f"{ns}e1") if r.content == "早上用藥：A"]
+    assert rows[0].responded_at is not None
+
+
+def test_mark_responded_ignores_a_reminder_outside_the_window(store, ns):
+    store.record(f"{ns}e1", "medication", "太久以前的提醒")
+    logged_at = FIXED.timestamp()
+
+    store.mark_responded(f"{ns}e1", now=logged_at + 7200, within_seconds=3600)
+
+    rows = [r for r in store.list_for_elder(f"{ns}e1") if r.content == "太久以前的提醒"]
+    assert rows[0].responded_at is None
+
+
+def test_list_for_range_returns_only_reminders_inside_the_bounds(store, ns):
+    store.record(f"{ns}e1", "medication", "區間內")
+    at = FIXED.timestamp()
+
+    inside = store.list_for_range(f"{ns}e1", start=at - 1, end=at + 1)
+    outside = store.list_for_range(f"{ns}e1", start=at + 10, end=at + 20)
+
+    assert "區間內" in {r.content for r in inside}
+    assert "區間內" not in {r.content for r in outside}
