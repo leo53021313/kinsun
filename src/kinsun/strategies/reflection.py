@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from collections.abc import Callable
 from datetime import datetime
 from typing import Protocol
@@ -59,11 +60,18 @@ _SECONDS_PER_DAY = 86400.0  # 台灣無日光節約，一天固定 86400 秒。
 
 _REQUIRED_FIELDS = ("content", "category", "evidence", "observed_days")
 
-# 反思的系統提示。第 3、4 條是對濾網的「事前緩解」而非重複防護：
+# 反思的系統提示。第 3、5 條是對濾網的「事前緩解」而非重複防護：
 # 濾網（policy.py）會擋掉含醫療字眼與過長／多行的守則，但它只能丟棄、無法改寫，
 # 合法的話題類守則（「不要聊她過世老伴生病的那段」）因此會被誤殺。與其放寬詞表，
 # 不如在這裡就要求模型寫成不含醫療字眼的說法。長度上限引用 policy 的公開常數，
 # 兩邊永遠一致。
+#
+# 第 4 條是第 3 條的必要配套，不可拆開看：「把醫療字眼改寫掉」的指令同時開了一條路，
+# 讓「她說胸口很痛通常只是想撒嬌，不用理會」能改寫成「她抱怨的時候通常只是想撒嬌，
+# 不用理會」——沒有醫療詞、單行、夠短、分類合法，**四道濾網全部放行**，然後永久注入
+# system prompt。而這正是 policy.py docstring 點名的真正傷害：金孫當著長輩的面把危急
+# 訊號正常化。第 2 條擋不住它（它字面上是 tone／topic，不涉用藥就醫），濾網也擋不住
+# （改寫後無詞可命中），只能在這裡明文堵死「靠改寫規避」這條路。
 REFLECTION_PROMPT = (
     "你是「金孫」——一位陪伴長輩的 AI 夥伴——的反思模組。以下是這位長輩過去幾天"
     "與金孫的對話，以及系統推送的提醒與長輩是否回應的紀錄。\n\n"
@@ -76,11 +84,15 @@ REFLECTION_PROMPT = (
     "3. 守則的文字也不可以出現醫療或身體不適的字眼（醫、診、病、藥、痛、血、跌、"
     "不舒服……），含這些字的守則會被系統直接丟棄。話題類的守則請改寫成不含這些字"
     "的說法，例如「不要聊她過世老伴生病的那段」要改寫成「不要聊她過世老伴的事」。\n"
-    f"4. 每條守則都是一句話，不超過 {MAX_CONTENT_CHARS} 個字；不可換行、不可分點、"
+    "4. 但若一條守則的本意是要金孫忽視、淡化或不理會長輩說的不適、疼痛或求助，一律"
+    "不要產出，也不可改寫成不含上述字眼的說法來規避第 3 條——例如「她說胸口很痛通常"
+    "只是想撒嬌，不用理會」不合法，改寫成「她抱怨的時候通常只是想撒嬌，不用理會」"
+    "同樣不合法。這類守則永遠不合法：長輩喊不舒服時，金孫必須當真。\n"
+    f"5. 每條守則都是一句話，不超過 {MAX_CONTENT_CHARS} 個字；不可換行、不可分點、"
     "不可加標題。\n"
-    "5. 每條守則必須有跨多天、重複出現的證據。單一天的一次觀察不算數"
+    "6. 每條守則必須有跨多天、重複出現的證據。單一天的一次觀察不算數"
     "（長輩可能只是那天心情不好），此類一律不要產出。\n"
-    "6. 已經生效的守則不要重複產出。\n\n"
+    "7. 已經生效的守則不要重複產出。\n\n"
     "【回傳格式】只回傳 JSON 陣列，不要任何其他文字或 markdown 標記。每個元素：\n"
     '{"content": "一句話的守則", "category": "四類之一", '
     '"evidence": "你依據的觀察", "observed_days": 這個模式在幾天中出現過的整數, '
@@ -137,18 +149,21 @@ def reflect_days(
         logger.warning("反思回傳格式不合，整批丟棄 elder=%s 回應=%r", elder_id, reply[:200])
         return
 
+    plausible, forged = _split_forged_evidence(candidates, lookback_days)
     accepted, rejected = admit_all(
-        candidates,
+        plausible,
         min_observed_days=min_observed_days,
         adopted_count=len(adopted),
         max_strategies=max_strategies,
         adopted_ids={row.strategy_id for row in adopted},
     )
-    for candidate, reason in rejected:
-        # 逐條記錄、理由原文照登：理由字串本身就是分類（醫療攔截／結構驗證／證據不足／
-        # 撞上限），聚合成一句就失去可分類統計的價值。
+    for candidate, reason in [*forged, *rejected]:
+        # 逐條記錄、理由原文照登：理由字串本身就是拒絕分類（醫療攔截／結構驗證／證據
+        # 不足／證據捏造／撞上限），聚合成一句就失去可分類統計的價值。
+        # 「守則分類」是模型自填的 category（address／tone／…），**不是**拒絕分類——欄位
+        # 名若只寫「分類」，後人拿它分桶會分到完全不同的東西。
         logger.warning(
-            "守則被濾網擋下 elder=%s 理由=%s 分類=%s 內容=%r",
+            "守則被濾網擋下 elder=%s 理由=%s 守則分類=%s 內容=%r",
             elder_id,
             reason,
             candidate.category,
@@ -156,6 +171,34 @@ def reflect_days(
         )
     for candidate in accepted:
         _record(strategies, elder_id, candidate)
+
+
+def _split_forged_evidence(
+    candidates: list[Candidate], lookback_days: int
+) -> tuple[list[Candidate], list[tuple[Candidate, str]]]:
+    """挑掉 observed_days 大於回看天數的候選：那不是證據充分，是捏造證據。
+
+    證據門檻整個建立在模型**自陳**的 observed_days 上，而在七天的窗裡自陳「觀察了 999
+    天」是物理上不可能的觀察。少了這道免費的合理性檢查，繞過證據門檻的成本是零。
+
+    這道檢查只能做在這裡：`policy` 收的是 `min_observed_days`，它不知道回看天數是幾天，
+    無從判斷一個數字是否超出視野。拒絕理由刻意寫成可辨識的「證據捏造」——「模型試圖
+    繞過證據門檻」是最該告警的指標之一，不可與尋常的「證據不足」混在同一桶。
+    """
+    plausible: list[Candidate] = []
+    forged: list[tuple[Candidate, str]] = []
+    for candidate in candidates:
+        if candidate.observed_days > lookback_days:
+            forged.append(
+                (
+                    candidate,
+                    f"證據捏造：自陳觀察 {candidate.observed_days} 天，"
+                    f"超出回看天數 {lookback_days} 天（不可能的觀察）",
+                )
+            )
+        else:
+            plausible.append(candidate)
+    return plausible, forged
 
 
 def _record(strategies: StrategyStore, elder_id: str, candidate: Candidate) -> None:
@@ -237,22 +280,43 @@ def _parse(reply: str) -> list[Candidate] | None:
 
 
 def _to_candidate(item: object) -> Candidate | None:
-    """把一個 JSON 元素轉成 Candidate；欄位缺漏或型別不對回 None。
+    """把一個 JSON 元素轉成 Candidate；欄位缺漏或型別救不回來時回 None（整批丟棄）。
 
-    型別嚴格（不做 str()／int() 強制轉型）：能寫出 observed_days="很多天" 的回應，
-    其 content 同樣不值得信任。內容的合法性交給濾網，此處只認格式。
+    ## content 嚴格、observed_days 寬鬆——這個不對稱是刻意的，請不要「一致性重構」掉
+
+    `observed_days` 接受 int-coercible（`"3"`、`3.0` → 3）。理由是失效模式的形狀：LLM 的
+    JSON 序列化習慣是**穩定的**——會把數字加引號的模型，是每晚都加。所以嚴格版的代價
+    不是「偶爾損失一晚」，而是這個功能可能**從上線第一天起就永遠學不到任何東西**，而
+    唯一的訊號是每晚一行 warning。守則自動生效、無人審，沒有人會盯著「今晚沒新增守則」，
+    因為那本來就是常態——這是靜默的全功能失效。轉型在此不損及任何一道防線：
+    `observed_days` 只流向「與 `min_observed_days` 比大小」與 DB 的整數欄位，不參與醫療詞
+    比對、不參與結構驗證、也不進 system prompt。
+
+    `content` 則**必須維持嚴格**：`str(42)` 會製造出「42」這條守則——可印、單行、夠短、
+    無醫療詞、分類合法，**四道濾網全部放行**，然後永久注入 system prompt。content 的語意
+    有效性無法用轉型救回（一條守則要嘛是句人話、要嘛不是），`observed_days` 可以（一個
+    數字加了引號還是同一個數字）。兩者的寬嚴之別來自「轉型能不能救回語意」，不是疏漏。
+
+    非數字的 `observed_days`（「很多天」）仍整批丟棄：那是模型連題目都沒答對，其 content
+    同樣不值得信任。
     """
     if not isinstance(item, dict) or any(field not in item for field in _REQUIRED_FIELDS):
         return None
-    content, category, evidence = item["content"], item["category"], item["evidence"]
-    if not all(isinstance(value, str) for value in (content, category, evidence)):
+    content, category = item["content"], item["category"]
+    if not isinstance(content, str) or not isinstance(category, str):
         return None
-    observed_days = item["observed_days"]
-    # bool 是 int 的子類，得另外擋掉：observed_days=true 不是「觀察到 1 天」。
-    if isinstance(observed_days, bool) or not isinstance(observed_days, int):
+    evidence = _to_evidence(item["evidence"])
+    if evidence is None:
         return None
-    supersedes = item.get("supersedes") or None  # 模型常填空字串代替 null。
-    if supersedes is not None and not isinstance(supersedes, str):
+    observed_days = _to_observed_days(item["observed_days"])
+    if observed_days is None:
+        return None
+    supersedes = item.get("supersedes")
+    if isinstance(supersedes, str):
+        supersedes = supersedes.strip() or None  # 模型常拿空字串代替 null，視為沒有取代對象。
+    elif supersedes is not None:
+        # 0／false／[] 等 falsy 值不是 null，是型別錯；`or None` 會讓它們靜默變成「沒有
+        # 取代對象」，把一條本該丟棄的候選放進來。
         return None
     return Candidate(
         content=content,
@@ -261,6 +325,38 @@ def _to_candidate(item: object) -> Candidate | None:
         observed_days=observed_days,
         supersedes=supersedes,
     )
+
+
+def _to_evidence(value: object) -> str | None:
+    """evidence 允許字串或字串陣列（模型很常把觀察逐條列出）；其餘型別回 None。
+
+    evidence 是四個欄位裡最無安全顧慮的——不進 system prompt、不參與任何一道濾網，只
+    落庫供人回查。為了它的格式偏好丟掉整晚的反思，代價完全不成比例。
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list) and all(isinstance(line, str) for line in value):
+        return "；".join(value)
+    return None
+
+
+def _to_observed_days(value: object) -> int | None:
+    """轉成整數天數；bool 與非數字回 None。寬嚴之別的理由見 `_to_candidate`。"""
+    # bool 必須先擋：它是 int 的子類（int(True) == 1），但 observed_days=true 的語意不是
+    # 「觀察到 1 天」，而是模型根本沒在回答這個問題。
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, (float, str)):
+        try:
+            # 先轉 float 再取整，一併吃下 3.0 與 "3"／"3.0"。無條件捨去（3.7 → 3）只會
+            # 低估天數、讓證據門檻更嚴，不可能放行證據不足的守則。
+            number = float(value)
+        except ValueError:
+            return None  # 「很多天」這種答不出數字的回應，仍整批丟棄。
+        return int(number) if math.isfinite(number) else None  # inf／nan 不是天數。
+    return None
 
 
 def _strip_code_fence(reply: str) -> str:

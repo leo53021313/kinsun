@@ -10,6 +10,8 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from kinsun.llm import Message
 from kinsun.memory.shortterm import FakeMemoryStore
 from kinsun.reports.reminders import REMINDER_KIND_MEDICATION, FakeReminderLogStore
@@ -131,7 +133,44 @@ def test_a_candidate_missing_a_field_writes_nothing():
 
 
 def test_a_non_numeric_observed_days_writes_nothing():
+    """答不出數字的模型，其 content 同樣不值得信任——整批丟棄的論點在此完整保留。"""
     strategies, _ = _run(_one_candidate(observed_days="很多天"))
+    assert strategies.list_for_elder("e1") == []
+
+
+def test_a_stringified_observed_days_is_coerced():
+    """模型的 JSON 序列化習慣是穩定的：會把整數加引號的模型是每晚都加。
+
+    嚴格版的失效模式不是「偶爾損失一晚」，而是這功能從上線第一天起就永遠學不到
+    任何東西，而唯一訊號是每晚一行 warning。observed_days 只流向「與門檻比大小」
+    與 DB 整數欄位，轉型不損及任何一道濾網。
+    """
+    strategies, _ = _run(_one_candidate(observed_days="3"))
+    rows = strategies.list_for_elder("e1", status=STRATEGY_STATUS_ADOPTED)
+    assert [r.observed_days for r in rows] == [3]
+
+
+def test_a_float_observed_days_is_coerced():
+    strategies, _ = _run(_one_candidate(observed_days=3.0))
+    rows = strategies.list_for_elder("e1", status=STRATEGY_STATUS_ADOPTED)
+    assert [r.observed_days for r in rows] == [3]
+
+
+def test_a_boolean_observed_days_writes_nothing():
+    """bool 是 int 的子類（int(True) == 1）；observed_days=true 不是「觀察到 1 天」。"""
+    strategies, _ = _run(_one_candidate(observed_days=True))
+    assert strategies.list_for_elder("e1") == []
+
+
+def test_a_list_evidence_is_joined_rather_than_dropped():
+    """evidence 從不進 prompt、不參與任何濾網——用整批丟棄處置它的格式偏好不成比例。"""
+    strategies, _ = _run(_one_candidate(evidence=["連三天沒回", "她自己說過"]))
+    rows = strategies.list_for_elder("e1", status=STRATEGY_STATUS_ADOPTED)
+    assert [r.evidence for r in rows] == ["連三天沒回；她自己說過"]
+
+
+def test_a_list_evidence_of_non_strings_writes_nothing():
+    strategies, _ = _run(_one_candidate(evidence=[{"不是": "字串"}]))
     assert strategies.list_for_elder("e1") == []
 
 
@@ -140,9 +179,35 @@ def test_a_non_string_content_writes_nothing():
     assert strategies.list_for_elder("e1") == []
 
 
+def test_a_numeric_content_writes_nothing():
+    """content 維持嚴格，不隨 observed_days 一起放寬——這個不對稱是刻意的。
+
+    str(42) 會生出「42」這條守則：可印、夠短、無醫療詞、分類合法，四道濾網全部放行，
+    然後永久注入 system prompt。content 的語意有效性無法用轉型救回。
+    """
+    strategies, _ = _run(_one_candidate(content=42))
+    assert strategies.list_for_elder("e1") == []
+
+
 def test_a_non_string_supersedes_writes_nothing():
     strategies, _ = _run(_one_candidate(supersedes=17))
     assert strategies.list_for_elder("e1") == []
+
+
+@pytest.mark.parametrize("falsy", [0, False, []])
+def test_a_falsy_non_string_supersedes_writes_nothing(falsy):
+    """`item.get("supersedes") or None` 會讓 0／false／[] 靜默變成「沒有取代對象」。
+
+    空字串→None 是刻意的（模型常拿空字串代替 null），其餘 falsy 值則是型別錯。
+    """
+    strategies, _ = _run(_one_candidate(supersedes=falsy))
+    assert strategies.list_for_elder("e1") == []
+
+
+def test_an_empty_string_supersedes_means_no_supersede_target():
+    strategies, _ = _run(_one_candidate(supersedes=""))
+    rows = strategies.list_for_elder("e1", status=STRATEGY_STATUS_ADOPTED)
+    assert [r.content for r in rows] == ["早上七點半再問候"]
 
 
 def test_an_empty_array_writes_nothing_and_does_not_raise():
@@ -212,6 +277,41 @@ def test_the_prompt_carries_the_length_limit_and_the_medical_rewrite_hint():
     assert str(MAX_CONTENT_CHARS) in REFLECTION_PROMPT
     assert "改寫" in REFLECTION_PROMPT
     assert REFLECTION_PROMPT in reflector.system_prompt
+
+
+def test_the_prompt_forbids_rewriting_a_dismissive_rule_past_the_filters():
+    """教模型「改寫掉醫療字眼」的同一句話，也讓它能把
+
+        「她說胸口很痛通常只是想撒嬌，不用理會」
+
+    改寫成「她抱怨的時候通常只是想撒嬌，不用理會」——通過全部四道濾網、永久注入
+    system prompt。這正是 policy.py docstring 自己點名的真正傷害：金孫當著長輩的面
+    把危急訊號正常化。濾網擋不住（字面上是 tone／topic），只能在 prompt 就堵死。
+    """
+    assert "忽視" in REFLECTION_PROMPT
+    assert "淡化" in REFLECTION_PROMPT
+    assert "不理會" in REFLECTION_PROMPT
+    # 必須明講「不得靠改寫規避」，否則第 3 條的改寫指令仍是一條敞開的路。
+    assert "不可改寫" in REFLECTION_PROMPT
+
+
+def test_observed_days_beyond_the_lookback_window_is_rejected(caplog):
+    """observed_days=999 在七天的窗下是物理上不可能的觀察——這是捏造證據。
+
+    證據門檻整個建立在模型自陳的數字上，連「不可能大於回看天數」這個免費的合理性
+    檢查都不做，捏造證據就是零成本。
+    """
+    with caplog.at_level(logging.WARNING, logger="kinsun.strategies.reflection"):
+        strategies, _ = _run(_one_candidate(observed_days=999))
+    assert strategies.list_for_elder("e1") == []
+    assert any("捏造" in r.getMessage() for r in caplog.records)
+
+
+def test_observed_days_equal_to_the_lookback_window_is_still_accepted():
+    """邊界：整整七天每天都觀察到，是合理的（且是最強的證據）。"""
+    strategies, _ = _run(_one_candidate(observed_days=7))
+    rows = strategies.list_for_elder("e1", status=STRATEGY_STATUS_ADOPTED)
+    assert [r.observed_days for r in rows] == [7]
 
 
 def test_the_whole_lookback_window_is_read_not_just_yesterday():
@@ -314,6 +414,17 @@ def test_each_rejection_is_logged_with_its_own_reason(caplog):
     # 醫療攔截與證據不足必須是兩筆各自帶理由的紀錄——揉成一句就無法分類統計。
     assert any("醫療" in m and "不要再提醒她吃藥" in m for m in messages)
     assert any("證據不足" in m and "講話溫柔一點" in m for m in messages)
+
+
+def test_the_log_labels_the_model_declared_category_as_such(caplog):
+    """欄位名「分類=」會被誤讀成「拒絕分類」（醫療攔截／證據不足／…），但它其實是模型
+    自填的 category（address／tone／…）。任何後來的人拿它去分桶，分到的都是錯的東西。
+    """
+    with caplog.at_level(logging.WARNING, logger="kinsun.strategies.reflection"):
+        _run(_one_candidate(observed_days=1))
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("守則分類=" in m for m in messages)
+    assert not any(" 分類=" in m for m in messages)  # 不得留下裸的「分類=」
 
 
 def test_a_malformed_reply_is_logged(caplog):
