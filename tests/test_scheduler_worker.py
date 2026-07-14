@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import inspect
+import logging
 from datetime import datetime
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -15,6 +17,7 @@ import pytest
 import kinsun.scheduler.worker as worker
 from kinsun.accounts.models import PrincipalType
 from kinsun.config import load_settings
+from kinsun.strategies.reflection import reflect_days as _real_reflect_days
 
 _BASE_ENV = {
     "LINE_CHANNEL_SECRET": "test-secret",
@@ -107,6 +110,11 @@ def _fake_core(
         risk_events=SimpleNamespace(list_for_elder=lambda elder_id: []),
         summaries=SimpleNamespace(save=lambda *a, **k: None),
         notifications=object(),
+        # 每晚反思寫入端（spec 2026-07-14）：worker 應取用 Core 現成的 store，不自建。
+        strategies=SimpleNamespace(
+            list_for_elder=lambda elder_id, status=None: [],
+            record=lambda *a, **k: None,
+        ),
         agent=SimpleNamespace(proactive=lambda elder_id, intent: f"主動：{intent}"),
     )
 
@@ -216,6 +224,115 @@ def test_summary_failure_does_not_block_consolidation(monkeypatch):
     scheduler, _core = _build(monkeypatch, _settings(), elders=["e1", "e2"])
     _job(scheduler, "daily-consolidation").run()
     assert consolidated == ["e1", "e2"]  # 摘要失敗不影響整理與其他長輩
+
+
+def _binding_spy(record):
+    """會驗簽章的 reflect_days 替身：worker 漏傳必填參數時就地 TypeError。
+
+    `lambda elder_id, **kw` 這種寬鬆替身會把 worker 的漏傳照單全收（`max_turns` 刻意
+    無預設值），測試照樣全綠，錯留到正式環境每晚炸一次。故此處拿真 `reflect_days` 的
+    簽章做 bind——測試替身的寬容度不可以高於它替身的那個函式。
+    """
+    signature = inspect.signature(_real_reflect_days)
+
+    def _spy(elder_id, **kwargs):
+        signature.bind(elder_id, **kwargs)
+        record(elder_id, kwargs)
+
+    return _spy
+
+
+def _stub_nightly(monkeypatch, *, consolidate=None, summarize=None):
+    monkeypatch.setattr(worker, "run_consolidation", consolidate or (lambda elder_id, **kw: None))
+    monkeypatch.setattr(worker, "summarize_day", summarize or (lambda elder_id, **kw: None))
+
+
+def test_consolidation_job_reflects_after_summarising(monkeypatch):
+    """反思掛進既有夜間批次（spec 2026-07-14）：整理 → 摘要 → 反思，接線與設定要對上。"""
+    events: list[tuple[str, str]] = []
+    calls: list[dict] = []
+    _stub_nightly(
+        monkeypatch,
+        consolidate=lambda elder_id, **kw: events.append(("整理", elder_id)),
+        summarize=lambda elder_id, **kw: events.append(("摘要", elder_id)),
+    )
+    monkeypatch.setattr(
+        worker,
+        "reflect_days",
+        _binding_spy(
+            lambda elder_id, kwargs: (events.append(("反思", elder_id)), calls.append(kwargs))
+        ),
+    )
+    scheduler, core = _build(monkeypatch, _settings(), elders=["e1"])
+    _job(scheduler, "daily-consolidation").run()
+
+    assert events == [("整理", "e1"), ("摘要", "e1"), ("反思", "e1")]
+    kwargs = calls[0]
+    assert kwargs["short_term"] is core.memory
+    assert kwargs["reminder_logs"] is core.reminder_logs
+    assert kwargs["strategies"] is core.strategies  # 取 Core 現成的 store，不自建第二個
+    assert kwargs["reflector"] is core.gemini  # 與摘要共用 GEMINI_MODEL_SUMMARY 那一顆
+    assert kwargs["lookback_days"] == 7
+    assert kwargs["min_observed_days"] == 3
+    assert kwargs["max_strategies"] == 15
+    assert kwargs["max_turns"] == 600
+
+
+def test_reflection_can_be_switched_off(monkeypatch):
+    """REFLECTION_ENABLED 是緊急關閉開關：關掉後夜間批次不得再呼叫反思。"""
+    reflected: list[str] = []
+    _stub_nightly(monkeypatch)
+    monkeypatch.setattr(
+        worker, "reflect_days", _binding_spy(lambda elder_id, kw: reflected.append(elder_id))
+    )
+    scheduler, _core = _build(monkeypatch, _settings(REFLECTION_ENABLED="false"), elders=["e1"])
+    _job(scheduler, "daily-consolidation").run()
+    assert reflected == []
+
+
+def test_reflection_failure_does_not_break_the_batch(monkeypatch, caplog):
+    """reflect_days 對 LLM timeout／MemoryStoreError 刻意不設防，防線在 run_one。"""
+    consolidated: list[str] = []
+    summarized: list[str] = []
+    attempted: list[str] = []
+    _stub_nightly(
+        monkeypatch,
+        consolidate=lambda elder_id, **kw: consolidated.append(elder_id),
+        summarize=lambda elder_id, **kw: summarized.append(elder_id),
+    )
+
+    def _boom(elder_id, **kw):
+        attempted.append(elder_id)
+        raise RuntimeError("gemini 掛了")
+
+    monkeypatch.setattr(worker, "reflect_days", _boom)
+    scheduler, _core = _build(monkeypatch, _settings(), elders=["e1", "e2"])
+    with caplog.at_level(logging.WARNING):
+        _job(scheduler, "daily-consolidation").run()  # 不應拋出
+
+    assert consolidated == ["e1", "e2"]  # 反思失敗不影響長期記憶整理……
+    assert summarized == ["e1", "e2"]  # ……也不影響家屬摘要
+    assert attempted == ["e1", "e2"]  # 一位長輩的 LLM timeout 不得炸掉整批長輩的反思
+    assert any("每晚反思失敗" in r.getMessage() for r in caplog.records)
+    # 失敗必須收在 run_one 內：少了 try/except 時 fanout 會在外層補一筆 ERROR，把整位
+    # 長輩的夜間批次標成失敗——縱使整理與摘要其實都做完了，值班的人會查錯方向。
+    assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
+
+
+def test_summary_failure_does_not_block_reflection(monkeypatch):
+    """三個批次互不拖累：摘要掛了，今晚照樣要學。"""
+    reflected: list[str] = []
+
+    def _boom(elder_id, **kw):
+        raise RuntimeError("摘要掛了")
+
+    _stub_nightly(monkeypatch, summarize=_boom)
+    monkeypatch.setattr(
+        worker, "reflect_days", _binding_spy(lambda elder_id, kw: reflected.append(elder_id))
+    )
+    scheduler, _core = _build(monkeypatch, _settings(), elders=["e1"])
+    _job(scheduler, "daily-consolidation").run()
+    assert reflected == ["e1"]
 
 
 def test_greeting_pushes_and_records_reminder_log(monkeypatch):

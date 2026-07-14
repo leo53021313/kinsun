@@ -40,6 +40,7 @@ from kinsun.reports.summaries import summarize_day
 from kinsun.scheduler.jobs import build_audio_cleanup_job, build_consolidation_job
 from kinsun.scheduler.scheduler import Job, Scheduler
 from kinsun.scheduler.state import PgScheduleStateStore
+from kinsun.strategies.reflection import reflect_days
 
 logger = logging.getLogger("kinsun.scheduler.worker")
 
@@ -65,6 +66,8 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
     summaries = core.summaries
     # 摘要納 L1 小訊號（✅ D-10 己-5）：worker 自組 risk_events 讀取端。
     risk_events = core.risk_events
+    # 反思寫入端；與後台檢視／撤銷同一個 store（已在 Core），不另建。
+    strategies = core.strategies
     # 整理進度標記（✅ 庚-06／庚-13）：逐日補齊＋冪等，避免停機漏天與重覆寫入。
     consolidation_log = PgConsolidationLogStore(db, clock=clock)
 
@@ -87,6 +90,28 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
             )
         except Exception:  # noqa: BLE001 - 摘要失敗不影響整理與其他長輩
             logger.warning("對話摘要失敗 elder=%s", elder_id)
+        # 每晚反思（spec 2026-07-14）：接在既有的夜間批次尾巴，與摘要共用
+        # GEMINI_MODEL_SUMMARY 這顆模型。反思因此是每晚自動的主線行為，不需另立 cron。
+        if not settings.reflection_enabled:
+            return
+        try:
+            reflect_days(
+                elder_id,
+                short_term=memory,
+                reminder_logs=reminder_logs,
+                strategies=strategies,
+                reflector=gemini,
+                clock=clock,
+                lookback_days=settings.reflection_lookback_days,
+                min_observed_days=settings.reflection_min_observed_days,
+                max_strategies=settings.reflection_max_strategies,
+                max_turns=settings.reflection_max_turns,
+            )
+        except Exception:  # noqa: BLE001 - 反思失敗不影響整理、摘要與其他長輩
+            # reflect_days 對 LLM timeout／MemoryStoreError 刻意不設防（快速失敗），防線在此。
+            # 少了這層，例外會沿 fanout 冒上去：本該只是「今晚少學一條」，卻會把整位長輩的
+            # 夜間批次記成失敗——縱使整理與摘要其實都做完了，值班的人會查錯方向。
+            logger.warning("每晚反思失敗 elder=%s", elder_id)
 
     def _push_to_elder(elder_id: str, intent: str, kind: str) -> None:
         # 先確認可達再生成內容（避免白花一次 LLM 呼叫）；出站由 router 依綁定通道投遞。
