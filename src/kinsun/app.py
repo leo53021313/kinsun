@@ -99,6 +99,9 @@ def build_app() -> FastAPI:
         traces=core.traces,
         model_name=settings.gemini_model,
         safety_model_name=settings.gemini_model_safety,
+        # 長輩開口即標記時間窗內的提醒為已回應：反思的行為訊號來源（✅ Task 4）。
+        reminder_logs=core.reminder_logs,
+        response_window_seconds=settings.reflection_response_window_minutes * 60,
     )
     binding_sessions = PgBindingSessionStore(db)
     medication_menu = MedicationMenu(core.medications, core.accounts, binding_sessions, clock=clock)

@@ -11,6 +11,7 @@ from dataclasses import replace
 from kinsun.agent import CareAgent
 from kinsun.llm import LLMUsage, collect_llm_usage
 from kinsun.observability.store import TraceStore, safe_record
+from kinsun.reports.reminders import ReminderLogStore
 from kinsun.safety.detector import RiskDetector
 from kinsun.safety.events import RiskEventStore
 from kinsun.safety.notifier import Notifier
@@ -35,6 +36,8 @@ class VoicePipeline:
         model_name: str = "",
         safety_model_name: str = "",
         timer: Callable[[], float] = time.monotonic,
+        reminder_logs: ReminderLogStore | None = None,
+        response_window_seconds: int = 3600,
     ) -> None:
         self._asr = asr
         self._agent = agent
@@ -46,6 +49,9 @@ class VoicePipeline:
         self._model_name = model_name
         self._safety_model_name = safety_model_name
         self._timer = timer
+        # 選填（預設 None＝不標記）：既有呼叫端與測試不受影響。
+        self._reminder_logs = reminder_logs
+        self._response_window_seconds = response_window_seconds
 
     def process(
         self,
@@ -92,6 +98,8 @@ class VoicePipeline:
         self, user_text: str, *, elder_id: str, external_id: str, channel: str, trace_id: str
     ) -> TtsResult:
         """會話鍵為 elder_id；external_id＋channel 僅供觀測五表標記（可為空字串）。"""
+        # 語音（process）與文字（process_text）都流經此處，故標記一次即涵蓋兩條路徑。
+        self._mark_reminder_responded(elder_id)
         assessment = self._assess(
             user_text, external_id=external_id, channel=channel, trace_id=trace_id
         )
@@ -114,6 +122,25 @@ class VoicePipeline:
         )
         # 附上本輪的使用者原話（語音為 ASR 辨識、文字為輸入），供 debug 顯示。
         return replace(result, transcript=user_text)
+
+    def _mark_reminder_responded(self, elder_id: str) -> None:
+        """長輩開口＝可能在回應剛推的提醒（時間窗判定，不做內容比對）。
+
+        這是反思的行為訊號來源；標記失敗不可影響對話。
+
+        ⚠️ now 用 time.time()（epoch 秒），不可用 self._timer——後者預設 time.monotonic，
+        只能量延遲、不是牆鐘時間，拿去跟 reminder_logs.created_at 比較會得到垃圾。
+        """
+        if self._reminder_logs is None:
+            return
+        try:
+            self._reminder_logs.mark_responded(
+                elder_id,
+                now=time.time(),
+                within_seconds=self._response_window_seconds,
+            )
+        except Exception:  # noqa: BLE001 - 訊號落庫失敗不可中斷對話
+            logger.warning("提醒回應標記失敗 elder=%s", elder_id)
 
     def _latency_ms(self, started: float) -> int:
         return int((self._timer() - started) * 1000)
