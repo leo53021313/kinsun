@@ -244,6 +244,32 @@ def test_one_bad_candidate_does_not_sink_the_good_ones():
     assert contents == {"早上七點半再問候"}
 
 
+def test_a_mixed_batch_with_a_malformed_candidate_writes_nothing():
+    """整批丟棄：混合陣列中那條合法的守則也不寫——連好的一起丟，是刻意的。
+
+    這條與上面的 test_one_bad_candidate_does_not_sink_the_good_ones 只是看似矛盾，兩者
+    守的是不同層：**濾網**（policy）逐條判斷（醫療／輕蔑／證據不足 → 只丟那條），
+    **解析**（_parse）則是全有全無。理由是壞掉的位置不同——濾網擋下一條，代表模型答了
+    題但那條不該採用；而一個元素的 content 是 42，代表這份回應根本沒照格式回答，
+    半份 JSON 裡挑得出來的那幾條，來源同樣不可信。寧可今晚不學，不可學進垃圾。
+
+    此不變量原本只有註解在守：把 _parse 的 `return None` 改成 `continue`（壞的跳過、
+    好的照寫），修正前的測試全數通過——沒有任何測試餵過混合陣列。
+    """
+    payload = _candidates({}, {"content": 42})
+    strategies, _ = _run(payload)
+    assert strategies.list_for_elder("e1") == []
+
+
+def test_a_mixed_batch_with_a_non_numeric_observed_days_writes_nothing():
+    """observed_days 寬鬆（"3"／3.0 可轉型）不等於可以放行「很多天」——那是連題目都
+    沒答對，整份回應（含同批那條合法守則）一律不採信。
+    """
+    payload = _candidates({}, {"observed_days": "很多天"})
+    strategies, _ = _run(payload)
+    assert strategies.list_for_elder("e1") == []
+
+
 def test_content_is_stripped_before_it_is_written():
     strategies, _ = _run(_one_candidate(content="  早上七點半再問候  "))
     rows = strategies.list_for_elder("e1", status=STRATEGY_STATUS_ADOPTED)
