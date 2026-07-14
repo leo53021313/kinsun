@@ -292,6 +292,42 @@ def test_dismissive_content_is_rejected(content):
     assert "輕蔑" in reason
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        # 一、訴求訊號漏收：淡化詞明明都在 _DOWNPLAY_TERMS 裡，純粹因為訊號詞沒收到就放行。
+        # 訊號詞單獨出現不會攔任何東西（只有交集才攔），故擴充它的誤殺成本近乎零。
+        "她發牢騷的時候不用回應",
+        "她碎念的時候不用在意",
+        "她一直唸的時候不用放在心上",
+        "她唉聲嘆氣時不用放在心上",
+        "她埋怨的時候聽聽就好",
+        "她怨嘆的時候不用往心裡去",
+        "她不開心的時候不用安慰",
+        "她覺得孤單的時候不用太在意",
+        "她說寂寞的時候不用放在心上",
+        # 二、淡化動作漏收：短的自然說法直接逃逸（「聽聽就算了」少一個「了」就穿過去）。
+        "她的抱怨聽聽就算",
+        "她抱怨鄰居的話參考就好",
+        "她難過的時候笑一笑就過去",
+        "她訴苦的時候隨便回一句",
+        "她哭的時候轉移話題就好",
+        "她哭的時候帶過去就好",
+    ],
+)
+def test_dismissive_paraphrases_are_rejected(content):
+    reason = is_admissible(_candidate(content=content), **OK)
+    assert reason is not None
+    assert "輕蔑" in reason
+
+
+def test_the_exaggeration_attack_is_blocked_without_relying_on_the_tension_terms():
+    """「不用太緊張」從 _DOWNPLAY_TERMS 移除不損失攔截力：這句由無條件詞「誇大」擋下。"""
+    reason = is_admissible(_candidate(content="她常常誇大自己的狀況，回應時不用太緊張"), **OK)
+    assert reason is not None
+    assert "誇大" in reason
+
+
 def test_the_dismissive_rejection_is_its_own_bucket_not_the_medical_one():
     """拒絕理由是唯一的觀測訊號：「模型多常試圖教金孫忽視長輩」必須自成一桶。"""
     reason = is_admissible(_candidate(content="她抱怨的時候通常只是想撒嬌，不用理會"), **OK)
@@ -351,6 +387,28 @@ def test_a_dismissive_candidate_is_reported_as_dismissive_even_when_the_category
     ],
 )
 def test_legitimate_strategies_survive_the_dismissive_filter(content, category):
+    assert is_admissible(_candidate(content=content, category=category), **OK) is None
+
+
+# 交集是位置盲的（不做語法分析），交集本身就是誤殺來源——以下兩組是它的實證。
+
+
+@pytest.mark.parametrize(
+    ("content", "category"),
+    [
+        # 「不用太緊張」的受詞是金孫自己的語氣，與裸詞「不用緊張」有完全相同的歧義：
+        # 兩句都是合法的語氣守則，卻因為同句出現訴求訊號而被交集擋下。
+        ("她心情不好時多陪她，講話不用太緊張", STRATEGY_CATEGORY_TONE),
+        ("她抱怨鄰居的時候，回她的語氣不用太緊張", STRATEGY_CATEGORY_TONE),
+        # 訴求訊號單獨出現完全合法——它只是淡化動作的觸發條件，不是輕蔑詞。
+        ("她不開心的時候多陪她講幾句", STRATEGY_CATEGORY_TONE),
+        ("她會碎念，那是她的個性，不要糾正她", STRATEGY_CATEGORY_TONE),
+        ("她講話會一直唸，不用打斷她", STRATEGY_CATEGORY_TONE),
+        ("她覺得孤單的時候，可以多聊她的老朋友", STRATEGY_CATEGORY_TOPIC),
+        ("她嘆氣的時候多問她一句在想什麼", STRATEGY_CATEGORY_TONE),
+    ],
+)
+def test_legitimate_strategies_survive_the_widened_signal_table(content, category):
     assert is_admissible(_candidate(content=content, category=category), **OK) is None
 
 
