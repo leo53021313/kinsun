@@ -45,7 +45,15 @@ class ReminderLogStore(Protocol):
     def record(self, elder_id: str, kind: str, content: str) -> None: ...
     def list_for_elder(self, elder_id: str) -> list[ReminderLog]: ...
     def list_for_range(self, elder_id: str, *, start: float, end: float) -> list[ReminderLog]: ...
-    def mark_responded(self, elder_id: str, *, now: float, within_seconds: int) -> None: ...
+
+    def mark_responded(self, elder_id: str, *, now: float, within_seconds: int) -> None:
+        """把時間窗內**最近一則**提醒標為已回應；該則若已標記過則不動作。
+
+        「尚未標記」是更新條件、不是候選條件——見 PgReminderLogStore.mark_responded。
+        同一 created_at 有多則提醒時，選中哪一則為**未定義行為**（Fake 與 Pg 不保證
+        一致）：真實世界不會撞秒，呼叫端不應依賴此情形的結果。
+        """
+        ...
 
 
 class PgReminderLogStore:
@@ -81,15 +89,21 @@ class PgReminderLogStore:
         return [ReminderLog(*r) for r in rows]
 
     def mark_responded(self, elder_id: str, *, now: float, within_seconds: int) -> None:
-        """把時間窗內、尚未標記的最近一則提醒標為已回應。
+        """把時間窗內最近一則提醒標為已回應；該則若已標記過則不動作。
 
         只標最近一則：長輩一句話不該同時「回應」早上與中午的兩則提醒。
+
+        ⚠️ 「尚未標記」放在外層 UPDATE 的 WHERE（更新條件），**不可**放進子查詢
+        （候選條件）：管線是每則長輩訊息呼叫一次，若候選條件濾掉已標記的，長輩每
+        多講一句話就會往回啃一則更舊的提醒（串連標記），時間窗內所有提醒都會被標成
+        已回應、回應率灌水到近 100%。改成先選最近一則、已標記就 no-op，第二句起自然
+        不再往下啃，同時保留首次回應時間（不被後續發言覆寫）。
         """
         self._db.execute(
             "UPDATE reminder_logs SET responded_at = %s WHERE reminder_log_id = ("
             "SELECT reminder_log_id FROM reminder_logs "
-            "WHERE elder_id = %s AND responded_at IS NULL AND created_at >= %s "
-            "AND created_at <= %s ORDER BY created_at DESC LIMIT 1)",
+            "WHERE elder_id = %s AND created_at >= %s AND created_at <= %s "
+            "ORDER BY created_at DESC LIMIT 1) AND responded_at IS NULL",
             (now, elder_id, now - within_seconds, now),
         )
 
@@ -131,17 +145,18 @@ class FakeReminderLogStore:
         return sorted(rows, key=lambda r: r.created_at)
 
     def mark_responded(self, elder_id: str, *, now: float, within_seconds: int) -> None:
+        # 候選集不濾 responded_at（與 Pg 同一語意）：先選窗內最近一則，已標記就 no-op。
+        # 若在此濾掉已標記的，連續發言會一路往回啃更舊的提醒（串連標記）。
         candidates = [
             (i, r)
             for i, r in enumerate(self._rows)
-            if r.elder_id == elder_id
-            and r.responded_at is None
-            and now - within_seconds <= r.created_at <= now
+            if r.elder_id == elder_id and now - within_seconds <= r.created_at <= now
         ]
         if not candidates:
             return
         i, row = max(candidates, key=lambda pair: pair[1].created_at)
-        self._rows[i] = replace(row, responded_at=now)
+        if row.responded_at is None:
+            self._rows[i] = replace(row, responded_at=now)
 
 
 def safe_record(

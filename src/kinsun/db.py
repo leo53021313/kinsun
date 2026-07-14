@@ -162,8 +162,11 @@ STRATEGIES_DDL = (
 
 # 提醒回應訊號（spec 2026-07-14）：長輩在提醒發出後的時間窗內有發言即標記。
 # ⚠️ 既有庫的 reminder_logs 早已存在，CREATE TABLE IF NOT EXISTS 對它是 no-op、
-# 不會生出 responded_at；故本遷移必須獨立成一段，排在 REMINDER_LOGS_DDL 之後、
-# 索引之前（見 ensure_schema）。NULL＝未回應，既有列自動為 NULL，語意正確。
+# 不會生出 responded_at；故新欄位必須獨立以 ALTER 補（把欄位加進 REMINDER_LOGS_DDL
+# 只有新庫吃得到，既有庫永遠缺欄位）。ensure_schema 裡本段須排在 REMINDER_LOGS_DDL
+# 之後——新庫要先有表才 ALTER 得動；新索引引用 responded_at，故與 ALTER 同批（本段內
+# 先 ALTER 後建索引），reminder_logs 沒有獨立的索引步驟。
+# NULL＝未回應，既有列自動為 NULL，語意正確。
 REMINDER_LOGS_RESPONDED_MIGRATION_DDL = (
     "ALTER TABLE reminder_logs ADD COLUMN IF NOT EXISTS responded_at DOUBLE PRECISION;"
     "CREATE INDEX IF NOT EXISTS idx_reminder_logs_elder_responded "
