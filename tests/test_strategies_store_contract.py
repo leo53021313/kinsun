@@ -21,7 +21,7 @@ from kinsun.strategies.models import (
     STRATEGY_STATUS_REVOKED,
     STRATEGY_STATUS_SUPERSEDED,
 )
-from kinsun.strategies.store import FakeStrategyStore, PgStrategyStore
+from kinsun.strategies.store import FakeStrategyStore, PgStrategyStore, StrategyError
 
 TPE = timezone(timedelta(hours=8))
 FIXED = datetime(2026, 7, 14, 3, tzinfo=TPE)
@@ -36,7 +36,9 @@ def store(request, ns):
             clock=lambda: FIXED,
             new_id=lambda: next(ids),
         )
-    return FakeStrategyStore()
+    # Pg 的 clock 回 datetime、Fake 回 epoch 秒（沿用 FakeRiskEventStore 前例），
+    # 兩者餵同一個時刻，revoked_at 才能在合約裡對同一個值斷言。
+    return FakeStrategyStore(clock=lambda: FIXED.timestamp())
 
 
 def test_record_writes_an_adopted_strategy(store, ns):
@@ -94,3 +96,60 @@ def test_revoke_takes_a_strategy_out_of_effect(store, ns):
     assert store.list_for_elder(f"{ns}e1", status=STRATEGY_STATUS_ADOPTED) == []
     revoked = store.list_for_elder(f"{ns}e1", status=STRATEGY_STATUS_REVOKED)
     assert [r.content for r in revoked] == ["要撤掉的"]
+
+
+def test_revoke_stamps_revoked_at_from_the_clock(store, ns):
+    store.record(f"{ns}e1", "要撤掉的", STRATEGY_CATEGORY_TONE, "證據", 3, None)
+    target = store.list_for_elder(f"{ns}e1", status=STRATEGY_STATUS_ADOPTED)[0]
+
+    store.revoke(target.strategy_id)
+
+    revoked = store.list_for_elder(f"{ns}e1", status=STRATEGY_STATUS_REVOKED)[0]
+    assert revoked.revoked_at == FIXED.timestamp()
+
+
+def test_revoking_an_unknown_strategy_id_is_a_silent_no_op(store, ns):
+    """釘住現況：撤銷不存在的守則不報錯、也不憑空生出任何列。
+
+    revoke 的唯一呼叫端是後台人工操作，找不到就是沒事發生；此處只固定行為，
+    不主張它是唯一正解。
+    """
+    store.revoke(f"{ns}nonexistent")
+
+    assert store.list_for_elder(f"{ns}e1") == []
+
+
+def test_record_rejects_superseding_a_revoked_strategy(store, ns):
+    """人工撤銷過的守則不得被當成取代對象——否則等於讓它借屍還魂、且鑿穿上限。"""
+    store.record(f"{ns}e1", "被撤銷的", STRATEGY_CATEGORY_TONE, "證據", 3, None)
+    target = store.list_for_elder(f"{ns}e1", status=STRATEGY_STATUS_ADOPTED)[0]
+    store.revoke(target.strategy_id)
+
+    with pytest.raises(StrategyError):
+        store.record(
+            f"{ns}e1", "近似的新守則", STRATEGY_CATEGORY_TONE, "新證據", 5, target.strategy_id
+        )
+
+    assert store.list_for_elder(f"{ns}e1", status=STRATEGY_STATUS_ADOPTED) == []
+    revoked = store.list_for_elder(f"{ns}e1", status=STRATEGY_STATUS_REVOKED)
+    assert [r.content for r in revoked] == ["被撤銷的"]
+
+
+def test_record_rejects_superseding_another_elders_strategy(store, ns):
+    store.record(f"{ns}e1", "e1 的守則", STRATEGY_CATEGORY_TONE, "證據", 3, None)
+    target = store.list_for_elder(f"{ns}e1", status=STRATEGY_STATUS_ADOPTED)[0]
+
+    with pytest.raises(StrategyError):
+        store.record(f"{ns}e2", "越界取代", STRATEGY_CATEGORY_TONE, "證據", 3, target.strategy_id)
+
+    assert store.list_for_elder(f"{ns}e2") == []
+    still_adopted = store.list_for_elder(f"{ns}e1", status=STRATEGY_STATUS_ADOPTED)
+    assert [r.content for r in still_adopted] == ["e1 的守則"]
+
+
+def test_record_rejects_a_category_outside_the_whitelist(store, ns):
+    """縱深防禦：白名單在持久層也要擋，旁路寫入端才無法塞進 medication 類守則。"""
+    with pytest.raises(StrategyError):
+        store.record(f"{ns}e1", "把血壓藥加倍", "medication", "證據", 3, None)
+
+    assert store.list_for_elder(f"{ns}e1") == []
