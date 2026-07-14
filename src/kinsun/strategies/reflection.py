@@ -8,6 +8,15 @@
 2. 產出寫回系統自己（strategies 表 → 注入 system prompt），而非寫給家屬看。
    摘要是報告，反思是學習。
 
+## 讀多天就不能用 list_for_range
+
+`list_for_range` 的 `LIMIT` 套在 `ORDER BY created_at ASC` 上：超量時**留下的是最舊的**。
+單日窗（consolidation 逐日補齊）幾乎不會撞到上限，跨七天的窗卻很容易——健談的長輩
+一天 40 輪，七天就 280 輪。撞上限的後果是反思只看得到最舊的那幾天，長輩前天才糾正
+過的事反而看不到：**越投入的長輩，反思品質越差**。故此處固定用
+`list_recent_in_range`（保最新、丟最舊），上限走獨立的 `REFLECTION_MAX_TURNS`，且撞到
+上限一定記 warning——靜默縮水的視野是查不出來的。
+
 ## 三個「壞掉也不能炸」的地方
 
 守則自動生效、無人審，而這支批次每晚對每位長輩跑一次。它的失敗模式必須是
@@ -97,14 +106,25 @@ def reflect_days(
     lookback_days: int,
     min_observed_days: int,
     max_strategies: int,
+    max_turns: int,
 ) -> None:
     """反思這位長輩過去 lookback_days 天的互動，把通過濾網的守則寫成生效中的守則。"""
     # 迄點＝今日零時：只反思已完整結束的日子，今天才過幾小時的片段不算一天。
     _, end = previous_day_bounds(clock())
     start = end - lookback_days * _SECONDS_PER_DAY
-    turns = short_term.list_for_range(elder_id, start=start, end=end)
+    # 用 list_recent_in_range 而非 list_for_range：後者的 LIMIT 套在 ASC 上，跨七天讀時
+    # 截掉的會是**最新的那幾天**，健談的長輩反而只被反思到一片舊資料（見模組 docstring）。
+    turns = short_term.list_recent_in_range(elder_id, start=start, end=end, limit=max_turns)
     if not turns:
         return
+    if len(turns) >= max_turns:
+        # 取滿上限即示警（可能剛好等於上限而未截斷——寧可多報一次，不可讓視野縮水無聲無息）。
+        logger.warning(
+            "反思輪數達上限，較舊的對話未納入 elder=%s limit=%s 回看天數=%s",
+            elder_id,
+            max_turns,
+            lookback_days,
+        )
 
     logs = reminder_logs.list_for_range(elder_id, start=start, end=end)
     adopted = strategies.list_for_elder(elder_id, status=STRATEGY_STATUS_ADOPTED)

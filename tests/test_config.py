@@ -203,6 +203,7 @@ def test_reflection_settings_have_defaults():
     assert settings.reflection_min_observed_days == 3
     assert settings.reflection_max_strategies == 15
     assert settings.reflection_response_window_minutes == 60
+    assert settings.reflection_max_turns == 600
 
 
 def test_reflection_can_be_switched_off():
@@ -237,6 +238,7 @@ def test_reflection_min_observed_days_equal_lookback_is_allowed():
         "REFLECTION_MIN_OBSERVED_DAYS",
         "REFLECTION_MAX_STRATEGIES",
         "REFLECTION_RESPONSE_WINDOW_MINUTES",
+        "REFLECTION_MAX_TURNS",
     ],
 )
 @pytest.mark.parametrize("raw", ["0", "-1"])
@@ -257,9 +259,11 @@ def test_reflection_numeric_settings_accept_legal_overrides():
         "REFLECTION_MIN_OBSERVED_DAYS": "1",
         "REFLECTION_MAX_STRATEGIES": "1",
         "REFLECTION_RESPONSE_WINDOW_MINUTES": "1",
+        "REFLECTION_MAX_TURNS": "1000",
     }
     settings = load_settings(env)
     assert settings.reflection_lookback_days == 14
     assert settings.reflection_min_observed_days == 1
     assert settings.reflection_max_strategies == 1
     assert settings.reflection_response_window_minutes == 1
+    assert settings.reflection_max_turns == 1000

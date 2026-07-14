@@ -53,6 +53,16 @@ def _memory_with_turns() -> FakeMemoryStore:
     return memory
 
 
+def _chatty_week() -> FakeMemoryStore:
+    """健談長輩：七天（7/7～7/13）每天 40 輪，共 280 輪，超過任何合理的單日上限。"""
+    memory = FakeMemoryStore(now=NOW)
+    for day in range(7, 14):
+        at = datetime(2026, 7, day, 9, tzinfo=TPE)
+        for turn in range(40):
+            memory.append("e1", Message(role="user", content=f"7/{day} 第 {turn} 句"), at=at)
+    return memory
+
+
 def _run(
     reply: str,
     *,
@@ -61,6 +71,7 @@ def _run(
     reminder_logs=None,
     min_observed_days: int = 3,
     max_strategies: int = 15,
+    max_turns: int = 600,
 ):
     strategies = strategies if strategies is not None else FakeStrategyStore()
     reflector = FakeReflector(reply)
@@ -78,6 +89,7 @@ def _run(
         lookback_days=7,
         min_observed_days=min_observed_days,
         max_strategies=max_strategies,
+        max_turns=max_turns,
     )
     return strategies, reflector
 
@@ -219,6 +231,45 @@ def test_turns_outside_the_window_are_not_read():
     assert "今天講的話" not in contents
 
 
+def test_the_latest_days_survive_the_turn_cap():
+    """輪數超過上限時，砍掉的必須是最舊的——**最近幾天一定要看得到**。
+
+    這是反思「讀多天」的立意所在：長輩前天才糾正過的事，反思不能看不到。用
+    ORDER BY ASC LIMIT 的舊寫法在此會反過來只留下最舊的 200 輪（7/7～7/11），
+    最投入的長輩反而拿到最爛的反思。
+    """
+    _, reflector = _run(_one_candidate(), short_term=_chatty_week(), max_turns=200)
+    contents = [m.content for m in reflector.messages]
+    assert len(contents) == 200
+    assert any(c.startswith("7/13") for c in contents)  # 昨天
+    assert any(c.startswith("7/12") for c in contents)  # 前天
+    assert contents[-1] == "7/13 第 39 句"  # 仍以時序由舊到新收尾
+    assert not any(c.startswith("7/7") for c in contents)  # 被砍的是最舊的那天
+
+
+def test_the_whole_chatty_week_fits_under_the_default_cap():
+    """預設上限（600）下，健談長輩的整週 280 輪一輪都不該少。"""
+    _, reflector = _run(_one_candidate(), short_term=_chatty_week())
+    contents = [m.content for m in reflector.messages]
+    assert len(contents) == 280
+    assert contents[0] == "7/7 第 0 句"
+    assert contents[-1] == "7/13 第 39 句"
+
+
+def test_hitting_the_turn_cap_is_logged(caplog):
+    """截斷不得靜默：沒有日誌就沒人會發現反思的視野正在縮水。"""
+    with caplog.at_level(logging.WARNING, logger="kinsun.strategies.reflection"):
+        _run(_one_candidate(), short_term=_chatty_week(), max_turns=200)
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("上限" in m and "200" in m for m in messages)
+
+
+def test_staying_under_the_turn_cap_is_not_logged(caplog):
+    with caplog.at_level(logging.WARNING, logger="kinsun.strategies.reflection"):
+        _run(_one_candidate(), short_term=_chatty_week(), max_turns=600)
+    assert [r.getMessage() for r in caplog.records] == []
+
+
 def test_no_turns_means_no_llm_call():
     strategies = FakeStrategyStore()
     reflector = FakeReflector(_one_candidate())
@@ -232,6 +283,7 @@ def test_no_turns_means_no_llm_call():
         lookback_days=7,
         min_observed_days=3,
         max_strategies=15,
+        max_turns=600,
     )
     assert reflector.system_prompt == ""
     assert strategies.list_for_elder("nobody") == []

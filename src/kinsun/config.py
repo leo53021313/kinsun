@@ -98,6 +98,7 @@ class Settings:
     reflection_min_observed_days: int
     reflection_max_strategies: int
     reflection_response_window_minutes: int
+    reflection_max_turns: int
 
 
 def _parse_bool(raw: str) -> bool:
@@ -212,4 +213,8 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         reflection_response_window_minutes=_require_positive_int(
             env, "REFLECTION_RESPONSE_WINDOW_MINUTES", "60"
         ),
+        # 反思單次讀取的輪數上限（與聊天上下文的 MEMORY_MAX_TURNS 是兩個不同的窗）。
+        # 600 ＝ 七天 × 每天約 85 輪：涵蓋絕大多數長輩的整個回顧窗，token 成本仍可控
+        # （約 3～6 萬 token）。超量時丟的是最舊的輪次，並記 warning。
+        reflection_max_turns=_require_positive_int(env, "REFLECTION_MAX_TURNS", "600"),
     )

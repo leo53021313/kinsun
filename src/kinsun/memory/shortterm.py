@@ -30,6 +30,9 @@ class MemoryStore(Protocol):
     def recent(self, elder_id: str) -> list[Message]: ...
     def previous_day(self, elder_id: str) -> list[Message]: ...
     def list_for_range(self, elder_id: str, *, start: float, end: float) -> list[Message]: ...
+    def list_recent_in_range(
+        self, elder_id: str, *, start: float, end: float, limit: int
+    ) -> list[Message]: ...
     def day_starts_with_turns(
         self, elder_id: str, *, since: float, before: float
     ) -> list[float]: ...
@@ -68,7 +71,12 @@ class PgMemoryStore:
         return self.list_for_range(elder_id, start=start, end=end)
 
     def list_for_range(self, elder_id: str, *, start: float, end: float) -> list[Message]:
-        """回傳 [start, end) 區間的對話（時序由舊到新，上限 max_turns）——整理批次逐日補齊用。"""
+        """回傳 [start, end) 區間的對話（時序由舊到新，上限 max_turns）——整理批次逐日補齊用。
+
+        `LIMIT` 套在 `ASC` 上，超量時**留下的是最舊的**。這對逐日補齊（單日、幾乎不會
+        碰到 max_turns）沒有影響，但**跨多天的窗不可用本方法**——會靜默截掉最近的幾天。
+        跨多天請用 `list_recent_in_range`。
+        """
         rows = self._db.query(
             "SELECT role, content FROM turns "
             "WHERE elder_id = %s AND created_at >= %s AND created_at < %s "
@@ -76,6 +84,28 @@ class PgMemoryStore:
             (elder_id, start, end, self._max_turns),
         )
         return [Message(role=r, content=t) for r, t in rows]
+
+    def list_recent_in_range(
+        self, elder_id: str, *, start: float, end: float, limit: int
+    ) -> list[Message]:
+        """回傳 [start, end) 區間內**最近的 limit 輪**，仍以時序由舊到新排列。
+
+        與 `list_for_range` 的差別只在超量時丟哪一端：本方法丟最舊的、保最新的。跨多天
+        的讀取（每晚反思）必須用這個——長輩越健談，窗越容易滿，而「前天才糾正過的事」
+        正是最不能被丟掉的資料。
+
+        `limit` 由呼叫端傳入而非沿用 `max_turns`：聊天上下文（今日、MEMORY_MAX_TURNS）
+        與反思（七天、REFLECTION_MAX_TURNS）是兩個不同的窗，共用一個上限就是病灶本身。
+
+        取用 DESC 再反轉，讓 `LIMIT` 落在最新的那一端。
+        """
+        rows = self._db.query(
+            "SELECT role, content FROM turns "
+            "WHERE elder_id = %s AND created_at >= %s AND created_at < %s "
+            "ORDER BY created_at DESC, id DESC LIMIT %s",
+            (elder_id, start, end, limit),
+        )
+        return [Message(role=r, content=t) for r, t in reversed(rows)]
 
     def day_starts_with_turns(self, elder_id: str, *, since: float, before: float) -> list[float]:
         """回傳 [since, before) 內有對話的每個日界起點時間戳（配置時區、去重、升序）。
@@ -152,7 +182,22 @@ class FakeMemoryStore:
         return self.list_for_range(elder_id, start=start, end=end)
 
     def list_for_range(self, elder_id: str, *, start: float, end: float) -> list[Message]:
-        rows = sorted(
+        # 忠實複製 Pg 的 ASC + LIMIT：超量時留下的是**最舊的**（見 Pg 端 docstring）。
+        return [m for _, _, m in self._in_range(elder_id, start, end)[: self._max_turns]]
+
+    def list_recent_in_range(
+        self, elder_id: str, *, start: float, end: float, limit: int
+    ) -> list[Message]:
+        # 超量時留下的是**最新的** limit 輪，但仍由舊到新（對應 Pg 的 DESC + reversed）。
+        if limit <= 0:
+            return []  # 切片陷阱：limit=0 時 rows[-0:] 會回傳全部，Pg 的 LIMIT 0 則回空。
+        return [m for _, _, m in self._in_range(elder_id, start, end)[-limit:]]
+
+    def _in_range(
+        self, elder_id: str, start: float, end: float
+    ) -> list[tuple[float, int, Message]]:
+        """區間內的對話，依（時間戳，寫入序）升序——對應 Pg 的 ORDER BY created_at, id。"""
+        return sorted(
             (
                 (ts, i, m)
                 for i, (ts, m) in enumerate(self._turns.get(elder_id, []))
@@ -160,7 +205,6 @@ class FakeMemoryStore:
             ),
             key=lambda r: (r[0], r[1]),
         )
-        return [m for _, _, m in rows[: self._max_turns]]
 
     def day_starts_with_turns(self, elder_id: str, *, since: float, before: float) -> list[float]:
         tz = self._now.tzinfo
