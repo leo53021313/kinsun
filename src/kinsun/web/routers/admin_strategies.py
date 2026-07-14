@@ -55,23 +55,16 @@ def create_admin_strategies_router(
     def update_strategy(strategy_id: str, body: StrategyActionBody) -> dict:
         if body.action != ACTION_REVOKE:
             raise HTTPException(status_code=400, detail=ErrorCode.INVALID_ACTION)
-        # 先查再撤：store.revoke() 對不存在／已撤銷／已被取代的 id 是靜默成功（0 列
-        # UPDATE），直接轉呼叫會讓 UI 對著不存在的 id 顯示「已撤銷」。故以「此刻是否
-        # 仍在 adopted」為命中判準——撤不到東西就是 404。
-        # 兩人同時撤同一條時可能都回 200（第二次是 no-op UPDATE），結果一致，無害。
-        if not _is_adopted(strategies, strategy_id):
+        # 命中與否交給 revoke() 回報：它是一句條件式 UPDATE（WHERE status='adopted'
+        # RETURNING），撤到才回 True。不能改成「先查 adopted 清單、再撤」——兩步之間
+        # 夜間反思剛好 commit 一個 supersede，就會撲空卻回報「已撤銷」，而那條守則的
+        # 改寫版正生效中：這個逃生口對操作者說謊，比壞掉更糟。
+        # 兩人同時撤同一條時只有一人拿到 200，另一人 404（守則確實已不在生效中）。
+        if not strategies.revoke(strategy_id):
             raise HTTPException(status_code=404, detail=ErrorCode.STRATEGY_NOT_FOUND)
-        strategies.revoke(strategy_id)
         return ok({"strategy_id": strategy_id, "status": STRATEGY_STATUS_REVOKED})
 
     return router
-
-
-def _is_adopted(strategies: StrategyStore, strategy_id: str) -> bool:
-    """守則是否仍在生效中。adopted 有每位長輩 15 條上限，全表掃描成本可接受。"""
-    return any(
-        s.strategy_id == strategy_id for s in strategies.list_for_status(STRATEGY_STATUS_ADOPTED)
-    )
 
 
 def _strategy_json(s: Strategy) -> dict:

@@ -129,12 +129,13 @@ class StrategyStore(Protocol):
                observed_days: int, supersedes_strategy_id: str | None) -> None: ...
     def list_for_elder(self, elder_id: str, *, status: str | None = None) -> list[Strategy]: ...
     def list_for_status(self, status: str) -> list[Strategy]: ...
-    def revoke(self, strategy_id: str) -> None: ...
+    def revoke(self, strategy_id: str) -> bool: ...  # 回傳是否真的撤到（撤不到＝後台回 404）
 ```
 
 - `record` 為 append-only 事件語意（新守則永遠是新一筆），符合命名規範的 `record` 動詞慣例。寫入時 `status` 直接為 `adopted`。
 - `record` 在**同一個交易**內完成兩件事：插入新守則（`adopted`）＋若 `supersedes_strategy_id` 非空，把被取代的那筆設為 `superseded`。此原子性是 15 條上限不被突破的保證。
 - `list_for_elder` 供反思與 `StrategyFacts` 使用（單一長輩）；`list_for_status` 供後台清單使用（**跨長輩**，依 `created_at` 由新到舊）。兩個查詢維度不同，故分兩個方法（命名依 `list_for_<維度>` 慣例）。
+- `revoke` 是一句條件式 `UPDATE ... RETURNING`（`WHERE status = 'adopted'`），命中與否由 DB 自己回報，後台端點據此決定 200／404。刻意**不採**「先查 adopted 清單、再撤」：兩步之間夜間反思若 commit 一個 supersede，撤銷會撲空、端點卻回報「已撤銷」（TOCTOU），而那條學歪守則的改寫版正生效中——逃生口說謊比壞掉更糟。
 - `PgStrategyStore` / `FakeStrategyStore` 同住 `store.py`（三件套規範）。
 
 ### 3. 反思：`src/kinsun/strategies/reflection.py`

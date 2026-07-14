@@ -61,7 +61,7 @@ class StrategyStore(Protocol):
     ) -> None: ...
     def list_for_elder(self, elder_id: str, *, status: str | None = None) -> list[Strategy]: ...
     def list_for_status(self, status: str) -> list[Strategy]: ...
-    def revoke(self, strategy_id: str) -> None: ...
+    def revoke(self, strategy_id: str) -> bool: ...
 
 
 class PgStrategyStore:
@@ -153,10 +153,17 @@ class PgStrategyStore:
         )
         return [Strategy(*r) for r in rows]
 
-    def revoke(self, strategy_id: str) -> None:
-        self._db.execute(
+    def revoke(self, strategy_id: str) -> bool:
+        """撤銷一條生效中的守則；回傳是否真的撤到（撤不到＝呼叫端該回 404）。
+
+        命中判斷靠 `RETURNING`，由這一句條件式 UPDATE 自己回報，不另外先查一次。
+        「先查 adopted、再撤」有 TOCTOU 窗口：兩步之間夜間反思剛好 commit 一個
+        supersede，撤銷就會撲空、端點卻回報「已撤銷」（而該守則的改寫版正生效中）。
+        單一 UPDATE 的 WHERE 條件與寫入在同一列鎖內求值，窗口不存在。
+        """
+        row = self._db.query_one(
             "UPDATE strategies SET status = %s, revoked_at = %s "
-            "WHERE strategy_id = %s AND status = %s",
+            "WHERE strategy_id = %s AND status = %s RETURNING strategy_id",
             (
                 STRATEGY_STATUS_REVOKED,
                 self._clock().timestamp(),
@@ -164,16 +171,18 @@ class PgStrategyStore:
                 STRATEGY_STATUS_ADOPTED,
             ),
         )
+        return row is not None
 
 
 class FakeStrategyStore:
     """StrategyStore 的記憶體替身（測試用，不碰 DB）。
 
     忠實複製 Pg 的行為：record 寫入即 adopted、分類與取代對象不合法時丟 StrategyError、
-    帶 supersedes 時原子性退場舊守則、revoke 只對 adopted 生效（撤銷不存在的 id 是靜默
-    no-op，同 Pg 的 0 列 UPDATE）。strategy_id 與 created_at 由索引虛構、僅供排序，故
-    合約不斷言其值；revoked_at 則取自可注入的 clock（epoch 秒），與 Pg 對齊。回傳依
-    created_at 由新到舊排序，對齊 Pg 的 ORDER BY DESC。
+    帶 supersedes 時原子性退場舊守則、revoke 只對 adopted 生效且回報有沒有撤到（同 Pg
+    的 `UPDATE ... RETURNING`：撤不到就是 False，不報錯也不留痕跡）。strategy_id 與
+    created_at 由索引虛構、僅供排序，故合約不斷言其值；revoked_at 則取自可注入的
+    clock（epoch 秒），與 Pg 對齊。回傳依 created_at 由新到舊排序，對齊 Pg 的
+    ORDER BY DESC。
     """
 
     def __init__(self, *, clock: Callable[[], float] | None = None) -> None:
@@ -227,10 +236,10 @@ class FakeStrategyStore:
         rows = [r for r in self._rows if r.status == status]
         return sorted(rows, key=lambda r: r.created_at, reverse=True)
 
-    def revoke(self, strategy_id: str) -> None:
+    def revoke(self, strategy_id: str) -> bool:
         # 未注入 clock 時沿用合成時間戳，與既有測試相容（比照 FakeRiskEventStore）。
         now = self._clock() if self._clock else 0.0
-        self._replace(strategy_id, STRATEGY_STATUS_REVOKED, revoked_at=now, elder_id=None)
+        return self._replace(strategy_id, STRATEGY_STATUS_REVOKED, revoked_at=now, elder_id=None)
 
     def _require_adopted(self, elder_id: str, strategy_id: str) -> None:
         row = next(
@@ -242,7 +251,8 @@ class FakeStrategyStore:
 
     def _replace(
         self, strategy_id: str, status: str, *, revoked_at: float | None, elder_id: str | None
-    ) -> None:
+    ) -> bool:
+        """把一條 adopted 守則換成新狀態；回傳是否命中（對齊 Pg 條件式 UPDATE 的列數）。"""
         for i, row in enumerate(self._rows):
             matches_elder = elder_id is None or row.elder_id == elder_id
             if (
@@ -251,3 +261,5 @@ class FakeStrategyStore:
                 and row.status == STRATEGY_STATUS_ADOPTED
             ):
                 self._rows[i] = replace(row, status=status, revoked_at=revoked_at)
+                return True
+        return False

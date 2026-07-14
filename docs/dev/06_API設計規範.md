@@ -87,7 +87,7 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | `invite_used`／`invite_expired`／`too_many_attempts`／`invite_wrong_role` | 409 | 邀請碼狀態錯誤（wrong_role＝家屬碼誤走裝置綁定，✅ 庚-04） |
 | `name_required`／`label_required`／`slots_required`／`invalid_slot`／`invalid_date`／`invalid_time`／`date_in_past` | 400 | 欄位業務驗證失敗 |
 | `invalid_status`／`invalid_action` | 400 | admin 守則：查詢狀態不在白名單／動作非 `revoke`（後台不提供採用，守則自動生效） |
-| `strategy_not_found` | 404 | admin 守則：查無此守則，或它已不在生效中（`revoke` 對這些 id 靜默成功，端點自行判斷命中） |
+| `strategy_not_found` | 404 | admin 守則：查無此守則，或它已不在生效中（撤銷是條件式 `UPDATE ... RETURNING`，撤不到即回本錯誤——不先查後撤，避免謊報「已撤銷」） |
 | `validation_error` | 422 | pydantic 欄位驗證失敗（統一改寫，§2.3） |
 | `audio_too_large` | 413 | 音檔超過上限（上限值 env 可調，✅ D-26） |
 | `unsupported_media_type` | 415 | 對講機收到非音訊 content-type（✅ D-61 丙-11） |

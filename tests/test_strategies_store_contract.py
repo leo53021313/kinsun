@@ -91,7 +91,7 @@ def test_revoke_takes_a_strategy_out_of_effect(store, ns):
     store.record(f"{ns}e1", "要撤掉的", STRATEGY_CATEGORY_TONE, "證據", 3, None)
     target = store.list_for_elder(f"{ns}e1", status=STRATEGY_STATUS_ADOPTED)[0]
 
-    store.revoke(target.strategy_id)
+    assert store.revoke(target.strategy_id) is True
 
     assert store.list_for_elder(f"{ns}e1", status=STRATEGY_STATUS_ADOPTED) == []
     revoked = store.list_for_elder(f"{ns}e1", status=STRATEGY_STATUS_REVOKED)
@@ -108,15 +108,46 @@ def test_revoke_stamps_revoked_at_from_the_clock(store, ns):
     assert revoked.revoked_at == FIXED.timestamp()
 
 
-def test_revoking_an_unknown_strategy_id_is_a_silent_no_op(store, ns):
-    """釘住現況：撤銷不存在的守則不報錯、也不憑空生出任何列。
+def test_revoking_an_unknown_strategy_id_reports_a_miss(store, ns):
+    """撤不到東西時回 False，且不報錯、不憑空生出任何列。
 
-    revoke 的唯一呼叫端是後台人工操作，找不到就是沒事發生；此處只固定行為，
-    不主張它是唯一正解。
+    此處原本主張「revoke 的唯一呼叫端是後台人工操作，找不到就是沒事發生」——Task 9
+    證偽了它：後台端點確實需要知道有沒有命中，否則會對操作者謊報「已撤銷」。它當時只
+    好在端點外面「先查 adopted 再撤」，而那兩步之間有 TOCTOU 窗口。命中與否改由這裡
+    的單一條件式 UPDATE 自己回報，窗口才真正消失。
     """
-    store.revoke(f"{ns}nonexistent")
+    assert store.revoke(f"{ns}nonexistent") is False
 
     assert store.list_for_elder(f"{ns}e1") == []
+
+
+def test_revoking_an_already_revoked_strategy_reports_a_miss(store, ns):
+    """撤第二次不算命中：它早已不在生效中，端點據此回 404 而非謊報成功。"""
+    store.record(f"{ns}e1", "撤過的", STRATEGY_CATEGORY_TONE, "證據", 3, None)
+    target = store.list_for_elder(f"{ns}e1", status=STRATEGY_STATUS_ADOPTED)[0]
+    assert store.revoke(target.strategy_id) is True
+
+    assert store.revoke(target.strategy_id) is False
+
+    revoked = store.list_for_elder(f"{ns}e1", status=STRATEGY_STATUS_REVOKED)
+    assert [r.content for r in revoked] == ["撤過的"]
+
+
+def test_revoking_a_superseded_strategy_reports_a_miss(store, ns):
+    """TOCTOU 的現場：夜間反思剛把它 supersede 掉，後台此刻撤不到——必須回 False。
+
+    回 True 的話，端點會回報「已撤銷」，但真正生效中的是那條改寫版，一條也沒撤到。
+    """
+    store.record(f"{ns}e1", "學歪的守則", STRATEGY_CATEGORY_TONE, "證據", 3, None)
+    old = store.list_for_elder(f"{ns}e1", status=STRATEGY_STATUS_ADOPTED)[0]
+    store.record(f"{ns}e1", "反思改寫版", STRATEGY_CATEGORY_TONE, "新證據", 5, old.strategy_id)
+
+    assert store.revoke(old.strategy_id) is False
+
+    # 撤不到就不該留下痕跡：舊守則仍是 superseded、revoked_at 未被蓋上。
+    superseded = store.list_for_elder(f"{ns}e1", status=STRATEGY_STATUS_SUPERSEDED)
+    assert [(r.content, r.revoked_at) for r in superseded] == [("學歪的守則", None)]
+    assert store.list_for_elder(f"{ns}e1", status=STRATEGY_STATUS_REVOKED) == []
 
 
 def test_record_rejects_superseding_a_revoked_strategy(store, ns):
