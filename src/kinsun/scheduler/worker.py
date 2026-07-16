@@ -136,18 +136,35 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
             except Exception:  # noqa: BLE001 - 問候時間計算失敗不影響整理、摘要與反思
                 logger.warning("問候時間計算失敗 elder=%s", elder_id)
 
-    def _push_to_elder(elder_id: str, intent: str, kind: str) -> None:
+    def _push_to_elder(elder_id: str, intent: str, kind: str, *, ledger: bool = False) -> None:
         # 先確認可達再生成內容（避免白花一次 LLM 呼叫）；出站由 router 依綁定通道投遞。
         if not router.has_route(PrincipalType.ELDER, elder_id):
             logger.warning("主動推播略過（長輩無任何綁定通道）elder=%s kind=%s", elder_id, kind)
             return
         content = agent.proactive(elder_id, intent)
+        if ledger:
+            # ledger=True ＝ 這筆 reminder_logs 不只是觀測，它就是本推播的冪等帳本
+            # （目前只有問候）：先記帳再推播，記不進去就不推。
+            # 用 safe_record 吞掉寫入失敗會讓 greeted_today 永遠是 false，於是從她的
+            # 偏好時間起每半小時重問候一次直到當天結束（約 30 則），每則還燒一次 LLM。
+            # 失敗讓它冒到 fanout ＝ 跳過本輪、30 分鐘後重試——與問候 job 已宣告的
+            # 「寧可漏問候，不可重複轟炸」同向，語意上即 at-most-once。
+            reminder_logs.record(elder_id, kind, content)
+            delivered = router.send_text(PrincipalType.ELDER, elder_id, content)
+            if not delivered:
+                # send_text 逐通道吞例外、只回傳成功數，零送達不會拋。帳已經記了
+                # （at-most-once：不重推），但這一則問候等於沒送出，必須可歸因——
+                # 否則後台帳上顯示「已問候」而她整天沒收到，沒人知道要去查通道。
+                # 各通道的根因由 router 的 logger.exception 留痕，這裡補的是結論。
+                logger.warning("問候已記帳但零通道送達 elder=%s kind=%s", elder_id, kind)
+            return
         router.send_text(PrincipalType.ELDER, elder_id, content)
-        # 主動推播補記 reminder_logs（觀測用，失敗不影響推播）。
+        # 主動推播補記 reminder_logs（純觀測，失敗不影響推播）。
         safe_record(reminder_logs.record, elder_id, kind, content)
 
     def greet_one(elder_id: str) -> None:
-        _push_to_elder(elder_id, GREETING_INTENT, REMINDER_KIND_PROACTIVE_GREETING)
+        # ledger=True：問候的冪等靠 greeted_today 讀這張表，記帳因此是安全關鍵。
+        _push_to_elder(elder_id, GREETING_INTENT, REMINDER_KIND_PROACTIVE_GREETING, ledger=True)
 
     def care_one(elder_id: str) -> None:
         _push_to_elder(elder_id, INACTIVITY_INTENT, REMINDER_KIND_PROACTIVE_CARE)

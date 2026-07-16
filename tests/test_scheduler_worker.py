@@ -19,7 +19,7 @@ from kinsun.accounts.models import PrincipalType
 from kinsun.config import load_settings
 from kinsun.proactive.greeting_time import update_greeting_time as _real_update_greeting_time
 from kinsun.proactive.preferences import FakeGreetingPreferenceStore, GreetingPreference
-from kinsun.reports.reminders import FakeReminderLogStore
+from kinsun.reports.reminders import FakeReminderLogStore, ReminderLogError
 from kinsun.strategies.reflection import reflect_days as _real_reflect_days
 
 _BASE_ENV = {
@@ -59,8 +59,16 @@ class _FakeLLM:
 
 
 class _SpyRouter:
-    def __init__(self, *, reachable: bool = True) -> None:
+    """出站路由替身；delivered ＝ send_text 回傳的送達通道數。
+
+    delivered=0 模擬「有綁定通道、但每個通道都送失敗」（LINE token 過期、推播配額
+    用罄）：真 router 的 send_text 逐通道吞例外、只回傳成功數，**不會拋**——替身
+    的行為必須跟著它，否則測不到「送達 0 通道」這條路徑。
+    """
+
+    def __init__(self, *, reachable: bool = True, delivered: int = 1) -> None:
         self.reachable = reachable
+        self.delivered = delivered
         self.sent: list[tuple[PrincipalType, str, str]] = []
 
     def has_route(self, principal_type, principal_id) -> bool:
@@ -68,7 +76,17 @@ class _SpyRouter:
 
     def send_text(self, principal_type, principal_id, text) -> int:
         self.sent.append((principal_type, principal_id, text))
-        return 1
+        return self.delivered
+
+
+class _UnwritableReminderLogStore(FakeReminderLogStore):
+    """record 一律失敗、讀取照常：模擬 reminder_logs 缺 INSERT 權限或持續鎖等待。
+
+    「寫不進去但讀得到」正是最危險的組合——greeted_today 讀得到空清單、恆為 false。
+    """
+
+    def record(self, elder_id, kind, content):
+        raise ReminderLogError("提醒紀錄存取失敗：permission denied for table reminder_logs")
 
 
 def _fake_core(
@@ -478,6 +496,51 @@ def test_it_does_not_greet_her_twice_in_the_same_day(monkeypatch):
     job.run()
     job.run()  # 下一次掃描（或 worker 重啟後的補跑）
     assert len(router.sent) == 1
+
+
+def test_a_greeting_it_cannot_book_is_never_sent(monkeypatch):
+    """記不進帳就不問候——問候的冪等帳本就是 reminder_logs（spec 2026-07-16）。
+
+    這條釘的是本任務親手造出來的風險：reminder_logs 從「觀測帳」升格成「冪等帳本」
+    之後，用 safe_record 吞掉寫入失敗＝greeted_today 永遠是 false。cron 是
+    `0,30 * * * *`，於是從她的偏好時間起每半小時推一則早安到當天結束（約 30 則），
+    每則還燒一次 LLM。32 輪 ≈ 16 小時的掃描，涵蓋一整個白天。
+
+    記帳失敗必須讓它冒到 fanout ＝ 跳過本輪、30 分鐘後重試，與 job 已宣告的
+    「寧可漏問候，不可重複轟炸」同向。
+    """
+    router = _SpyRouter()
+    scheduler, _core = _build(
+        monkeypatch,
+        _settings(),
+        elders=["e1"],
+        router=router,
+        reminder_logs=_UnwritableReminderLogStore(_clock),
+    )
+    job = _job(scheduler, "daily-greeting")
+    for _ in range(32):
+        job.run()
+    assert not router.sent, f"記帳失敗，卻對她推了 {len(router.sent)} 則問候"
+
+
+def test_a_greeting_that_reached_nobody_is_attributable(monkeypatch, caplog):
+    """送達 0 通道仍要記帳（at-most-once 不重推），但必須留下可歸因的痕跡。
+
+    LINE token 過期／推播配額用罄時 send_text 回 0、不拋，帳照記、greeted_today
+    變 True——她整天收不到問候，後台帳上卻顯示「已問候」。不重推是政策（正確），
+    但「這一則問候等於沒送出」這個結論必須查得到，否則沒人知道要去查 token。
+    """
+    router = _SpyRouter(delivered=0)
+    reminder_logs = FakeReminderLogStore(_clock)
+    scheduler, _core = _build(
+        monkeypatch, _settings(), elders=["e1"], router=router, reminder_logs=reminder_logs
+    )
+    with caplog.at_level(logging.WARNING):
+        _job(scheduler, "daily-greeting").run()
+
+    assert len(router.sent) == 1  # 有試著送
+    assert len(reminder_logs.recorded) == 1  # 帳照記（at-most-once：不重推）
+    assert any("零通道送達" in r.getMessage() for r in caplog.records)
 
 
 def test_it_greets_at_her_own_time_rather_than_the_global_hour(monkeypatch):
