@@ -19,7 +19,12 @@ from kinsun.accounts.models import PrincipalType
 from kinsun.config import load_settings
 from kinsun.proactive.greeting_time import update_greeting_time as _real_update_greeting_time
 from kinsun.proactive.preferences import FakeGreetingPreferenceStore, GreetingPreference
-from kinsun.reports.reminders import FakeReminderLogStore, ReminderLogError
+from kinsun.reports.reminders import (
+    REMINDER_KIND_APPOINTMENT,
+    REMINDER_KIND_MEDICATION,
+    FakeReminderLogStore,
+    ReminderLogError,
+)
 from kinsun.strategies.reflection import reflect_days as _real_reflect_days
 
 _BASE_ENV = {
@@ -496,6 +501,35 @@ def test_it_does_not_greet_her_twice_in_the_same_day(monkeypatch):
     job.run()
     job.run()  # 下一次掃描（或 worker 重啟後的補跑）
     assert len(router.sent) == 1
+
+
+def test_a_morning_medication_log_must_not_count_as_a_greeting(monkeypatch):
+    """用藥／回診提醒不是問候——greeted_today 的 kind 濾網是安全關鍵，不可省。
+
+    四種提醒共用同一張 reminder_logs（刻意設計，見 reports/reminders.py），而問候的
+    冪等靠 greeted_today 讀這張表。濾網一旦失效（或日後被「順手簡化」成「今天有紀錄
+    就算問候過」），08:00 的用藥提醒（MEDICATION_MORNING_HOUR 預設 8）與回診提醒
+    （APPOINTMENT_REMINDER_HOUR 預設 8）都會被認成問候——兩者都落在問候護軌
+    [6, 11] 內，於是**所有吃早藥的長輩從此再也收不到問候，且完全靜默**：沒有例外、
+    沒有 warning，後台只看得到「今天沒問候她」這個結果。
+
+    其餘 worker 測試的 reminder_logs 都從空的開始、且只有問候會寫入，故沒有任何一條
+    測得到這個濾網——這條專門補那個缺口。
+    """
+    router = _SpyRouter()
+    # 提醒寫在今天 08:00（兩者的預設時間），問候 job 09:00 才掃描：同一天、同一張表。
+    now = _clock().replace(hour=8)
+    logs = FakeReminderLogStore(lambda: now)
+    logs.record("e1", REMINDER_KIND_MEDICATION, "早上用藥：血壓藥")
+    logs.record("e1", REMINDER_KIND_APPOINTMENT, "明天回診：心臟科")
+    now = _clock()  # 閉包捕獲變數本身：其後問候自己的記帳落在 09:00
+    scheduler, _core = _build(
+        monkeypatch, _settings(), elders=["e1"], router=router, reminder_logs=logs
+    )
+    _job(scheduler, "daily-greeting").run()
+    assert [pid for _, pid, _ in router.sent] == ["e1"], (
+        "用藥／回診提醒被誤判成『今天問候過了』——吃早藥的長輩再也收不到問候"
+    )
 
 
 def test_a_greeting_it_cannot_book_is_never_sent(monkeypatch):
