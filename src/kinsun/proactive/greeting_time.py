@@ -88,14 +88,27 @@ def next_greeting_time(
     最容易被「順手統一」掉的設計，改動前請先讀。
 
     後置條件：回傳值必定落在 [earliest_hour:00, latest_hour:00] 內；
-    回 None ⇔ current 已在護軌內。
+    回 None ⇒ current 已在護軌內（等價的逆否：current 在護軌外 ⇒ 必定回傳非 None）。
+
+    ⚠️ 這是單向蘊含，不是雙向。反例一秒可得：current=(8, 0) 已在護軌內、她十一點才
+    活躍 → 回 (8, 30)。故呼叫端**不可**反向讀成「回傳非 None ⇒ 這是護軌拉回」——
+    絕大多數的非 None 是正常調整，該照常寫可解釋性欄位（樣本數、中位數、計算時刻）。
+    要分辨兩者只能看有沒有足夠樣本，本函式不代為區分。
+
+    ⚠️ 護軌拉回刻意豁免「單次最多調 max_shift_minutes」的幅度上限：拉回是一步到位的
+    （current=(5, 0) → (6, 0) 跳 60 分；(0, 0) → (6, 0) 跳 360 分；(23, 0) → (11, 0)
+    跳 720 分）。替代方案是每晚只挪 30 分，但把 00:00 的違規設定救回界內要花 12 個
+    晚上，這 12 晚她都在違規時間被問候，明顯更糟。稽核「30 分速率限制有被遵守嗎」時
+    看到的大跳躍就是這條路徑——那是刻意的豁免，不是失控。
     """
     current_minutes = current[0] * 60 + current[1]
 
-    # 護軌是絕對的，不以「有沒有資料」為條件：現行時間在護軌外就先拉回界內。
+    # 護軌是絕對的，不以「有沒有資料」為條件：現行時間在護軌外就先拉回界內，且刻意
+    # 豁免單次幅度上限（一步到位，可能遠大於 max_shift_minutes——理由見 docstring）。
     # 若讓死區先短路，五點就活躍的長輩（diff = 0 落在死區）會被永遠釘死在
     # 違規的五點——而護軌存在的意義，正是為了保護這種長輩。
-    # 可達路徑：PROACTIVE_GREETING_HOUR 未受 earliest／latest 的跨欄位驗證涵蓋。
+    # 可達路徑：Task C 已補上 PROACTIVE_GREETING_HOUR 的跨欄位驗證（啟動即失敗），
+    # 本層是下游的縱深防禦，兩層都要有：偏好時間也可能來自 DB 裡的舊資料或人工改值。
     bounded = max(earliest_hour * 60, min(latest_hour * 60, current_minutes))
     if bounded != current_minutes:
         return divmod(bounded, 60)

@@ -167,6 +167,20 @@ def test_a_current_time_outside_the_guardrails_is_pulled_back():
     assert next_greeting_time(first_turns=[], current=(5, 0), **GUARDS) == (6, 0)
 
 
+def test_the_guardrail_pullback_is_exempt_from_the_max_shift_cap():
+    """護軌拉回刻意一步到位，可以跳超過 max_shift_minutes（30 分）——這是設計，不是漏洞。
+
+    簡報把「單次最多調 30 分」列為四道護欄之一，本路徑是它唯一的豁免。替代方案是每晚
+    只挪 30 分，但把 00:00 的違規設定救回界內要花 12 個晚上，這 12 晚她都在違規時間被
+    問候，明顯更糟。
+
+    本測試把豁免釘成不變量：稽核「30 分速率限制有被遵守嗎」的人會看到 720 分的跳躍，
+    docstring 與這裡是他找得到的解釋。若有人日後「順手」把拉回也夾成 30 分，這裡會擋下。
+    """
+    assert next_greeting_time(first_turns=[], current=(0, 0), **GUARDS) == (6, 0)  # 跳 360 分
+    assert next_greeting_time(first_turns=[], current=(23, 0), **GUARDS) == (11, 0)  # 跳 720 分
+
+
 def test_it_stays_put_once_it_reaches_a_guardrail():
     """已經站在護軌上、她還要更早／更晚 → 回 None，不是每晚回同一個值。
 
@@ -183,7 +197,8 @@ def test_every_result_is_a_valid_wall_clock_time_inside_the_guardrails():
     若夾取改用模運算或 timedelta，hour=25 會靜默變成隔天一點（惡夢情境）；
     純整數 max／min 夾進 [earliest*60, latest*60] 後才 divmod，繞回不可能發生。
 
-    順帶釘死本函式的後置條件：回 None ⇔ 現行時間已在護軌內。
+    順帶釘死本函式的後置條件：回 None ⇒ 現行時間已在護軌內（單向蘊含——本測試也只
+    斷言這個方向。反向不成立：current=(8, 0) 在護軌內，她十一點才活躍時仍回 (8, 30)）。
     """
     earliest, latest = GUARDS["earliest_hour"], GUARDS["latest_hour"]
     for target_hour in range(0, 24):
