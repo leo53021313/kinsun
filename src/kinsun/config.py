@@ -180,6 +180,23 @@ def load_settings(env: Mapping[str, str]) -> Settings:
             f"PROACTIVE_GREETING_EARLIEST_HOUR（{proactive_greeting_earliest_hour}）"
             f"必須小於 PROACTIVE_GREETING_LATEST_HOUR（{proactive_greeting_latest_hour}）。"
         )
+    # 基準問候時間本身也是鐘點，同樣要驗證：它是自適應關閉時全體長輩的問候時間，也是
+    # 自適應開啟時的起算點。裸的 int() 會讓 25 點、-3 點靜默通過。
+    proactive_greeting_hour = _require_hour(env, "PROACTIVE_GREETING_HOUR", "8")
+    # 基準值落在自己的上下限之外＝自相矛盾的設定。夜間批次的護軌會把它夾回界內（縱深
+    # 防禦，刻意保留），但那是靜默的補救：維運只會看到「設了 5 點、系統卻在 6 點問候」，
+    # 找不出原因。矛盾的設定要在啟動時就講清楚，而不是讓下游默默替它圓場。
+    if not (
+        proactive_greeting_earliest_hour
+        <= proactive_greeting_hour
+        <= proactive_greeting_latest_hour
+    ):
+        raise ConfigError(
+            f"PROACTIVE_GREETING_HOUR（{proactive_greeting_hour}）必須介於 "
+            f"PROACTIVE_GREETING_EARLIEST_HOUR（{proactive_greeting_earliest_hour}）與 "
+            f"PROACTIVE_GREETING_LATEST_HOUR（{proactive_greeting_latest_hour}）之間："
+            "基準問候時間落在自己的護軌外，等於要求系統在被自己禁止的時間問候。"
+        )
     # 樣本門檻超出回顧視野＝永遠湊不到樣本，問候時間永遠不會調整，且不會報錯。
     if proactive_greeting_min_sample_days > proactive_greeting_lookback_days:
         raise ConfigError(
@@ -207,7 +224,8 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         longterm_embedding_model=env.get("LONGTERM_EMBEDDING_MODEL", "gemini-embedding-001"),
         longterm_consolidation_hour=int(env.get("LONGTERM_CONSOLIDATION_HOUR", "0")),
         scheduler_tick_seconds=int(env.get("SCHEDULER_TICK_SECONDS", "60")),
-        proactive_greeting_hour=int(env.get("PROACTIVE_GREETING_HOUR", "8")),
+        # 基準問候時間（上方已驗證為真的鐘點，且落在自適應的上下限內）。
+        proactive_greeting_hour=proactive_greeting_hour,
         proactive_inactivity_hour=int(env.get("PROACTIVE_INACTIVITY_HOUR", "10")),
         proactive_inactivity_days=int(env.get("PROACTIVE_INACTIVITY_DAYS", "2")),
         # 自適應問候時間（spec 2026-07-16）：預設開；關閉則全體回退 PROACTIVE_GREETING_HOUR。

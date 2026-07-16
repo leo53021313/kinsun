@@ -390,6 +390,43 @@ def test_greeting_hour_bounds_accept_legal_edges(key, raw, attribute):
     assert getattr(settings, attribute) == int(raw)
 
 
+@pytest.mark.parametrize("raw", ["25", "-3", "99"])
+def test_greeting_hour_itself_must_be_a_real_hour(raw: str):
+    """`PROACTIVE_GREETING_HOUR` 也必須是真的鐘點——前一個 commit 只顧到上下限。
+
+    上下限有 `_require_hour`，它卻還是裸的 `int()`：`25`、`-3`、`99` 全部照收。
+    它是自適應關閉時全體長輩的問候時間，也是 Task E 餵給計算核心的現行值。
+    """
+    with pytest.raises(ConfigError) as exc:
+        load_settings({**BASE_ENV, "PROACTIVE_GREETING_HOUR": raw})
+    message = str(exc.value)
+    assert "PROACTIVE_GREETING_HOUR" in message
+    assert raw in message  # 訊息要自解釋：含實際數值
+
+
+@pytest.mark.parametrize("raw", ["5", "12"])
+def test_greeting_hour_must_sit_inside_its_own_guardrails(raw: str):
+    """設定錯誤要啟動即失敗，不要靠夜間批次默默夾回。
+
+    `PROACTIVE_GREETING_HOUR=5` 配下限 6 是矛盾的設定。夜間批次的護軌會把它夾到
+    6 點（縱深防禦，該留著），但維運看到的是「我設了 5 點，系統卻在 6 點問候」
+    ——看起來像程式壞了。矛盾的設定應該在啟動時就講清楚。
+    """
+    with pytest.raises(ConfigError) as exc:
+        load_settings({**BASE_ENV, "PROACTIVE_GREETING_HOUR": raw})
+    message = str(exc.value)
+    assert "PROACTIVE_GREETING_HOUR" in message
+    assert raw in message
+    assert "6" in message and "11" in message  # 要含實際的上下限值
+
+
+@pytest.mark.parametrize("raw", ["6", "8", "11"])
+def test_greeting_hour_accepts_the_guardrail_edges(raw: str):
+    """邊界不得誤擋：等於上限或下限都是合法設定。"""
+    settings = load_settings({**BASE_ENV, "PROACTIVE_GREETING_HOUR": raw})
+    assert settings.proactive_greeting_hour == int(raw)
+
+
 def test_greeting_sample_days_must_fit_the_lookback_window():
     with pytest.raises(ConfigError, match="PROACTIVE_GREETING_MIN_SAMPLE_DAYS"):
         load_settings(
