@@ -11,6 +11,7 @@ from dataclasses import replace
 from kinsun.agent import CareAgent
 from kinsun.llm import LLMUsage, collect_llm_usage
 from kinsun.observability.store import TraceStore, safe_record
+from kinsun.reports.reminders import ReminderLogStore
 from kinsun.safety.detector import RiskDetector
 from kinsun.safety.events import RiskEventStore
 from kinsun.safety.notifier import Notifier
@@ -35,6 +36,8 @@ class VoicePipeline:
         model_name: str = "",
         safety_model_name: str = "",
         timer: Callable[[], float] = time.monotonic,
+        reminder_logs: ReminderLogStore | None = None,
+        response_window_seconds: int = 3600,
     ) -> None:
         self._asr = asr
         self._agent = agent
@@ -46,6 +49,9 @@ class VoicePipeline:
         self._model_name = model_name
         self._safety_model_name = safety_model_name
         self._timer = timer
+        # 選填（預設 None＝不標記）：既有呼叫端與測試不受影響。
+        self._reminder_logs = reminder_logs
+        self._response_window_seconds = response_window_seconds
 
     def process(
         self,
@@ -106,6 +112,10 @@ class VoicePipeline:
                 logger.warning("危急事件落庫失敗")
         if assessment.tier >= RiskTier.L2:
             self._notifier.notify(elder_id, assessment)
+        # ⚠️ 位置有意義，請勿上移：反思的觀測訊號絕不可排在家屬通報之前（見
+        # _mark_reminder_responded 的 docstring）。語音（process）與文字（process_text）
+        # 都流經此處，故標記一次即涵蓋兩條路徑。
+        self._mark_reminder_responded(elder_id)
         reply_text = self._generate(
             elder_id, user_text, external_id=external_id, channel=channel, trace_id=trace_id
         )
@@ -114,6 +124,34 @@ class VoicePipeline:
         )
         # 附上本輪的使用者原話（語音為 ASR 辨識、文字為輸入），供 debug 顯示。
         return replace(result, transcript=user_text)
+
+    def _mark_reminder_responded(self, elder_id: str) -> None:
+        """長輩開口＝可能在回應剛推的提醒（時間窗判定，不做內容比對）。
+
+        這是反思的行為訊號來源；標記失敗不可影響對話。
+
+        ⚠️ 呼叫點必須排在危急落庫＋家屬通報**之後**，不可上移到本輪開頭。下方的
+        try/except 擋得住這個 UPDATE 的**錯誤**，擋不住它的**延遲**：全庫沒有任何
+        statement_timeout／lock_timeout，撞到鎖就是無限期阻塞。部署時 `ensure_schema`
+        以非 CONCURRENTLY 方式建 reminder_logs 的索引，對該表持 ShareLock、擋住所有
+        寫入；若此時長輩傳來「我喘不過氣」，而標記排在通報之前，家屬通報就會跟著卡在
+        鎖上，直到索引建完。一個純粹給反思用的觀測訊號，不該擋在長輩的求救前面。
+        時間窗語意與本輪中的位置無關（now 取的是牆鐘時間），故後移零成本。
+        順序由 test_critical_notification_precedes_the_reminder_signal_marking 守住。
+
+        ⚠️ now 用 time.time()（epoch 秒），不可用 self._timer——後者預設 time.monotonic，
+        只能量延遲、不是牆鐘時間，拿去跟 reminder_logs.created_at 比較會得到垃圾。
+        """
+        if self._reminder_logs is None:
+            return
+        try:
+            self._reminder_logs.mark_responded(
+                elder_id,
+                now=time.time(),
+                within_seconds=self._response_window_seconds,
+            )
+        except Exception:  # noqa: BLE001 - 訊號落庫失敗不可中斷對話
+            logger.warning("提醒回應標記失敗 elder=%s", elder_id)
 
     def _latency_ms(self, started: float) -> int:
         return int((self._timer() - started) * 1000)

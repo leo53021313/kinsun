@@ -42,6 +42,7 @@ from kinsun.web.ratelimit import PgRateLimiter
 from kinsun.web.routers import (
     create_admin_jobs_router,
     create_admin_router,
+    create_admin_strategies_router,
     create_app_auth_router,
     create_guardian_face_router,
     create_meta_router,
@@ -99,6 +100,9 @@ def build_app() -> FastAPI:
         traces=core.traces,
         model_name=settings.gemini_model,
         safety_model_name=settings.gemini_model_safety,
+        # 長輩開口即標記時間窗內的提醒為已回應：反思的行為訊號來源（✅ Task 4）。
+        reminder_logs=core.reminder_logs,
+        response_window_seconds=settings.reflection_response_window_minutes * 60,
     )
     binding_sessions = PgBindingSessionStore(db)
     medication_menu = MedicationMenu(core.medications, core.accounts, binding_sessions, clock=clock)
@@ -199,6 +203,14 @@ def build_app() -> FastAPI:
             channel_router=core.router,
             record_reminder=core.reminder_logs.record,
             clock=clock,
+        ),
+        prefix="/api/v1/admin",
+    )
+    # 守則的逃生口：反思產出的守則自動生效，後台只能事後撤銷（無「採用」動作）。
+    app.include_router(
+        create_admin_strategies_router(
+            admin_api_key=settings.admin_api_key,
+            strategies=core.strategies,
         ),
         prefix="/api/v1/admin",
     )

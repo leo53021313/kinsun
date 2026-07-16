@@ -37,6 +37,7 @@ from kinsun.memory.recall import SessionMemory
 from kinsun.memory.shortterm import PgMemoryStore
 from kinsun.notifications.store import PgAppNotificationStore
 from kinsun.observability.store import PgTraceStore
+from kinsun.proactive.preferences import PgGreetingPreferenceStore
 from kinsun.rag.embeddings import GeminiEmbeddingModel
 from kinsun.rag.retriever import HealthEducationRetriever
 from kinsun.rag.service import HealthEducationRagService
@@ -44,10 +45,14 @@ from kinsun.rag.vector_store import PgVectorStore
 from kinsun.reports.reminders import PgReminderLogStore
 from kinsun.reports.summaries import PgConversationSummaryStore
 from kinsun.safety.events import PgRiskEventStore
+from kinsun.strategies.facts import StrategyFacts
+from kinsun.strategies.store import PgStrategyStore
 from kinsun.tools.clock import CURRENT_TIME_SPEC, build_current_time_handler
 from kinsun.tools.health_rag import HEALTH_RAG_SPEC, build_health_rag_handler
+from kinsun.tools.lookups import PgWebSearchLookupStore, WebSearchLookupStore
 from kinsun.tools.registry import ToolRegistry
 from kinsun.tools.weather import WEATHER_SPEC, build_weather_handler
+from kinsun.tools.web_search import WEB_SEARCH_SPEC, build_web_search_handler
 
 
 @dataclass(frozen=True)
@@ -84,6 +89,10 @@ class Core:
     risk_events: PgRiskEventStore
     summaries: PgConversationSummaryStore
     notifications: PgAppNotificationStore
+    # 反思寫入（worker）與後台檢視／撤銷都需要同一個 store，故收進 Core。
+    strategies: PgStrategyStore
+    # 夜間批次寫、問候 job 讀（spec 2026-07-16），同一根內兩處共用，故收進 Core。
+    greeting_prefs: PgGreetingPreferenceStore
     agent: CareAgent
 
 
@@ -106,13 +115,20 @@ def build_externals(settings: Settings) -> Externals:
 
 
 def build_tool_registry(
-    *, clock: Callable[[], datetime], rag_service: HealthEducationRagService
+    *,
+    clock: Callable[[], datetime],
+    rag_service: HealthEducationRagService,
+    tavily_api_key: str = "",
+    lookups: WebSearchLookupStore | None = None,
 ) -> ToolRegistry:
     """集中組工具：日後新增工具只改這裡，兩個組裝根自動都有。"""
     registry = ToolRegistry()
     registry.register(WEATHER_SPEC, build_weather_handler())
     registry.register(CURRENT_TIME_SPEC, build_current_time_handler(clock))
     registry.register(HEALTH_RAG_SPEC, build_health_rag_handler(rag_service))
+    # 金鑰未設＝跳過註冊（優雅降級）：金孫少一個上網查證能力，其餘功能照常運作。
+    if tavily_api_key:
+        registry.register(WEB_SEARCH_SPEC, build_web_search_handler(tavily_api_key, lookups))
     return registry
 
 
@@ -137,12 +153,15 @@ def assemble_core(
     appt_store = PgAppointmentStore(db)
     medications = MedicationService(med_store)
     appointments = AppointmentService(appt_store)
+    strategies = PgStrategyStore(db, clock=clock, new_id=new_id)
     session = SessionMemory(
         memory,
         externals.long_term,
         facts=[
             MedicationFacts(medications),
             AppointmentFacts(appointments, clock=clock),
+            # 閉環的最後一哩：反思學到的守則由此進入下一輪對話的 system prompt。
+            StrategyFacts(strategies, max_strategies=settings.reflection_max_strategies),
         ],
     )
     rag_service = HealthEducationRagService(
@@ -156,10 +175,16 @@ def assemble_core(
         llm=externals.gemini,
         top_k=settings.rag_top_k,
     )
+    web_search_lookups = PgWebSearchLookupStore(db, clock=clock, new_id=new_id)
     agent = CareAgent(
         externals.gemini,
         session,
-        tools=build_tool_registry(clock=clock, rag_service=rag_service),
+        tools=build_tool_registry(
+            clock=clock,
+            rag_service=rag_service,
+            tavily_api_key=settings.tavily_api_key,
+            lookups=web_search_lookups,
+        ),
     )
     notifications = PgAppNotificationStore(db, clock=clock, new_id=new_id)
     risk_events = PgRiskEventStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex)
@@ -190,5 +215,7 @@ def assemble_core(
         traces=PgTraceStore(db, clock=clock, new_id=new_id),
         reminder_logs=PgReminderLogStore(db, clock=clock, new_id=new_id),
         notifications=notifications,
+        strategies=strategies,
+        greeting_prefs=PgGreetingPreferenceStore(db),
         agent=agent,
     )
