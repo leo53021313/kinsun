@@ -117,7 +117,10 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
                 # 夜間批次記成失敗——縱使整理與摘要其實都做完了，值班的人會查錯方向。
                 logger.warning("每晚反思失敗 elder=%s", elder_id)
         # 自適應問候時間（spec 2026-07-16）：純統計、不經 LLM，不需另立 cron。
-        # 掛在第四步而非另開排程，四者互不拖累：任一失敗只記 warning。
+        # 掛在第四步而非另開排程。**後三步**（摘要／反思／問候時間）互不拖累：各自包
+        # try/except，任一失敗只記 warning，其餘照跑。整理（第一步）刻意不設防，故它
+        # 失敗會中止本位長輩的整批（後三步全部跳過）並由 fanout 記一筆 ERROR——
+        # Mem0 是外部服務、掛掉很寫實，值班的人看到 ERROR 該知道那晚是真的沒整理。
         if settings.proactive_greeting_adaptive_enabled:
             try:
                 update_greeting_time(

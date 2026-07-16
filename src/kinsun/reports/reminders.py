@@ -19,19 +19,29 @@ logger = logging.getLogger("kinsun.reports.reminders")
 # ⚠️ 這張表的紀錄有**兩種角色**，寫入失敗的政策**完全相反**，不可統一（spec 2026-07-16）：
 #
 # * 純觀測（medication／appointment／proactive-care）：紀錄只供健康報告，冪等由各自
-#   每天一次的 cron 保證。故**先推播、`sent == 0` 就不記**（庚-14：沒送到的提醒不該
-#   出現在家屬的健康報告裡，保報告誠實）。寫入失敗用 safe_record 吞掉——拿一個報表
-#   寫入去擋推播，等於報表壞了長輩就收不到關心。
+#   每天一次的 cron 保證。寫入失敗一律用 safe_record 吞掉——拿一個報表寫入去擋推播，
+#   等於報表壞了長輩就收不到關心。
 # * 冪等帳本（proactive-greeting）：問候 job 每半小時掃描（cron `0,30 * * * *`），
 #   「今天問候過沒」全靠 greeted_today 讀這張表。故**先記帳、記不了就不推**——若用
 #   safe_record 吞掉寫入失敗，greeted_today 恆為 false，於是從她的偏好時間起每半小時
 #   推一則早安到當天結束（約 30 則，每則還燒一次 LLM）。
 #
 # 同一張表無法同時滿足兩者（一個要「送到才記」，一個要「記了才送」）。衝突時
-# **安全（不轟炸長輩）必須贏**，誠實退居其次——代價是送達 0 通道的問候仍會記帳、
-# 出現在健康報告裡（庚-14 在問候類上的已知缺口，非本次引入；長期正解是補
-# `reminder_logs.delivered` 欄位，比照 safety/notifier.py 的 risk_notification_logs，
-# 讓帳本記「試過了」、報告濾「真送到的」。屬 DDL 變更，另案）。
+# **安全（不轟炸長輩）必須贏**，誠實退居其次。
+#
+# ⚠️ 「送到才記」（庚-14：沒送到的提醒不該出現在家屬的健康報告裡）**三類純觀測只有
+# 兩類做到**，不要照著角色分類想當然耳：
+#
+# * medication（medications/jobs.py）與 appointment（appointments/jobs.py）：先推播、
+#   `sent == 0` 就 return 不記。✅ 遵守庚-14。
+# * proactive-care（scheduler/worker.py 的 `_push_to_elder` 尾段）：**無條件 record**，
+#   不看送達數。故送達 0 通道的失聯關心照樣進健康報告。
+# * proactive-greeting：記帳在推播之前，送達 0 通道也已經記了（帳本角色使然）。
+#
+# 即：庚-14 的缺口**不只在問候類，失聯關心也有**（兩者皆非本次引入，舊碼相同）。
+# 修法不是讓 care_one 改看送達數——那會把純觀測寫入變成推播的硬相依，正是上面刻意
+# 避免的。長期正解是補 `reminder_logs.delivered` 欄位，比照 safety/notifier.py 的
+# risk_notification_logs，讓帳本記「試過了」、報告濾「真送到的」。屬 DDL 變更，另案。
 #
 # 回歸測試（改動前請先讀，兩條政策各有一條釘死）：
 #   tests/test_scheduler_worker.py::test_a_greeting_it_cannot_book_is_never_sent
