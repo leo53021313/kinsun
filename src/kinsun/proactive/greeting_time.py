@@ -1,0 +1,95 @@
+"""自適應問候時間的計算核心：從長輩的活躍時刻推算下一次的問候時間。
+
+⚠️ 安全界線（不可協商）：本模組只決定「早安問候」的時間。用藥提醒
+（medications/jobs.py）與回診提醒（appointments/jobs.py）是各自獨立的 cron，
+時間由 MEDICATION_*_HOUR／APPOINTMENT_REMINDER_HOUR 決定，永遠不受本模組影響。
+
+⚠️ 死區（dead zone）是唯一擋住自我實現漂移的設計，不要拿掉：
+若規則是「問候＝她第一次活躍的時刻」，而她的活躍根本是被我們的問候觸發的
+（九點問候 → 她九點五分講話），時間會逐日往「後」漂：
+    09:00 → 她 09:05 活躍 → 09:30 → 她 09:35 → 10:00 → ... → 一路漂到上限。
+（已用突變測試驗證：拿掉死區，漂移測試會漂到 11:00 並失敗。）
+故只有當中位活躍時刻與現行問候時間**相差超過 max_shift_minutes** 才調整。
+
+收斂點＝她的中位活躍時刻 ∓ max_shift_minutes（死區邊緣），或先撞到的護軌：
+她十一點才活躍 → 08:00 逐日往後停在 10:30；她七點就自己來 → 08:00 往前停在
+07:30（不是 07:00——死區讓它停在離中位數 30 分處）。
+
+⚠️ 死區只擋得住「回話延遲 ≤ max_shift_minutes」的自我實現迴圈。若她固定在問候後
+45 分（> 死區）才回話，時間仍會逐日往後漂，最後由上限接住。要根治得比對問候
+實際送出的時刻，而 first_user_turn_per_day 這個訊號沒有那個資訊——已知限制。
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, tzinfo
+from statistics import median
+
+# 問候 job 每半小時掃一次（cron 0,30 * * * *），故偏好時間必須落在整點或半點——
+# 存 07:45 卻在 08:00 問候，是對後台說謊。
+_SLOT_MINUTES = 30
+
+
+def median_minute_of_day(first_turns: list[float], tz: tzinfo) -> int:
+    """把每筆時刻換算成「當天的第幾分鐘」後取中位數。
+
+    用中位數不用平均數：偶爾的熬夜或早起是離群值，中位數對它有抗性。
+
+    first_turns 為空時會拋 StatisticsError——呼叫端要寫可解釋性欄位前請先確認有資料
+    （next_greeting_time 可能在沒有任何樣本時仍回傳「把違規時間拉回護軌」的結果）。
+
+    已知限制：minute_of_day 是線性座標、不是環狀座標。若她的活躍時刻橫跨午夜
+    （23:50 與 00:10 交錯），中位數在數學上會失去意義。此時靠護軌把結果關在界內。
+    """
+    minutes = []
+    for ts in first_turns:
+        local = datetime.fromtimestamp(ts, tz)
+        minutes.append(local.hour * 60 + local.minute)
+    return int(median(minutes))
+
+
+def _align(minute_of_day: int) -> int:
+    return round(minute_of_day / _SLOT_MINUTES) * _SLOT_MINUTES
+
+
+def next_greeting_time(
+    *,
+    first_turns: list[float],
+    current: tuple[int, int],
+    tz: tzinfo,
+    min_sample_days: int,
+    earliest_hour: int,
+    latest_hour: int,
+    max_shift_minutes: int,
+) -> tuple[int, int] | None:
+    """算出下一次的問候時間；回 None 代表不調整（樣本不足、或已在死區內）。
+
+    first_turns 為她每天第一則主動訊息的時刻（epoch 秒），current 為現行問候時間。
+
+    後置條件：回傳值必定落在 [earliest_hour:00, latest_hour:00] 內；
+    回 None ⇔ current 已在護軌內。
+    """
+    current_minutes = current[0] * 60 + current[1]
+
+    # 護軌是絕對的，不以「有沒有資料」為條件：現行時間在護軌外就先拉回界內。
+    # 若讓死區先短路，五點就活躍的長輩（diff = 0 落在死區）會被永遠釘死在
+    # 違規的五點——而護軌存在的意義，正是為了保護這種長輩。
+    # 可達路徑：PROACTIVE_GREETING_HOUR 未受 earliest／latest 的跨欄位驗證涵蓋。
+    bounded = max(earliest_hour * 60, min(latest_hour * 60, current_minutes))
+    if bounded != current_minutes:
+        return divmod(bounded, 60)
+
+    if not first_turns or len(first_turns) < min_sample_days:
+        return None
+
+    target = median_minute_of_day(first_turns, tz)
+    diff = target - current_minutes
+    if abs(diff) <= max_shift_minutes:
+        return None  # 死區：夠近了就不動，這是擋住自我實現漂移的關鍵
+
+    step = max_shift_minutes if diff > 0 else -max_shift_minutes
+    moved = _align(current_minutes + step)
+    clamped = max(earliest_hour * 60, min(latest_hour * 60, moved))
+    if clamped == current_minutes:
+        return None  # 已在護欄邊界上，無處可去
+    return divmod(clamped, 60)
