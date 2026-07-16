@@ -60,6 +60,7 @@ from datetime import datetime, tzinfo
 from statistics import median
 
 from kinsun.memory.shortterm import MemoryStore, previous_day_bounds
+from kinsun.proactive.constants import SLOT_MINUTES
 from kinsun.proactive.preferences import (
     NO_SAMPLE_MEDIAN,
     GreetingPreference,
@@ -68,13 +69,10 @@ from kinsun.proactive.preferences import (
 
 logger = logging.getLogger("kinsun.proactive.greeting_time")
 
-# 問候 job 每半小時掃一次（cron 0,30 * * * *），故偏好時間必須落在整點或半點——
-# 存 07:45 卻在 08:00 問候，是對後台說謊。
-#
-# public：config.py 用它驗證 PROACTIVE_GREETING_MAX_SHIFT_MINUTES 必須是本值的正倍數
-# （非倍數會被 `_align` 吃掉或放大，兩者都是靜默失效——見該處的驗證）。這是「掃描間隔」
-# 這件事的唯一真實來源，config 不得自己寫死 30，否則兩份真相會漂移。
-SLOT_MINUTES = 30
+# SLOT_MINUTES（掃描間隔＝30 分）住在 proactive/constants.py，理由見該檔：config 也要用
+# 它驗證 PROACTIVE_GREETING_MAX_SHIFT_MINUTES，而 config 是全庫最低層模組，讓它 import
+# 本模組會把 memory.shortterm → db → psycopg 整條鏈拖進去。上面這行 import 同時是
+# re-export：`greeting_time.SLOT_MINUTES` 仍可取用，呼叫端不需要改。
 
 
 def median_minute_of_day(first_turns: list[float], tz: tzinfo) -> int:

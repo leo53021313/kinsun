@@ -7,7 +7,11 @@ from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from kinsun.proactive.greeting_time import SLOT_MINUTES
+# 只從無相依的常數模組取用，不要改成 import greeting_time：那會沿著
+# greeting_time → memory.shortterm → db 把 psycopg 拖進這個全庫最低層的模組，
+# 並讓任何「db／llm 想讀設定」的合理需求變成硬循環匯入。回歸測試見
+# tests/test_config.py::test_importing_config_does_not_pull_in_the_database_driver。
+from kinsun.proactive.constants import SLOT_MINUTES
 
 
 class ConfigError(Exception):

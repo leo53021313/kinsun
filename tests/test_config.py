@@ -1,3 +1,8 @@
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 from kinsun.config import ConfigError, Settings, load_dotenv, load_settings
@@ -548,3 +553,43 @@ def test_greeting_numeric_settings_must_be_at_least_one(key: str, raw: str):
     message = str(exc.value)
     assert key in message
     assert raw in message
+
+
+def test_importing_config_does_not_pull_in_the_database_driver():
+    """config 是全庫最低層模組，import 它不得把資料庫驅動拖進來。
+
+    這條測試是本專案唯一擋得住「相依鏈悄悄長回來」的防線，請不要刪。背景：
+
+    * config 曾為了讓 SLOT_MINUTES 只有一份真實來源而 import greeting_time，結果
+      沿著 greeting_time → memory.shortterm → db 一路把 psycopg（90＋子模組）與連線池
+      拉進最低層。常數模組 proactive/constants.py 就是為了斬斷這條鏈而存在。
+    * 真正的代價不只是啟動變慢：只要有人讓 db.py／llm.py／memory/shortterm.py 其中
+      一支 import config（完全合理的需求），就會形成硬循環匯入，啟動即炸。
+      這種錯誤在 code review 時幾乎看不出來——它藏在兩個模組的 import 之間。
+
+    ⚠️ 必須用子行程測。同一個 pytest session 裡別的測試早就把 psycopg 匯入
+    sys.modules 了，在本行程內斷言只會拿到別人的匯入結果，永遠是假失敗或假成功。
+    """
+    root = Path(__file__).resolve().parents[1]
+    # 本專案非套件、不安裝（見 pyproject 的 pythonpath 設定），子行程要自己指出 src。
+    env = {**os.environ, "PYTHONPATH": str(root / "src")}
+    probe = (
+        "import sys\n"
+        "import kinsun.config\n"
+        "print('\\n'.join(sorted(m for m in sys.modules if 'psycopg' in m)))\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, f"子行程匯入 config 失敗：{result.stderr}"
+    leaked = result.stdout.split()
+    assert leaked == [], (
+        "import kinsun.config 把資料庫驅動拉進來了，相依鏈又長回來了：\n"
+        + "\n".join(leaked)
+        + "\n\n請找出 config 新增的那條 import，改為只依賴無相依的常數／純函式模組"
+        "（如 kinsun.proactive.constants）。"
+    )
