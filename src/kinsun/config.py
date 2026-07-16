@@ -105,6 +105,7 @@ class Settings:
     proactive_greeting_earliest_hour: int
     proactive_greeting_latest_hour: int
     proactive_greeting_max_shift_minutes: int
+    proactive_greeting_lag_tolerance_minutes: int
 
 
 # 讀成 False 的值。`off` 與空值（含純空白）必須在列：布林旗標裡有緊急關閉開關
@@ -197,6 +198,24 @@ def load_settings(env: Mapping[str, str]) -> Settings:
             f"PROACTIVE_GREETING_LATEST_HOUR（{proactive_greeting_latest_hour}）之間："
             "基準問候時間落在自己的護軌外，等於要求系統在被自己禁止的時間問候。"
         )
+    # 往前的死區（同時是兩個方向共用的步伐大小）與往後的容忍度。
+    proactive_greeting_max_shift_minutes = _require_positive_int(
+        env, "PROACTIVE_GREETING_MAX_SHIFT_MINUTES", "30"
+    )
+    proactive_greeting_lag_tolerance_minutes = _require_positive_int(
+        env, "PROACTIVE_GREETING_LAG_TOLERANCE_MINUTES", "60"
+    )
+    # 往後的容忍度比往前的死區還緊＝設計意圖被反轉。容忍度之所以存在，是因為「她在問候
+    # 之後才有動靜」是模糊訊號（分不出「還沒醒」與「只是慢慢看手機」），往後調必須比往前
+    # 調保守；反過來設，往前調就變得比往後調保守，機制照跑、不報錯，但方向錯了。
+    if proactive_greeting_lag_tolerance_minutes < proactive_greeting_max_shift_minutes:
+        raise ConfigError(
+            f"PROACTIVE_GREETING_LAG_TOLERANCE_MINUTES（{proactive_greeting_lag_tolerance_minutes}）"
+            f"不得小於 PROACTIVE_GREETING_MAX_SHIFT_MINUTES"
+            f"（{proactive_greeting_max_shift_minutes}）："
+            "往後的容忍度比往前的死區還鬆是刻意的設計（問候後才有動靜是模糊訊號），"
+            "反過來設會讓往前調比往後調保守，與設計意圖相反。"
+        )
     # 樣本門檻超出回顧視野＝永遠湊不到樣本，問候時間永遠不會調整，且不會報錯。
     if proactive_greeting_min_sample_days > proactive_greeting_lookback_days:
         raise ConfigError(
@@ -239,10 +258,10 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         # 問候時間上下限：統計再怎麼算都夾在這個區間內（上方已驗證順序）。
         proactive_greeting_earliest_hour=proactive_greeting_earliest_hour,
         proactive_greeting_latest_hour=proactive_greeting_latest_hour,
-        # 單次最大調整幅度（分鐘），同時是死區門檻：與現行時間差距在此之內就不動。
-        proactive_greeting_max_shift_minutes=_require_positive_int(
-            env, "PROACTIVE_GREETING_MAX_SHIFT_MINUTES", "30"
-        ),
+        # 單次最大調整幅度（分鐘，兩個方向共用），同時是往「前」調的死區門檻（上方已驗證）。
+        proactive_greeting_max_shift_minutes=proactive_greeting_max_shift_minutes,
+        # 往「後」調的死區門檻（上方已驗證 ≥ MAX_SHIFT）：她在問候後多久內有動靜都算正常。
+        proactive_greeting_lag_tolerance_minutes=proactive_greeting_lag_tolerance_minutes,
         invite_ttl_hours=int(env.get("INVITE_TTL_HOURS", "24")),
         invite_max_attempts=int(env.get("INVITE_MAX_ATTEMPTS", "5")),
         database_url=_require(env, "DATABASE_URL"),

@@ -11,7 +11,14 @@ from datetime import datetime, timedelta, timezone
 from kinsun.proactive.greeting_time import median_minute_of_day, next_greeting_time
 
 TPE = timezone(timedelta(hours=8))
-GUARDS = dict(tz=TPE, min_sample_days=5, earliest_hour=6, latest_hour=11, max_shift_minutes=30)
+GUARDS = dict(
+    tz=TPE,
+    min_sample_days=5,
+    earliest_hour=6,
+    latest_hour=11,
+    max_shift_minutes=30,
+    lag_tolerance_minutes=60,
+)
 
 
 def _turns_at(hour: int, minute: int = 0, days: int = 7) -> list[float]:
@@ -84,7 +91,12 @@ def test_the_time_does_not_drift_when_she_only_answers_our_greeting():
 
 
 def test_it_converges_and_then_stops_when_she_wakes_late():
-    """八點問候、她十一點活躍：逐日往後，最後停在死區邊緣，不會無限往後。"""
+    """八點問候、她十一點活躍：逐日往後，最後停在容忍度邊緣，不會無限往後。
+
+    收斂點是 10:00 而非她的中位數 11:00——|11:00 − 10:00| = 60 就進入往後的死區
+    （lag_tolerance_minutes）。這是刻意的保守：真的睡到十一點的長輩會被跟上到
+    十點，而「其實七點就醒、只是一小時後才看手機」的長輩不會被推著跑。
+    """
     current = (8, 0)
     seen = []
     for _ in range(20):
@@ -94,8 +106,8 @@ def test_it_converges_and_then_stops_when_she_wakes_late():
         assert nxt != current, "回傳了與現值相同的時間，應該回 None"
         current = nxt
         seen.append(current)
-    assert current == (10, 30), f"收斂在 {current}"
-    assert len(seen) == 5  # 8:00 → 10:30，一次 30 分
+    assert current == (10, 0), f"收斂在 {current}"
+    assert len(seen) == 4  # 8:00 → 10:00，一次 30 分
 
 
 # --- 以下為 Task D 實作時補上的邊界情境（見報告） ---
@@ -228,30 +240,83 @@ def test_a_max_shift_wider_than_the_whole_guardrail_band_does_not_overshoot():
     守的是「步伐大於區間時不會一步跨出護軌」：夾取在對齊之後才做，
     所以 8:00 + 600 分 = 18:00 會被關回 11:00，而不是變成合法外的時刻。
     """
-    guards = {**GUARDS, "max_shift_minutes": 600}
+    # 容忍度跟著放大：Task C 驗證 lag_tolerance ≥ max_shift，這裡不做出設定擋掉的組合。
+    guards = {**GUARDS, "max_shift_minutes": 600, "lag_tolerance_minutes": 600}
     got = next_greeting_time(first_turns=_turns_at(23), current=(6, 0), **guards)
     assert got == (11, 0)
     settled = _iterate_to_fixpoint(_turns_at(23), (6, 0), **guards)
     assert settled == (11, 0)
 
 
-def test_a_response_lag_longer_than_the_dead_zone_drifts_but_the_guardrail_stops_it():
-    """已知限制：她固定在問候後 45 分（> 死區 30 分）才回話 → 仍會自我實現漂移。
+def _settle_with_response_lag(
+    lag_minutes: int, current: tuple[int, int], **guards
+) -> tuple[int, int]:
+    """模擬「她固定在問候後 lag_minutes 分鐘才回話」，反覆推算直到收斂。
 
-    死區只擋得住「回話延遲 ≤ max_shift_minutes」的自我實現迴圈。延遲更長時
-    時間會逐日往後推，最後被上限 11:00 接住。守的是「死區失效時護軌是最後
-    一道防線」，並誠實記錄這個限制（見報告：需要問候實際送出時刻才能根治）。
+    這是自我實現迴圈的模型：她的活躍時刻永遠是「現行問候時間 ＋ 固定延遲」，
+    因為她的活躍根本是被我們的問候觸發的。
     """
-    current = (8, 0)
     for _ in range(40):
         turns = [
-            datetime(2026, 7, 1 + d, current[0], current[1], tzinfo=TPE).timestamp() + 45 * 60
+            datetime(2026, 7, 1 + d, current[0], current[1], tzinfo=TPE).timestamp()
+            + lag_minutes * 60
             for d in range(7)
         ]
-        nxt = next_greeting_time(first_turns=turns, current=current, **GUARDS)
+        nxt = next_greeting_time(first_turns=turns, current=current, **guards)
         if nxt is None:
-            break
+            return current
         current = nxt
-    else:
-        raise AssertionError(f"未收斂，停在 {current}")
-    assert current == (11, 0), f"應被上限接住，卻停在 {current}"
+    raise AssertionError(f"未收斂，停在 {current}")
+
+
+def test_a_forty_five_minute_response_lag_no_longer_drifts():
+    """她八點收到問候、四十五分鐘後才看手機（手機放在別的房間）→ 時間必須不動。
+
+    這是本次修正的核心，也是回歸護欄。舊行為：45 分 > 往前的死區 30 分 → 判定
+    太早 → 往後調 → 她還是 45 分後才看 → 再往後 → 一路推到上限 11:00。結果是
+    「十一點問候、十一點四十五她才回」，比原本「八點問候、八點四十五回」更糟，
+    而且「早安」變成將近中午。
+
+    修法是把往後調的容忍度（lag_tolerance_minutes＝60）與往前的死區
+    （max_shift_minutes＝30）拆開，因為兩個方向的訊號品質根本不同：
+    「問候後才有動靜」分不出「還沒醒」與「只是慢慢看手機」。
+
+    突變驗證：把 lag_tolerance_minutes 換回 max_shift_minutes（30），本測試會以
+    「問候時間漂移到 (11, 0)」失敗。
+    """
+    settled = _settle_with_response_lag(45, (8, 0), **GUARDS)
+    assert settled == (8, 0), f"問候時間漂移到 {settled}"
+
+
+def test_a_response_lag_longer_than_the_tolerance_still_shifts_later():
+    """容忍度不是「往後永不調整」：延遲 90 分（> 60）仍要往後調一格。
+
+    守的是「別把死區開得太大而讓機制失效」——真的睡得晚的長輩仍要被跟上。
+    """
+    # 八點問候、她通常九點半才第一次講話 → 差 90 分 > 容忍度 60 → 往後調 30 分
+    assert next_greeting_time(first_turns=_turns_at(9, 30), current=(8, 0), **GUARDS) == (8, 30)
+
+
+def test_the_dead_zone_for_shifting_earlier_is_still_max_shift():
+    """往前的死區不受容忍度影響，仍是 max_shift_minutes（30 分）。
+
+    「她在問候之前就自己來了」是乾淨訊號：問候還沒發出，不可能是我們觸發的，
+    她確實醒著。故往前調不需要往後調那種保守。若誤把 lag_tolerance（60）也套在
+    往前的方向，第二條斷言會回 None 而失敗。
+    """
+    # 她七點四十活躍、八點問候 → 早 20 分（< 30）→ 不動
+    assert next_greeting_time(first_turns=_turns_at(7, 40), current=(8, 0), **GUARDS) is None
+    # 她七點十五活躍 → 早 45 分（> 30，但 < 容忍度 60）→ 仍要往前調
+    assert next_greeting_time(first_turns=_turns_at(7, 15), current=(8, 0), **GUARDS) == (7, 30)
+
+
+def test_a_response_lag_far_longer_than_the_tolerance_drifts_but_the_guardrail_stops_it():
+    """殘留限制：她固定在問候後 90 分（> 容忍度 60）才回話 → 仍會自我實現漂移。
+
+    容忍度只把自我實現迴圈的門檻從 30 分抬到 60 分，沒有根治它：延遲更長時時間
+    仍會逐日往後推，最後被上限 11:00 接住。守的是「容忍度失效時護軌是最後一道
+    防線」，並誠實記錄這個限制（見報告：要根治得比對問候實際送出的時刻，而
+    first_user_turn_per_day 這個訊號沒有那個資訊）。
+    """
+    settled = _settle_with_response_lag(90, (8, 0), **GUARDS)
+    assert settled == (11, 0), f"應被上限接住，卻停在 {settled}"

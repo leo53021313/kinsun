@@ -295,6 +295,40 @@ def test_adaptive_greeting_settings_have_defaults():
     assert settings.proactive_greeting_earliest_hour == 6
     assert settings.proactive_greeting_latest_hour == 11
     assert settings.proactive_greeting_max_shift_minutes == 30
+    assert settings.proactive_greeting_lag_tolerance_minutes == 60
+
+
+def test_greeting_lag_tolerance_must_not_be_tighter_than_max_shift():
+    """往後的容忍度比往前的死區還緊＝設計意圖被反轉，啟動即失敗。
+
+    容忍度之所以存在，是因為「問候後才有動靜」是模糊訊號（分不出「還沒醒」與
+    「只是慢慢看手機」），往後調必須比往前調保守。若 lag_tolerance < max_shift，
+    往前調反而變得比往後調保守——機制還在跑、不報錯，但方向反了。
+    """
+    with pytest.raises(ConfigError) as exc:
+        load_settings(
+            {
+                **BASE_ENV,
+                "PROACTIVE_GREETING_MAX_SHIFT_MINUTES": "30",
+                "PROACTIVE_GREETING_LAG_TOLERANCE_MINUTES": "15",
+            }
+        )
+    message = str(exc.value)
+    assert "PROACTIVE_GREETING_LAG_TOLERANCE_MINUTES" in message
+    assert "PROACTIVE_GREETING_MAX_SHIFT_MINUTES" in message
+    assert "15" in message and "30" in message  # 訊息要自解釋：含實際數值
+
+
+def test_greeting_lag_tolerance_equal_to_max_shift_is_allowed():
+    """邊界：兩者相等仍成立（等於兩個方向同門檻，是舊行為），不該被擋。"""
+    settings = load_settings(
+        {
+            **BASE_ENV,
+            "PROACTIVE_GREETING_MAX_SHIFT_MINUTES": "30",
+            "PROACTIVE_GREETING_LAG_TOLERANCE_MINUTES": "30",
+        }
+    )
+    assert settings.proactive_greeting_lag_tolerance_minutes == 30
 
 
 def test_adaptive_greeting_can_be_switched_off():
@@ -456,6 +490,7 @@ def test_greeting_sample_days_equal_lookback_is_allowed():
         "PROACTIVE_GREETING_LOOKBACK_DAYS",
         "PROACTIVE_GREETING_MIN_SAMPLE_DAYS",
         "PROACTIVE_GREETING_MAX_SHIFT_MINUTES",
+        "PROACTIVE_GREETING_LAG_TOLERANCE_MINUTES",
     ],
 )
 @pytest.mark.parametrize("raw", ["0", "-1"])

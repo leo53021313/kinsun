@@ -9,15 +9,30 @@
 （九點問候 → 她九點五分講話），時間會逐日往「後」漂：
     09:00 → 她 09:05 活躍 → 09:30 → 她 09:35 → 10:00 → ... → 一路漂到上限。
 （已用突變測試驗證：拿掉死區，漂移測試會漂到 11:00 並失敗。）
-故只有當中位活躍時刻與現行問候時間**相差超過 max_shift_minutes** 才調整。
+故只有當中位活躍時刻與現行問候時間**相差超過死區門檻**才調整。
 
-收斂點＝她的中位活躍時刻 ∓ max_shift_minutes（死區邊緣），或先撞到的護軌：
-她十一點才活躍 → 08:00 逐日往後停在 10:30；她七點就自己來 → 08:00 往前停在
-07:30（不是 07:00——死區讓它停在離中位數 30 分處）。
+⚠️ 兩個方向的死區門檻刻意不對稱（Leo 核定），因為**兩個方向的訊號品質根本不同**：
 
-⚠️ 死區只擋得住「回話延遲 ≤ max_shift_minutes」的自我實現迴圈。若她固定在問候後
-45 分（> 死區）才回話，時間仍會逐日往後漂，最後由上限接住。要根治得比對問候
-實際送出的時刻，而 first_user_turn_per_day 這個訊號沒有那個資訊——已知限制。
+* 她在問候「之前」就自己來了 ＝ **乾淨訊號**。問候還沒發出，她的活躍不可能是
+  我們觸發的，她確實醒著。→ 死區用 max_shift_minutes（30 分）。
+* 她在問候「之後」才有動靜 ＝ **模糊訊號**。可能是還沒醒，也可能只是慢慢看手機
+  （手機放在另一個房間，照護場域很常見）。**兩者在資料上分不出來**——要分出來就
+  得試探，而 Leo 已核定不試探。→ 死區用 lag_tolerance_minutes（60 分），更保守。
+
+沒有這個不對稱，「習慣四十五分鐘後才看手機」的長輩會被系統推著跑：45 分 > 30 分
+→ 判定太早 → 往後調 → 她還是 45 分後才看 → 再往後 → 一路推到上限，最終「十一點
+問候、十一點四十五她才回」，比原本「八點問候、八點四十五回」更糟，而且「早安」
+變成將近中午。（回歸測試：test_a_forty_five_minute_response_lag_no_longer_drifts。）
+
+步伐大小兩個方向都仍是 max_shift_minutes：不對稱的是「要不要動」，不是「動多少」。
+
+收斂點＝中位活躍時刻 − lag_tolerance_minutes（往後）或 ＋ max_shift_minutes
+（往前），即死區邊緣，或先撞到的護軌：她十一點才活躍 → 08:00 逐日往後停在 10:00；
+她七點就自己來 → 08:00 往前停在 07:30（不是 07:00——死區讓它停在離中位數 30 分處）。
+
+⚠️ 殘留限制：容忍度只把自我實現迴圈的門檻從 30 分抬到 60 分，沒有根治它。若她固定
+在問候後 90 分（> 容忍度）才回話，時間仍會逐日往後漂，最後由上限接住。要根治得比對
+問候實際送出的時刻，而 first_user_turn_per_day 這個訊號沒有那個資訊——已知限制。
 """
 
 from __future__ import annotations
@@ -61,10 +76,16 @@ def next_greeting_time(
     earliest_hour: int,
     latest_hour: int,
     max_shift_minutes: int,
+    lag_tolerance_minutes: int,
 ) -> tuple[int, int] | None:
     """算出下一次的問候時間；回 None 代表不調整（樣本不足、或已在死區內）。
 
     first_turns 為她每天第一則主動訊息的時刻（epoch 秒），current 為現行問候時間。
+
+    max_shift_minutes 是步伐大小（兩個方向共用）＋往「前」調的死區門檻；
+    lag_tolerance_minutes 是往「後」調的死區門檻，必須 ≥ max_shift_minutes
+    （由 Task C 的跨欄位驗證保證）。兩者不對稱的理由見模組 docstring——那是本模組
+    最容易被「順手統一」掉的設計，改動前請先讀。
 
     後置條件：回傳值必定落在 [earliest_hour:00, latest_hour:00] 內；
     回 None ⇔ current 已在護軌內。
@@ -84,8 +105,12 @@ def next_greeting_time(
 
     target = median_minute_of_day(first_turns, tz)
     diff = target - current_minutes
-    if abs(diff) <= max_shift_minutes:
-        return None  # 死區：夠近了就不動，這是擋住自我實現漂移的關鍵
+    # 死區：夠近了就不動，這是擋住自我實現漂移的關鍵。兩個方向的門檻刻意不同——
+    # 「問候後才有動靜」是模糊訊號（分不出「還沒醒」與「只是慢慢看手機」），故往後
+    # 調要比往前調保守。詳見模組 docstring，不要把兩者統一。
+    tolerance = lag_tolerance_minutes if diff > 0 else max_shift_minutes
+    if abs(diff) <= tolerance:
+        return None
 
     step = max_shift_minutes if diff > 0 else -max_shift_minutes
     moved = _align(current_minutes + step)
