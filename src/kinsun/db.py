@@ -148,6 +148,40 @@ REMINDER_LOGS_DDL = (
     "ON reminder_logs (elder_id, created_at);"
 )
 
+# 策略記憶（spec 2026-07-14）：金孫每晚反思學到的「相處之道」守則。
+# 全新表、無舊欄位要遷移，故建表與建索引可同批（既有庫首次跑時一起建起來）。
+STRATEGIES_DDL = (
+    "CREATE TABLE IF NOT EXISTS strategies ("
+    "strategy_id TEXT PRIMARY KEY, elder_id TEXT NOT NULL, content TEXT NOT NULL, "
+    "category TEXT NOT NULL, evidence TEXT NOT NULL, observed_days INTEGER NOT NULL, "
+    "status TEXT NOT NULL, supersedes_strategy_id TEXT, "
+    "created_at DOUBLE PRECISION NOT NULL, revoked_at DOUBLE PRECISION);"
+    "CREATE INDEX IF NOT EXISTS idx_strategies_elder_status "
+    "ON strategies (elder_id, status);"
+)
+
+# 每位長輩的問候時間偏好（spec 2026-07-16）：夜間批次算、問候 job 讀。
+# 全新表、無舊欄位要遷移，故建表可單批（既有庫首次跑時一起建起來）。
+GREETING_PREFERENCES_DDL = (
+    "CREATE TABLE IF NOT EXISTS greeting_preferences ("
+    "elder_id TEXT PRIMARY KEY, hour INTEGER NOT NULL, minute INTEGER NOT NULL, "
+    "computed_at DOUBLE PRECISION NOT NULL, sample_days INTEGER NOT NULL, "
+    "median_minute_of_day INTEGER NOT NULL);"
+)
+
+# 提醒回應訊號（spec 2026-07-14）：長輩在提醒發出後的時間窗內有發言即標記。
+# ⚠️ 既有庫的 reminder_logs 早已存在，CREATE TABLE IF NOT EXISTS 對它是 no-op、
+# 不會生出 responded_at；故新欄位必須獨立以 ALTER 補（把欄位加進 REMINDER_LOGS_DDL
+# 只有新庫吃得到，既有庫永遠缺欄位）。ensure_schema 裡本段須排在 REMINDER_LOGS_DDL
+# 之後——新庫要先有表才 ALTER 得動；新索引引用 responded_at，故與 ALTER 同批（本段內
+# 先 ALTER 後建索引），reminder_logs 沒有獨立的索引步驟。
+# NULL＝未回應，既有列自動為 NULL，語意正確。
+REMINDER_LOGS_RESPONDED_MIGRATION_DDL = (
+    "ALTER TABLE reminder_logs ADD COLUMN IF NOT EXISTS responded_at DOUBLE PRECISION;"
+    "CREATE INDEX IF NOT EXISTS idx_reminder_logs_elder_responded "
+    "ON reminder_logs (elder_id, responded_at);"
+)
+
 # 危急通知送達紀錄（✅ D-36，丙-7）：每位家屬成功／失敗獨立留痕。
 # channels 記實際走的通道（✅ 庚-16，逗號串接）；App＝落庫待拉取、非真送達。
 RISK_NOTIFICATION_LOGS_DDL = (
@@ -181,6 +215,16 @@ CONVERSATION_SUMMARIES_DDL = (
     "CREATE TABLE IF NOT EXISTS conversation_summaries ("
     "elder_id TEXT, date TEXT NOT NULL, "
     "content TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+)
+
+# 上網查證來源紀錄（spec 2026-07-14）：金孫每次 web_search 的關鍵字、主題與來源清單。
+# 全新表、無舊欄位要遷移，故建表與建索引可同批（既有庫首次跑時一起建起來）。
+WEB_SEARCH_LOOKUPS_DDL = (
+    "CREATE TABLE IF NOT EXISTS web_search_lookups ("
+    "web_search_lookup_id TEXT PRIMARY KEY, query TEXT NOT NULL, topic TEXT NOT NULL, "
+    "status TEXT NOT NULL, sources JSONB NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS idx_web_search_lookups_created "
+    "ON web_search_lookups (created_at);"
 )
 
 # 觀測五表以 external_id＋channel 記來源（✅ 庚-07／A-8）：欄位承載任一通道的外部
@@ -321,8 +365,12 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(RAG_DDL)
         conn.execute(RISK_EVENTS_DDL)
         conn.execute(REMINDER_LOGS_DDL)
+        conn.execute(STRATEGIES_DDL)
+        conn.execute(GREETING_PREFERENCES_DDL)
+        conn.execute(REMINDER_LOGS_RESPONDED_MIGRATION_DDL)
         conn.execute(RISK_NOTIFICATION_LOGS_DDL)
         conn.execute(APP_NOTIFICATIONS_DDL)
+        conn.execute(WEB_SEARCH_LOOKUPS_DDL)
         conn.execute(MEMORY_CONSOLIDATIONS_DDL)
         conn.execute(CONVERSATION_SUMMARIES_DDL)
         # 三段順序不可調換：建表（既有庫 no-op）→ 舊欄改名／補 channel → 建索引。

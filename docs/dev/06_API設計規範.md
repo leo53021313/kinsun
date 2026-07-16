@@ -86,6 +86,8 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | `not_paired` | 409 | 長輩帳密登入但未掃碼配對（己-6：首次一定掃碼） |
 | `invite_used`／`invite_expired`／`too_many_attempts`／`invite_wrong_role` | 409 | 邀請碼狀態錯誤（wrong_role＝家屬碼誤走裝置綁定，✅ 庚-04） |
 | `name_required`／`label_required`／`slots_required`／`invalid_slot`／`invalid_date`／`invalid_time`／`date_in_past` | 400 | 欄位業務驗證失敗 |
+| `invalid_status`／`invalid_action` | 400 | admin 守則：查詢狀態不在白名單／動作非 `revoke`（後台不提供採用，守則自動生效） |
+| `strategy_not_found` | 404 | admin 守則：查無此守則，或它已不在生效中（撤銷是條件式 `UPDATE ... RETURNING`，撤不到即回本錯誤——不先查後撤，避免謊報「已撤銷」） |
 | `validation_error` | 422 | pydantic 欄位驗證失敗（統一改寫，§2.3） |
 | `audio_too_large` | 413 | 音檔超過上限（上限值 env 可調，✅ D-26） |
 | `unsupported_media_type` | 415 | 對講機收到非音訊 content-type（✅ D-61 丙-11） |
@@ -150,6 +152,7 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | —（新增） | `GET /api/v1/admin/elders/{elder_id}/reminders`／`memory`／`account`／`risk-notifications`、`GET /api/v1/admin/jobs` | 內測基礎建設（spec 2026-07-12）：長輩詳情四分頁＋排程狀態，唯讀、`X-Admin-Key` 守門 |
 | —（新增） | `POST /api/v1/admin/jobs/{job_name}/run`、`POST /api/v1/admin/elders/{elder_id}/reminders/dispatch` | 內測手動觸發（spec 2026-07-12）：需 `X-Admin-Key`＋`INTERNAL_TESTING_ENABLED=true`（否則 403 `internal_testing_disabled`）；RPC 動作式路徑為 admin 內部工具刻意例外；不寫 `scheduler_state` |
 | —（新增） | `GET /api/v1/meta` | 公開端點（無認證）：回 `{internal_testing: bool}` 供 App／admin 前端決定內測功能顯示（spec 2026-07-12） |
+| —（新增） | `GET /api/v1/admin/strategies?status=adopted`、`PATCH /api/v1/admin/strategies/{strategy_id}` | 守則檢視與撤銷（每晚反思）：守則自動生效、無待審佇列，故 PATCH 只收 `{"action": "revoke"}`（其餘 400 `invalid_action`），**不提供採用**；`status` 須為 `adopted`／`revoked`／`superseded`（否則 400 `invalid_status`）；撤不到生效中的守則回 404 `strategy_not_found`。列表回傳含 `evidence`／`observed_days`（僅後台可見，不進 system prompt） |
 
 ### 平台契約（不入信封、不入 v1）
 

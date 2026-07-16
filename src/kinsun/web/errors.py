@@ -28,6 +28,7 @@ class ErrorCode(StrEnum):
     APPOINTMENT_NOT_FOUND = "appointment_not_found"
     TRACE_NOT_FOUND = "trace_not_found"
     JOB_NOT_FOUND = "job_not_found"
+    STRATEGY_NOT_FOUND = "strategy_not_found"
 
     # --- 帳號 ---
     EMAIL_TAKEN = "email_taken"
@@ -51,6 +52,8 @@ class ErrorCode(StrEnum):
     INVALID_DATE = "invalid_date"
     INVALID_TIME = "invalid_time"
     DATE_IN_PAST = "date_in_past"
+    INVALID_STATUS = "invalid_status"
+    INVALID_ACTION = "invalid_action"
     VALIDATION_ERROR = "validation_error"
 
     # --- 請求限制 ---
