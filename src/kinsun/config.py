@@ -137,6 +137,18 @@ def _require_positive_int(env: Mapping[str, str], key: str, default: str) -> int
     return value
 
 
+def _require_hour(env: Mapping[str, str], key: str, default: str) -> int:
+    """讀取鐘點設定並確保落在 0..23。
+
+    刻意不沿用 `_require_positive_int`：它擋掉 `< 1`，會誤擋合法的 0 點。兩者是不同的
+    關切——那個管「數量至少要有 1」，這個管「鐘點必須是真的鐘點」。
+    """
+    value = int(env.get(key, default))
+    if not 0 <= value <= 23:
+        raise ConfigError(f"{key}（{value}）必須介於 0 到 23 之間。")
+    return value
+
+
 def load_settings(env: Mapping[str, str]) -> Settings:
     # 反思設定的不變量在啟動時就檢查（fail-fast）：反思是夜間批次，設定矛盾若留到凌晨的
     # job 才浮現，只會表現成「今晚沒找到模式」——沒有錯誤、沒有告警，可能潛伏數週。
@@ -157,8 +169,11 @@ def load_settings(env: Mapping[str, str]) -> Settings:
     proactive_greeting_min_sample_days = _require_positive_int(
         env, "PROACTIVE_GREETING_MIN_SAMPLE_DAYS", "5"
     )
-    proactive_greeting_earliest_hour = int(env.get("PROACTIVE_GREETING_EARLIEST_HOUR", "6"))
-    proactive_greeting_latest_hour = int(env.get("PROACTIVE_GREETING_LATEST_HOUR", "11"))
+    # 範圍先驗（順序檢查涵蓋不到）：順序只約束兩者的關係，不約束各自的範圍——`EARLIEST=-5`
+    # 配 `LATEST=99` 照樣滿足 -5 < 99。這是四道護欄裡唯一負責把算出的時間夾住的一道，區間
+    # 一旦變成 [-5, 99] 就等於沒有夾取，而且是靜默的：不報錯，系統看起來還在自適應。
+    proactive_greeting_earliest_hour = _require_hour(env, "PROACTIVE_GREETING_EARLIEST_HOUR", "6")
+    proactive_greeting_latest_hour = _require_hour(env, "PROACTIVE_GREETING_LATEST_HOUR", "11")
     # 上下限顛倒＝夾取區間為空，問候時間會被夾成一個荒謬的值；啟動即失敗，不要等到夜裡才發現。
     if proactive_greeting_earliest_hour >= proactive_greeting_latest_hour:
         raise ConfigError(

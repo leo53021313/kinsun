@@ -341,6 +341,55 @@ def test_greeting_hour_bounds_must_not_be_equal():
     assert "8" in message  # 訊息要自解釋：含實際數值
 
 
+@pytest.mark.parametrize(
+    ("key", "raw"),
+    [
+        ("PROACTIVE_GREETING_EARLIEST_HOUR", "-5"),
+        ("PROACTIVE_GREETING_LATEST_HOUR", "24"),  # 邊界＋1
+        ("PROACTIVE_GREETING_LATEST_HOUR", "99"),
+    ],
+)
+def test_greeting_hour_bounds_must_be_a_real_hour(key, raw):
+    """鐘點必須是真的鐘點（0..23）——順序檢查涵蓋不到這件事。
+
+    順序檢查只約束「兩者的關係」，不約束「各自的範圍」：`EARLIEST=-5` 配上預設的
+    `LATEST=11` 依然滿足 -5 < 11，於是靜默放行。這道護欄是四道裡唯一負責把統計算出的
+    時間夾住的一道，夾取區間一旦變成 [-5, 99] 就等於沒有夾取——任何時間都原封不動通
+    過，而且不報錯，系統看起來還在自適應。
+    """
+    with pytest.raises(ConfigError) as exc:
+        load_settings({**BASE_ENV, key: raw})
+    message = str(exc.value)
+    assert key in message
+    assert raw in message  # 訊息要自解釋：含實際數值
+
+
+def test_greeting_hour_bounds_reject_out_of_range_pair_that_passes_the_order_check():
+    """`-5` 配 `99` 同時滿足順序檢查，卻是「等於沒有夾取」的區間；範圍驗證必須先擋下。"""
+    with pytest.raises(ConfigError, match="PROACTIVE_GREETING_EARLIEST_HOUR"):
+        load_settings(
+            {
+                **BASE_ENV,
+                "PROACTIVE_GREETING_EARLIEST_HOUR": "-5",
+                "PROACTIVE_GREETING_LATEST_HOUR": "99",
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("key", "raw", "attribute"),
+    [
+        # 0 點是合法鐘點——這正是不能沿用 `_require_positive_int`（`< 1` 即擋）的全部理由。
+        ("PROACTIVE_GREETING_EARLIEST_HOUR", "0", "proactive_greeting_earliest_hour"),
+        ("PROACTIVE_GREETING_LATEST_HOUR", "23", "proactive_greeting_latest_hour"),
+    ],
+)
+def test_greeting_hour_bounds_accept_legal_edges(key, raw, attribute):
+    """範圍驗證不得誤擋合法邊界：0 與 23 都是真的鐘點。"""
+    settings = load_settings({**BASE_ENV, key: raw})
+    assert getattr(settings, attribute) == int(raw)
+
+
 def test_greeting_sample_days_must_fit_the_lookback_window():
     with pytest.raises(ConfigError, match="PROACTIVE_GREETING_MIN_SAMPLE_DAYS"):
         load_settings(
