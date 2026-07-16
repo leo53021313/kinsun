@@ -7,6 +7,8 @@ from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from kinsun.proactive.greeting_time import SLOT_MINUTES
+
 
 class ConfigError(Exception):
     """設定錯誤（缺必填環境變數等）。"""
@@ -202,6 +204,20 @@ def load_settings(env: Mapping[str, str]) -> Settings:
     proactive_greeting_max_shift_minutes = _require_positive_int(
         env, "PROACTIVE_GREETING_MAX_SHIFT_MINUTES", "30"
     )
+    # 步伐必須是掃描間隔的正倍數：步伐算完會經 greeting_time._align 對齊到半點（問候 job
+    # 每半小時掃描），對齊會把非倍數的步伐**吃掉或放大**，兩種誤設都是靜默的——
+    #   * ≤ 15：每一步都被捨回原點 → 問候時間永遠不動，機制看起來在跑卻完全癱瘓。
+    #   * 非倍數（如 45）：對齊往上進位 → 實際位移超過宣稱的上限（45 → 位移 60 分）。
+    # SLOT_MINUTES 取自 greeting_time（唯一真實來源），不在此寫死 30——兩份真相會漂移。
+    if proactive_greeting_max_shift_minutes % SLOT_MINUTES != 0:
+        raise ConfigError(
+            f"PROACTIVE_GREETING_MAX_SHIFT_MINUTES（{proactive_greeting_max_shift_minutes}）"
+            f"必須是問候掃描間隔 {SLOT_MINUTES} 分的正倍數（如 {SLOT_MINUTES}、"
+            f"{SLOT_MINUTES * 2}）："
+            f"問候時間一律對齊半點，非倍數的步伐會被對齊吃掉或放大，且不會報錯——"
+            f"小於 {SLOT_MINUTES} 會被捨回原點（問候時間永遠不動，自適應等同癱瘓）；"
+            f"大於 {SLOT_MINUTES} 但非倍數會往上進位（實際位移超過你設定的上限）。"
+        )
     proactive_greeting_lag_tolerance_minutes = _require_positive_int(
         env, "PROACTIVE_GREETING_LAG_TOLERANCE_MINUTES", "60"
     )

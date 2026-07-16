@@ -53,7 +53,11 @@ logger = logging.getLogger("kinsun.proactive.greeting_time")
 
 # 問候 job 每半小時掃一次（cron 0,30 * * * *），故偏好時間必須落在整點或半點——
 # 存 07:45 卻在 08:00 問候，是對後台說謊。
-_SLOT_MINUTES = 30
+#
+# public：config.py 用它驗證 PROACTIVE_GREETING_MAX_SHIFT_MINUTES 必須是本值的正倍數
+# （非倍數會被 `_align` 吃掉或放大，兩者都是靜默失效——見該處的驗證）。這是「掃描間隔」
+# 這件事的唯一真實來源，config 不得自己寫死 30，否則兩份真相會漂移。
+SLOT_MINUTES = 30
 
 
 def median_minute_of_day(first_turns: list[float], tz: tzinfo) -> int:
@@ -75,7 +79,7 @@ def median_minute_of_day(first_turns: list[float], tz: tzinfo) -> int:
 
 
 def _align(minute_of_day: int) -> int:
-    return round(minute_of_day / _SLOT_MINUTES) * _SLOT_MINUTES
+    return round(minute_of_day / SLOT_MINUTES) * SLOT_MINUTES
 
 
 def next_greeting_time(

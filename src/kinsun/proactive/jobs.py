@@ -15,7 +15,7 @@ logger = logging.getLogger("kinsun.proactive")
 GREETING_INTENT = "早安問候，關心長者今天的狀況"
 INACTIVITY_INTENT = "長者已經一段時間沒有互動了，主動表達想念與關心"
 
-# 每半小時掃描一次；偏好時間對齊半點（見 greeting_time._SLOT_MINUTES），兩者必須一致。
+# 每半小時掃描一次；偏好時間對齊半點（見 greeting_time.SLOT_MINUTES），兩者必須一致。
 GREETING_SCAN_CRON = "0,30 * * * *"
 
 

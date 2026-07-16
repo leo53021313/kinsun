@@ -331,6 +331,53 @@ def test_greeting_lag_tolerance_equal_to_max_shift_is_allowed():
     assert settings.proactive_greeting_lag_tolerance_minutes == 30
 
 
+@pytest.mark.parametrize("raw", ["5", "10", "14", "15", "45", "40"])
+def test_greeting_max_shift_must_be_a_multiple_of_the_scan_slot(raw):
+    """MAX_SHIFT 非 30 的倍數＝兩種靜默失效，啟動即失敗。
+
+    步伐算完會經 `_align` 對齊到半點（問候 job 每半小時掃描，存 07:45 卻在 08:00
+    問候是對後台說謊），而對齊會把不是 30 倍數的步伐吃掉或放大——兩種誤設都不報錯：
+
+    * ≤ 15：每一步都被捨回原點 → 問候時間**永遠不動**。設定看起來生效了、機制看
+      起來在跑，實際上自適應完全癱瘓（實測 5／10／14／15 皆然）。
+    * 非 30 倍數（如 45）：對齊往上進位 → **實際位移超過宣稱的上限**（實測 45 →
+      08:00 直接跳 09:00，位移 60 分）。稽核「30 分速率限制有被遵守嗎」會查無此據。
+    """
+    with pytest.raises(ConfigError) as exc:
+        load_settings({**BASE_ENV, "PROACTIVE_GREETING_MAX_SHIFT_MINUTES": raw})
+    message = str(exc.value)
+    assert "PROACTIVE_GREETING_MAX_SHIFT_MINUTES" in message
+    assert raw in message and "30" in message  # 訊息要自解釋：含實際數值與掃描間隔
+
+
+def test_greeting_max_shift_accepts_positive_multiples_of_the_scan_slot():
+    """邊界：60 是 30 的正倍數 → 放行（實測位移正好 60 分，與宣稱一致）。"""
+    settings = load_settings(
+        {
+            **BASE_ENV,
+            "PROACTIVE_GREETING_MAX_SHIFT_MINUTES": "60",
+            "PROACTIVE_GREETING_LAG_TOLERANCE_MINUTES": "60",
+        }
+    )
+    assert settings.proactive_greeting_max_shift_minutes == 60
+
+
+def test_greeting_lag_tolerance_is_not_bound_to_the_scan_slot():
+    """LAG_TOLERANCE 刻意不受倍數限制——它只是門檻，不參與 `_align`。
+
+    把倍數限制「順手」套到它身上會擋掉完全合法的設定（如 45 分容忍度）。兩者的
+    角色不同：MAX_SHIFT 是步伐（會被對齊），LAG_TOLERANCE 只決定「要不要動」。
+    """
+    settings = load_settings(
+        {
+            **BASE_ENV,
+            "PROACTIVE_GREETING_MAX_SHIFT_MINUTES": "30",
+            "PROACTIVE_GREETING_LAG_TOLERANCE_MINUTES": "45",
+        }
+    )
+    assert settings.proactive_greeting_lag_tolerance_minutes == 45
+
+
 def test_adaptive_greeting_can_be_switched_off():
     settings = load_settings({**BASE_ENV, "PROACTIVE_GREETING_ADAPTIVE_ENABLED": "false"})
     assert settings.proactive_greeting_adaptive_enabled is False
