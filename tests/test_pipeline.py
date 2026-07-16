@@ -1,12 +1,16 @@
+import time
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from kinsun.agent import CareAgent
 from kinsun.llm import LLMError, Message, report_llm_usage
 from kinsun.pipeline import VoicePipeline
+from kinsun.reports.reminders import REMINDER_KIND_MEDICATION
 from kinsun.safety.tiers import FAILSAFE_EVENT_REASON, RiskAssessment, RiskTier
 from kinsun.speech.asr import MockAsrClient
 from kinsun.speech.tts import TextBubbleTts, TTSError, TtsResult
-from tests.fakes import FakeRiskEventStore, FakeTraceStore
+from tests.fakes import FakeReminderLogStore, FakeRiskEventStore, FakeTraceStore
 
 
 class EchoLLM:
@@ -43,7 +47,7 @@ class SpyNotifier:
         self.calls.append((elder_id, assessment.tier))
 
 
-def _pipeline(detector, notifier, risk_events=None):
+def _pipeline(detector, notifier, risk_events=None, *, reminder_logs=None):
     return VoicePipeline(
         asr=MockAsrClient("阿公早安"),
         agent=CareAgent(EchoLLM(), NullSession()),
@@ -51,6 +55,8 @@ def _pipeline(detector, notifier, risk_events=None):
         detector=detector,
         notifier=notifier,
         risk_events=risk_events or FakeRiskEventStore(),
+        reminder_logs=reminder_logs,
+        response_window_seconds=3600,
     )
 
 
@@ -284,7 +290,7 @@ class _ExplodingAsr:
         raise AssertionError("process_text 不應呼叫 ASR")
 
 
-def _text_pipeline(detector, notifier, risk_events=None):
+def _text_pipeline(detector, notifier, risk_events=None, *, reminder_logs=None):
     return VoicePipeline(
         asr=_ExplodingAsr(),
         agent=CareAgent(EchoLLM(), NullSession()),
@@ -292,6 +298,8 @@ def _text_pipeline(detector, notifier, risk_events=None):
         detector=detector,
         notifier=notifier,
         risk_events=risk_events or FakeRiskEventStore(),
+        reminder_logs=reminder_logs,
+        response_window_seconds=3600,
     )
 
 
@@ -376,3 +384,118 @@ def test_pipeline_records_null_tokens_when_llm_reports_no_usage():
     _traced_pipeline(traces).process(b"\x00", elder_id="u1", trace_id="t1")
     assert traces.llm_calls[1].input_tokens is None
     assert traces.llm_calls[1].output_tokens is None
+
+
+def _reminders_with_one_recent(elder_id: str) -> FakeReminderLogStore:
+    """五分鐘前推過一則提醒的 store（落在預設一小時回應窗內）。"""
+    recent = datetime.now(UTC) - timedelta(minutes=5)
+    reminders = FakeReminderLogStore(clock=lambda: recent)
+    reminders.record(elder_id, REMINDER_KIND_MEDICATION, "早上用藥：血壓藥")
+    return reminders
+
+
+def test_incoming_text_marks_a_recent_reminder_as_responded():
+    """長輩開口＝可能在回應剛推的提醒；這是反思唯一騙不了人的行為訊號。"""
+    reminders = _reminders_with_one_recent("u1")
+
+    _text_pipeline(StubDetector(RiskTier.L0), SpyNotifier(), reminder_logs=reminders).process_text(
+        "我吃過了", elder_id="u1"
+    )
+
+    assert reminders.list_for_elder("u1")[0].responded_at is not None
+
+
+def test_incoming_voice_marks_a_recent_reminder_as_responded():
+    """語音與文字共用 _process_transcribed，故兩條路徑都要標記（語音路徑的證明）。"""
+    reminders = _reminders_with_one_recent("u1")
+
+    _pipeline(StubDetector(RiskTier.L0), SpyNotifier(), reminder_logs=reminders).process(
+        b"\x00", elder_id="u1"
+    )
+
+    assert reminders.list_for_elder("u1")[0].responded_at is not None
+
+
+class _SpyReminderLogs:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, float, int]] = []
+
+    def mark_responded(self, elder_id: str, *, now: float, within_seconds: int) -> None:
+        self.calls.append((elder_id, now, within_seconds))
+
+
+def test_marking_uses_wall_clock_and_configured_window():
+    """now 必須是牆鐘時間（epoch 秒）：self._timer 預設 time.monotonic 只能量延遲，
+    拿去跟 reminder_logs.created_at（epoch 秒）比較會得到垃圾（窗判定永遠不成立）。
+    """
+    spy = _SpyReminderLogs()
+    pipeline = _text_pipeline(StubDetector(RiskTier.L0), SpyNotifier(), reminder_logs=spy)
+
+    before = time.time()
+    pipeline.process_text("你好", elder_id="u1")
+    after = time.time()
+
+    elder_id, now, within_seconds = spy.calls[0]
+    assert elder_id == "u1"
+    assert within_seconds == 3600  # 由呼叫端設定帶入，不在管線內硬編碼
+    assert before <= now <= after  # monotonic（開機以來秒數）會落在這個區間外
+
+
+class _OrderedNotifier:
+    """與 reminder store 共用同一個呼叫序列 list，用來釘死兩者的先後。"""
+
+    def __init__(self, calls: list[str]) -> None:
+        self._calls = calls
+
+    def notify(self, elder_id: str, assessment: RiskAssessment) -> None:
+        self._calls.append("notify")
+
+
+class _OrderedReminderLogs:
+    def __init__(self, calls: list[str]) -> None:
+        self._calls = calls
+
+    def mark_responded(self, elder_id: str, *, now: float, within_seconds: int) -> None:
+        self._calls.append("mark_responded")
+
+
+def test_critical_notification_precedes_the_reminder_signal_marking():
+    """家屬通報必須發生在提醒回應標記之前——這個順序是安全屬性，不是風格偏好。
+
+    `mark_responded` 是一個 DB UPDATE，且純粹是反思用的觀測訊號（長輩開口＝可能在回應
+    剛推的提醒）。管線裡的 try/except 擋得住它的**錯誤**，擋不住它的**延遲**：全庫沒有
+    任何 statement_timeout／lock_timeout，撞到鎖就是無限期阻塞。真實情境——部署時
+    `ensure_schema` 以非 CONCURRENTLY 方式建 reminder_logs 的索引，對該表持 ShareLock、
+    擋住所有寫入；此時長輩傳來「我喘不過氣」，標記卡在鎖上，**家屬通報跟著卡住**，直到
+    索引建完為止。一個給反思用的觀測訊號，不該擋在長輩的求救前面。
+
+    時間窗語意與本輪中的位置無關（`mark_responded` 用 time.time() 判斷提醒發出後 N 秒內
+    長輩有沒有發言），所以搬到通報之後零成本。⚠️ 請不要「順手優化」把它搬回開頭。
+    """
+    calls: list[str] = []
+    pipeline = _text_pipeline(
+        StubDetector(RiskTier.L2),
+        _OrderedNotifier(calls),
+        reminder_logs=_OrderedReminderLogs(calls),
+    )
+
+    pipeline.process_text("我喘不過氣", elder_id="u1")
+
+    assert calls.index("notify") < calls.index("mark_responded")
+
+
+class _ExplodingReminderLogs:
+    def mark_responded(self, elder_id, *, now, within_seconds):
+        raise RuntimeError("db down")
+
+
+def test_marking_failure_does_not_break_the_reply():
+    """訊號可以掉，長輩的話不能掉：標記失敗只記 warning，不中斷回覆。"""
+    pipeline = _text_pipeline(
+        StubDetector(RiskTier.L0), SpyNotifier(), reminder_logs=_ExplodingReminderLogs()
+    )
+
+    result = pipeline.process_text("你好", elder_id="u1")
+
+    assert result.transcript == "你好"
+    assert result.text == "你說的是：你好"
