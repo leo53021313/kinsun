@@ -160,6 +160,15 @@ STRATEGIES_DDL = (
     "ON strategies (elder_id, status);"
 )
 
+# 每位長輩的問候時間偏好（spec 2026-07-16）：夜間批次算、問候 job 讀。
+# 全新表、無舊欄位要遷移，故建表可單批（既有庫首次跑時一起建起來）。
+GREETING_PREFERENCES_DDL = (
+    "CREATE TABLE IF NOT EXISTS greeting_preferences ("
+    "elder_id TEXT PRIMARY KEY, hour INTEGER NOT NULL, minute INTEGER NOT NULL, "
+    "computed_at DOUBLE PRECISION NOT NULL, sample_days INTEGER NOT NULL, "
+    "median_minute_of_day INTEGER NOT NULL);"
+)
+
 # 提醒回應訊號（spec 2026-07-14）：長輩在提醒發出後的時間窗內有發言即標記。
 # ⚠️ 既有庫的 reminder_logs 早已存在，CREATE TABLE IF NOT EXISTS 對它是 no-op、
 # 不會生出 responded_at；故新欄位必須獨立以 ALTER 補（把欄位加進 REMINDER_LOGS_DDL
@@ -357,6 +366,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(RISK_EVENTS_DDL)
         conn.execute(REMINDER_LOGS_DDL)
         conn.execute(STRATEGIES_DDL)
+        conn.execute(GREETING_PREFERENCES_DDL)
         conn.execute(REMINDER_LOGS_RESPONDED_MIGRATION_DDL)
         conn.execute(RISK_NOTIFICATION_LOGS_DDL)
         conn.execute(APP_NOTIFICATIONS_DDL)

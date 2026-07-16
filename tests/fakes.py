@@ -15,6 +15,9 @@ from kinsun.medications.store import FakeMedicationStore as FakeMedicationStore
 from kinsun.memory.models import MemoryItem
 from kinsun.memory.shortterm import FakeMemoryStore as FakeMemoryStore
 from kinsun.observability.store import FakeTraceStore as FakeTraceStore
+from kinsun.proactive.preferences import (
+    FakeGreetingPreferenceStore as FakeGreetingPreferenceStore,
+)
 from kinsun.reports.reminders import FakeReminderLogStore as FakeReminderLogStore
 from kinsun.reports.summaries import FakeConversationSummaryStore as FakeConversationSummaryStore
 from kinsun.safety.events import FakeRiskEventStore as FakeRiskEventStore
