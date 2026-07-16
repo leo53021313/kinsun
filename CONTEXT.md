@@ -111,6 +111,20 @@ _Avoid_: 警報等級、嚴重度
 由排程觸發、agent 主動開啟的對話（早安問候、失聯關心、用藥提醒）。
 _Avoid_: 推播、通知
 
+**問候偏好（GreetingPreference）**：
+一位長輩自己的早安問候時間（`greeting_preferences` 表，主鍵 `elder_id`，故 `save` 為 upsert）：`hour`＋`minute`（對齊整點或半點，因問候 job 每半小時掃描）＋三個**可解釋性欄位**（`computed_at`、`sample_days`、`median_minute_of_day`）——後台要能看懂它為什麼決定九點半，而不是面對一個沒有來由的數字。夜間批次寫、問候 job 讀；沒有偏好（新長輩、樣本不足）就回退全域 `PROACTIVE_GREETING_HOUR`。總開關 `PROACTIVE_GREETING_ADAPTIVE_ENABLED` 關閉時連讀都不讀，全體回退全域值——只擋夜間計算不算關閉，表裡的舊偏好會繼續生效。
+_Avoid_: 排程、設定、rule
+
+**自適應問候時間（Adaptive greeting time）**：
+每位長輩的問候時間由她自己的活躍資料**統計**算出（`proactive/greeting_time.py`，spec 2026-07-16）：取她每天第一則主動訊息的時刻，過去 `LOOKBACK_DAYS` 天取中位數（中位數對偶爾的熬夜／早起有抗性），逐日往她的方向挪、每次至多 30 分。**不經 LLM、不試探**（長輩不是 A/B 測試的受試者）。每晚掛在既有夜間批次的第四步（整理 → 摘要 → 反思 → 問候時間），未新增 cron。
+
+⚠️ **只碰早安問候**。用藥提醒（`medications/jobs.py`）與回診提醒（`appointments/jobs.py`）是各自獨立的 cron，時間由 `MEDICATION_*_HOUR`／`APPOINTMENT_REMINDER_HOUR` 決定，**永遠不受本機制影響**——這條界線不可協商。失聯關心亦不在範圍內。
+
+⚠️ **死區（dead zone）是擋住自我實現漂移的設計，不是可省的最佳化**：她的活躍可能根本是被我們的問候觸發的（八點問候 → 她八點五分講話 → 判定該往後 → 一路漂到上限）。故唯有中位活躍時刻與現行問候時間**相差超過死區門檻**才調整。收斂點＝中位數 ∓ 死區寬度（不是中位數本身），或先撞到的護軌。
+
+⚠️ **兩個方向的訊號品質不同，死區門檻因此刻意不對稱**（Leo 核定）：她在問候**前**就自己來＝**乾淨訊號**（問候還沒發出，不可能是我們觸發的，她確實醒著）→ 死區 30 分（`MAX_SHIFT_MINUTES`）；她在問候**後**才有動靜＝**模糊訊號**（分不出「還沒醒」與「只是慢慢看手機」，手機放在別的房間在照護場域很常見）→ 死區 60 分（`LAG_TOLERANCE_MINUTES`），更保守。不對稱的是「要不要動」，不是「動多少」——步伐兩個方向都是 30 分。
+_Avoid_: 學習問候時間、動態排程、個人化 cron
+
 **健康報告（HealthReport）**：
 家屬端看的長輩近況彙整：近 N 天（預設 30）的危急事件 ＋ 提醒紀錄。由 `reports/health.py` 的 `build_health_report` 組裝（以 `elder_id` 直查、依時間窗過濾），route handler 只驗身分並出 JSON。與 observability 的管理端活動時間軸（feed／timeline）是不同報告、不同受眾。
 _Avoid_: 儀表板、timeline、feed
