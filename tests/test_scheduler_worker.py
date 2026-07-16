@@ -609,6 +609,36 @@ def test_inactivity_cares_only_after_threshold(monkeypatch):
     assert worker.INACTIVITY_INTENT in router.sent[0][2]
 
 
+def test_a_care_message_still_goes_out_when_the_ledger_is_down(monkeypatch):
+    """失聯關心不因記帳失敗而不送——與問候的政策**刻意相反**，不可統一。
+
+    兩條路徑寫的是同一張 reminder_logs，但那筆紀錄的角色不同：
+
+    * 問候（ledger=True）：每半小時掃描一次，冪等全靠 greeted_today 讀這張表——
+      記不進去 → greeted_today 恆為 false → 一天約 30 則。記帳是安全關鍵，
+      故先記帳、記不了就不推。
+    * 失聯關心（ledger=False）：每天一次的 cron（inactivity-care），冪等由 cron
+      自己保證、不讀這張表。這筆紀錄是**純觀測**（只供健康報告），拿一個觀測寫入
+      去擋關心推播＝她已經好幾天沒消息了，卻因為報表寫不進去而沒人問候她。
+
+    少了這條，日後有人「順手統一兩條路徑」（讓失聯關心也走 ledger）會全綠通過。
+    """
+    router = _SpyRouter()
+    now_ts = _clock().timestamp()
+    scheduler, _core = _build(
+        monkeypatch,
+        _settings(),
+        elders=["e-old"],
+        router=router,
+        last_active=lambda elder_id: now_ts - 4 * 86400,
+        reminder_logs=_UnwritableReminderLogStore(_clock),
+    )
+    _job(scheduler, "inactivity-care").run()
+    assert [pid for _, pid, _ in router.sent] == ["e-old"], (
+        "記帳失敗擋掉了失聯關心——那筆 reminder_logs 只是觀測，不是冪等帳本"
+    )
+
+
 def test_serve_ticks_until_interrupted(monkeypatch):
     ran: list[int] = []
     scheduler = SimpleNamespace(run_due=lambda: ran.append(1))
