@@ -99,6 +99,12 @@ class Settings:
     reflection_max_strategies: int
     reflection_response_window_minutes: int
     reflection_max_turns: int
+    proactive_greeting_adaptive_enabled: bool
+    proactive_greeting_lookback_days: int
+    proactive_greeting_min_sample_days: int
+    proactive_greeting_earliest_hour: int
+    proactive_greeting_latest_hour: int
+    proactive_greeting_max_shift_minutes: int
 
 
 # 讀成 False 的值。`off` 與空值（含純空白）必須在列：布林旗標裡有緊急關閉開關
@@ -142,6 +148,30 @@ def load_settings(env: Mapping[str, str]) -> Settings:
             f"REFLECTION_LOOKBACK_DAYS（{reflection_lookback_days}）："
             "證據門檻超出回顧視野時，沒有守則能通過門檻，反思會每晚空轉卻不報錯。"
         )
+    # 自適應問候的護欄同樣在啟動時檢查（fail-fast）：這機制會自動改變系統對長輩的行為
+    # 時間，護欄比演算法重要——算錯了沒有護欄就是半夜三點吵醒人。以下兩個不變量的失效
+    # 都是靜默的，留到夜裡的 job 才浮現時，看不出任何異常。
+    proactive_greeting_lookback_days = _require_positive_int(
+        env, "PROACTIVE_GREETING_LOOKBACK_DAYS", "14"
+    )
+    proactive_greeting_min_sample_days = _require_positive_int(
+        env, "PROACTIVE_GREETING_MIN_SAMPLE_DAYS", "5"
+    )
+    proactive_greeting_earliest_hour = int(env.get("PROACTIVE_GREETING_EARLIEST_HOUR", "6"))
+    proactive_greeting_latest_hour = int(env.get("PROACTIVE_GREETING_LATEST_HOUR", "11"))
+    # 上下限顛倒＝夾取區間為空，問候時間會被夾成一個荒謬的值；啟動即失敗，不要等到夜裡才發現。
+    if proactive_greeting_earliest_hour >= proactive_greeting_latest_hour:
+        raise ConfigError(
+            f"PROACTIVE_GREETING_EARLIEST_HOUR（{proactive_greeting_earliest_hour}）"
+            f"必須小於 PROACTIVE_GREETING_LATEST_HOUR（{proactive_greeting_latest_hour}）。"
+        )
+    # 樣本門檻超出回顧視野＝永遠湊不到樣本，問候時間永遠不會調整，且不會報錯。
+    if proactive_greeting_min_sample_days > proactive_greeting_lookback_days:
+        raise ConfigError(
+            f"PROACTIVE_GREETING_MIN_SAMPLE_DAYS（{proactive_greeting_min_sample_days}）不得大於 "
+            f"PROACTIVE_GREETING_LOOKBACK_DAYS（{proactive_greeting_lookback_days}）："
+            "樣本門檻超出回顧視野時，永遠湊不到足夠樣本，問候時間永遠不會調整卻不報錯。"
+        )
     return Settings(
         line_channel_secret=_require(env, "LINE_CHANNEL_SECRET"),
         line_channel_access_token=_require(env, "LINE_CHANNEL_ACCESS_TOKEN"),
@@ -165,6 +195,21 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         proactive_greeting_hour=int(env.get("PROACTIVE_GREETING_HOUR", "8")),
         proactive_inactivity_hour=int(env.get("PROACTIVE_INACTIVITY_HOUR", "10")),
         proactive_inactivity_days=int(env.get("PROACTIVE_INACTIVITY_DAYS", "2")),
+        # 自適應問候時間（spec 2026-07-16）：預設開；關閉則全體回退 PROACTIVE_GREETING_HOUR。
+        proactive_greeting_adaptive_enabled=_parse_bool(
+            env.get("PROACTIVE_GREETING_ADAPTIVE_ENABLED", "true")
+        ),
+        # 回顧幾天的活躍紀錄來推算問候時間（上方已驗證）。
+        proactive_greeting_lookback_days=proactive_greeting_lookback_days,
+        # 樣本門檻：至少幾天有活躍才調整；不足則不動（上方已驗證 ≤ 回顧視野）。
+        proactive_greeting_min_sample_days=proactive_greeting_min_sample_days,
+        # 問候時間上下限：統計再怎麼算都夾在這個區間內（上方已驗證順序）。
+        proactive_greeting_earliest_hour=proactive_greeting_earliest_hour,
+        proactive_greeting_latest_hour=proactive_greeting_latest_hour,
+        # 單次最大調整幅度（分鐘），同時是死區門檻：與現行時間差距在此之內就不動。
+        proactive_greeting_max_shift_minutes=_require_positive_int(
+            env, "PROACTIVE_GREETING_MAX_SHIFT_MINUTES", "30"
+        ),
         invite_ttl_hours=int(env.get("INVITE_TTL_HOURS", "24")),
         invite_max_attempts=int(env.get("INVITE_MAX_ATTEMPTS", "5")),
         database_url=_require(env, "DATABASE_URL"),

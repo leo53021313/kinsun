@@ -285,3 +285,98 @@ def test_reflection_numeric_settings_accept_legal_overrides():
     assert settings.reflection_max_strategies == 1
     assert settings.reflection_response_window_minutes == 1
     assert settings.reflection_max_turns == 1000
+
+
+def test_adaptive_greeting_settings_have_defaults():
+    settings = load_settings(BASE_ENV)
+    assert settings.proactive_greeting_adaptive_enabled is True
+    assert settings.proactive_greeting_lookback_days == 14
+    assert settings.proactive_greeting_min_sample_days == 5
+    assert settings.proactive_greeting_earliest_hour == 6
+    assert settings.proactive_greeting_latest_hour == 11
+    assert settings.proactive_greeting_max_shift_minutes == 30
+
+
+def test_adaptive_greeting_can_be_switched_off():
+    settings = load_settings({**BASE_ENV, "PROACTIVE_GREETING_ADAPTIVE_ENABLED": "false"})
+    assert settings.proactive_greeting_adaptive_enabled is False
+
+
+@pytest.mark.parametrize("raw", ["off", "OFF", "Off", "n", "N", "", "   "])
+def test_adaptive_greeting_kill_switch_honours_off_and_blank(raw):
+    """`off`／空值必須真的關掉——這是自適應問候唯一的緊急關閉開關，不能給假的安全感。
+
+    這東西會自動改變系統對長輩的行為時間、無人審。要立刻退回全體統一時間的人打了
+    `PROACTIVE_GREETING_ADAPTIVE_ENABLED=off`，若這裡讀成 True，他會得到「已關閉」的
+    錯覺，而它照調。空值同理——那是「我把值刪掉了」，不是「請開著」。
+    """
+    settings = load_settings({**BASE_ENV, "PROACTIVE_GREETING_ADAPTIVE_ENABLED": raw})
+    assert settings.proactive_greeting_adaptive_enabled is False, raw
+
+
+def test_greeting_hour_bounds_must_be_ordered():
+    with pytest.raises(ConfigError, match="PROACTIVE_GREETING_EARLIEST_HOUR"):
+        load_settings(
+            {
+                **BASE_ENV,
+                "PROACTIVE_GREETING_EARLIEST_HOUR": "11",
+                "PROACTIVE_GREETING_LATEST_HOUR": "6",
+            }
+        )
+
+
+def test_greeting_hour_bounds_must_not_be_equal():
+    """邊界：上下限相等＝夾取區間退化成單一時刻，四道護欄之一形同虛設；一併擋下。"""
+    with pytest.raises(ConfigError) as exc:
+        load_settings(
+            {
+                **BASE_ENV,
+                "PROACTIVE_GREETING_EARLIEST_HOUR": "8",
+                "PROACTIVE_GREETING_LATEST_HOUR": "8",
+            }
+        )
+    message = str(exc.value)
+    assert "PROACTIVE_GREETING_EARLIEST_HOUR" in message
+    assert "PROACTIVE_GREETING_LATEST_HOUR" in message
+    assert "8" in message  # 訊息要自解釋：含實際數值
+
+
+def test_greeting_sample_days_must_fit_the_lookback_window():
+    with pytest.raises(ConfigError, match="PROACTIVE_GREETING_MIN_SAMPLE_DAYS"):
+        load_settings(
+            {
+                **BASE_ENV,
+                "PROACTIVE_GREETING_LOOKBACK_DAYS": "3",
+                "PROACTIVE_GREETING_MIN_SAMPLE_DAYS": "5",
+            }
+        )
+
+
+def test_greeting_sample_days_equal_lookback_is_allowed():
+    """邊界：門檻＝回顧視野仍可成立（每天都要有活躍才調整），不該被擋。"""
+    env = {
+        **BASE_ENV,
+        "PROACTIVE_GREETING_LOOKBACK_DAYS": "5",
+        "PROACTIVE_GREETING_MIN_SAMPLE_DAYS": "5",
+    }
+    settings = load_settings(env)
+    assert settings.proactive_greeting_lookback_days == 5
+    assert settings.proactive_greeting_min_sample_days == 5
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "PROACTIVE_GREETING_LOOKBACK_DAYS",
+        "PROACTIVE_GREETING_MIN_SAMPLE_DAYS",
+        "PROACTIVE_GREETING_MAX_SHIFT_MINUTES",
+    ],
+)
+@pytest.mark.parametrize("raw", ["0", "-1"])
+def test_greeting_numeric_settings_must_be_at_least_one(key: str, raw: str):
+    """0 或負數會讓自適應問候靜默失效或行為未定義；啟動時就要擋。"""
+    with pytest.raises(ConfigError) as exc:
+        load_settings({**BASE_ENV, key: raw})
+    message = str(exc.value)
+    assert key in message
+    assert raw in message
