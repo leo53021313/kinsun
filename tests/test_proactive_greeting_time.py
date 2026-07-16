@@ -8,7 +8,16 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from kinsun.proactive.greeting_time import median_minute_of_day, next_greeting_time
+from kinsun.proactive.greeting_time import (
+    median_minute_of_day,
+    next_greeting_time,
+    update_greeting_time,
+)
+from kinsun.proactive.preferences import (
+    NO_SAMPLE_MEDIAN,
+    FakeGreetingPreferenceStore,
+    GreetingPreference,
+)
 
 TPE = timezone(timedelta(hours=8))
 GUARDS = dict(
@@ -335,3 +344,133 @@ def test_a_response_lag_far_longer_than_the_tolerance_drifts_but_the_guardrail_s
     """
     settled = _settle_with_response_lag(90, (8, 0), **GUARDS)
     assert settled == (11, 0), f"應被上限接住，卻停在 {settled}"
+
+
+# --- update_greeting_time：夜間批次的薄協調函式（讀訊號 → 算 → 存） ---
+
+
+NIGHT = datetime(2026, 7, 16, 3, 5, tzinfo=TPE)  # 夜間批次的執行時刻
+
+
+class _FakeShortTerm:
+    """只提供 update_greeting_time 用得到的那個訊號讀取端。"""
+
+    def __init__(self, turns: list[float] | None = None) -> None:
+        self._turns = turns or []
+        self.calls: list[tuple[str, float, float]] = []
+
+    def first_user_turn_per_day(self, elder_id: str, *, since: float, before: float) -> list[float]:
+        self.calls.append((elder_id, since, before))
+        return list(self._turns)
+
+
+_UPDATE_ARGS = dict(
+    default_hour=8,
+    lookback_days=14,
+    min_sample_days=5,
+    earliest_hour=6,
+    latest_hour=11,
+    max_shift_minutes=30,
+    lag_tolerance_minutes=60,
+)
+
+
+def _update(short_term, prefs, *, now: datetime = NIGHT, **overrides):
+    update_greeting_time(
+        "e1",
+        short_term=short_term,
+        prefs=prefs,
+        clock=lambda: now,
+        **{**_UPDATE_ARGS, **overrides},
+    )
+
+
+def test_it_saves_the_new_time_with_the_evidence_behind_it():
+    """存的不只是結論，還有「憑什麼」——後台要看得懂系統為何決定這個時間。"""
+    prefs = FakeGreetingPreferenceStore()
+    _update(_FakeShortTerm(_turns_at(11)), prefs)
+    saved = prefs.get_for_elder("e1")
+    assert saved is not None
+    assert (saved.hour, saved.minute) == (8, 30)  # 從全域 08:00 往後一格
+    assert saved.computed_at == NIGHT.timestamp()
+    assert saved.sample_days == 7
+    assert saved.median_minute_of_day == 11 * 60
+
+
+def test_it_writes_nothing_when_there_is_nothing_to_change():
+    """不動就不要寫：每晚寫一次 computed_at 會讓後台看起來像系統一直在調整。"""
+    prefs = FakeGreetingPreferenceStore()
+    _update(_FakeShortTerm(_turns_at(8, 20)), prefs)  # 落在死區
+    assert prefs.get_for_elder("e1") is None
+
+
+def test_a_silent_elder_never_gets_a_row():
+    """她整段回看期都沒講話、現行時間又合法 → 不寫（新長輩不該憑空長出偏好列）。"""
+    prefs = FakeGreetingPreferenceStore()
+    _update(_FakeShortTerm([]), prefs)
+    assert prefs.get_for_elder("e1") is None
+
+
+def test_it_starts_from_her_existing_preference_not_the_global_hour():
+    """現行值是她上次算出來的偏好；拿全域 08:00 當 current 會讓她每晚被拉回原點。"""
+    prefs = FakeGreetingPreferenceStore()
+    prefs.save(GreetingPreference("e1", 10, 0, 0.0, 7, 660))
+    _update(_FakeShortTerm(_turns_at(7)), prefs)  # 她七點活躍 → 從 10:00 往前一格
+    saved = prefs.get_for_elder("e1")
+    assert saved is not None
+    assert (saved.hour, saved.minute) == (9, 30)
+
+
+def test_it_reads_whole_days_only_ending_at_last_midnight():
+    """回看窗＝[今日零時 − lookback_days 天, 今日零時)：整天為單位，不含今天。
+
+    納入「今天」會把批次執行前那幾小時（凌晨三點多）當成一天的樣本，
+    而那註定是殘缺的半天，會把中位數往凌晨帶偏。
+    """
+    short_term = _FakeShortTerm()
+    _update(short_term, FakeGreetingPreferenceStore())
+    elder_id, since, before = short_term.calls[0]
+    assert elder_id == "e1"
+    midnight = datetime(2026, 7, 16, 0, 0, tzinfo=TPE).timestamp()
+    assert before == midnight
+    assert since == midnight - 14 * 86400
+
+
+def test_a_guardrail_pullback_with_no_samples_does_not_fabricate_a_median():
+    """她安靜了一整個回看期、現行值又違規 → 護軌照樣拉回，且不准編一個中位數。
+
+    這是 next_greeting_time 的後置條件「回 None ⇒ current 在護軌內」的單向性
+    咬人的地方：反向不成立，first_turns=[] 加上界外的 current 會回傳非 None。
+    此時 median_minute_of_day([]) 會拋 StatisticsError，故不可無條件呼叫。
+
+    sample_days=0 誠實說「零天樣本」；median 寫 NO_SAMPLE_MEDIAN（−1，不是任何
+    合法的 minute_of_day）誠實說「沒有中位數」。寫 0 會被讀成「她的中位活躍時刻
+    是午夜十二點」——那是憑空捏造的事實，比空值更糟。
+    """
+    prefs = FakeGreetingPreferenceStore()
+    prefs.save(GreetingPreference("e1", 5, 0, 0.0, 7, 300))  # 05:00 違規（下限 06:00）
+    _update(_FakeShortTerm([]), prefs)  # 不應拋出
+    saved = prefs.get_for_elder("e1")
+    assert saved is not None
+    assert (saved.hour, saved.minute) == (6, 0)  # 護軌不以樣本數為條件
+    assert saved.sample_days == 0
+    assert saved.median_minute_of_day == NO_SAMPLE_MEDIAN
+    assert saved.median_minute_of_day not in range(0, 1440)  # 不可與合法時刻混淆
+
+
+def test_a_pullback_with_samples_still_records_the_real_median():
+    """有樣本時的護軌拉回照常寫真中位數——不要因為「這是拉回」就丟掉手上的事實。"""
+    prefs = FakeGreetingPreferenceStore()
+    prefs.save(GreetingPreference("e1", 5, 0, 0.0, 7, 300))
+    _update(_FakeShortTerm(_turns_at(9)), prefs)
+    saved = prefs.get_for_elder("e1")
+    assert saved is not None
+    assert (saved.hour, saved.minute) == (6, 0)
+    assert saved.sample_days == 7
+    assert saved.median_minute_of_day == 9 * 60
+
+
+def test_too_few_samples_writes_nothing():
+    prefs = FakeGreetingPreferenceStore()
+    _update(_FakeShortTerm(_turns_at(11, days=4)), prefs)
+    assert prefs.get_for_elder("e1") is None

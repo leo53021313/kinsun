@@ -17,6 +17,9 @@ import pytest
 import kinsun.scheduler.worker as worker
 from kinsun.accounts.models import PrincipalType
 from kinsun.config import load_settings
+from kinsun.proactive.greeting_time import update_greeting_time as _real_update_greeting_time
+from kinsun.proactive.preferences import FakeGreetingPreferenceStore, GreetingPreference
+from kinsun.reports.reminders import FakeReminderLogStore
 from kinsun.strategies.reflection import reflect_days as _real_reflect_days
 
 _BASE_ENV = {
@@ -68,21 +71,14 @@ class _SpyRouter:
         return 1
 
 
-class _SpyReminderLogs:
-    def __init__(self) -> None:
-        self.recorded: list[tuple[str, str, str]] = []
-
-    def record(self, elder_id: str, kind: str, content: str) -> None:
-        self.recorded.append((elder_id, kind, content))
-
-
 def _fake_core(
     settings,
     *,
     elders: list[str] | None = None,
     router: _SpyRouter | None = None,
-    reminder_logs: _SpyReminderLogs | None = None,
+    reminder_logs: FakeReminderLogStore | None = None,
     last_active=None,
+    greeting_prefs: FakeGreetingPreferenceStore | None = None,
 ):
     elders = elders if elders is not None else []
     return SimpleNamespace(
@@ -105,7 +101,13 @@ def _fake_core(
             last_active=last_active or (lambda elder_id: None),
         ),
         traces=SimpleNamespace(purge_older_than=lambda cutoff: None),
-        reminder_logs=reminder_logs or _SpyReminderLogs(),
+        # 用正牌的 Fake（非自造 spy）：問候 job 的冪等靠 list_for_range 讀 reminder_logs，
+        # 只有 record 的替身會讓「今天問候過沒」的接線測不到。
+        reminder_logs=reminder_logs if reminder_logs is not None else FakeReminderLogStore(_clock),
+        # 夜間批次寫、問候 job 讀（spec 2026-07-16）。
+        greeting_prefs=(
+            greeting_prefs if greeting_prefs is not None else FakeGreetingPreferenceStore()
+        ),
         # 兩根共用收進 Core（✅ 庚-44）。
         risk_events=SimpleNamespace(list_for_elder=lambda elder_id: []),
         summaries=SimpleNamespace(save=lambda *a, **k: None),
@@ -335,9 +337,126 @@ def test_summary_failure_does_not_block_reflection(monkeypatch):
     assert reflected == ["e1"]
 
 
+def _update_binding_spy(record):
+    """會驗簽章的 update_greeting_time 替身（理由同 _binding_spy）。
+
+    lag_tolerance_minutes 是 Task D 後補上的必填參數，寬鬆替身會把漏傳照單全收。
+    """
+    signature = inspect.signature(_real_update_greeting_time)
+
+    def _spy(elder_id, **kwargs):
+        signature.bind(elder_id, **kwargs)
+        record(elder_id, kwargs)
+
+    return _spy
+
+
+def test_the_nightly_batch_updates_the_greeting_time_last(monkeypatch):
+    """自適應問候時間掛進夜間批次第四步：整理 → 摘要 → 反思 → 問候時間。"""
+    events: list[tuple[str, str]] = []
+    calls: list[dict] = []
+    _stub_nightly(
+        monkeypatch,
+        consolidate=lambda elder_id, **kw: events.append(("整理", elder_id)),
+        summarize=lambda elder_id, **kw: events.append(("摘要", elder_id)),
+    )
+    monkeypatch.setattr(
+        worker, "reflect_days", _binding_spy(lambda elder_id, kw: events.append(("反思", elder_id)))
+    )
+    monkeypatch.setattr(
+        worker,
+        "update_greeting_time",
+        _update_binding_spy(
+            lambda elder_id, kwargs: (events.append(("問候時間", elder_id)), calls.append(kwargs))
+        ),
+    )
+    scheduler, core = _build(monkeypatch, _settings(), elders=["e1"])
+    _job(scheduler, "daily-consolidation").run()
+
+    assert events == [("整理", "e1"), ("摘要", "e1"), ("反思", "e1"), ("問候時間", "e1")]
+    kwargs = calls[0]
+    assert kwargs["short_term"] is core.memory
+    assert kwargs["prefs"] is core.greeting_prefs  # 取 Core 現成的 store，不自建第二個
+    assert kwargs["default_hour"] == 8
+    assert kwargs["lookback_days"] == 14
+    assert kwargs["min_sample_days"] == 5
+    assert kwargs["earliest_hour"] == 6
+    assert kwargs["latest_hour"] == 11
+    assert kwargs["max_shift_minutes"] == 30
+    assert kwargs["lag_tolerance_minutes"] == 60
+
+
+def test_the_greeting_time_update_can_be_switched_off(monkeypatch):
+    """PROACTIVE_GREETING_ADAPTIVE_ENABLED 是緊急關閉開關：關掉後不得再計算。"""
+    updated: list[str] = []
+    _stub_nightly(monkeypatch)
+    monkeypatch.setattr(
+        worker,
+        "update_greeting_time",
+        _update_binding_spy(lambda elder_id, kw: updated.append(elder_id)),
+    )
+    scheduler, _core = _build(
+        monkeypatch, _settings(PROACTIVE_GREETING_ADAPTIVE_ENABLED="false"), elders=["e1"]
+    )
+    _job(scheduler, "daily-consolidation").run()
+    assert updated == []
+
+
+def test_switching_off_reflection_does_not_switch_off_the_greeting_time(monkeypatch):
+    """兩個開關互相獨立——反思關掉時問候時間照算。
+
+    這是 run_one 的結構陷阱：反思那段原本以 `if not enabled: return` 提早結束整個
+    函式，把第四步接在它後面會讓 REFLECTION_ENABLED=false 連帶關掉問候時間計算，
+    而兩者在設定上毫無關係。
+    """
+    updated: list[str] = []
+    _stub_nightly(monkeypatch)
+    monkeypatch.setattr(
+        worker,
+        "update_greeting_time",
+        _update_binding_spy(lambda elder_id, kw: updated.append(elder_id)),
+    )
+    scheduler, _core = _build(monkeypatch, _settings(REFLECTION_ENABLED="false"), elders=["e1"])
+    _job(scheduler, "daily-consolidation").run()
+    assert updated == ["e1"]
+
+
+def test_greeting_time_failure_does_not_break_the_batch(monkeypatch, caplog):
+    """問候時間算不出來，就只是「今晚不調時間」，不該連累前三步或其他長輩。"""
+    consolidated: list[str] = []
+    summarized: list[str] = []
+    reflected: list[str] = []
+    attempted: list[str] = []
+    _stub_nightly(
+        monkeypatch,
+        consolidate=lambda elder_id, **kw: consolidated.append(elder_id),
+        summarize=lambda elder_id, **kw: summarized.append(elder_id),
+    )
+    monkeypatch.setattr(
+        worker, "reflect_days", _binding_spy(lambda elder_id, kw: reflected.append(elder_id))
+    )
+
+    def _boom(elder_id, **kw):
+        attempted.append(elder_id)
+        raise RuntimeError("記憶庫掛了")
+
+    monkeypatch.setattr(worker, "update_greeting_time", _boom)
+    scheduler, _core = _build(monkeypatch, _settings(), elders=["e1", "e2"])
+    with caplog.at_level(logging.WARNING):
+        _job(scheduler, "daily-consolidation").run()  # 不應拋出
+
+    assert consolidated == ["e1", "e2"]
+    assert summarized == ["e1", "e2"]
+    assert reflected == ["e1", "e2"]
+    assert attempted == ["e1", "e2"]  # 一位長輩失敗不得炸掉整批
+    assert any("問候時間計算失敗" in r.getMessage() for r in caplog.records)
+    # 失敗必須收在 run_one 內，否則 fanout 會把整位長輩的夜間批次標成 ERROR。
+    assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
+
+
 def test_greeting_pushes_and_records_reminder_log(monkeypatch):
     router = _SpyRouter()
-    reminder_logs = _SpyReminderLogs()
+    reminder_logs = FakeReminderLogStore(_clock)
     scheduler, _core = _build(
         monkeypatch, _settings(), elders=["e1"], router=router, reminder_logs=reminder_logs
     )
@@ -345,6 +464,62 @@ def test_greeting_pushes_and_records_reminder_log(monkeypatch):
     assert [(pt, pid) for pt, pid, _ in router.sent] == [(PrincipalType.ELDER, "e1")]
     assert worker.GREETING_INTENT in router.sent[0][2]
     assert reminder_logs.recorded == [("e1", "proactive-greeting", router.sent[0][2])]
+
+
+def test_it_does_not_greet_her_twice_in_the_same_day(monkeypatch):
+    """job 每半小時跑一次（spec 2026-07-16），冪等全靠 reminder_logs——跑兩次只能問候一次。
+
+    這條測的是 greeted_today 這個閉包本身：它讀的是真的 reminder_logs，而問候寫的
+    也是真的 reminder_logs。少了它，「每半小時掃描」會變成「每半小時轟炸長輩一次」。
+    """
+    router = _SpyRouter()
+    scheduler, _core = _build(monkeypatch, _settings(), elders=["e1"], router=router)
+    job = _job(scheduler, "daily-greeting")
+    job.run()
+    job.run()  # 下一次掃描（或 worker 重啟後的補跑）
+    assert len(router.sent) == 1
+
+
+def test_it_greets_at_her_own_time_rather_than_the_global_hour(monkeypatch):
+    """接線驗證：問候 job 真的讀得到夜間批次寫的偏好。
+
+    e-late 的偏好 11:00 還沒到（現在 09:00）→ 不問候；e-early 的 06:30 早就過了 → 問候。
+    """
+    router = _SpyRouter()
+    prefs = FakeGreetingPreferenceStore()
+    prefs.save(GreetingPreference("e-late", 11, 0, 0.0, 7, 660))
+    prefs.save(GreetingPreference("e-early", 6, 30, 0.0, 7, 390))
+    scheduler, _core = _build(
+        monkeypatch,
+        _settings(),
+        elders=["e-late", "e-early"],
+        router=router,
+        greeting_prefs=prefs,
+    )
+    _job(scheduler, "daily-greeting").run()
+    assert [pid for _, pid, _ in router.sent] == ["e-early"]
+
+
+def test_the_kill_switch_makes_everyone_fall_back_to_the_global_hour(monkeypatch):
+    """PROACTIVE_GREETING_ADAPTIVE_ENABLED=false 必須讓「已經存在的偏好」也失效。
+
+    只擋住夜間計算是不夠的：緊急關閉時 greeting_preferences 裡還躺著上次算出來的
+    時間，問候 job 若照樣讀，關掉開關等於什麼都沒關——長輩仍在她的自適應時間被問候。
+    開關要能真的回退到 PROACTIVE_GREETING_HOUR，才叫緊急關閉。
+    """
+    router = _SpyRouter()
+    prefs = FakeGreetingPreferenceStore()
+    prefs.save(GreetingPreference("e-late", 11, 0, 0.0, 7, 660))  # 11:00 > 現在 09:00
+    scheduler, _core = _build(
+        monkeypatch,
+        _settings(PROACTIVE_GREETING_ADAPTIVE_ENABLED="false"),
+        elders=["e-late"],
+        router=router,
+        greeting_prefs=prefs,
+    )
+    _job(scheduler, "daily-greeting").run()
+    # 關掉後偏好不算數：全域 08:00 已過 → 照樣問候。
+    assert [pid for _, pid, _ in router.sent] == ["e-late"]
 
 
 def test_greeting_skips_elder_without_route(monkeypatch):

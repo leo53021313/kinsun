@@ -37,6 +37,7 @@ from kinsun.memory.recall import SessionMemory
 from kinsun.memory.shortterm import PgMemoryStore
 from kinsun.notifications.store import PgAppNotificationStore
 from kinsun.observability.store import PgTraceStore
+from kinsun.proactive.preferences import PgGreetingPreferenceStore
 from kinsun.rag.embeddings import GeminiEmbeddingModel
 from kinsun.rag.retriever import HealthEducationRetriever
 from kinsun.rag.service import HealthEducationRagService
@@ -90,6 +91,8 @@ class Core:
     notifications: PgAppNotificationStore
     # 反思寫入（worker）與後台檢視／撤銷都需要同一個 store，故收進 Core。
     strategies: PgStrategyStore
+    # 夜間批次寫、問候 job 讀（spec 2026-07-16），同一根內兩處共用，故收進 Core。
+    greeting_prefs: PgGreetingPreferenceStore
     agent: CareAgent
 
 
@@ -213,5 +216,6 @@ def assemble_core(
         reminder_logs=PgReminderLogStore(db, clock=clock, new_id=new_id),
         notifications=notifications,
         strategies=strategies,
+        greeting_prefs=PgGreetingPreferenceStore(db),
         agent=agent,
     )

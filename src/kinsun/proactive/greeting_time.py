@@ -37,8 +37,19 @@
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
 from datetime import datetime, tzinfo
 from statistics import median
+
+from kinsun.memory.shortterm import MemoryStore, previous_day_bounds
+from kinsun.proactive.preferences import (
+    NO_SAMPLE_MEDIAN,
+    GreetingPreference,
+    GreetingPreferenceStore,
+)
+
+logger = logging.getLogger("kinsun.proactive.greeting_time")
 
 # 問候 job 每半小時掃一次（cron 0,30 * * * *），故偏好時間必須落在整點或半點——
 # 存 07:45 卻在 08:00 問候，是對後台說謊。
@@ -131,3 +142,74 @@ def next_greeting_time(
     if clamped == current_minutes:
         return None  # 已在護欄邊界上，無處可去
     return divmod(clamped, 60)
+
+
+def update_greeting_time(
+    elder_id: str,
+    *,
+    short_term: MemoryStore,
+    prefs: GreetingPreferenceStore,
+    clock: Callable[[], datetime],
+    default_hour: int,
+    lookback_days: int,
+    min_sample_days: int,
+    earliest_hour: int,
+    latest_hour: int,
+    max_shift_minutes: int,
+    lag_tolerance_minutes: int,
+) -> None:
+    """夜間批次的薄協調函式：讀訊號 → 呼叫純函式 → 存偏好。不經 LLM。
+
+    刻意不設防：讀寫失敗直接往上冒（快速失敗），防線在 worker 的 run_one——
+    問候時間算不出來只該是「今晚不調時間」，不該讓值班的人以為整理或摘要壞了。
+
+    回看窗是 [今日零時 − lookback_days 天, 今日零時)，以整天為單位、不含今天：
+    批次在凌晨三點多跑，把「今天」算進去等於拿一段註定殘缺的半天當樣本。
+    """
+    now = clock()
+    tz = now.tzinfo
+    _, end = previous_day_bounds(now)
+    start = end - lookback_days * 86400.0
+    first_turns = short_term.first_user_turn_per_day(elder_id, since=start, before=end)
+    existing = prefs.get_for_elder(elder_id)
+    # 現行值取她自己的偏好；沒有偏好才退回全域設定。拿全域當 current 會讓她每晚被拉回原點。
+    current = (existing.hour, existing.minute) if existing else (default_hour, 0)
+    nxt = next_greeting_time(
+        first_turns=first_turns,
+        current=current,
+        tz=tz,
+        min_sample_days=min_sample_days,
+        earliest_hour=earliest_hour,
+        latest_hour=latest_hour,
+        max_shift_minutes=max_shift_minutes,
+        lag_tolerance_minutes=lag_tolerance_minutes,
+    )
+    if nxt is None:
+        return  # 不動就不寫：每晚寫一次 computed_at 會讓後台以為系統一直在調整。
+
+    # ⚠️ 不可無條件呼叫 median_minute_of_day：next_greeting_time 的後置條件
+    # 「回 None ⇒ current 在護軌內」是**單向**的，反向不成立。護軌拉回不以樣本數為
+    # 條件（護軌若能被「她安靜了一個月」關掉，就不是護軌），故 first_turns=[] 加上
+    # 界外的 current 會回傳非 None，而 median([]) 會拋 StatisticsError 炸掉這一步。
+    # 此時誠實寫「零天樣本、沒有中位數」，不要編一個假的中位數搪塞可解釋性欄位。
+    prefs.save(
+        GreetingPreference(
+            elder_id=elder_id,
+            hour=nxt[0],
+            minute=nxt[1],
+            computed_at=now.timestamp(),
+            sample_days=len(first_turns),
+            median_minute_of_day=(
+                median_minute_of_day(first_turns, tz) if first_turns else NO_SAMPLE_MEDIAN
+            ),
+        )
+    )
+    logger.info(
+        "問候時間調整 elder=%s %02d:%02d → %02d:%02d（%d 天樣本）",
+        elder_id,
+        current[0],
+        current[1],
+        nxt[0],
+        nxt[1],
+        len(first_turns),
+    )

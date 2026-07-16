@@ -25,6 +25,7 @@ from kinsun.medications.models import MedicationSlot
 from kinsun.memory.longterm.consolidation import run_consolidation
 from kinsun.memory.longterm.consolidation_log import PgConsolidationLogStore
 from kinsun.observability.jobs import build_observability_cleanup_job
+from kinsun.proactive.greeting_time import update_greeting_time
 from kinsun.proactive.jobs import (
     GREETING_INTENT,
     INACTIVITY_INTENT,
@@ -68,6 +69,8 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
     risk_events = core.risk_events
     # 反思寫入端；與後台檢視／撤銷同一個 store（已在 Core），不另建。
     strategies = core.strategies
+    # 問候偏好：夜間批次（run_one 第四步）寫、問候 job 讀，同一個 store。
+    greeting_prefs = core.greeting_prefs
     # 整理進度標記（✅ 庚-06／庚-13）：逐日補齊＋冪等，避免停機漏天與重覆寫入。
     consolidation_log = PgConsolidationLogStore(db, clock=clock)
 
@@ -92,26 +95,46 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
             logger.warning("對話摘要失敗 elder=%s", elder_id)
         # 每晚反思（spec 2026-07-14）：接在既有的夜間批次尾巴，與摘要共用
         # GEMINI_MODEL_SUMMARY 這顆模型。反思因此是每晚自動的主線行為，不需另立 cron。
-        if not settings.reflection_enabled:
-            return
-        try:
-            reflect_days(
-                elder_id,
-                short_term=memory,
-                reminder_logs=reminder_logs,
-                strategies=strategies,
-                reflector=gemini,
-                clock=clock,
-                lookback_days=settings.reflection_lookback_days,
-                min_observed_days=settings.reflection_min_observed_days,
-                max_strategies=settings.reflection_max_strategies,
-                max_turns=settings.reflection_max_turns,
-            )
-        except Exception:  # noqa: BLE001 - 反思失敗不影響整理、摘要與其他長輩
-            # reflect_days 對 LLM timeout／MemoryStoreError 刻意不設防（快速失敗），防線在此。
-            # 少了這層，例外會沿 fanout 冒上去：本該只是「今晚少學一條」，卻會把整位長輩的
-            # 夜間批次記成失敗——縱使整理與摘要其實都做完了，值班的人會查錯方向。
-            logger.warning("每晚反思失敗 elder=%s", elder_id)
+        # ⚠️ 用 if 包起來、不用 `if not enabled: return`：後面還有第四步，提早 return
+        # 會讓 REFLECTION_ENABLED=false 連帶關掉問候時間計算，而兩者毫無關係。
+        if settings.reflection_enabled:
+            try:
+                reflect_days(
+                    elder_id,
+                    short_term=memory,
+                    reminder_logs=reminder_logs,
+                    strategies=strategies,
+                    reflector=gemini,
+                    clock=clock,
+                    lookback_days=settings.reflection_lookback_days,
+                    min_observed_days=settings.reflection_min_observed_days,
+                    max_strategies=settings.reflection_max_strategies,
+                    max_turns=settings.reflection_max_turns,
+                )
+            except Exception:  # noqa: BLE001 - 反思失敗不影響整理、摘要與其他長輩
+                # reflect_days 對 LLM timeout／MemoryStoreError 刻意不設防（快速失敗），防線在此。
+                # 少了這層，例外會沿 fanout 冒上去：本該只是「今晚少學一條」，卻會把整位長輩的
+                # 夜間批次記成失敗——縱使整理與摘要其實都做完了，值班的人會查錯方向。
+                logger.warning("每晚反思失敗 elder=%s", elder_id)
+        # 自適應問候時間（spec 2026-07-16）：純統計、不經 LLM，不需另立 cron。
+        # 掛在第四步而非另開排程，四者互不拖累：任一失敗只記 warning。
+        if settings.proactive_greeting_adaptive_enabled:
+            try:
+                update_greeting_time(
+                    elder_id,
+                    short_term=memory,
+                    prefs=greeting_prefs,
+                    clock=clock,
+                    default_hour=settings.proactive_greeting_hour,
+                    lookback_days=settings.proactive_greeting_lookback_days,
+                    min_sample_days=settings.proactive_greeting_min_sample_days,
+                    earliest_hour=settings.proactive_greeting_earliest_hour,
+                    latest_hour=settings.proactive_greeting_latest_hour,
+                    max_shift_minutes=settings.proactive_greeting_max_shift_minutes,
+                    lag_tolerance_minutes=settings.proactive_greeting_lag_tolerance_minutes,
+                )
+            except Exception:  # noqa: BLE001 - 問候時間計算失敗不影響整理、摘要與反思
+                logger.warning("問候時間計算失敗 elder=%s", elder_id)
 
     def _push_to_elder(elder_id: str, intent: str, kind: str) -> None:
         # 先確認可達再生成內容（避免白花一次 LLM 呼叫）；出站由 router 依綁定通道投遞。
@@ -129,6 +152,22 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
     def care_one(elder_id: str) -> None:
         _push_to_elder(elder_id, INACTIVITY_INTENT, REMINDER_KIND_PROACTIVE_CARE)
 
+    def greeted_today(elder_id: str) -> bool:
+        """今天問候過她沒有——問候 job 每半小時掃一次，冪等全靠這裡。
+
+        查既有的 reminder_logs（問候送出時本來就會記一筆），不另立狀態表。
+        窗是「今天整天」而非「到此刻為止」：後者的 end 是排他的，剛好在掃描
+        當下寫入的那筆會被漏掉；而未來的紀錄本就不存在，放寬到明日零時無害。
+        讀取失敗刻意讓例外冒到 fanout ＝ 跳過該長輩（寧可漏問候，不可重複轟炸）。
+        """
+        day_start = clock().replace(hour=0, minute=0, second=0, microsecond=0)
+        logs = reminder_logs.list_for_range(
+            elder_id,
+            start=day_start.timestamp(),
+            end=(day_start + timedelta(days=1)).timestamp(),
+        )
+        return any(log.kind == REMINDER_KIND_PROACTIVE_GREETING for log in logs)
+
     jobs = [
         build_consolidation_job(
             sessions=memory.sessions,
@@ -139,7 +178,14 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
             minute=5,
         ),
         build_greeting_job(
-            sessions=memory.sessions, greet_one=greet_one, hour=settings.proactive_greeting_hour
+            sessions=memory.sessions,
+            greet_one=greet_one,
+            default_hour=settings.proactive_greeting_hour,
+            # 緊急關閉開關（spec 2026-07-16）：關掉後連讀都不讀，全體回退
+            # PROACTIVE_GREETING_HOUR——只擋夜間計算會讓表裡的舊偏好繼續生效。
+            prefs=greeting_prefs if settings.proactive_greeting_adaptive_enabled else None,
+            greeted_today=greeted_today,
+            clock=clock,
         ),
         build_inactivity_job(
             sessions=memory.sessions,
@@ -234,10 +280,19 @@ def main() -> int:
     settings = load_settings(os.environ)
     tz = ZoneInfo(settings.timezone)
     scheduler, db = build_scheduler(settings, clock=lambda: datetime.now(tz))
+    # 問候那段不能再寫死「X:00」：自適應開啟時每位長輩各有各的時間，這行印的是機制。
+    greeting = (
+        f"問候 每半小時掃描（每位長輩各自的時間，"
+        f"{settings.proactive_greeting_earliest_hour}-"
+        f"{settings.proactive_greeting_latest_hour} 點，"
+        f"未累積足夠資料前為 {settings.proactive_greeting_hour}:00）"
+        if settings.proactive_greeting_adaptive_enabled
+        else f"問候 {settings.proactive_greeting_hour}:00（自適應已關閉）"
+    )
     print(
         f"排程器啟動：每 {settings.scheduler_tick_seconds}s 檢查；"
         f"整理 {settings.longterm_consolidation_hour}:05、"
-        f"問候 {settings.proactive_greeting_hour}:00、"
+        f"{greeting}、"
         f"失聯關心 {settings.proactive_inactivity_hour}:00"
         f"（{settings.proactive_inactivity_days} 天門檻）。"
     )

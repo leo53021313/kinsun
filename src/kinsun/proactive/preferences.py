@@ -16,6 +16,20 @@ from kinsun.db import Database, _Errors
 
 _COLUMNS = "elder_id, hour, minute, computed_at, sample_days, median_minute_of_day"
 
+# 「這一列不是統計算出來的，沒有中位數」的哨兵值。
+#
+# 為什麼需要它：護軌拉回（現行時間落在 EARLIEST/LATEST 之外）刻意**不以樣本數為
+# 條件**——護軌若能被「她安靜了一個月」關掉，就不是護軌。所以會出現「零天樣本、
+# 卻要寫一列」的組合，而那時中位數並不存在。
+#
+# 為什麼是 −1 而不是 0：合法的 minute_of_day 是 0..1439，0 就是午夜十二點。寫 0
+# 等於對後台宣稱「她的中位活躍時刻是半夜十二點」——憑空捏造的事實比誠實的空值更糟。
+# −1 落在合法域外，讀到的人一望即知「這裡沒有統計依據」，配合 sample_days=0 自洽。
+#
+# 為什麼不改成 NULL：median_minute_of_day 是 INTEGER NOT NULL，改可空要動 DDL 與
+# 既有庫的遷移路徑，代價遠大於一個域外哨兵。
+NO_SAMPLE_MEDIAN = -1
+
 
 @dataclass(frozen=True)
 class GreetingPreference:
@@ -23,8 +37,8 @@ class GreetingPreference:
     hour: int
     minute: int  # 對齊半小時：0 或 30
     computed_at: float
-    sample_days: int  # 憑幾天的資料算的（可解釋性）
-    median_minute_of_day: int  # 她的中位活躍時刻，當天第幾分鐘（可解釋性）
+    sample_days: int  # 憑幾天的資料算的（可解釋性）；0 ＝ 護軌拉回，非統計調整
+    median_minute_of_day: int  # 她的中位活躍時刻，當天第幾分鐘（可解釋性）；見 NO_SAMPLE_MEDIAN
 
 
 class GreetingPreferenceError(Exception):

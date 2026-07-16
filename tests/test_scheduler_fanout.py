@@ -1,3 +1,5 @@
+import pytest
+
 from kinsun.scheduler.fanout import fanout_job
 
 
@@ -13,6 +15,25 @@ def test_runs_action_for_each_item_and_builds_cron():
 def test_minute_in_cron():
     job = fanout_job(name="t", hour=3, minute=30, population=lambda: [], action=lambda x: None)
     assert job.cron == "30 3 * * *"
+
+
+def test_an_explicit_cron_is_used_verbatim():
+    """問候 job 要每半小時掃一次（spec 2026-07-16），hour／minute 組不出這種 cron。"""
+    job = fanout_job(name="t", cron="0,30 * * * *", population=lambda: [], action=lambda x: None)
+    assert job.cron == "0,30 * * * *"
+
+
+def test_giving_both_hour_and_cron_fails_fast():
+    """兩個都給時哪個生效無從得知，靜默採用其一等於讓 job 在不明時刻跑。"""
+    with pytest.raises(ValueError):
+        fanout_job(
+            name="t", hour=8, cron="0,30 * * * *", population=lambda: [], action=lambda x: None
+        )
+
+
+def test_giving_neither_hour_nor_cron_fails_fast():
+    with pytest.raises(ValueError):
+        fanout_job(name="t", population=lambda: [], action=lambda x: None)
 
 
 def test_one_item_failure_isolated():
