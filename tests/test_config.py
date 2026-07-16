@@ -1,3 +1,8 @@
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 from kinsun.config import ConfigError, Settings, load_dotenv, load_settings
@@ -184,3 +189,407 @@ def test_longterm_health_top_k_default_and_override():
     """✅ 庚-38（A-22）：健康記憶檢索條數接 settings（原硬編建構子預設）。"""
     assert load_settings(BASE_ENV).longterm_health_top_k == 3
     assert load_settings({**BASE_ENV, "LONGTERM_HEALTH_TOP_K": "6"}).longterm_health_top_k == 6
+
+
+def test_tavily_api_key_defaults_to_empty():
+    # 留空＝不註冊 web_search 工具（優雅降級），見 composition.build_tool_registry。
+    assert load_settings(BASE_ENV).tavily_api_key == ""
+
+
+def test_tavily_api_key_read_from_env():
+    settings = load_settings({**BASE_ENV, "TAVILY_API_KEY": "tvly-abc"})
+    assert settings.tavily_api_key == "tvly-abc"
+
+
+def test_reflection_settings_have_defaults():
+    settings = load_settings(BASE_ENV)
+    assert settings.reflection_enabled is True
+    assert settings.reflection_lookback_days == 7
+    assert settings.reflection_min_observed_days == 3
+    assert settings.reflection_max_strategies == 15
+    assert settings.reflection_response_window_minutes == 60
+    assert settings.reflection_max_turns == 600
+
+
+def test_reflection_can_be_switched_off():
+    settings = load_settings({**BASE_ENV, "REFLECTION_ENABLED": "false"})
+    assert settings.reflection_enabled is False
+
+
+@pytest.mark.parametrize("raw", ["off", "OFF", "Off", "n", "N", "", "   "])
+def test_reflection_kill_switch_honours_off_and_blank(raw):
+    """`off`／空值必須真的關掉——這是反思唯一的緊急關閉開關，不能給假的安全感。
+
+    反思自動生效、無人審、每晚自動跑。凌晨三點發現守則學歪、要立刻關掉的人打了
+    `REFLECTION_ENABLED=off`，若這裡把它讀成 True，他會得到「已關閉」的錯覺，而它照跑。
+    空值（`REFLECTION_ENABLED=`）同理——那是「我把值刪掉了」的意思，不是「請開著」。
+    """
+    settings = load_settings({**BASE_ENV, "REFLECTION_ENABLED": raw})
+    assert settings.reflection_enabled is False, raw
+
+
+@pytest.mark.parametrize("raw", ["true", "TRUE", "1", "yes", "y", "on"])
+def test_reflection_stays_on_for_truthy_values(raw):
+    settings = load_settings({**BASE_ENV, "REFLECTION_ENABLED": raw})
+    assert settings.reflection_enabled is True, raw
+
+
+def test_reflection_min_observed_days_must_not_exceed_lookback():
+    """證據門檻大於回顧視野＝沒有守則能通過門檻，反思每晚空轉卻不報錯（fail-fast 攔下）。"""
+    env = {**BASE_ENV, "REFLECTION_MIN_OBSERVED_DAYS": "30", "REFLECTION_LOOKBACK_DAYS": "7"}
+    with pytest.raises(ConfigError) as exc:
+        load_settings(env)
+    message = str(exc.value)
+    assert "REFLECTION_MIN_OBSERVED_DAYS" in message
+    assert "REFLECTION_LOOKBACK_DAYS" in message
+    assert "30" in message  # 訊息要自解釋：含實際數值
+    assert "7" in message
+
+
+def test_reflection_min_observed_days_equal_lookback_is_allowed():
+    """邊界：門檻＝回顧視野仍可成立（守則需每天都被觀察到），不該被擋。"""
+    env = {**BASE_ENV, "REFLECTION_MIN_OBSERVED_DAYS": "7", "REFLECTION_LOOKBACK_DAYS": "7"}
+    settings = load_settings(env)
+    assert settings.reflection_min_observed_days == 7
+    assert settings.reflection_lookback_days == 7
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "REFLECTION_LOOKBACK_DAYS",
+        "REFLECTION_MIN_OBSERVED_DAYS",
+        "REFLECTION_MAX_STRATEGIES",
+        "REFLECTION_RESPONSE_WINDOW_MINUTES",
+        "REFLECTION_MAX_TURNS",
+    ],
+)
+@pytest.mark.parametrize("raw", ["0", "-1"])
+def test_reflection_numeric_settings_must_be_at_least_one(key: str, raw: str):
+    """0 或負數會讓反思靜默失效或行為未定義；啟動時就要擋。"""
+    with pytest.raises(ConfigError) as exc:
+        load_settings({**BASE_ENV, key: raw})
+    message = str(exc.value)
+    assert key in message
+    assert raw in message
+
+
+def test_reflection_numeric_settings_accept_legal_overrides():
+    """合法覆寫不受驗證影響。"""
+    env = {
+        **BASE_ENV,
+        "REFLECTION_LOOKBACK_DAYS": "14",
+        "REFLECTION_MIN_OBSERVED_DAYS": "1",
+        "REFLECTION_MAX_STRATEGIES": "1",
+        "REFLECTION_RESPONSE_WINDOW_MINUTES": "1",
+        "REFLECTION_MAX_TURNS": "1000",
+    }
+    settings = load_settings(env)
+    assert settings.reflection_lookback_days == 14
+    assert settings.reflection_min_observed_days == 1
+    assert settings.reflection_max_strategies == 1
+    assert settings.reflection_response_window_minutes == 1
+    assert settings.reflection_max_turns == 1000
+
+
+def test_adaptive_greeting_settings_have_defaults():
+    settings = load_settings(BASE_ENV)
+    assert settings.proactive_greeting_adaptive_enabled is True
+    assert settings.proactive_greeting_lookback_days == 14
+    assert settings.proactive_greeting_min_sample_days == 5
+    assert settings.proactive_greeting_earliest_hour == 6
+    assert settings.proactive_greeting_latest_hour == 11
+    assert settings.proactive_greeting_max_shift_minutes == 30
+    assert settings.proactive_greeting_lag_tolerance_minutes == 60
+
+
+def test_greeting_lag_tolerance_must_not_be_tighter_than_max_shift():
+    """往後的容忍度比往前的死區還緊＝設計意圖被反轉，啟動即失敗。
+
+    容忍度之所以存在，是因為「問候後才有動靜」是模糊訊號（分不出「還沒醒」與
+    「只是慢慢看手機」），往後調必須比往前調保守。若 lag_tolerance < max_shift，
+    往前調反而變得比往後調保守——機制還在跑、不報錯，但方向反了。
+    """
+    with pytest.raises(ConfigError) as exc:
+        load_settings(
+            {
+                **BASE_ENV,
+                "PROACTIVE_GREETING_MAX_SHIFT_MINUTES": "30",
+                "PROACTIVE_GREETING_LAG_TOLERANCE_MINUTES": "15",
+            }
+        )
+    message = str(exc.value)
+    assert "PROACTIVE_GREETING_LAG_TOLERANCE_MINUTES" in message
+    assert "PROACTIVE_GREETING_MAX_SHIFT_MINUTES" in message
+    assert "15" in message and "30" in message  # 訊息要自解釋：含實際數值
+
+
+def test_greeting_lag_tolerance_equal_to_max_shift_is_allowed():
+    """邊界：兩者相等仍成立（等於兩個方向同門檻，是舊行為），不該被擋。"""
+    settings = load_settings(
+        {
+            **BASE_ENV,
+            "PROACTIVE_GREETING_MAX_SHIFT_MINUTES": "30",
+            "PROACTIVE_GREETING_LAG_TOLERANCE_MINUTES": "30",
+        }
+    )
+    assert settings.proactive_greeting_lag_tolerance_minutes == 30
+
+
+@pytest.mark.parametrize("raw", ["5", "10", "14", "15", "45", "40"])
+def test_greeting_max_shift_must_be_a_multiple_of_the_scan_slot(raw):
+    """MAX_SHIFT 非 30 的倍數＝兩種靜默失效，啟動即失敗。
+
+    步伐算完會經 `_align` 對齊到半點（問候 job 每半小時掃描，存 07:45 卻在 08:00
+    問候是對後台說謊），而對齊會把不是 30 倍數的步伐吃掉或放大——兩種誤設都不報錯：
+
+    * ≤ 15：每一步都被捨回原點 → 問候時間**永遠不動**。設定看起來生效了、機制看
+      起來在跑，實際上自適應完全癱瘓（實測 5／10／14／15 皆然）。
+    * 非 30 倍數（如 45）：對齊往上進位 → **實際位移超過宣稱的上限**（實測 45 →
+      08:00 直接跳 09:00，位移 60 分）。稽核「30 分速率限制有被遵守嗎」會查無此據。
+    """
+    with pytest.raises(ConfigError) as exc:
+        load_settings({**BASE_ENV, "PROACTIVE_GREETING_MAX_SHIFT_MINUTES": raw})
+    message = str(exc.value)
+    assert "PROACTIVE_GREETING_MAX_SHIFT_MINUTES" in message
+    assert raw in message and "30" in message  # 訊息要自解釋：含實際數值與掃描間隔
+
+
+def test_greeting_max_shift_accepts_positive_multiples_of_the_scan_slot():
+    """邊界：60 是 30 的正倍數 → 放行（實測位移正好 60 分，與宣稱一致）。"""
+    settings = load_settings(
+        {
+            **BASE_ENV,
+            "PROACTIVE_GREETING_MAX_SHIFT_MINUTES": "60",
+            "PROACTIVE_GREETING_LAG_TOLERANCE_MINUTES": "60",
+        }
+    )
+    assert settings.proactive_greeting_max_shift_minutes == 60
+
+
+def test_greeting_lag_tolerance_is_not_bound_to_the_scan_slot():
+    """LAG_TOLERANCE 刻意不受倍數限制——它只是門檻，不參與 `_align`。
+
+    把倍數限制「順手」套到它身上會擋掉完全合法的設定（如 45 分容忍度）。兩者的
+    角色不同：MAX_SHIFT 是步伐（會被對齊），LAG_TOLERANCE 只決定「要不要動」。
+    """
+    settings = load_settings(
+        {
+            **BASE_ENV,
+            "PROACTIVE_GREETING_MAX_SHIFT_MINUTES": "30",
+            "PROACTIVE_GREETING_LAG_TOLERANCE_MINUTES": "45",
+        }
+    )
+    assert settings.proactive_greeting_lag_tolerance_minutes == 45
+
+
+def test_adaptive_greeting_can_be_switched_off():
+    settings = load_settings({**BASE_ENV, "PROACTIVE_GREETING_ADAPTIVE_ENABLED": "false"})
+    assert settings.proactive_greeting_adaptive_enabled is False
+
+
+@pytest.mark.parametrize("raw", ["off", "OFF", "Off", "n", "N", "", "   "])
+def test_adaptive_greeting_kill_switch_honours_off_and_blank(raw):
+    """`off`／空值必須真的關掉——這是自適應問候唯一的緊急關閉開關，不能給假的安全感。
+
+    這東西會自動改變系統對長輩的行為時間、無人審。要立刻退回全體統一時間的人打了
+    `PROACTIVE_GREETING_ADAPTIVE_ENABLED=off`，若這裡讀成 True，他會得到「已關閉」的
+    錯覺，而它照調。空值同理——那是「我把值刪掉了」，不是「請開著」。
+    """
+    settings = load_settings({**BASE_ENV, "PROACTIVE_GREETING_ADAPTIVE_ENABLED": raw})
+    assert settings.proactive_greeting_adaptive_enabled is False, raw
+
+
+def test_greeting_hour_bounds_must_be_ordered():
+    with pytest.raises(ConfigError, match="PROACTIVE_GREETING_EARLIEST_HOUR"):
+        load_settings(
+            {
+                **BASE_ENV,
+                "PROACTIVE_GREETING_EARLIEST_HOUR": "11",
+                "PROACTIVE_GREETING_LATEST_HOUR": "6",
+            }
+        )
+
+
+def test_greeting_hour_bounds_must_not_be_equal():
+    """邊界：上下限相等＝夾取區間退化成單一時刻，四道護欄之一形同虛設；一併擋下。"""
+    with pytest.raises(ConfigError) as exc:
+        load_settings(
+            {
+                **BASE_ENV,
+                "PROACTIVE_GREETING_EARLIEST_HOUR": "8",
+                "PROACTIVE_GREETING_LATEST_HOUR": "8",
+            }
+        )
+    message = str(exc.value)
+    assert "PROACTIVE_GREETING_EARLIEST_HOUR" in message
+    assert "PROACTIVE_GREETING_LATEST_HOUR" in message
+    assert "8" in message  # 訊息要自解釋：含實際數值
+
+
+@pytest.mark.parametrize(
+    ("key", "raw"),
+    [
+        ("PROACTIVE_GREETING_EARLIEST_HOUR", "-5"),
+        ("PROACTIVE_GREETING_LATEST_HOUR", "24"),  # 邊界＋1
+        ("PROACTIVE_GREETING_LATEST_HOUR", "99"),
+    ],
+)
+def test_greeting_hour_bounds_must_be_a_real_hour(key, raw):
+    """鐘點必須是真的鐘點（0..23）——順序檢查涵蓋不到這件事。
+
+    順序檢查只約束「兩者的關係」，不約束「各自的範圍」：`EARLIEST=-5` 配上預設的
+    `LATEST=11` 依然滿足 -5 < 11，於是靜默放行。這道護欄是四道裡唯一負責把統計算出的
+    時間夾住的一道，夾取區間一旦變成 [-5, 99] 就等於沒有夾取——任何時間都原封不動通
+    過，而且不報錯，系統看起來還在自適應。
+    """
+    with pytest.raises(ConfigError) as exc:
+        load_settings({**BASE_ENV, key: raw})
+    message = str(exc.value)
+    assert key in message
+    assert raw in message  # 訊息要自解釋：含實際數值
+
+
+def test_greeting_hour_bounds_reject_out_of_range_pair_that_passes_the_order_check():
+    """`-5` 配 `99` 同時滿足順序檢查，卻是「等於沒有夾取」的區間；範圍驗證必須先擋下。"""
+    with pytest.raises(ConfigError, match="PROACTIVE_GREETING_EARLIEST_HOUR"):
+        load_settings(
+            {
+                **BASE_ENV,
+                "PROACTIVE_GREETING_EARLIEST_HOUR": "-5",
+                "PROACTIVE_GREETING_LATEST_HOUR": "99",
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("key", "raw", "attribute"),
+    [
+        # 0 點是合法鐘點——這正是不能沿用 `_require_positive_int`（`< 1` 即擋）的全部理由。
+        ("PROACTIVE_GREETING_EARLIEST_HOUR", "0", "proactive_greeting_earliest_hour"),
+        ("PROACTIVE_GREETING_LATEST_HOUR", "23", "proactive_greeting_latest_hour"),
+    ],
+)
+def test_greeting_hour_bounds_accept_legal_edges(key, raw, attribute):
+    """範圍驗證不得誤擋合法邊界：0 與 23 都是真的鐘點。"""
+    settings = load_settings({**BASE_ENV, key: raw})
+    assert getattr(settings, attribute) == int(raw)
+
+
+@pytest.mark.parametrize("raw", ["25", "-3", "99"])
+def test_greeting_hour_itself_must_be_a_real_hour(raw: str):
+    """`PROACTIVE_GREETING_HOUR` 也必須是真的鐘點——前一個 commit 只顧到上下限。
+
+    上下限有 `_require_hour`，它卻還是裸的 `int()`：`25`、`-3`、`99` 全部照收。
+    它是自適應關閉時全體長輩的問候時間，也是 Task E 餵給計算核心的現行值。
+    """
+    with pytest.raises(ConfigError) as exc:
+        load_settings({**BASE_ENV, "PROACTIVE_GREETING_HOUR": raw})
+    message = str(exc.value)
+    assert "PROACTIVE_GREETING_HOUR" in message
+    assert raw in message  # 訊息要自解釋：含實際數值
+
+
+@pytest.mark.parametrize("raw", ["5", "12"])
+def test_greeting_hour_must_sit_inside_its_own_guardrails(raw: str):
+    """設定錯誤要啟動即失敗，不要靠夜間批次默默夾回。
+
+    `PROACTIVE_GREETING_HOUR=5` 配下限 6 是矛盾的設定。夜間批次的護軌會把它夾到
+    6 點（縱深防禦，該留著），但維運看到的是「我設了 5 點，系統卻在 6 點問候」
+    ——看起來像程式壞了。矛盾的設定應該在啟動時就講清楚。
+    """
+    with pytest.raises(ConfigError) as exc:
+        load_settings({**BASE_ENV, "PROACTIVE_GREETING_HOUR": raw})
+    message = str(exc.value)
+    assert "PROACTIVE_GREETING_HOUR" in message
+    assert raw in message
+    assert "6" in message and "11" in message  # 要含實際的上下限值
+
+
+@pytest.mark.parametrize("raw", ["6", "8", "11"])
+def test_greeting_hour_accepts_the_guardrail_edges(raw: str):
+    """邊界不得誤擋：等於上限或下限都是合法設定。"""
+    settings = load_settings({**BASE_ENV, "PROACTIVE_GREETING_HOUR": raw})
+    assert settings.proactive_greeting_hour == int(raw)
+
+
+def test_greeting_sample_days_must_fit_the_lookback_window():
+    with pytest.raises(ConfigError, match="PROACTIVE_GREETING_MIN_SAMPLE_DAYS"):
+        load_settings(
+            {
+                **BASE_ENV,
+                "PROACTIVE_GREETING_LOOKBACK_DAYS": "3",
+                "PROACTIVE_GREETING_MIN_SAMPLE_DAYS": "5",
+            }
+        )
+
+
+def test_greeting_sample_days_equal_lookback_is_allowed():
+    """邊界：門檻＝回顧視野仍可成立（每天都要有活躍才調整），不該被擋。"""
+    env = {
+        **BASE_ENV,
+        "PROACTIVE_GREETING_LOOKBACK_DAYS": "5",
+        "PROACTIVE_GREETING_MIN_SAMPLE_DAYS": "5",
+    }
+    settings = load_settings(env)
+    assert settings.proactive_greeting_lookback_days == 5
+    assert settings.proactive_greeting_min_sample_days == 5
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "PROACTIVE_GREETING_LOOKBACK_DAYS",
+        "PROACTIVE_GREETING_MIN_SAMPLE_DAYS",
+        "PROACTIVE_GREETING_MAX_SHIFT_MINUTES",
+        "PROACTIVE_GREETING_LAG_TOLERANCE_MINUTES",
+    ],
+)
+@pytest.mark.parametrize("raw", ["0", "-1"])
+def test_greeting_numeric_settings_must_be_at_least_one(key: str, raw: str):
+    """0 或負數會讓自適應問候靜默失效或行為未定義；啟動時就要擋。"""
+    with pytest.raises(ConfigError) as exc:
+        load_settings({**BASE_ENV, key: raw})
+    message = str(exc.value)
+    assert key in message
+    assert raw in message
+
+
+def test_importing_config_does_not_pull_in_the_database_driver():
+    """config 是全庫最低層模組，import 它不得把資料庫驅動拖進來。
+
+    這條測試是本專案唯一擋得住「相依鏈悄悄長回來」的防線，請不要刪。背景：
+
+    * config 曾為了讓 SLOT_MINUTES 只有一份真實來源而 import greeting_time，結果
+      沿著 greeting_time → memory.shortterm → db 一路把 psycopg（90＋子模組）與連線池
+      拉進最低層。常數模組 proactive/constants.py 就是為了斬斷這條鏈而存在。
+    * 真正的代價不只是啟動變慢：只要有人讓 db.py／llm.py／memory/shortterm.py 其中
+      一支 import config（完全合理的需求），就會形成硬循環匯入，啟動即炸。
+      這種錯誤在 code review 時幾乎看不出來——它藏在兩個模組的 import 之間。
+
+    ⚠️ 必須用子行程測。同一個 pytest session 裡別的測試早就把 psycopg 匯入
+    sys.modules 了，在本行程內斷言只會拿到別人的匯入結果，永遠是假失敗或假成功。
+    """
+    root = Path(__file__).resolve().parents[1]
+    # 本專案非套件、不安裝（見 pyproject 的 pythonpath 設定），子行程要自己指出 src。
+    env = {**os.environ, "PYTHONPATH": str(root / "src")}
+    probe = (
+        "import sys\n"
+        "import kinsun.config\n"
+        "print('\\n'.join(sorted(m for m in sys.modules if 'psycopg' in m)))\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, f"子行程匯入 config 失敗：{result.stderr}"
+    leaked = result.stdout.split()
+    assert leaked == [], (
+        "import kinsun.config 把資料庫驅動拉進來了，相依鏈又長回來了：\n"
+        + "\n".join(leaked)
+        + "\n\n請找出 config 新增的那條 import，改為只依賴無相依的常數／純函式模組"
+        "（如 kinsun.proactive.constants）。"
+    )
