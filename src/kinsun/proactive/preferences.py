@@ -72,7 +72,9 @@ class PgGreetingPreferenceStore:
 class FakeGreetingPreferenceStore:
     """GreetingPreferenceStore 的記憶體替身（測試用，不碰 DB）。
 
-    以 elder_id 為鍵做 upsert；list_all 依 elder_id 排序，對齊 Pg 的 ORDER BY。
+    以 elder_id 為鍵做 upsert；list_all 依 elder_id 排序。elder_id 為小寫 uuid，
+    故 Python 的 codepoint 排序與 Pg 的 collation 排序一致；若日後 elder_id 改用
+    自由文字，此等價不再成立（大小寫與 `-`／`_` 的次序兩者會分歧）。
     """
 
     def __init__(self) -> None:

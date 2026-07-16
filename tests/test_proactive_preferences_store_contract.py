@@ -22,14 +22,21 @@ def store(request):
     return FakeGreetingPreferenceStore()
 
 
-def _pref(elder_id: str, hour: int = 9, minute: int = 30) -> GreetingPreference:
+def _pref(
+    elder_id: str,
+    hour: int = 9,
+    minute: int = 30,
+    computed_at: float = 1_784_000_000.0,
+    sample_days: int = 7,
+    median_minute_of_day: int = 600,
+) -> GreetingPreference:
     return GreetingPreference(
         elder_id=elder_id,
         hour=hour,
         minute=minute,
-        computed_at=1_784_000_000.0,
-        sample_days=7,
-        median_minute_of_day=600,
+        computed_at=computed_at,
+        sample_days=sample_days,
+        median_minute_of_day=median_minute_of_day,
     )
 
 
@@ -45,10 +52,40 @@ def test_get_for_an_unknown_elder_returns_none(store, ns):
 
 
 def test_save_is_upsert(store, ns):
-    store.save(_pref(f"{ns}e1", hour=8, minute=0))
-    store.save(_pref(f"{ns}e1", hour=10, minute=30))
+    """重算後每一個非鍵欄位都必須被覆蓋，可解釋性欄位不得凍結在第一次的值。
+
+    夜間批次第二次跑，某長輩從 08:00 調成 10:30。若只更新 hour／minute，後台會顯示
+    「憑 7 天資料、中位 600 分算出 10:30」——但 10:30 是另一批資料算的，連
+    computed_at 都還停在當初，看不出這數字多舊。故兩次 save 的五個非鍵欄位全給
+    不同值，逐欄釘死覆蓋行為。
+    """
+    first = _pref(
+        f"{ns}e1",
+        hour=8,
+        minute=0,
+        computed_at=1_784_000_000.0,
+        sample_days=7,
+        median_minute_of_day=600,
+    )
+    second = _pref(
+        f"{ns}e1",
+        hour=10,
+        minute=30,
+        computed_at=1_784_086_400.0,
+        sample_days=14,
+        median_minute_of_day=630,
+    )
+    # 前提：兩者除了 elder_id（衝突鍵）外每欄都不同，否則本測試對該欄沒有鑑別力。
+    assert all(
+        getattr(first, f) != getattr(second, f)
+        for f in ("hour", "minute", "computed_at", "sample_days", "median_minute_of_day")
+    )
+
+    store.save(first)
+    store.save(second)
+
     got = store.get_for_elder(f"{ns}e1")
-    assert (got.hour, got.minute) == (10, 30)
+    assert got == second
     assert len([p for p in store.list_all() if p.elder_id == f"{ns}e1"]) == 1
 
 
