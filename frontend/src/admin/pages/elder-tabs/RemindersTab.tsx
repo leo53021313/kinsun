@@ -1,38 +1,24 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 
-import {
-  type AdminElderReminders,
-  dispatchReminder,
-  getElderReminders,
-  getMeta,
-} from "../../api";
+import { dispatchReminder, getElderReminders, getMeta } from "../../api";
 import { formatTime } from "../../format";
 import { strings } from "../../strings";
+import { useLoadable } from "../../useLoadable";
 
 /** 提醒設定分頁：用藥／回診主檔＋近期發送紀錄；內測模式可立即發送。 */
 export function RemindersTab() {
   const reminders = strings.elderTabs.reminders;
   const { elderId } = useParams<{ elderId: string }>();
-  const [data, setData] = useState<AdminElderReminders | null>(null);
+  const {
+    data,
+    error,
+    reload: load,
+  } = useLoadable(useCallback(() => (elderId ? getElderReminders(elderId) : null), [elderId]));
   const [testing, setTesting] = useState(false);
-  const [error, setError] = useState(false);
+  // notice 與載入無關（它是「已發送」之類的操作回饋），故不收進 hook。
   const [notice, setNotice] = useState("");
 
-  const load = useCallback(() => {
-    if (!elderId) return;
-    // setError(false) 放進成功處理器：開頭的同步 setState 會在 useEffect 中
-    // 觸發連鎖重繪。代價是錯誤橫幅留到成功才消失。
-    getElderReminders(elderId).then(
-      (data) => {
-        setData(data);
-        setError(false);
-      },
-      () => setError(true),
-    );
-  }, [elderId]);
-
-  useEffect(load, [load]);
   useEffect(() => {
     getMeta().then(
       (m) => setTesting(m.internal_testing),
