@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
 import { useParams } from "react-router-dom";
 
-import { type TraceDetail, getTrace } from "../api";
+import { getTrace } from "../api";
 import { formatLatency, formatTime } from "../format";
 import { strings } from "../strings";
+import { useLoadable } from "../useLoadable";
 import { adminTierLabel } from "kinsun-shared/terms";
 
 function StatusBadge({ status }: { status: string }) {
@@ -16,24 +17,19 @@ function StatusBadge({ status }: { status: string }) {
 
 export function TraceDetailPage() {
   const { traceId } = useParams<{ traceId: string }>();
-  const [trace, setTrace] = useState<TraceDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(() => {
-    if (!traceId) return;
-    // setError(null) 放進成功處理器：開頭的同步 setState 會在 useEffect 中
-    // 觸發連鎖重繪。代價是錯誤橫幅留到成功才消失。
-    getTrace(traceId).then(
-      (trace) => {
-        setTrace(trace);
-        setError(null);
-      },
-      (e) =>
-        setError(e?.status === 404 ? strings.trace.notFound : strings.common.loadFailedRefresh),
-    );
-  }, [traceId]);
-
-  useEffect(load, [load]);
+  const {
+    data: trace,
+    error,
+    reload: load,
+  } = useLoadable(
+    useCallback(() => (traceId ? getTrace(traceId) : null), [traceId]),
+    // 錯誤型別由呼叫端決定：本頁要區分 404「查無此筆」與一般失敗，故為字串
+    // 而非其餘六頁的布林。
+    (e: unknown) =>
+      (e as { status?: number })?.status === 404
+        ? strings.trace.notFound
+        : strings.common.loadFailedRefresh,
+  );
 
   if (error) return <p className="error-banner">{error}</p>;
   if (!trace) return <p>{strings.common.loading}</p>;
