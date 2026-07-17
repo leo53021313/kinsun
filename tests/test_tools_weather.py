@@ -2,6 +2,7 @@ import json
 
 from kinsun.tools.weather import WEATHER_SPEC, build_weather_handler
 from kinsun.transport import FakeTransport, Response
+from kinsun.turn_context import elder_utterance
 
 _GEO = {"results": [{"latitude": 25.0, "longitude": 121.5, "name": "Taipei"}]}
 _FC = {
@@ -118,3 +119,65 @@ def test_weather_spec_tells_model_when_to_pass_coords():
     assert "他問的就是所在地的天氣，帶上該座標與地名呼叫，不要多問" in WEATHER_SPEC.description
     assert "不要帶座標" in WEATHER_SPEC.description
     assert "兩者都不知道時，先開口問" in WEATHER_SPEC.description
+
+
+def test_refuses_location_the_elder_never_said():
+    """⚠️ 結構性防線：沒有座標時，地名必須真的來自長輩的原話。
+
+    實測（真 Gemini）：模型不知道長輩在哪時會猜「台北市」去呼叫，工具照查照回，
+    金孫就把台北的天氣報給別處的長輩（4/7）。提示詞在兩處都寫著「不要自行假設
+    台北」，它照做不誤——這不是措辭問題，是模型有能力猜。本防線拿掉它的能力。
+    """
+    urls, transport = _url_recorder()
+
+    with elder_utterance("今天天氣如何？"):
+        out = build_weather_handler(transport)({"location": "台北市"})
+
+    assert not urls, "不該碰任何外部 API"
+    assert "長輩沒有說" in out and "問" in out
+
+
+def test_allows_location_the_elder_said():
+    urls, transport = _url_recorder()
+
+    with elder_utterance("我在台南，今天天氣如何？"):
+        build_weather_handler(transport)({"location": "台南"})
+
+    assert any("geocoding" in u for u in urls)
+
+
+def test_allows_normalised_location_the_elder_said():
+    """長輩說「台北」、模型正規化成「台北市」去查——那是它該做的事（地理編碼
+    只認得完整市名），不可因字尾不同就誤拒。"""
+    urls, transport = _url_recorder()
+
+    with elder_utterance("我在台北，今天天氣如何？"):
+        build_weather_handler(transport)({"location": "台北市"})
+
+    assert any("geocoding" in u for u in urls)
+
+
+def test_coords_bypass_the_utterance_check():
+    """有座標＝手機回報的，本來就不是模型猜的，不需要出現在原話裡。"""
+    urls, transport = _url_recorder()
+
+    with elder_utterance("今天天氣如何？"):
+        build_weather_handler(transport)(
+            {"location": "台南市", "latitude": 22.99, "longitude": 120.21}
+        )
+
+    assert not any("geocoding" in u for u in urls)
+    assert urls, "應直接查預報"
+
+
+def test_no_utterance_context_allows_lookup():
+    """排程端／主動關懷沒有長輩原話（contextvar 為空）：不設限，維持既有行為。
+
+    那條路徑走 generate、根本沒有工具可用（見 agent.py），故不會有人踩到；
+    但若日後有，靜默拒絕比放行更難查。
+    """
+    urls, transport = _url_recorder()
+
+    build_weather_handler(transport)({"location": "台南"})
+
+    assert any("geocoding" in u for u in urls)

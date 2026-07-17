@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import re
 import urllib.parse
 from collections.abc import Callable
 
 from kinsun.llm import ToolSpec
 from kinsun.transport import Transport, UrllibTransport, get_json
+from kinsun.turn_context import current_utterance
 
 # ⚠️ 本描述與 agent.py 的地點三句必須語意一致。Bug 2 的根因就是兩者矛盾：工具
 # 說「不知道地點就先開口問」、system prompt 說「直接用那個地點」，兩段都進模型
@@ -83,6 +85,27 @@ _WMO = {
 }
 
 
+def _is_from_elder(location: str) -> bool:
+    """這個地名是長輩自己說的，還是模型猜的？
+
+    ⚠️ 這道防線是實測逼出來的，不是防禦性程式設計：模型不知道長輩在哪時會猜
+    「台北市」去呼叫，工具照查照回，金孫就把台北的天氣報給別處的長輩（實測 4/7）。
+    提示詞在工具描述與 system prompt 兩處都寫著「不要自行假設台北」，它照做不誤。
+    這不是措辭問題——是模型有能力猜。本函式拿掉它的能力。
+
+    比對前去掉「市／縣／區」字尾：長輩說「台北」，模型會正規化成「台北市」去查
+    （地理編碼只認得完整市名，那是它該做的事），嚴格比對會誤拒。
+
+    原話為空（排程端、主動關懷）時回 True，維持既有行為：那條路徑走 generate、
+    根本沒有工具可用（見 agent.py），不會有人踩到；但若日後有，靜默拒絕比放行難查。
+    """
+    utterance = current_utterance()
+    if not utterance:
+        return True
+    base = re.sub(r"[市縣區]$", "", location)
+    return bool(base) and base in utterance
+
+
 def build_weather_handler(transport: Transport | None = None) -> Callable[[dict], str]:
     http = transport or UrllibTransport()
 
@@ -97,6 +120,12 @@ def build_weather_handler(transport: Transport | None = None) -> Callable[[dict]
         # 答錯，與地理編碼失準同級），卻會擋掉出國的長輩，且驗證失敗也只能說
         # 「查不到」——沒有比現況更好。
         if lat is None or lon is None:
+            # 沒有座標時，地名必須真的來自長輩的原話——否則就是模型自己猜的。
+            if not _is_from_elder(location):
+                return (
+                    "（長輩沒有說要查哪裡，情境也沒有他的位置。"
+                    "請開口問他要查哪個地方，不要自己挑。）"
+                )
             geo = get_json(http, _GEOCODE_URL.format(name=urllib.parse.quote(location)), timeout=10)
             results = geo.get("results") or []
             if not results:
