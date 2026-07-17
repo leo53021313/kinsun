@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from kinsun.llm import LLMClient, Message, ToolResult
 from kinsun.memory.recall import SessionMemory
+from kinsun.turn_context import elder_utterance
 
 SYSTEM_PROMPT = (
     "你是「金孫」，一位溫暖、有耐心的台灣長輩陪伴助理。"
@@ -65,7 +66,11 @@ class CareAgent:
         if self._tools is None:
             reply = self._llm.generate(system_prompt=system_prompt, messages=base)
         else:
-            reply = self._run_tool_loop(system_prompt, base)
+            # 把長輩的原話提供給工具（✅ spec 2026-07-17-天氣地點正確性）：天氣工具
+            # 靠它分辨「長輩說的地點」與「模型自己猜的」。實測顯示模型不知道地點時
+            # 會猜「台北市」去呼叫，而提示詞擋不住——那道防線的上游就在這裡。
+            with elder_utterance(user_text):
+                reply = self._run_tool_loop(system_prompt, base)
         self._session.record_turn(elder_id, user_msg, Message("assistant", reply))
         return reply
 

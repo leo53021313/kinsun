@@ -5,6 +5,8 @@
 
 import { createApiClient } from "kinsun-shared/client";
 import { ApiError } from "kinsun-shared/envelope";
+
+import type { ElderPlace } from "@/lib/location";
 import type {
   AppNotification,
   Appointment,
@@ -107,12 +109,18 @@ export function listNotifications(token: string): Promise<AppNotification[]> {
 export async function postTurn(
   audioUri: string,
   token: string,
-  place = "",
+  place: ElderPlace | null = null,
 ): Promise<TurnReply> {
   const audio = await (await fetch(audioUri)).blob();
-  // 地名走 query param：/turns 收的是裸音檔 body，地名在 body 裡沒有位置可放。
-  // 空字串＝這輪沒有位置（未授權、室內收不到），不帶參數——不是「他不在任何地方」。
-  const query = place ? `?${new URLSearchParams({ location: place })}` : "";
+  // 地名與座標走 query param：/turns 收的是裸音檔 body，它們在 body 裡沒有位置可放。
+  // null＝這輪沒有位置（未授權、室內收不到），不帶參數——不是「他不在任何地方」。
+  const query = place
+    ? `?${new URLSearchParams({
+        location: place.place,
+        latitude: String(place.latitude),
+        longitude: String(place.longitude),
+      })}`
+    : "";
   return request(`/api/v1/turns${query}`, {
     method: "POST",
     body: audio,
