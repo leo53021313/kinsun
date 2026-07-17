@@ -63,4 +63,19 @@ class LocationFacts:
         # 與其讓金孫很有自信地報錯天氣，不如讓它照舊開口問。
         if elapsed > self._stale_after_seconds:
             return None
-        return FactSection(_TITLE, [f"{_relative(elapsed)}在{location.place}"])
+        return FactSection(_TITLE, [self._line(location, elapsed)])
+
+    @staticmethod
+    def _line(location, elapsed: float) -> str:
+        """一行內容：相對時間 ＋ 地名（＋ 座標，若有）。
+
+        座標給天氣工具直接查預報用，跳過地理編碼——Open-Meteo 的台灣地名索引
+        只有 6/22 命中，而手機回報的正是「台南市」這種查不到的字串。
+        地名仍要有：金孫得對長輩說「台南市今天…」。
+
+        座標缺漏（PR #55 寫入的既有列）時退回只給地名，行為等同 PR #55。
+        """
+        base = f"{_relative(elapsed)}在{location.place}"
+        if location.latitude is None or location.longitude is None:
+            return base
+        return f"{base}（查這裡的天氣請用座標 {location.latitude},{location.longitude}）"
