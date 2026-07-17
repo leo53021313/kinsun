@@ -14,7 +14,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { AvatarPlaceholder, type AvatarState } from "@/components/AvatarPlaceholder";
 import { RoleSwitcher } from "@/components/RoleSwitcher";
 import { ApiError, logoutSession, postTurn } from "@/lib/api";
-import { currentPlace } from "@/lib/location";
+import { type ElderPlace, currentPlace } from "@/lib/location";
 import { useSession } from "@/lib/SessionProvider";
 import { strings } from "@/lib/strings";
 import { colors, elder, spacing } from "@/lib/theme";
@@ -32,7 +32,7 @@ export default function ElderTalk() {
   const [micReady, setMicReady] = useState(false);
   // 這輪的取位 promise：錄音開始時發動，送出時才 await（見 startRecording）。
   // 用 ref 而非 state：它的變動不該觸發重繪。
-  const placeRef = useRef<Promise<string> | null>(null);
+  const placeRef = useRef<Promise<ElderPlace | null> | null>(null);
 
   const { loading: sessionLoading, session, signOut } = useSession();
 
@@ -98,7 +98,7 @@ export default function ElderTalk() {
       if (!uri) {
         throw new Error("no recording");
       }
-      const place = await (placeRef.current ?? Promise.resolve(""));
+      const place = await (placeRef.current ?? Promise.resolve(null));
       const reply = await postTurn(uri, session?.token ?? "", place);
       setReplyText(reply.text);
       if (reply.audio_url) {

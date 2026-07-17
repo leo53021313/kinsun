@@ -107,8 +107,14 @@ def _client(svc, *, tts=None, publisher=None, traces=None, locations=None):
     return TestClient(app)
 
 
-def _post_audio(client, token, body=b"\x00fake-audio", *, location=None):
-    params = {} if location is None else {"location": location}
+def _post_audio(client, token, body=b"\x00fake-audio", *, location=None, lat=None, lon=None):
+    params = {}
+    if location is not None:
+        params["location"] = location
+    if lat is not None:
+        params["latitude"] = lat
+    if lon is not None:
+        params["longitude"] = lon
     return client.post(
         "/api/v1/turns",
         content=body,
@@ -194,14 +200,35 @@ def test_turn_rejects_oversized_audio():
     assert res.status_code == 413
 
 
-def test_location_query_param_is_saved():
+def test_location_with_coords_is_saved():
     svc = _service()
     elder, token = _bound_elder_token(svc)
     locations = FakeLocationStore()
-    res = _post_audio(_client(svc, locations=locations), token, location="台南市")
+    res = _post_audio(
+        _client(svc, locations=locations), token, location="台南市", lat=22.99, lon=120.21
+    )
     assert res.status_code == 201
-    saved = locations.get_for_elder(elder.elder_id)
-    assert saved == ElderLocation(elder.elder_id, "台南市", NOW.timestamp())
+    assert locations.get_for_elder(elder.elder_id) == ElderLocation(
+        elder.elder_id, "台南市", NOW.timestamp(), 22.99, 120.21
+    )
+
+
+def test_location_without_coords_does_not_write():
+    # 半套＝沒有：App 要嘛三個都給、要嘛都不給。只有地名沒有座標的分支沒有任何
+    # 呼叫端會產生，接受它只會讓下游多一條沒人走的路。
+    svc = _service()
+    elder, token = _bound_elder_token(svc)
+    locations = FakeLocationStore()
+    _post_audio(_client(svc, locations=locations), token, location="台南市")
+    assert locations.get_for_elder(elder.elder_id) is None
+
+
+def test_coords_without_location_does_not_write():
+    svc = _service()
+    elder, token = _bound_elder_token(svc)
+    locations = FakeLocationStore()
+    _post_audio(_client(svc, locations=locations), token, lat=22.99, lon=120.21)
+    assert locations.get_for_elder(elder.elder_id) is None
 
 
 def test_missing_location_does_not_write():
@@ -218,10 +245,10 @@ def test_blank_location_does_not_clear_existing():
     svc = _service()
     elder, token = _bound_elder_token(svc)
     locations = FakeLocationStore()
-    locations.save(ElderLocation(elder.elder_id, "高雄市", 1752739200.0))
-    _post_audio(_client(svc, locations=locations), token, location="   ")
+    locations.save(ElderLocation(elder.elder_id, "高雄市", 1752739200.0, 22.62, 120.31))
+    _post_audio(_client(svc, locations=locations), token, location="   ", lat=22.99, lon=120.21)
     assert locations.get_for_elder(elder.elder_id) == ElderLocation(
-        elder.elder_id, "高雄市", 1752739200.0
+        elder.elder_id, "高雄市", 1752739200.0, 22.62, 120.31
     )
 
 
