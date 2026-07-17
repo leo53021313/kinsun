@@ -21,9 +21,15 @@ export function TraceDetailPage() {
 
   const load = useCallback(() => {
     if (!traceId) return;
-    setError(null);
-    getTrace(traceId).then(setTrace, (e) =>
-      setError(e?.status === 404 ? strings.trace.notFound : strings.common.loadFailedRefresh),
+    // setError(null) 放進成功處理器：開頭的同步 setState 會在 useEffect 中
+    // 觸發連鎖重繪。代價是錯誤橫幅留到成功才消失。
+    getTrace(traceId).then(
+      (trace) => {
+        setTrace(trace);
+        setError(null);
+      },
+      (e) =>
+        setError(e?.status === 404 ? strings.trace.notFound : strings.common.loadFailedRefresh),
     );
   }, [traceId]);
 
