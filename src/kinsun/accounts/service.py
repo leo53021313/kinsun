@@ -7,7 +7,7 @@ import re
 import secrets
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
 from kinsun.accounts.models import (
@@ -115,20 +115,33 @@ class AccountService:
             ElderGuardian(elder.elder_id, guardian_id, Role.PRIMARY, 1), tx=tx
         )
 
-    def create_elder_for_guardian(self, guardian_id: str, elder_name: str) -> Elder:
+    def create_elder_for_guardian(
+        self, guardian_id: str, elder_name: str, nickname: str = ""
+    ) -> Elder:
         """為既有家屬（App 認證）建長輩檔並掛 PRIMARY 關聯。"""
-        elder = Elder(self._new_id(), elder_name)
+        elder = Elder(self._new_id(), elder_name, nickname=nickname)
         with self._repo.transaction() as tx:
             self._save_new_elder(elder, guardian_id, tx)
         return elder
 
-    def create_elder(self, guardian_line_id: str, guardian_name: str, elder_name: str) -> Elder:
+    def create_elder(
+        self, guardian_line_id: str, guardian_name: str, elder_name: str, nickname: str = ""
+    ) -> Elder:
         """LINE（LIFF）路徑：家屬可能尚無紀錄，同交易建家屬＋長輩。"""
-        elder = Elder(self._new_id(), elder_name)
+        elder = Elder(self._new_id(), elder_name, nickname=nickname)
         with self._repo.transaction() as tx:
             guardian = self._guardian_for(guardian_line_id, guardian_name, tx=tx)
             self._save_new_elder(elder, guardian.guardian_id, tx)
         return elder
+
+    def set_elder_nickname(self, elder_id: str, nickname: str) -> Elder:
+        """家屬補設／更改稱謂（空字串＝清除，情境注入退回名字保底）。"""
+        elder = self._repo.get_elder(elder_id)
+        if elder is None:
+            raise AppAccountError("elder_not_found")
+        updated = replace(elder, nickname=nickname)
+        self._repo.save_elder(updated)
+        return updated
 
     def generate_invite(self, elder_id: str, role: InviteRole, *, tx=None) -> Invite:
         expires_at = (self._clock() + timedelta(hours=self._ttl_hours)).timestamp()

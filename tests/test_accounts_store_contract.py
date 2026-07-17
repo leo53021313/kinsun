@@ -247,3 +247,15 @@ def test_get_elder_account_by_elder_id(store, ns):
     assert got is not None
     assert got.phone == f"{ns}0912345678"
     assert store.get_elder_account(f"{ns}nobody") is None
+
+
+def test_elder_nickname_roundtrip_and_upsert(store, ns):
+    """稱謂欄位（2026-07-17）：round-trip 保值、save 為 upsert 語意可更新。"""
+    store.save_elder(Elder(f"{ns}e-nick", "王秀英", nickname="秀英阿嬤"))
+    assert store.get_elder(f"{ns}e-nick").nickname == "秀英阿嬤"
+
+    store.save_elder(Elder(f"{ns}e-nick", "王秀英", nickname="秀英姨"))
+    assert store.get_elder(f"{ns}e-nick").nickname == "秀英姨"
+
+    store.save_elder(Elder(f"{ns}e-plain", "陳阿土"))
+    assert store.get_elder(f"{ns}e-plain").nickname == ""
