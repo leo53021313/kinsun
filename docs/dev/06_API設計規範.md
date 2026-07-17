@@ -1,6 +1,6 @@
 # API 設計規範 - 金孫 KinSun
 
-> **版本:** v1.1 | **更新:** 2026-07-17 | **狀態:** ✅ 定稿（契約已拍板 D-23～D-29；/v1 已全面落地）
+> **版本:** v1.2 | **更新:** 2026-07-17 | **狀態:** ✅ 定稿（契約已拍板 D-23～D-29；/v1 已全面落地）
 > **基準:** as-is（現行 22 端點實證）＋ to-be（/v1 契約）。命名規則以 AGENTS.md 為準。
 > DGX 服務認證與速率限制 → 13_安全循環；`admin api disabled` 503 措辭一併列 13。
 
@@ -123,7 +123,8 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | as-is | to-be | 說明 |
 | :--- | :--- | :--- |
 | `GET /api/me/elders` | `GET /api/v1/elders` | 列登入家屬管理的長輩（✅ D-28 改名） |
-| `POST /api/elders` | `POST /api/v1/elders` | 建長輩＋首綁邀請碼；payload 三端統一 `{name}`（✅ 庚-29——LIFF 家屬名改由後端取 ID token 顯示名稱，前端不再自送 guardian_name） |
+| `POST /api/elders` | `POST /api/v1/elders` | 建長輩＋首綁邀請碼；payload `{name, nickname?}`（✅ 庚-29——LIFF 家屬名改由後端取 ID token 顯示名稱，前端不再自送 guardian_name；nickname＝稱謂選填 ≤50 字，2026-07-17）；列表與建立回應皆含 `nickname` |
+| —（新增） | `PUT /api/v1/elders/{elder_id}/profile` | 家屬補設／更改稱謂（2026-07-17）：payload `{nickname}`（≤50 字，空字串＝清除）；PUT＝upsert；未管理 404 |
 | `POST /api/elders/{elder_id}/guardian-invites` | `POST /api/v1/elders/{elder_id}/guardian-invites` | 產家屬邀請碼 |
 | `GET|POST /api/elders/{elder_id}/medications`、`PUT|DELETE .../{medication_id}` | 同路徑掛 `/api/v1/` | 用藥 CRUD |
 | `GET|POST /api/elders/{elder_id}/appointments`、`PUT|DELETE .../{appointment_id}` | 同路徑掛 `/api/v1/` | 回診 CRUD；payload `{date, label, time}`，`time` 選填 HH:MM（✅ 庚-15，空＝未指定、提醒不帶時間） |
@@ -192,3 +193,4 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | :--- | :--- | :--- |
 | v1.0 | 2026-07-08 | 初版：D-23～D-29 契約定稿 |
 | v1.1 | 2026-07-17 | turns 補位置三參數（location／latitude／longitude 模糊座標，三者齊備才寫入）；追認 7/12–7/14 已回填而未升版的內容（sessions/all、内測端點、守則端點、錯誤碼中央註冊等） |
+| v1.2 | 2026-07-17 | 稱謂欄位（elders.nickname）：POST /elders 收選填 nickname、GET /elders 回傳 nickname、新增 PUT /elders/{elder_id}/profile 補設稱謂 |

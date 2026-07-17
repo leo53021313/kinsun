@@ -16,6 +16,7 @@ import pytest
 
 import kinsun.scheduler.worker as worker
 from kinsun.accounts.models import PrincipalType
+from kinsun.agent import Recall
 from kinsun.config import load_settings
 from kinsun.proactive.greeting_time import update_greeting_time as _real_update_greeting_time
 from kinsun.proactive.preferences import FakeGreetingPreferenceStore, GreetingPreference
@@ -133,14 +134,16 @@ def _fake_core(
         ),
         # 兩根共用收進 Core（✅ 庚-44）。
         risk_events=SimpleNamespace(list_for_elder=lambda elder_id: []),
-        summaries=SimpleNamespace(save=lambda *a, **k: None),
+        # get_for_date：主動推播讀「她上次開口那天」的摘要當檢索關鍵字＋注入
+        # （spec 2026-07-17）。預設回 None＝那天沒摘要，主動推播據此退回無脈絡行為。
+        summaries=SimpleNamespace(save=lambda *a, **k: None, get_for_date=lambda *a, **k: None),
         notifications=object(),
         # 每晚反思寫入端（spec 2026-07-14）：worker 應取用 Core 現成的 store，不自建。
         strategies=SimpleNamespace(
             list_for_elder=lambda elder_id, status=None: [],
             record=lambda *a, **k: None,
         ),
-        agent=SimpleNamespace(proactive=lambda elder_id, intent: f"主動：{intent}"),
+        agent=SimpleNamespace(proactive=lambda elder_id, intent, *, recall=None: f"主動：{intent}"),
     )
 
 
@@ -150,6 +153,11 @@ def _settings(**overrides):
 
 def _clock() -> datetime:
     return datetime(2026, 7, 10, 9, 0, tzinfo=ZoneInfo("Asia/Taipei"))
+
+
+def _ts(year: int, month: int, day: int) -> float:
+    """那天早上 9 點的 epoch 秒——當 last_active（她最後開口的時刻）用。"""
+    return datetime(year, month, day, 9, 0, tzinfo=ZoneInfo("Asia/Taipei")).timestamp()
 
 
 def _build(monkeypatch, settings, **core_kwargs):
@@ -485,8 +493,123 @@ def test_greeting_pushes_and_records_reminder_log(monkeypatch):
     )
     _job(scheduler, "daily-greeting").run()
     assert [(pt, pid) for pt, pid, _ in router.sent] == [(PrincipalType.ELDER, "e1")]
-    assert worker.GREETING_INTENT in router.sent[0][2]
+    from kinsun.proactive.jobs import GREETING_INTENT
+
+    assert GREETING_INTENT in router.sent[0][2]
+    assert "星期" in router.sent[0][2]  # intent 織入日期素材（2026-07-17 問候多樣性）
     assert reminder_logs.recorded == [("e1", "proactive-greeting", router.sent[0][2])]
+
+
+def test_greeting_carries_summary_of_the_day_she_last_spoke(monkeypatch):
+    """問候前先讀「她上次開口那天」的摘要餵給 agent（spec 2026-07-17）。
+
+    _clock() 是 2026-07-10；她昨天（07-09）講過話，故讀 07-09 的摘要、距今 1 天。
+    刻意不用「今天減一天」定位：她可能好幾天沒開口（見下一條），那時昨天的摘要
+    若存在也只是金孫自言自語的紀錄——主動推播每天都會寫 assistant turn。
+    """
+    calls: list[tuple[str, object]] = []
+    scheduler, core = _build(
+        monkeypatch, _settings(), elders=["e1"], last_active=lambda elder_id: _ts(2026, 7, 9)
+    )
+    core.summaries.get_for_date = lambda elder_id, date: SimpleNamespace(
+        content=f"{elder_id} 在 {date} 聊到孫子"
+    )
+    core.agent.proactive = lambda elder_id, intent, *, recall=None: (
+        calls.append((elder_id, recall)) or "阿嬤早"
+    )
+
+    _job(scheduler, "daily-greeting").run()
+
+    assert calls == [("e1", Recall("e1 在 2026-07-09 聊到孫子", 1))]
+
+
+def test_recall_reaches_back_to_her_last_spoken_day_not_yesterday(monkeypatch):
+    """她五天沒開口：要拿的是 07-05（她最後講話那天）的摘要，並告知已隔 5 天。
+
+    這是真 Gemini 探針揪出的設計錯：想念推播的觸發條件是「≥2 天沒開口」，與
+    「昨天有她的對話」互斥——照昨天去讀，這條路永遠是 None，等於沒修。
+    """
+    calls: list[object] = []
+    asked: list[str] = []
+    scheduler, core = _build(
+        monkeypatch, _settings(), elders=["e1"], last_active=lambda elder_id: _ts(2026, 7, 5)
+    )
+
+    def _summary(elder_id, date):
+        asked.append(date)
+        return SimpleNamespace(content="阿嬤聊到孫子要來")
+
+    core.summaries.get_for_date = _summary
+    core.agent.proactive = lambda elder_id, intent, *, recall=None: (
+        calls.append(recall) or "阿嬤，好久沒聽到您的聲音了"
+    )
+
+    _job(scheduler, "inactivity-care").run()
+
+    assert asked == ["2026-07-05"]
+    assert calls == [Recall("阿嬤聊到孫子要來", 5)]
+
+
+def test_recall_is_none_when_she_has_never_spoken(monkeypatch):
+    """新長輩：沒有 last_active 就無從定位摘要日，退回無脈絡問候。"""
+    calls: list[object] = []
+    scheduler, core = _build(monkeypatch, _settings(), elders=["e1"])  # last_active 預設 None
+
+    def _never_called(elder_id, date):
+        raise AssertionError("沒有 last_active 就不該去查摘要")
+
+    core.summaries.get_for_date = _never_called
+    core.agent.proactive = lambda elder_id, intent, *, recall=None: calls.append(recall) or "阿嬤早"
+
+    _job(scheduler, "daily-greeting").run()
+
+    assert calls == [None]
+
+
+def test_inactivity_care_carries_recall_too(monkeypatch):
+    """想念推播與問候共用同一條推播路徑，一起吃到脈絡（Leo 核定：兩個一起修）。
+
+    「想念你」這種話比問候更需要記得她上次講什麼，否則更像罐頭。
+    """
+    calls: list[tuple[str, object]] = []
+    scheduler, core = _build(
+        monkeypatch, _settings(), elders=["e1"], last_active=lambda elder_id: _ts(2026, 7, 5)
+    )
+    core.summaries.get_for_date = lambda elder_id, date: SimpleNamespace(content="她提到膝蓋痛")
+    core.agent.proactive = lambda elder_id, intent, *, recall=None: (
+        calls.append((intent, recall)) or "阿嬤，好幾天沒聽到您的聲音了"
+    )
+
+    _job(scheduler, "inactivity-care").run()
+
+    assert calls == [(worker.INACTIVITY_INTENT, Recall("她提到膝蓋痛", 5))]
+
+
+def test_greeting_survives_summary_read_failure(monkeypatch, caplog):
+    """摘要讀取失敗只能降級成沒有脈絡，不可擋下問候。
+
+    與既有的問候偏好讀取失敗同向（jobs.py）：降級成本功能之前的行為，
+    比整批長輩沒人理她好。
+    """
+    router = _SpyRouter()
+    scheduler, core = _build(
+        monkeypatch,
+        _settings(),
+        elders=["e1"],
+        router=router,
+        last_active=lambda elder_id: _ts(2026, 7, 9),
+    )
+
+    def _boom(elder_id, date):
+        raise RuntimeError("摘要表掛了")
+
+    core.summaries.get_for_date = _boom
+
+    with caplog.at_level(logging.WARNING):
+        _job(scheduler, "daily-greeting").run()  # 不應拋出
+
+    assert [(pt, pid) for pt, pid, _ in router.sent] == [(PrincipalType.ELDER, "e1")]
+    assert any("摘要讀取失敗" in r.getMessage() for r in caplog.records)
 
 
 def test_it_does_not_greet_her_twice_in_the_same_day(monkeypatch):

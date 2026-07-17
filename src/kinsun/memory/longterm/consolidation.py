@@ -57,7 +57,9 @@ def run_consolidation(
             continue
         turns = short_term.list_for_range(elder_id, start=day_start, end=day_start + _DAY_SECONDS)
         if turns:
-            long_term.add(elder_id, turns, provenance=provenance.SELF_CLAIMED)
+            # occurred_on 帶對話日：mem0 的 created_at 記的是此刻（凌晨 3 點），
+            # 內容卻是 day 那天的對話——不明著傳，記憶的日期就會晚一天。
+            long_term.add(elder_id, turns, provenance=provenance.SELF_CLAIMED, occurred_on=day)
             total += len(turns)
         log.record(elder_id, day, turn_count=len(turns))
     return total

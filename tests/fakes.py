@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 from kinsun.accounts.store import FakeAccountStore as FakeAccountStore
 from kinsun.appointments.store import FakeAppointmentStore as FakeAppointmentStore
 from kinsun.binding.session import FakeBindingSessionStore as FakeBindingSessionStore
@@ -26,15 +28,29 @@ from kinsun.scheduler.state import FakeScheduleStateStore as FakeScheduleStateSt
 from kinsun.strategies.store import FakeStrategyStore as FakeStrategyStore
 
 
+class AddedMemory(NamedTuple):
+    """FakeLongTermStore 收到的一次 add；具名以免呼叫端寫 `_, msgs, _, _` 這種位置解構。"""
+
+    elder_id: str
+    messages: list[Message]
+    provenance: str
+    occurred_on: str | None
+
+
 class FakeLongTermStore:
     def __init__(self, memories: list[MemoryItem] | None = None) -> None:
-        self.added: list[tuple[str, list[Message], str]] = []
+        self.added: list[AddedMemory] = []
         self._memories = list(memories or [])
 
     def add(
-        self, elder_id: str, messages: list[Message], *, provenance: str = "self_claimed"
+        self,
+        elder_id: str,
+        messages: list[Message],
+        *,
+        provenance: str = "self_claimed",
+        occurred_on: str | None = None,
     ) -> None:
-        self.added.append((elder_id, list(messages), provenance))
+        self.added.append(AddedMemory(elder_id, list(messages), provenance, occurred_on))
 
     def search(self, elder_id: str, query: str, *, top_k: int = 5) -> list[MemoryItem]:
         return list(self._memories)

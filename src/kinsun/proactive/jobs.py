@@ -15,6 +15,23 @@ logger = logging.getLogger("kinsun.proactive")
 GREETING_INTENT = "早安問候，關心長者今天的狀況"
 INACTIVITY_INTENT = "長者已經一段時間沒有互動了，主動表達想念與關心"
 
+
+def greeting_intent(now: datetime) -> str:
+    """早安問候的 intent 織入日期素材（2026-07-17 全功能測試）。
+
+    固定 intent 天天餵，開場白也天天同一句——實測 4 次有 3 次逐字相同
+    （「阿公早安，今天精神有沒有比較好？早餐吃了嗎？」）。日期與星期是
+    每天必然不同的素材，給了模型才換得動話題；問候路徑已可走工具迴圈
+    （agent.proactive），情境有定位座標時可順道報當地天氣。
+    """
+    weekday = "一二三四五六日"[now.weekday()]
+    return (
+        f"{GREETING_INTENT}。今天是 {now.month} 月 {now.day} 日、星期{weekday}，"
+        "開場可以自然帶到今天的日子或這天的安排，不要每天都用同一句問候；"
+        "情境若附上她目前的位置座標，可以先用天氣工具查當地天氣，順口提醒一句。"
+    )
+
+
 # 每半小時掃描一次；偏好時間對齊半點（見 proactive/constants.py 的 SLOT_MINUTES），
 # 兩者必須一致。
 GREETING_SCAN_CRON = "0,30 * * * *"
