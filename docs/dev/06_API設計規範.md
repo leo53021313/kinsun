@@ -1,6 +1,6 @@
 # API 設計規範 - 金孫 KinSun
 
-> **版本:** v1.0 | **更新:** 2026-07-08 | **狀態:** ✅ 定稿（契約已拍板 D-23～D-29，程式碼落地列 16_WBS）
+> **版本:** v1.1 | **更新:** 2026-07-17 | **狀態:** ✅ 定稿（契約已拍板 D-23～D-29；/v1 已全面落地）
 > **基準:** as-is（現行 22 端點實證）＋ to-be（/v1 契約）。命名規則以 AGENTS.md 為準。
 > DGX 服務認證與速率限制 → 13_安全循環；`admin api disabled` 503 措辭一併列 13。
 
@@ -141,7 +141,7 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | `POST /api/app/device-bindings` | `POST /api/v1/device-bindings` | 長輩裝置綁定（PROXY 同意留痕；首次配對必經；僅收長輩綁定碼——家屬邀請碼回 409 invite_wrong_role，庚-04／A-46，2026-07-12） |
 | —（新增） | `PUT /api/v1/elders/{elder_id}/account` | ✅ D-71（己-6）：家屬代辦長輩帳密（帳號＝手機號碼；PUT＝重設）；invalid_phone 400／phone_taken 409 |
 | —（新增） | `POST /api/v1/elder-sessions` | ✅ D-71（己-6）：長輩帳密登入（只管重登；未配對 403 not_paired）；納 D-58 節流 |
-| `POST /api/app/turns` | `POST /api/v1/turns` | 對講機回合（raw body 音檔；上限 env 化 D-26） |
+| `POST /api/app/turns` | `POST /api/v1/turns` | 對講機回合（raw body 音檔；上限 env 化 D-26）。選填 query：`location`＋`latitude`＋`longitude`（長輩地名＋模糊座標，App 端已四捨五入至 0.01 度；**三者齊備才寫入** `elder_locations`，寫入排在 dispatch 之前，缺任一即忽略、不清空既有值——spec 2026-07-17 長輩目前地點） |
 | `current_app_guardian` 屬性 | **刪除** | 死碼（D-28） |
 
 ### 觀測後台（tags: admin）
@@ -191,3 +191,4 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | 版本 | 日期 | 變更 |
 | :--- | :--- | :--- |
 | v1.0 | 2026-07-08 | 初版：D-23～D-29 契約定稿 |
+| v1.1 | 2026-07-17 | turns 補位置三參數（location／latitude／longitude 模糊座標，三者齊備才寫入）；追認 7/12–7/14 已回填而未升版的內容（sessions/all、内測端點、守則端點、錯誤碼中央註冊等） |

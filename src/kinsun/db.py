@@ -170,14 +170,29 @@ GREETING_PREFERENCES_DDL = (
 )
 
 # 長輩目前地點（spec 2026-07-17）：一位長輩一列、覆寫式，不留行蹤軌跡。
-# 只存地名不存座標。elder_id 為天然唯一鍵，直接當主鍵（比照 greeting_preferences）。
-# 全新的表：既有庫沒有舊資料要升級，CREATE TABLE IF NOT EXISTS 在新舊庫結果相同，
-# 故不需 ALTER 補欄位、在 ensure_schema 裡也沒有排序約束。
+# elder_id 為天然唯一鍵，直接當主鍵（比照 greeting_preferences）。
 # 不建額外索引：主鍵即唯一查詢維度。
+# ⚠️ 座標欄位不在此處——本表已於 PR #55 上線，見下方 MIGRATION_DDL。
 ELDER_LOCATIONS_DDL = (
     "CREATE TABLE IF NOT EXISTS elder_locations ("
     "elder_id TEXT PRIMARY KEY, place TEXT NOT NULL, "
     "recorded_at DOUBLE PRECISION NOT NULL);"
+)
+
+# 模糊座標（spec 2026-07-17-天氣地點正確性）：手機端四捨五入到 0.01 度（約 1.1
+# 公里）後上傳，天氣工具直接拿去查預報、跳過地理編碼——Open-Meteo 的台灣地名
+# 索引只有 6/22 縣市命中，而手機回報的正是「台南市」這種查不到的字串。
+#
+# ⚠️ 既有庫的 elder_locations 早已存在（PR #55 今早合併），CREATE TABLE IF NOT
+# EXISTS 對它是 no-op、不會生出座標欄；故新欄位必須獨立以 ALTER 補（把欄位加進
+# ELDER_LOCATIONS_DDL 只有新庫吃得到，既有庫永遠缺欄位、線上炸 UndefinedColumn）。
+# ensure_schema 裡本段須排在 ELDER_LOCATIONS_DDL 之後——新庫要先有表才 ALTER 得動。
+#
+# NULL＝我們不知道它在哪（PR #55 寫入的既有列即此情形），語意正確；LocationFacts
+# 讀到 NULL 時退回只注入地名。
+ELDER_LOCATIONS_COORDS_MIGRATION_DDL = (
+    "ALTER TABLE elder_locations ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION;"
+    "ALTER TABLE elder_locations ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;"
 )
 
 # 提醒回應訊號（spec 2026-07-14）：長輩在提醒發出後的時間窗內有發言即標記。
@@ -379,6 +394,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(STRATEGIES_DDL)
         conn.execute(GREETING_PREFERENCES_DDL)
         conn.execute(ELDER_LOCATIONS_DDL)
+        conn.execute(ELDER_LOCATIONS_COORDS_MIGRATION_DDL)
         conn.execute(REMINDER_LOGS_RESPONDED_MIGRATION_DDL)
         conn.execute(RISK_NOTIFICATION_LOGS_DDL)
         conn.execute(APP_NOTIFICATIONS_DDL)
