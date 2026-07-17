@@ -201,3 +201,87 @@ def test_list_for_elder_survives_mem0_failure():
     """觀測讀取失敗不可影響服務：退化為空清單。"""
     mem = _ListableMem0(raise_on_get_all=True)
     assert Mem0LongTermStore(mem).list_for_elder("e1") == []
+
+
+def test_add_records_conversation_day_in_metadata():
+    """整理批次凌晨 3 點寫昨天的對話：mem0 的 created_at 記今天，與內容不同日。
+
+    對話日只有呼叫端知道，故必須明著傳進來存進 metadata（spec 2026-07-17）。
+    """
+    mem = _FakeMem0()
+    store = Mem0LongTermStore(mem)
+
+    store.add("sess1", [Message("user", "昨天聊的")], occurred_on="2026-07-09")
+
+    _, _, metadata = mem.added[0]
+    assert metadata == {"provenance": "self_claimed", "occurred_on": "2026-07-09"}
+
+
+def test_search_date_is_conversation_day_not_write_time():
+    mem = _FakeMem0(
+        search_return={
+            "results": [
+                {
+                    "memory": "孫子週末要來",
+                    "created_at": "2026-07-10T03:00:00+08:00",  # 整理批次的寫入時刻
+                    "metadata": {"provenance": "self_claimed", "occurred_on": "2026-07-09"},
+                }
+            ]
+        }
+    )
+
+    item = Mem0LongTermStore(mem).search("sess1", "孫子")[0]
+
+    assert item.date == "2026-07-09"  # 她講這話的那天，不是系統寫檔的那天
+
+
+def test_search_date_falls_back_to_created_at_for_legacy_items():
+    """本功能之前寫入的記憶沒有 occurred_on，維持舊行為。
+
+    刻意不回推「created_at 減一天」：補整理批次會在同一時刻寫入多個不同的對話日，
+    減一天對它們是錯的——寧可沿用舊值（晚一天），不可換成另一個錯的值。
+    """
+    mem = _FakeMem0(
+        search_return={
+            "results": [
+                {"memory": "舊記憶", "created_at": "2026-07-04T02:30:41+00:00", "metadata": {}}
+            ]
+        }
+    )
+
+    assert Mem0LongTermStore(mem).search("sess1", "x")[0].date == "2026-07-04"
+
+
+def test_search_orders_catchup_batch_by_conversation_day():
+    """停機補整理（庚-06）：多個對話日在同一批次寫入，created_at 只差幾毫秒。
+
+    此時只有對話日能定序。prompt 明著跟模型說記憶「已由新到舊排列」，排錯＝騙它。
+    """
+    mem = _FakeMem0(
+        search_return={
+            "results": [
+                {
+                    "id": "a",
+                    "memory": "六月26 的事",
+                    "created_at": "2026-07-10T03:00:00+08:00",
+                    "metadata": {"occurred_on": "2026-06-26"},
+                },
+                {
+                    "id": "b",
+                    "memory": "六月28 的事",
+                    "created_at": "2026-07-10T03:00:01+08:00",
+                    "metadata": {"occurred_on": "2026-06-28"},
+                },
+                {
+                    "id": "c",
+                    "memory": "六月27 的事",
+                    "created_at": "2026-07-10T03:00:02+08:00",  # 寫入序與對話序刻意相反
+                    "metadata": {"occurred_on": "2026-06-27"},
+                },
+            ]
+        }
+    )
+
+    items = Mem0LongTermStore(mem).search("sess1", "x")
+
+    assert [i.date for i in items] == ["2026-06-28", "2026-06-27", "2026-06-26"]

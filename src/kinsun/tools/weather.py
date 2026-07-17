@@ -38,6 +38,50 @@ WEATHER_SPEC = ToolSpec(
     },
 )
 
+# 台灣 22 縣市 → 約略座標（縣市政府所在地）。為什麼查表而不修地理編碼：
+# Open-Meteo 的台灣索引用「臺」且多數縣市只收不帶字尾的形式，實測 22 縣市僅 6 個
+# 命中（見下方 _GEOCODE_URL 註解）——長輩明說「高雄」金孫也只能回「查不到」
+# （2026-07-17 全功能測試實測）。縣市是封閉集合，查表沒有「新竹縣命中屏東新竹村」
+# 的同名誤中風險；鄉鎮與其他地名仍走地理編碼。鍵一律「台」寫法，查表前先正規化。
+_COUNTY_COORDS = {
+    "台北市": (25.04, 121.56),
+    "新北市": (25.01, 121.46),
+    "基隆市": (25.13, 121.74),
+    "桃園市": (24.99, 121.30),
+    "新竹市": (24.80, 120.97),
+    "新竹縣": (24.84, 121.01),
+    "苗栗縣": (24.56, 120.82),
+    "台中市": (24.14, 120.68),
+    "彰化縣": (24.08, 120.54),
+    "南投縣": (23.91, 120.66),
+    "雲林縣": (23.71, 120.43),
+    "嘉義市": (23.48, 120.45),
+    "嘉義縣": (23.46, 120.29),
+    "台南市": (22.99, 120.21),
+    "高雄市": (22.63, 120.30),
+    "屏東縣": (22.68, 120.49),
+    "宜蘭縣": (24.75, 121.75),
+    "花蓮縣": (23.98, 121.60),
+    "台東縣": (22.76, 121.14),
+    "澎湖縣": (23.57, 119.58),
+    "金門縣": (24.44, 118.32),
+    "連江縣": (26.16, 119.95),
+}
+
+
+def _county_coords(location: str) -> tuple[float, float] | None:
+    """縣市名 → 座標；查不到回 None（交給地理編碼）。
+
+    裸名（「新竹」「嘉義」）補字尾時「市」優先於「縣」：長輩口語的「新竹」
+    多指市區；帶字尾的完整名稱永遠精確命中，不受此順序影響。
+    """
+    name = location.replace("臺", "台").strip()
+    for candidate in (name, f"{name}市", f"{name}縣"):
+        if candidate in _COUNTY_COORDS:
+            return _COUNTY_COORDS[candidate]
+    return None
+
+
 # ⚠️ countryCode=TW 不可拿掉：沒有它，「台南」會命中中國山西省的台南
 # （35.56, 113.14），金孫會用山西的氣溫回答問台南天氣的長輩。
 #
@@ -96,12 +140,13 @@ def _is_from_elder(location: str) -> bool:
     比對前去掉「市／縣／區」字尾：長輩說「台北」，模型會正規化成「台北市」去查
     （地理編碼只認得完整市名，那是它該做的事），嚴格比對會誤拒。
 
-    原話為空（排程端、主動關懷）時回 True，維持既有行為：那條路徑走 generate、
-    根本沒有工具可用（見 agent.py），不會有人踩到；但若日後有，靜默拒絕比放行難查。
+    原話為空（主動問候路徑，2026-07-17 起走工具迴圈）時回 False：問候時長輩
+    根本沒開口，任何無座標的地名必然是模型自選的——放行等於在問候裡跟台南
+    阿嬤報台北的天氣。座標路徑（LocationFacts 注入的手機回報）不經本函式。
     """
     utterance = current_utterance()
     if not utterance:
-        return True
+        return False
     base = re.sub(r"[市縣區]$", "", location)
     return bool(base) and base in utterance
 
@@ -126,11 +171,17 @@ def build_weather_handler(transport: Transport | None = None) -> Callable[[dict]
                     "（長輩沒有說要查哪裡，情境也沒有他的位置。"
                     "請開口問他要查哪個地方，不要自己挑。）"
                 )
-            geo = get_json(http, _GEOCODE_URL.format(name=urllib.parse.quote(location)), timeout=10)
-            results = geo.get("results") or []
-            if not results:
-                return f"查不到「{location}」這個地點的天氣。"
-            lat, lon = results[0]["latitude"], results[0]["longitude"]
+            county = _county_coords(location)
+            if county:
+                lat, lon = county
+            else:
+                geo = get_json(
+                    http, _GEOCODE_URL.format(name=urllib.parse.quote(location)), timeout=10
+                )
+                results = geo.get("results") or []
+                if not results:
+                    return f"查不到「{location}」這個地點的天氣。"
+                lat, lon = results[0]["latitude"], results[0]["longitude"]
         fc = get_json(http, _FORECAST_URL.format(lat=lat, lon=lon), timeout=10)
         current = fc.get("current") or {}
         daily = fc.get("daily") or {}
