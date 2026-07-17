@@ -72,17 +72,20 @@ def create_app_turns_router(
     make_id = new_id or (lambda: uuid.uuid4().hex)
     now = clock or (lambda: datetime.now(UTC))
 
-    def _save_location(elder_id: str, place: str) -> None:
-        """記下長輩這輪回報的地點。⚠️ 只收地名，不收也不記座標。
+    def _save_location(elder_id: str, place: str, lat: float | None, lon: float | None) -> None:
+        """記下長輩這輪回報的地點與模糊座標（約 0.01 度／1.1 公里，手機端已捨去精度）。
 
-        空字串／純空白＝「這輪沒有位置」（未授權、室內收不到），**不是**「他不在
-        任何地方」——故不寫入也不清空既有資料。
+        三者必須同時具備才寫入：只有地名沒座標（或反之）視同「這輪沒有位置」。
+        App 要嘛三個都給、要嘛都不給；接受半套只會讓下游多一條沒人走的分支。
+
+        空字串／純空白的地名＝「這輪沒有位置」（未授權、室內收不到），**不是**
+        「他不在任何地方」——故不寫入也不清空既有資料。
         """
         place = place.strip()
-        if locations is None or not place:
+        if locations is None or not place or lat is None or lon is None:
             return
         try:
-            locations.save(ElderLocation(elder_id, place, now().timestamp()))
+            locations.save(ElderLocation(elder_id, place, now().timestamp(), lat, lon))
         except Exception:  # noqa: BLE001 - 位置是加分項，寫入失敗不可中斷對話
             logger.warning("長輩地點寫入失敗")
 
@@ -104,7 +107,11 @@ def create_app_turns_router(
 
     @router.post("/turns", status_code=201)
     async def create_turn(
-        request: Request, location: str = "", elder_id: str = Depends(current_elder)
+        request: Request,
+        location: str = "",
+        latitude: float | None = None,
+        longitude: float | None = None,
+        elder_id: str = Depends(current_elder),
     ) -> dict:
         # 往返延遲起點（✅ D-05 戊-2）：請求進入處理的時刻，與 dispatch 的預設
         # timer（time.monotonic）同源；涵蓋收音檔、進站上傳與整段管線。
@@ -123,7 +130,7 @@ def create_app_turns_router(
         # ⚠️ 必須排在 dispatch 之前：長輩這句話問的就是天氣時，這一輪就得用得到；
         # 排在後面等於永遠慢一輪——而「慢一輪」在對講機上的表現就是他問第一次
         # 還是被反問，功能等於沒做。
-        _save_location(elder_id, location)
+        _save_location(elder_id, location, latitude, longitude)
         collector = _TurnCollector()
         msg = InboundMessage(
             Channel.APP,
