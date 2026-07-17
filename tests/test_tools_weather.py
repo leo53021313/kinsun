@@ -37,3 +37,23 @@ def test_handler_empty_location():
 def test_handler_location_not_found():
     out = build_weather_handler(_transport({"results": []}, _FC))({"location": "不存在地"})
     assert "查不到" in out
+
+
+def test_geocode_request_is_limited_to_taiwan():
+    """⚠️ Bug 1：地理編碼未限定國家時，「台南」會命中中國山西省的台南
+    （35.56, 113.14），金孫會用山西的氣溫回答問台南天氣的長輩，語氣毫無遲疑。
+
+    寧可答不出來，不可答錯——限定 TW 後命中率會下降（實測全台 22 縣市僅 6 個
+    查得到），但錯答無法補救、查不到至少誠實。
+    """
+    urls: list[str] = []
+
+    def handler(method, url, data):
+        urls.append(url)
+        payload = _GEO if "geocoding" in url else _FC
+        return Response(200, {}, json.dumps(payload).encode())
+
+    build_weather_handler(FakeTransport(handler=handler))({"location": "台南"})
+
+    geocode_url = next(u for u in urls if "geocoding" in u)
+    assert "countryCode=TW" in geocode_url

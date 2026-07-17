@@ -22,8 +22,19 @@ WEATHER_SPEC = ToolSpec(
     },
 )
 
+# ⚠️ countryCode=TW 不可拿掉：沒有它，「台南」會命中中國山西省的台南
+# （35.56, 113.14），金孫會用山西的氣溫回答問台南天氣的長輩。
+#
+# 代價是命中率低——實測全台 22 縣市只有 6 個查得到（Open-Meteo 的台灣地名索引
+# 用「臺」不用「台」、且多數縣市只收錄不帶「市／縣」字尾的形式）。刻意不做
+# 多變體 fallback 去提高命中率：實測「新竹縣」會因此命中屏東的一個「新竹」村
+# （22.46, 120.47），而新竹市在 24.80, 120.97——那是把「查不到」換成「查錯」，
+# 與本行要修的 bug 同型。
+#
+# 寧可答不出來，不可答錯。定位路徑不走這條（它有座標，直接查預報）。
 _GEOCODE_URL = (
-    "https://geocoding-api.open-meteo.com/v1/search?name={name}&count=1&language=zh&format=json"
+    "https://geocoding-api.open-meteo.com/v1/search"
+    "?name={name}&count=1&language=zh&format=json&countryCode=TW"
 )
 _FORECAST_URL = (
     "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
