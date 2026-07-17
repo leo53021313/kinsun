@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from kinsun.appointments.facts import AppointmentFacts
 from kinsun.composition import Externals, assemble_core, build_tool_registry
 from kinsun.config import load_settings
+from kinsun.locations.facts import LocationFacts
 from kinsun.medications.facts import MedicationFacts
 from kinsun.strategies.facts import StrategyFacts
 from kinsun.tools.clock import CURRENT_TIME_SPEC
@@ -47,10 +48,16 @@ def test_assemble_core_agent_has_all_three_tools():
     assert names == {WEATHER_SPEC.name, CURRENT_TIME_SPEC.name, HEALTH_RAG_SPEC.name}
 
 
-def test_assemble_core_injects_three_fact_providers_in_order():
+def test_assemble_core_injects_four_fact_providers_in_order():
+    # 順序即 prompt 中的段落順序。LocationFacts 排最後：位置是這幾段裡最不重要的一段。
     core = _core()
     facts = core.agent._session._facts
-    assert [type(f) for f in facts] == [MedicationFacts, AppointmentFacts, StrategyFacts]
+    assert [type(f) for f in facts] == [
+        MedicationFacts,
+        AppointmentFacts,
+        StrategyFacts,
+        LocationFacts,
+    ]
 
 
 def test_build_tool_registry_registers_three_tools():

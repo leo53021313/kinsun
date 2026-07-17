@@ -42,6 +42,7 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.medication_bedtime_hour == 21
     assert settings.appointment_reminder_hour == 8
     assert settings.rag_top_k == 5
+    assert settings.location_stale_after_hours == 2  # 保守門檻：只影響主動問候路徑
     assert settings.liff_channel_id == ""
     assert settings.liff_timeout_seconds == 10
     assert settings.rich_menu_id == ""
@@ -63,6 +64,17 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.line_text_input_enabled is True
     assert settings.admin_api_key == ""
     assert settings.admin_retention_days == 14
+
+
+def test_location_stale_after_hours_is_overridable():
+    settings = load_settings({**BASE_ENV, "LOCATION_STALE_AFTER_HOURS": "6"})
+    assert settings.location_stale_after_hours == 6
+
+
+def test_location_stale_after_hours_rejects_zero():
+    # 0 會讓位置永遠過期、功能靜默失效；要關閉功能應該不給 App 定位權限，不是設 0。
+    with pytest.raises(ConfigError):
+        load_settings({**BASE_ENV, "LOCATION_STALE_AFTER_HOURS": "0"})
 
 
 def test_load_settings_requires_database_url():
