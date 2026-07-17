@@ -2,28 +2,55 @@
 
 from __future__ import annotations
 
+import re
 import urllib.parse
 from collections.abc import Callable
 
 from kinsun.llm import ToolSpec
 from kinsun.transport import Transport, UrllibTransport, get_json
+from kinsun.turn_context import current_utterance
 
+# ⚠️ 本描述與 agent.py 的地點三句必須語意一致。Bug 2 的根因就是兩者矛盾：工具
+# 說「不知道地點就先開口問」、system prompt 說「直接用那個地點」，兩段都進模型
+# 的 context，模型選了保守解，定位功能靜默失效整整一天。改一處必須檢查另一處。
 WEATHER_SPEC = ToolSpec(
     name="get_weather",
     description=(
         "查詢指定地點今天的天氣（概況與氣溫）。"
-        "只有在你已確認長輩要查哪個城市時才呼叫；"
-        "若不知道地點，先開口問長輩人在哪個城市，不要自行假設台北。"
+        "情境若附上長輩目前位置與座標，而他問的就是所在地的天氣，帶上該座標與地名呼叫，不要多問。"
+        "他問的是別的地方（例如等下要去哪裡），就用他說的地點名稱、不要帶座標。"
+        "兩者都不知道時，先開口問他要查哪裡，不要自行假設台北。"
     ),
     parameters={
         "type": "object",
-        "properties": {"location": {"type": "string", "description": "地點名稱，例：台北、高雄"}},
+        "properties": {
+            "location": {
+                "type": "string",
+                "description": "地點名稱，例：台南、高雄。永遠要帶——回覆時用它稱呼地點。",
+            },
+            "latitude": {
+                "type": "number",
+                "description": "情境附的座標；只有在長輩問的就是他所在地時才帶",
+            },
+            "longitude": {"type": "number", "description": "同 latitude"},
+        },
         "required": ["location"],
     },
 )
 
+# ⚠️ countryCode=TW 不可拿掉：沒有它，「台南」會命中中國山西省的台南
+# （35.56, 113.14），金孫會用山西的氣溫回答問台南天氣的長輩。
+#
+# 代價是命中率低——實測全台 22 縣市只有 6 個查得到（Open-Meteo 的台灣地名索引
+# 用「臺」不用「台」、且多數縣市只收錄不帶「市／縣」字尾的形式）。刻意不做
+# 多變體 fallback 去提高命中率：實測「新竹縣」會因此命中屏東的一個「新竹」村
+# （22.46, 120.47），而新竹市在 24.80, 120.97——那是把「查不到」換成「查錯」，
+# 與本行要修的 bug 同型。
+#
+# 寧可答不出來，不可答錯。定位路徑不走這條（它有座標，直接查預報）。
 _GEOCODE_URL = (
-    "https://geocoding-api.open-meteo.com/v1/search?name={name}&count=1&language=zh&format=json"
+    "https://geocoding-api.open-meteo.com/v1/search"
+    "?name={name}&count=1&language=zh&format=json&countryCode=TW"
 )
 _FORECAST_URL = (
     "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
@@ -58,6 +85,27 @@ _WMO = {
 }
 
 
+def _is_from_elder(location: str) -> bool:
+    """這個地名是長輩自己說的，還是模型猜的？
+
+    ⚠️ 這道防線是實測逼出來的，不是防禦性程式設計：模型不知道長輩在哪時會猜
+    「台北市」去呼叫，工具照查照回，金孫就把台北的天氣報給別處的長輩（實測 4/7）。
+    提示詞在工具描述與 system prompt 兩處都寫著「不要自行假設台北」，它照做不誤。
+    這不是措辭問題——是模型有能力猜。本函式拿掉它的能力。
+
+    比對前去掉「市／縣／區」字尾：長輩說「台北」，模型會正規化成「台北市」去查
+    （地理編碼只認得完整市名，那是它該做的事），嚴格比對會誤拒。
+
+    原話為空（排程端、主動關懷）時回 True，維持既有行為：那條路徑走 generate、
+    根本沒有工具可用（見 agent.py），不會有人踩到；但若日後有，靜默拒絕比放行難查。
+    """
+    utterance = current_utterance()
+    if not utterance:
+        return True
+    base = re.sub(r"[市縣區]$", "", location)
+    return bool(base) and base in utterance
+
+
 def build_weather_handler(transport: Transport | None = None) -> Callable[[dict], str]:
     http = transport or UrllibTransport()
 
@@ -65,16 +113,25 @@ def build_weather_handler(transport: Transport | None = None) -> Callable[[dict]
         location = (args.get("location") or "").strip()
         if not location:
             return "請告訴我您想查哪個地方的天氣。"
-        geo = get_json(http, _GEOCODE_URL.format(name=urllib.parse.quote(location)), timeout=10)
-        results = geo.get("results") or []
-        if not results:
-            return f"查不到「{location}」這個地點的天氣。"
-        place = results[0]
-        fc = get_json(
-            http,
-            _FORECAST_URL.format(lat=place["latitude"], lon=place["longitude"]),
-            timeout=10,
-        )
+        lat, lon = args.get("latitude"), args.get("longitude")
+        # 兩個都有才用座標：半套＝沒有。定位路徑（手機回報）必然兩個都給，
+        # 半套只可能來自模型出錯，那時走地理編碼比拿半個座標去猜安全。
+        # ⚠️ 刻意不驗證座標範圍（spec 元件設計 5）：擋不了模型幻覺（後果是天氣
+        # 答錯，與地理編碼失準同級），卻會擋掉出國的長輩，且驗證失敗也只能說
+        # 「查不到」——沒有比現況更好。
+        if lat is None or lon is None:
+            # 沒有座標時，地名必須真的來自長輩的原話——否則就是模型自己猜的。
+            if not _is_from_elder(location):
+                return (
+                    "（長輩沒有說要查哪裡，情境也沒有他的位置。"
+                    "請開口問他要查哪個地方，不要自己挑。）"
+                )
+            geo = get_json(http, _GEOCODE_URL.format(name=urllib.parse.quote(location)), timeout=10)
+            results = geo.get("results") or []
+            if not results:
+                return f"查不到「{location}」這個地點的天氣。"
+            lat, lon = results[0]["latitude"], results[0]["longitude"]
+        fc = get_json(http, _FORECAST_URL.format(lat=lat, lon=lon), timeout=10)
         current = fc.get("current") or {}
         daily = fc.get("daily") or {}
         desc = _WMO.get(current.get("weather_code"), "天氣")
