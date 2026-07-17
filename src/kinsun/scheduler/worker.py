@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from kinsun.accounts.models import PrincipalType
+from kinsun.agent import Recall
 from kinsun.appointments.jobs import build_appointment_reminder_job
 from kinsun.audio.publisher import build_audio_publisher
 from kinsun.composition import Core, assemble_core, build_externals
@@ -27,10 +28,10 @@ from kinsun.memory.longterm.consolidation_log import PgConsolidationLogStore
 from kinsun.observability.jobs import build_observability_cleanup_job
 from kinsun.proactive.greeting_time import update_greeting_time
 from kinsun.proactive.jobs import (
-    GREETING_INTENT,
     INACTIVITY_INTENT,
     build_greeting_job,
     build_inactivity_job,
+    greeting_intent,
 )
 from kinsun.reports.reminders import (
     REMINDER_KIND_PROACTIVE_CARE,
@@ -139,12 +140,38 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
             except Exception:  # noqa: BLE001 - 問候時間計算失敗不影響整理、摘要與反思
                 logger.warning("問候時間計算失敗 elder=%s", elder_id)
 
+    def _recall(elder_id: str) -> Recall | None:
+        """她上次開口那天的對話摘要，供主動推播接續話題（spec 2026-07-17）。
+
+        以 `last_active`（她最後一則 user turn）定位是哪一天，而**不是**「今天減
+        一天」——真 Gemini 探針揪出的設計錯：失聯關心的觸發條件是「≥2 天沒開口」，
+        與「昨天有她的對話」互斥，照昨天讀這條路對它永遠是 None。更糟的是昨天很
+        可能有金孫自己的問候（主動推播每次都寫 assistant turn），而每日摘要不分是
+        誰講的——照昨天讀會拿到一份「金孫自言自語」的摘要當成她的近況。
+
+        任一環節缺就回 None＝退回本功能之前的行為（拿 intent 當檢索關鍵字）。與問候
+        偏好讀取失敗同向（proactive/jobs.py）：降級成沒有脈絡的問候，比因為一張
+        報告用的表壞掉就整批長輩沒人理她好。
+        """
+        last = memory.last_active(elder_id)
+        if last is None:
+            return None  # 她從沒開口過（新長輩）
+        spoke_on = datetime.fromtimestamp(last, clock().tzinfo).date()
+        try:
+            row = summaries.get_for_date(elder_id, spoke_on.isoformat())
+        except Exception:  # noqa: BLE001 - 摘要是錦上添花，不可擋下問候
+            logger.warning("摘要讀取失敗，改用無脈絡問候 elder=%s", elder_id)
+            return None
+        if not row:
+            return None  # 那天還沒摘要（例如她今天才剛講，夜間批次尚未跑）
+        return Recall(content=row.content, days_ago=(clock().date() - spoke_on).days)
+
     def _push_to_elder(elder_id: str, intent: str, kind: str, *, ledger: bool = False) -> None:
         # 先確認可達再生成內容（避免白花一次 LLM 呼叫）；出站由 router 依綁定通道投遞。
         if not router.has_route(PrincipalType.ELDER, elder_id):
             logger.warning("主動推播略過（長輩無任何綁定通道）elder=%s kind=%s", elder_id, kind)
             return
-        content = agent.proactive(elder_id, intent)
+        content = agent.proactive(elder_id, intent, recall=_recall(elder_id))
         if ledger:
             # ledger=True ＝ 這筆 reminder_logs 不只是觀測，它就是本推播的冪等帳本
             # （目前只有問候）：先記帳再推播，記不進去就不推。
@@ -167,7 +194,10 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
 
     def greet_one(elder_id: str) -> None:
         # ledger=True：問候的冪等靠 greeted_today 讀這張表，記帳因此是安全關鍵。
-        _push_to_elder(elder_id, GREETING_INTENT, REMINDER_KIND_PROACTIVE_GREETING, ledger=True)
+        # intent 織入今天的日期（2026-07-17 問候多樣性）：固定 intent 天天產出同一句。
+        _push_to_elder(
+            elder_id, greeting_intent(clock()), REMINDER_KIND_PROACTIVE_GREETING, ledger=True
+        )
 
     def care_one(elder_id: str) -> None:
         _push_to_elder(elder_id, INACTIVITY_INTENT, REMINDER_KIND_PROACTIVE_CARE)

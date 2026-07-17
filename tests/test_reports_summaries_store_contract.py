@@ -54,6 +54,25 @@ def test_list_is_newest_date_first(store, ns):
     ]
 
 
+def test_get_for_date_returns_that_days_summary(store, ns):
+    store.save(f"{ns}u1", "2026-07-10", "十號")
+    store.save(f"{ns}u1", "2026-07-11", "十一號")
+    row = store.get_for_date(f"{ns}u1", "2026-07-10")
+    assert row is not None
+    assert (row.date, row.content) == ("2026-07-10", "十號")
+
+
+def test_get_for_date_returns_none_when_that_day_has_none(store, ns):
+    # 那天沒講話 → summarize_day 不存列 → 主動問候據此退回無脈絡行為。
+    store.save(f"{ns}u1", "2026-07-10", "十號")
+    assert store.get_for_date(f"{ns}u1", "2026-07-09") is None
+
+
+def test_get_for_date_is_scoped_to_elder(store, ns):
+    store.save(f"{ns}u2", "2026-07-10", "u2 的摘要")
+    assert store.get_for_date(f"{ns}u1", "2026-07-10") is None
+
+
 def test_list_is_scoped_to_line_user(store, ns):
     store.save(f"{ns}u1", "2026-07-10", "u1 的摘要")
     store.save(f"{ns}u2", "2026-07-10", "u2 的摘要")

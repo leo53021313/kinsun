@@ -20,6 +20,8 @@ MEMORY_DDL = (
 ACCOUNTS_DDL = (
     "CREATE TABLE IF NOT EXISTS elders ("
     "elder_id TEXT PRIMARY KEY, name TEXT NOT NULL);"
+    # 稱謂欄（2026-07-17）：既有庫走 ALTER 升級（建表→遷移順序，同 appointments.time）。
+    "ALTER TABLE elders ADD COLUMN IF NOT EXISTS nickname TEXT NOT NULL DEFAULT '';"
     "CREATE TABLE IF NOT EXISTS guardians ("
     "guardian_id TEXT PRIMARY KEY, name TEXT NOT NULL);"
     "CREATE TABLE IF NOT EXISTS elder_guardians ("
