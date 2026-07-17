@@ -28,6 +28,8 @@ from kinsun.channels.router import ChannelRouter
 from kinsun.config import Settings
 from kinsun.db import Database, ensure_schema
 from kinsun.llm import GeminiClient, LLMClient
+from kinsun.locations.facts import LocationFacts
+from kinsun.locations.store import PgLocationStore
 from kinsun.medications.facts import MedicationFacts
 from kinsun.medications.service import MedicationService
 from kinsun.medications.store import PgMedicationStore
@@ -91,6 +93,9 @@ class Core:
     notifications: PgAppNotificationStore
     # 反思寫入（worker）與後台檢視／撤銷都需要同一個 store，故收進 Core。
     strategies: PgStrategyStore
+    # 收進 Core 而非讓組裝根各自 new：clock 必須與 LocationFacts 同源，否則寫入
+    # 時刻與過期判斷會用到兩個不同的時鐘（庚-44／A-57 已為 risk_events 踩過此坑）。
+    locations: PgLocationStore
     # 夜間批次寫、問候 job 讀（spec 2026-07-16），同一根內兩處共用，故收進 Core。
     greeting_prefs: PgGreetingPreferenceStore
     agent: CareAgent
@@ -154,6 +159,7 @@ def assemble_core(
     medications = MedicationService(med_store)
     appointments = AppointmentService(appt_store)
     strategies = PgStrategyStore(db, clock=clock, new_id=new_id)
+    locations = PgLocationStore(db)
     session = SessionMemory(
         memory,
         externals.long_term,
@@ -162,6 +168,13 @@ def assemble_core(
             AppointmentFacts(appointments, clock=clock),
             # 閉環的最後一哩：反思學到的守則由此進入下一輪對話的 system prompt。
             StrategyFacts(strategies, max_strategies=settings.reflection_max_strategies),
+            # 地點注入（spec 2026-07-17）：位置是線索不是答案，措辭見 locations/facts.py。
+            # 排最後＝ prompt 中的段落順序最後：位置是這幾段裡最不重要的一段。
+            LocationFacts(
+                locations,
+                clock=clock,
+                stale_after_hours=settings.location_stale_after_hours,
+            ),
         ],
     )
     rag_service = HealthEducationRagService(
@@ -216,6 +229,7 @@ def assemble_core(
         reminder_logs=PgReminderLogStore(db, clock=clock, new_id=new_id),
         notifications=notifications,
         strategies=strategies,
+        locations=locations,
         greeting_prefs=PgGreetingPreferenceStore(db),
         agent=agent,
     )

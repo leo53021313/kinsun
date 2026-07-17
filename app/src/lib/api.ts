@@ -104,9 +104,16 @@ export function listNotifications(token: string): Promise<AppNotification[]> {
 
 // --- 長輩端：對講機回合 ---
 
-export async function postTurn(audioUri: string, token: string): Promise<TurnReply> {
+export async function postTurn(
+  audioUri: string,
+  token: string,
+  place = "",
+): Promise<TurnReply> {
   const audio = await (await fetch(audioUri)).blob();
-  return request("/api/v1/turns", {
+  // 地名走 query param：/turns 收的是裸音檔 body，地名在 body 裡沒有位置可放。
+  // 空字串＝這輪沒有位置（未授權、室內收不到），不帶參數——不是「他不在任何地方」。
+  const query = place ? `?${new URLSearchParams({ location: place })}` : "";
+  return request(`/api/v1/turns${query}`, {
     method: "POST",
     body: audio,
     headers: { "Content-Type": "audio/m4a" },

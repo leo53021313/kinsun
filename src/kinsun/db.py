@@ -169,6 +169,17 @@ GREETING_PREFERENCES_DDL = (
     "median_minute_of_day INTEGER NOT NULL);"
 )
 
+# 長輩目前地點（spec 2026-07-17）：一位長輩一列、覆寫式，不留行蹤軌跡。
+# 只存地名不存座標。elder_id 為天然唯一鍵，直接當主鍵（比照 greeting_preferences）。
+# 全新的表：既有庫沒有舊資料要升級，CREATE TABLE IF NOT EXISTS 在新舊庫結果相同，
+# 故不需 ALTER 補欄位、在 ensure_schema 裡也沒有排序約束。
+# 不建額外索引：主鍵即唯一查詢維度。
+ELDER_LOCATIONS_DDL = (
+    "CREATE TABLE IF NOT EXISTS elder_locations ("
+    "elder_id TEXT PRIMARY KEY, place TEXT NOT NULL, "
+    "recorded_at DOUBLE PRECISION NOT NULL);"
+)
+
 # 提醒回應訊號（spec 2026-07-14）：長輩在提醒發出後的時間窗內有發言即標記。
 # ⚠️ 既有庫的 reminder_logs 早已存在，CREATE TABLE IF NOT EXISTS 對它是 no-op、
 # 不會生出 responded_at；故新欄位必須獨立以 ALTER 補（把欄位加進 REMINDER_LOGS_DDL
@@ -367,6 +378,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(REMINDER_LOGS_DDL)
         conn.execute(STRATEGIES_DDL)
         conn.execute(GREETING_PREFERENCES_DDL)
+        conn.execute(ELDER_LOCATIONS_DDL)
         conn.execute(REMINDER_LOGS_RESPONDED_MIGRATION_DDL)
         conn.execute(RISK_NOTIFICATION_LOGS_DDL)
         conn.execute(APP_NOTIFICATIONS_DDL)

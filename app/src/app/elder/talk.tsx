@@ -6,7 +6,7 @@ import {
   useAudioRecorder,
 } from "expo-audio";
 import { useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as Haptics from "expo-haptics";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -14,6 +14,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { AvatarPlaceholder, type AvatarState } from "@/components/AvatarPlaceholder";
 import { RoleSwitcher } from "@/components/RoleSwitcher";
 import { ApiError, logoutSession, postTurn } from "@/lib/api";
+import { currentPlace } from "@/lib/location";
 import { useSession } from "@/lib/SessionProvider";
 import { strings } from "@/lib/strings";
 import { colors, elder, spacing } from "@/lib/theme";
@@ -29,6 +30,9 @@ export default function ElderTalk() {
   const [avatar, setAvatar] = useState<AvatarState>("idle");
   const [replyText, setReplyText] = useState<string>(strings.talk.idleHint);
   const [micReady, setMicReady] = useState(false);
+  // 這輪的取位 promise：錄音開始時發動，送出時才 await（見 startRecording）。
+  // 用 ref 而非 state：它的變動不該觸發重繪。
+  const placeRef = useRef<Promise<string> | null>(null);
 
   const { loading: sessionLoading, session, signOut } = useSession();
 
@@ -68,6 +72,9 @@ export default function ElderTalk() {
       player.pause();
       await recorder.prepareToRecordAsync();
       recorder.record();
+      // 錄音一開始就發動取位、不 await：長輩講話的那幾秒剛好把權限檢查與地名反查的
+      // 耗時蓋掉，送出時通常已經好了。currentPlace 永不拋，故不需 catch。
+      placeRef.current = currentPlace();
       setAvatar("listening");
       setReplyText(strings.talk.listening);
     } catch {
@@ -91,7 +98,8 @@ export default function ElderTalk() {
       if (!uri) {
         throw new Error("no recording");
       }
-      const reply = await postTurn(uri, session?.token ?? "");
+      const place = await (placeRef.current ?? Promise.resolve(""));
+      const reply = await postTurn(uri, session?.token ?? "", place);
       setReplyText(reply.text);
       if (reply.audio_url) {
         setAvatar("speaking");
