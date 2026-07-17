@@ -141,3 +141,15 @@ def test_tool_loop_falls_back_when_digest_still_wants_tools():
     agent = CareAgent(llm, SpySession(), tools=_registry_with_weather(), max_tool_iters=3)
     reply = agent.handle("u1", "天氣")
     assert reply == FALLBACK_REPLY
+
+
+def test_system_prompt_frames_location_as_hint_not_answer():
+    """⚠️ 回歸防線，非行為驗證。
+
+    假 LLM 不會推理，「模型不拿所在地去查別處」在此測不出來——那需要真的
+    Gemini，屬人工複驗（見 plan Task 7）。本測試只確保這三句話沒被刪改：
+    第一句消滅「每次都反問」，第二句擋 anchoring，第三句保住沒位置時的行為。
+    """
+    assert "他明確在問所在地的天氣，就直接用那個地點，不要多問" in SYSTEM_PROMPT
+    assert "不可拿他目前的位置去查" in SYSTEM_PROMPT
+    assert "情境沒有附位置時，一律先問" in SYSTEM_PROMPT

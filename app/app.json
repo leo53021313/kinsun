@@ -48,7 +48,13 @@
         }
       ],
       "@react-native-community/datetimepicker",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "金孫需要知道您在哪個城市，才能告訴您當地的天氣。"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
