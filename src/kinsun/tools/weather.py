@@ -140,12 +140,13 @@ def _is_from_elder(location: str) -> bool:
     比對前去掉「市／縣／區」字尾：長輩說「台北」，模型會正規化成「台北市」去查
     （地理編碼只認得完整市名，那是它該做的事），嚴格比對會誤拒。
 
-    原話為空（排程端、主動關懷）時回 True，維持既有行為：那條路徑走 generate、
-    根本沒有工具可用（見 agent.py），不會有人踩到；但若日後有，靜默拒絕比放行難查。
+    原話為空（主動問候路徑，2026-07-17 起走工具迴圈）時回 False：問候時長輩
+    根本沒開口，任何無座標的地名必然是模型自選的——放行等於在問候裡跟台南
+    阿嬤報台北的天氣。座標路徑（LocationFacts 注入的手機回報）不經本函式。
     """
     utterance = current_utterance()
     if not utterance:
-        return True
+        return False
     base = re.sub(r"[市縣區]$", "", location)
     return bool(base) and base in utterance
 

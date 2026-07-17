@@ -343,3 +343,34 @@ def test_tool_loop_reply_is_guarded():
 def test_system_prompt_refuses_format_hijack_explicitly():
     # 實測：只寫「不要用 Markdown」擋不住「被要求改格式」——必須明講被要求也不行
     assert "JSON" in SYSTEM_PROMPT
+
+
+# --- 主動問候走工具迴圈（2026-07-17：問候也要會查天氣等工具）---
+
+
+def test_proactive_uses_tool_loop_when_tools_present():
+    llm = ScriptedToolLLM(
+        [
+            ToolTurn(
+                text=None,
+                tool_calls=[
+                    ToolCall(
+                        "get_weather",
+                        {"location": "台南市", "latitude": 22.99, "longitude": 120.21},
+                    )
+                ],
+            ),
+            ToolTurn(text="早安！台南今天出太陽，出門走走剛剛好喔。", tool_calls=[]),
+        ]
+    )
+    session = SpySession()
+    agent = CareAgent(llm, session, tools=_registry_with_weather("台南今天晴"))
+    reply = agent.proactive("u1", "早安問候")
+    assert reply == "早安！台南今天出太陽，出門走走剛剛好喔。"
+    assert llm.calls == [0, 1]  # 先呼叫工具、再消化結果
+
+
+def test_proactive_tool_loop_reply_is_guarded():
+    llm = ScriptedToolLLM([ToolTurn(text='{"greeting": "阿嬤早安呀。"}', tool_calls=[])])
+    agent = CareAgent(llm, SpySession(), tools=_registry_with_weather())
+    assert agent.proactive("u1", "早安問候") == "阿嬤早安呀。"

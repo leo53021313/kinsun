@@ -24,7 +24,8 @@ def test_weather_spec_name():
 
 
 def test_handler_formats_weather():
-    out = build_weather_handler(_transport(_GEO, _FC))({"location": "台北"})
+    with elder_utterance("台北天氣如何？"):
+        out = build_weather_handler(_transport(_GEO, _FC))({"location": "台北"})
     assert "台北" in out
     assert "多雲" in out
     assert "22" in out and "28" in out
@@ -36,7 +37,8 @@ def test_handler_empty_location():
 
 
 def test_handler_location_not_found():
-    out = build_weather_handler(_transport({"results": []}, _FC))({"location": "不存在地"})
+    with elder_utterance("不存在地的天氣？"):
+        out = build_weather_handler(_transport({"results": []}, _FC))({"location": "不存在地"})
     assert "查不到" in out
 
 
@@ -54,7 +56,8 @@ def test_geocode_request_is_limited_to_taiwan():
         payload = _GEO if "geocoding" in url else _FC
         return Response(200, {}, json.dumps(payload).encode())
 
-    build_weather_handler(FakeTransport(handler=handler))({"location": "恆春"})
+    with elder_utterance("恆春天氣如何？"):
+        build_weather_handler(FakeTransport(handler=handler))({"location": "恆春"})
 
     geocode_url = next(u for u in urls if "geocoding" in u)
     assert "countryCode=TW" in geocode_url
@@ -92,7 +95,8 @@ def test_handler_without_coords_uses_geocoding():
     """長輩口說地名的路徑：沒有座標才譯（縣市名走內建座標表，故用鄉鎮名測）。"""
     urls, transport = _url_recorder()
 
-    build_weather_handler(transport)({"location": "恆春"})
+    with elder_utterance("恆春天氣如何？"):
+        build_weather_handler(transport)({"location": "恆春"})
 
     assert any("geocoding" in u for u in urls)
 
@@ -101,7 +105,8 @@ def test_handler_with_only_one_coord_uses_geocoding():
     """半套座標＝沒有座標。不猜、不半套查。"""
     urls, transport = _url_recorder()
 
-    build_weather_handler(transport)({"location": "恆春", "latitude": 22.99})
+    with elder_utterance("恆春天氣如何？"):
+        build_weather_handler(transport)({"location": "恆春", "latitude": 22.99})
 
     assert any("geocoding" in u for u in urls)
 
@@ -172,17 +177,30 @@ def test_coords_bypass_the_utterance_check():
     assert urls, "應直接查預報"
 
 
-def test_no_utterance_context_allows_lookup():
-    """排程端／主動關懷沒有長輩原話（contextvar 為空）：不設限，維持既有行為。
+def test_no_utterance_refuses_model_picked_location():
+    """主動問候已可走工具迴圈（2026-07-17）：沒有長輩原話＝只有座標可信。
 
-    那條路徑走 generate、根本沒有工具可用（見 agent.py），故不會有人踩到；
-    但若日後有，靜默拒絕比放行更難查。
+    放行的後果是問候時模型自選地名（實測慣猜台北）照查照報——跟台南阿嬤說
+    台北的天氣。座標路徑（手機回報＋LocationFacts 注入）不受影響。
     """
     urls, transport = _url_recorder()
 
-    build_weather_handler(transport)({"location": "台南"})
+    out = build_weather_handler(transport)({"location": "台南"})
 
-    assert urls and not any("geocoding" in u for u in urls)  # 縣市名走座標表直接查預報
+    assert not urls, "沒有原話也沒有座標：不該碰任何外部 API"
+    assert "問" in out
+
+
+def test_no_utterance_coords_path_still_allowed():
+    """問候時情境附了新鮮定位座標：照查（座標來自手機回報，不是模型猜的）。"""
+    urls, transport = _url_recorder()
+
+    out = build_weather_handler(transport)(
+        {"location": "台南市", "latitude": 22.99, "longitude": 120.21}
+    )
+
+    assert urls and not any("geocoding" in u for u in urls)
+    assert "台南市" in out
 
 
 # --- 縣市座標表（2026-07-17 功能測試：長輩明說「高雄」仍回「查不到」）---

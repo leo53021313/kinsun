@@ -256,10 +256,9 @@ def test_create_elder_without_nickname_defaults_empty():
 
 def test_update_elder_profile_sets_nickname():
     client, auth = _app_client_with_token()
-    elder_id = (
-        client.post("/api/v1/elders", json={"name": "王秀英"}, headers=auth)
-        .json()["data"]["elder_id"]
-    )
+    elder_id = client.post("/api/v1/elders", json={"name": "王秀英"}, headers=auth).json()["data"][
+        "elder_id"
+    ]
     res = client.put(
         f"/api/v1/elders/{elder_id}/profile", json={"nickname": "秀英阿嬤"}, headers=auth
     )
@@ -282,10 +281,9 @@ def test_update_elder_profile_rejects_unmanaged():
 
 def test_update_elder_profile_rejects_overlong_nickname():
     client, auth = _app_client_with_token()
-    elder_id = (
-        client.post("/api/v1/elders", json={"name": "王秀英"}, headers=auth)
-        .json()["data"]["elder_id"]
-    )
+    elder_id = client.post("/api/v1/elders", json={"name": "王秀英"}, headers=auth).json()["data"][
+        "elder_id"
+    ]
     res = client.put(
         f"/api/v1/elders/{elder_id}/profile", json={"nickname": "好" * 51}, headers=auth
     )

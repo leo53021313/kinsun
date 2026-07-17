@@ -28,10 +28,10 @@ from kinsun.memory.longterm.consolidation_log import PgConsolidationLogStore
 from kinsun.observability.jobs import build_observability_cleanup_job
 from kinsun.proactive.greeting_time import update_greeting_time
 from kinsun.proactive.jobs import (
-    GREETING_INTENT,
     INACTIVITY_INTENT,
     build_greeting_job,
     build_inactivity_job,
+    greeting_intent,
 )
 from kinsun.reports.reminders import (
     REMINDER_KIND_PROACTIVE_CARE,
@@ -194,7 +194,10 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
 
     def greet_one(elder_id: str) -> None:
         # ledger=True：問候的冪等靠 greeted_today 讀這張表，記帳因此是安全關鍵。
-        _push_to_elder(elder_id, GREETING_INTENT, REMINDER_KIND_PROACTIVE_GREETING, ledger=True)
+        # intent 織入今天的日期（2026-07-17 問候多樣性）：固定 intent 天天產出同一句。
+        _push_to_elder(
+            elder_id, greeting_intent(clock()), REMINDER_KIND_PROACTIVE_GREETING, ledger=True
+        )
 
     def care_one(elder_id: str) -> None:
         _push_to_elder(elder_id, INACTIVITY_INTENT, REMINDER_KIND_PROACTIVE_CARE)

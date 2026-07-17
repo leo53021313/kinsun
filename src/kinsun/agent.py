@@ -213,9 +213,15 @@ class CareAgent:
         if recall:
             task += _PROACTIVE_RECALL_DIRECTIVE
         directive = Message("user", task)
-        reply = _speakable(
-            self._llm.generate(system_prompt=system_prompt, messages=[*history, directive])
-        )
+        base = [*history, directive]
+        if self._tools is None:
+            reply = self._llm.generate(system_prompt=system_prompt, messages=base)
+        else:
+            # 問候也走工具迴圈（2026-07-17）：可查天氣、時間等。原話明確設為空——
+            # 長輩沒開口，天氣工具據此只信座標、拒絕模型自選地名（weather._is_from_elder）。
+            with elder_utterance(""):
+                reply = self._run_tool_loop(system_prompt, base)
+        reply = _speakable(reply)
         # 留存的記憶帶主動關懷標記（✅ D-39 丙-8）：隔日 recall 看得懂這輪是系統
         # 主動開場，不是長輩憑空收到回覆；送給長輩的 reply 本身不帶標記。
         self._session.record_turn(elder_id, Message("assistant", f"【主動關懷｜{intent}】{reply}"))

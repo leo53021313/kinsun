@@ -493,7 +493,10 @@ def test_greeting_pushes_and_records_reminder_log(monkeypatch):
     )
     _job(scheduler, "daily-greeting").run()
     assert [(pt, pid) for pt, pid, _ in router.sent] == [(PrincipalType.ELDER, "e1")]
-    assert worker.GREETING_INTENT in router.sent[0][2]
+    from kinsun.proactive.jobs import GREETING_INTENT
+
+    assert GREETING_INTENT in router.sent[0][2]
+    assert "星期" in router.sent[0][2]  # intent 織入日期素材（2026-07-17 問候多樣性）
     assert reminder_logs.recorded == [("e1", "proactive-greeting", router.sent[0][2])]
 
 
