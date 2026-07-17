@@ -57,3 +57,64 @@ def test_geocode_request_is_limited_to_taiwan():
 
     geocode_url = next(u for u in urls if "geocoding" in u)
     assert "countryCode=TW" in geocode_url
+
+
+def _url_recorder():
+    urls: list[str] = []
+
+    def handler(method, url, data):
+        urls.append(url)
+        payload = _GEO if "geocoding" in url else _FC
+        return Response(200, {}, json.dumps(payload).encode())
+
+    return urls, FakeTransport(handler=handler)
+
+
+def test_handler_with_coords_skips_geocoding():
+    """定位路徑：有座標就直接查預報，不碰地理編碼。
+
+    這是 Bug 3 的根治——Open-Meteo 的台灣地名索引只有 6/22 命中，而
+    reverseGeocodeAsync 回的正是「台南市」這種查不到的字串。有座標就別譯了。
+    """
+    urls, transport = _url_recorder()
+
+    out = build_weather_handler(transport)(
+        {"location": "台南市", "latitude": 22.99, "longitude": 120.21}
+    )
+
+    assert not any("geocoding" in u for u in urls), "有座標時不該呼叫地理編碼"
+    assert "22.99" in urls[0] and "120.21" in urls[0]
+    assert "台南市" in out  # 地名仍用於稱呼
+
+
+def test_handler_without_coords_uses_geocoding():
+    """長輩口說地名的路徑：沒有座標才譯。"""
+    urls, transport = _url_recorder()
+
+    build_weather_handler(transport)({"location": "台南"})
+
+    assert any("geocoding" in u for u in urls)
+
+
+def test_handler_with_only_one_coord_uses_geocoding():
+    """半套座標＝沒有座標。不猜、不半套查。"""
+    urls, transport = _url_recorder()
+
+    build_weather_handler(transport)({"location": "台南", "latitude": 22.99})
+
+    assert any("geocoding" in u for u in urls)
+
+
+def test_weather_spec_tells_model_when_to_pass_coords():
+    """⚠️ Bug 2 的回歸防線：本描述與 agent.py 的地點三句必須語意一致。
+
+    Bug 2 的根因就是兩者矛盾——工具說「不知道地點就先開口問」，system prompt
+    說「直接用那個地點」。兩段都會進模型的 context，模型選了保守解，定位功能
+    靜默失效整整一天。
+
+    ⚠️ 這只是釘字串。行為驗證做不到——假 LLM 不會推理，兩段矛盾的提示詞在它
+    眼裡只是兩個字串。真正的驗證見 scripts/anchoring_probe.py。
+    """
+    assert "他問的就是所在地的天氣，帶上該座標與地名呼叫，不要多問" in WEATHER_SPEC.description
+    assert "不要帶座標" in WEATHER_SPEC.description
+    assert "兩者都不知道時，先開口問" in WEATHER_SPEC.description

@@ -8,16 +8,30 @@ from collections.abc import Callable
 from kinsun.llm import ToolSpec
 from kinsun.transport import Transport, UrllibTransport, get_json
 
+# ⚠️ 本描述與 agent.py 的地點三句必須語意一致。Bug 2 的根因就是兩者矛盾：工具
+# 說「不知道地點就先開口問」、system prompt 說「直接用那個地點」，兩段都進模型
+# 的 context，模型選了保守解，定位功能靜默失效整整一天。改一處必須檢查另一處。
 WEATHER_SPEC = ToolSpec(
     name="get_weather",
     description=(
         "查詢指定地點今天的天氣（概況與氣溫）。"
-        "只有在你已確認長輩要查哪個城市時才呼叫；"
-        "若不知道地點，先開口問長輩人在哪個城市，不要自行假設台北。"
+        "情境若附上長輩目前位置與座標，而他問的就是所在地的天氣，帶上該座標與地名呼叫，不要多問。"
+        "他問的是別的地方（例如等下要去哪裡），就用他說的地點名稱、不要帶座標。"
+        "兩者都不知道時，先開口問他要查哪裡，不要自行假設台北。"
     ),
     parameters={
         "type": "object",
-        "properties": {"location": {"type": "string", "description": "地點名稱，例：台北、高雄"}},
+        "properties": {
+            "location": {
+                "type": "string",
+                "description": "地點名稱，例：台南、高雄。永遠要帶——回覆時用它稱呼地點。",
+            },
+            "latitude": {
+                "type": "number",
+                "description": "情境附的座標；只有在長輩問的就是他所在地時才帶",
+            },
+            "longitude": {"type": "number", "description": "同 latitude"},
+        },
         "required": ["location"],
     },
 )
@@ -76,16 +90,19 @@ def build_weather_handler(transport: Transport | None = None) -> Callable[[dict]
         location = (args.get("location") or "").strip()
         if not location:
             return "請告訴我您想查哪個地方的天氣。"
-        geo = get_json(http, _GEOCODE_URL.format(name=urllib.parse.quote(location)), timeout=10)
-        results = geo.get("results") or []
-        if not results:
-            return f"查不到「{location}」這個地點的天氣。"
-        place = results[0]
-        fc = get_json(
-            http,
-            _FORECAST_URL.format(lat=place["latitude"], lon=place["longitude"]),
-            timeout=10,
-        )
+        lat, lon = args.get("latitude"), args.get("longitude")
+        # 兩個都有才用座標：半套＝沒有。定位路徑（手機回報）必然兩個都給，
+        # 半套只可能來自模型出錯，那時走地理編碼比拿半個座標去猜安全。
+        # ⚠️ 刻意不驗證座標範圍（spec 元件設計 5）：擋不了模型幻覺（後果是天氣
+        # 答錯，與地理編碼失準同級），卻會擋掉出國的長輩，且驗證失敗也只能說
+        # 「查不到」——沒有比現況更好。
+        if lat is None or lon is None:
+            geo = get_json(http, _GEOCODE_URL.format(name=urllib.parse.quote(location)), timeout=10)
+            results = geo.get("results") or []
+            if not results:
+                return f"查不到「{location}」這個地點的天氣。"
+            lat, lon = results[0]["latitude"], results[0]["longitude"]
+        fc = get_json(http, _FORECAST_URL.format(lat=lat, lon=lon), timeout=10)
         current = fc.get("current") or {}
         daily = fc.get("daily") or {}
         desc = _WMO.get(current.get("weather_code"), "天氣")
