@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
 import { useParams } from "react-router-dom";
 
 import { type AdminRiskNotification, listElderRiskNotifications } from "../../api";
 import { formatTime } from "../../format";
 import { strings } from "../../strings";
+import { useLoadable } from "../../useLoadable";
 import { adminTierLabel } from "kinsun-shared/terms";
 
 /** 送達語意（✅ 庚-16）：推播未上線前，App 通道僅為「落庫待拉取」而非真送達——
@@ -19,23 +20,9 @@ function deliveryLabel(n: AdminRiskNotification): string {
 /** 危急通知分頁：每次危急事件通知了哪些家屬、每一位成功還是失敗。 */
 export function RiskNotificationsTab() {
   const { elderId } = useParams<{ elderId: string }>();
-  const [items, setItems] = useState<AdminRiskNotification[] | null>(null);
-  const [error, setError] = useState(false);
-
-  const load = useCallback(() => {
-    if (!elderId) return;
-    // setError(false) 放進成功處理器：開頭的同步 setState 會在 useEffect 中
-    // 觸發連鎖重繪。代價是錯誤橫幅留到成功才消失。
-    listElderRiskNotifications(elderId).then(
-      (items) => {
-        setItems(items);
-        setError(false);
-      },
-      () => setError(true),
-    );
-  }, [elderId]);
-
-  useEffect(load, [load]);
+  const { data: items, error } = useLoadable(
+    useCallback(() => (elderId ? listElderRiskNotifications(elderId) : null), [elderId]),
+  );
 
   if (error) return <p className="error-banner">{strings.common.loadFailedRefresh}</p>;
   if (!items) return <p>{strings.common.loading}</p>;

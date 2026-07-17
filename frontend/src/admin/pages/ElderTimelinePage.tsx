@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
-import { type Timeline, getTimeline } from "../api";
+import { getTimeline } from "../api";
 import { formatClock } from "../format";
 import { strings } from "../strings";
+import { useLoadable } from "../useLoadable";
 import { adminTierLabel } from "kinsun-shared/terms";
 
 function today(): string {
@@ -16,23 +17,11 @@ function today(): string {
 export function ElderTimelinePage() {
   const { elderId } = useParams<{ elderId: string }>();
   const [date, setDate] = useState(today());
-  const [timeline, setTimeline] = useState<Timeline | null>(null);
-  const [error, setError] = useState(false);
-
-  const load = useCallback(() => {
-    if (!elderId) return;
-    // setError(false) 放進成功處理器：開頭的同步 setState 會在 useEffect 中
-    // 觸發連鎖重繪。代價是錯誤橫幅留到成功才消失。
-    getTimeline(elderId, date).then(
-      (timeline) => {
-        setTimeline(timeline);
-        setError(false);
-      },
-      () => setError(true),
-    );
-  }, [elderId, date]);
-
-  useEffect(load, [load]);
+  const {
+    data: timeline,
+    error,
+    reload: load,
+  } = useLoadable(useCallback(() => (elderId ? getTimeline(elderId, date) : null), [elderId, date]));
 
   return (
     <section>

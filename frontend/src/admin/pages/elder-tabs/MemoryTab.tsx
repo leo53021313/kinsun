@@ -1,29 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
 import { useParams } from "react-router-dom";
 
-import { type AdminElderMemory, getElderMemory } from "../../api";
+import { getElderMemory } from "../../api";
 import { strings } from "../../strings";
+import { useLoadable } from "../../useLoadable";
 
 /** 記憶與摘要分頁：AI 幫長輩記住的事（Mem0）＋每日對話摘要。 */
 export function MemoryTab() {
   const { elderId } = useParams<{ elderId: string }>();
-  const [data, setData] = useState<AdminElderMemory | null>(null);
-  const [error, setError] = useState(false);
-
-  const load = useCallback(() => {
-    if (!elderId) return;
-    // setError(false) 放進成功處理器：開頭的同步 setState 會在 useEffect 中
-    // 觸發連鎖重繪。代價是錯誤橫幅留到成功才消失。
-    getElderMemory(elderId).then(
-      (data) => {
-        setData(data);
-        setError(false);
-      },
-      () => setError(true),
-    );
-  }, [elderId]);
-
-  useEffect(load, [load]);
+  const { data, error } = useLoadable(
+    useCallback(() => (elderId ? getElderMemory(elderId) : null), [elderId]),
+  );
 
   if (error) return <p className="error-banner">{strings.common.loadFailedRefresh}</p>;
   if (!data) return <p>{strings.common.loading}</p>;
