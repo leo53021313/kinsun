@@ -54,6 +54,153 @@ def test_summarize_day_skips_when_no_turns():
     assert summaries.list_for_elder("u1") == []
 
 
+# --- 摘要生成穩健化（2026-07-17 功能測試發現：39% 空回應、接話、格式污染）---
+
+
+class _SeqSummarizer:
+    """依序回放腳本的替身：元素為字串（回傳值）或例外（拋出）。"""
+
+    def __init__(self, script):
+        self.script = list(script)
+        self.calls = []
+
+    def generate(self, *, system_prompt, messages):
+        self.calls.append((system_prompt, messages))
+        step = self.script.pop(0)
+        if isinstance(step, Exception):
+            raise step
+        return step
+
+
+def test_summarizer_receives_single_user_transcript():
+    """對話以單一 user 文字稿餵入，不再用 user/assistant 歷史（模型會接話）。"""
+    summaries = FakeConversationSummaryStore()
+    summarizer = _StubSummarizer()
+    turns = [Message("user", "今天天氣真好"), Message("assistant", "是啊")]
+    summarize_day(
+        "u1",
+        short_term=_ShortTerm(turns),
+        summarizer=summarizer,
+        summaries=summaries,
+        clock=lambda: NOW,
+    )
+    messages = summarizer.calls[0][1]
+    assert len(messages) == 1
+    assert messages[0].role == "user"
+    assert "長輩：今天天氣真好" in messages[0].content
+    assert "金孫：是啊" in messages[0].content
+
+
+def test_summary_retries_once_on_llm_error():
+    from kinsun.llm import LLMError
+
+    summaries = FakeConversationSummaryStore()
+    summarizer = _SeqSummarizer([LLMError("Gemini 回應為空"), "長輩今天心情不錯。"])
+    summarize_day(
+        "u1",
+        short_term=_ShortTerm([Message("user", "嗨")]),
+        summarizer=summarizer,
+        summaries=summaries,
+        clock=lambda: NOW,
+    )
+    assert len(summarizer.calls) == 2
+    assert summaries.list_for_elder("u1")[0].content == "長輩今天心情不錯。"
+
+
+def test_summary_raises_after_two_llm_errors():
+    import pytest
+
+    from kinsun.llm import LLMError
+
+    summaries = FakeConversationSummaryStore()
+    summarizer = _SeqSummarizer([LLMError("Gemini 回應為空"), LLMError("Gemini 回應為空")])
+    with pytest.raises(LLMError):
+        summarize_day(
+            "u1",
+            short_term=_ShortTerm([Message("user", "嗨")]),
+            summarizer=summarizer,
+            summaries=summaries,
+            clock=lambda: NOW,
+        )
+    assert summaries.list_for_elder("u1") == []
+    assert len(summarizer.calls) == 2
+
+
+def test_summary_strips_markdown_and_heading_noise():
+    """實測 Gemini 會回「***」分隔線與「**長輩今日狀況摘要：**」標題行，須清掉。"""
+    summaries = FakeConversationSummaryStore()
+    summarizer = _StubSummarizer("\n***\n\n**長輩今日狀況摘要：**\n長輩今天心情不錯，有出門散步。")
+    summarize_day(
+        "u1",
+        short_term=_ShortTerm([Message("user", "嗨")]),
+        summarizer=summarizer,
+        summaries=summaries,
+        clock=lambda: NOW,
+    )
+    assert summaries.list_for_elder("u1")[0].content == "長輩今天心情不錯，有出門散步。"
+
+
+def test_summary_strips_html_tags():
+    """實測 Gemini 會夾帶 </blockquote> 等 HTML 標籤。"""
+    summaries = FakeConversationSummaryStore()
+    summarizer = _StubSummarizer("</blockquote>\n長輩今天在家看電視休息。")
+    summarize_day(
+        "u1",
+        short_term=_ShortTerm([Message("user", "嗨")]),
+        summarizer=summarizer,
+        summaries=summaries,
+        clock=lambda: NOW,
+    )
+    assert summaries.list_for_elder("u1")[0].content == "長輩今天在家看電視休息。"
+
+
+def test_summary_rejects_chat_continuation_and_retries():
+    """實測會回「心情有沒有比較好？」這種接話短問句——不是摘要，須重試。"""
+    summaries = FakeConversationSummaryStore()
+    summarizer = _SeqSummarizer(["心情有沒有比較好？", "長輩今天心情平穩，聊了日常。"])
+    summarize_day(
+        "u1",
+        short_term=_ShortTerm([Message("user", "嗨")]),
+        summarizer=summarizer,
+        summaries=summaries,
+        clock=lambda: NOW,
+    )
+    assert len(summarizer.calls) == 2
+    assert summaries.list_for_elder("u1")[0].content == "長輩今天心情平穩，聊了日常。"
+
+
+def test_summary_rejects_prompt_echo_lines():
+    """實測會複述指令（「請提供這段對話的摘要。」）再接正文，複述行須剔除。"""
+    summaries = FakeConversationSummaryStore()
+    summarizer = _StubSummarizer("請提供這段對話的摘要。\n長輩今天收到鄰居送的芒果，心情愉快。")
+    summarize_day(
+        "u1",
+        short_term=_ShortTerm([Message("user", "嗨")]),
+        summarizer=summarizer,
+        summaries=summaries,
+        clock=lambda: NOW,
+    )
+    assert summaries.list_for_elder("u1")[0].content == "長輩今天收到鄰居送的芒果，心情愉快。"
+
+
+def test_summary_raises_when_both_attempts_unusable():
+    import pytest
+
+    from kinsun.llm import LLMError
+
+    summaries = FakeConversationSummaryStore()
+    summarizer = _SeqSummarizer(["心情有沒有比較好？", "那邊還有人在野餐嗎？"])
+    with pytest.raises(LLMError):
+        summarize_day(
+            "u1",
+            short_term=_ShortTerm([Message("user", "嗨")]),
+            summarizer=summarizer,
+            summaries=summaries,
+            clock=lambda: NOW,
+        )
+    assert summaries.list_for_elder("u1") == []
+
+
 # --- 每日摘要納入 L1 小訊號（✅ D-10 己-5）---
 
 

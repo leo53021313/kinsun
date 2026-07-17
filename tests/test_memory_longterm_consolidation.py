@@ -26,10 +26,10 @@ def test_consolidation_writes_previous_day_turns_as_self_claimed():
     long_term = FakeLongTermStore()
     written = _run("sess1", short, long_term)
     assert written == 1
-    elder_id, messages, prov = long_term.added[0]
-    assert elder_id == "sess1"
-    assert prov == provenance.SELF_CLAIMED
-    assert messages[0].content == "我有高血壓"
+    added = long_term.added[0]
+    assert added.elder_id == "sess1"
+    assert added.provenance == provenance.SELF_CLAIMED
+    assert added.messages[0].content == "我有高血壓"
 
 
 def test_consolidation_archives_complete_days_not_partial_today():
@@ -42,7 +42,7 @@ def test_consolidation_archives_complete_days_not_partial_today():
     long_term = FakeLongTermStore()
     written = _run("sess1", short, long_term)
     assert written == 1
-    assert [m.content for m in long_term.added[0][1]] == ["昨天聊的"]
+    assert [m.content for m in long_term.added[0].messages] == ["昨天聊的"]
 
 
 def test_consolidation_skips_when_empty():
@@ -61,7 +61,7 @@ def test_consolidation_backfills_all_missing_days_after_downtime():
     written = _run("sess1", short, long_term)
     assert written == 3
     # 三個完整日各自一次寫入（逐日補齊，順序由舊到新）。
-    assert [msgs[0].content for _, msgs, _ in long_term.added] == ["六月26", "六月27", "六月28"]
+    assert [a.messages[0].content for a in long_term.added] == ["六月26", "六月27", "六月28"]
 
 
 def test_consolidation_is_idempotent_within_same_day():
@@ -86,4 +86,35 @@ def test_consolidation_resumes_only_new_day_next_night():
     short.append("sess1", Message("user", "六月29"), at=datetime(2026, 6, 29, 10, 0, tzinfo=TPE))
     next_night = datetime(2026, 6, 30, 3, 0, tzinfo=TPE)
     assert _run("sess1", short, long_term, log=log, now=next_night) == 1
-    assert [msgs[0].content for _, msgs, _ in long_term.added] == ["六月28", "六月29"]
+    assert [a.messages[0].content for a in long_term.added] == ["六月28", "六月29"]
+
+
+def test_consolidation_tags_turns_with_the_day_they_happened():
+    """凌晨 3 點寫的是昨天的對話——不明著傳對話日，mem0 只會記下寫入時刻（今天）。
+
+    NOW_3AM 是 6/29 03:00、對話在 6/28：這一天之差就是 MemoryItem.date 的來源，
+    而該欄位會餵給模型（prompt 明著說「附記錄日期」）。
+    """
+    short = FakeMemoryStore(now=NOW_3AM)
+    short.append(
+        "sess1", Message("user", "孫子週末要來"), at=datetime(2026, 6, 28, 9, 0, tzinfo=TPE)
+    )
+    long_term = FakeLongTermStore()
+
+    _run("sess1", short, long_term)
+
+    assert long_term.added[0].occurred_on == "2026-06-28"  # 不是 06-29
+
+
+def test_consolidation_tags_each_catchup_day_with_its_own_date():
+    """停機補整理：多天在同一次批次寫入，每天必須各帶自己的對話日。"""
+    short = FakeMemoryStore(now=NOW_3AM)
+    for day in (26, 27, 28):
+        short.append(
+            "sess1", Message("user", f"六月{day}"), at=datetime(2026, 6, day, 9, 0, tzinfo=TPE)
+        )
+    long_term = FakeLongTermStore()
+
+    _run("sess1", short, long_term)
+
+    assert [a.occurred_on for a in long_term.added] == ["2026-06-26", "2026-06-27", "2026-06-28"]

@@ -1,6 +1,6 @@
 # WBS 開發計畫（一次性重構）- 金孫 KinSun
 
-> **版本:** v1.8 | **更新:** 2026-07-17 | **狀態:** 甲～庚批完成（庚批 2026-07-13 結案：50 完成＋擱置 RAG／著作權＋1 不改；⚠ 庚-09 無完成標記且程式未接線，實為 55/56——待 Leo 確認）；內測基礎建設（D-73）✅ 完工；辛批 8 項全數完成（辛-8 迄 2026-07-17） 
+> **版本:** v1.9 | **更新:** 2026-07-17 | **狀態:** 甲～庚批完成（庚批 2026-07-13 結案：50 完成＋擱置 RAG／著作權＋1 不改；⚠ 庚-09 無完成標記且程式未接線，實為 55/56——待 Leo 確認）；內測基礎建設（D-73）✅ 完工；辛批 9 項全數完成（辛-9 迄 2026-07-17） 
 > **總工期**：2026-07-09 ～ 2026-08-20（6 週，✅ D-04 硬里程碑倒排）
 > **施工順序**：甲→乙→丙→丁→戊→己（✅ Leo 核准 2026-07-08）；**分工：全批由 Leo 一人施工**（✅ 會-16，2026-07-09）。
 > 每個工項出處文件都有細節；規模：S＝半天內、M＝1–3 天、L＝3 天以上。
@@ -210,6 +210,7 @@
 | 辛-6 | ✅ 完成（2026-07-17）：天氣地點正確性——工具收座標直查跳過地理編碼＋地理編碼限台灣（countryCode=TW）＋拒答模型臆測地名（`turn_context.elder_utterance` contextvar 比對長輩原話）＋系統提示「位置是參考不是答案」三句＋anchoring 探針 `scripts/anchoring_probe.py` | Leo 指示（spec：superpowers/specs/2026-07-17-天氣地點正確性-design.md） | M |
 | 辛-7 | ✅ 完成（2026-07-17，PR #56）：JS 端 linting——frontend ESLint 9 flat config（tseslint＋react-hooks 7）＋app eslint-config-expo；順修 usePolling render 期改 ref 與 admin 七頁 effect 同步 setState；納入 CI（frontend／app job） | Leo 指示（spec：superpowers/specs/2026-07-17-js端引入linting-design.md） | M |
 | 辛-8 | ✅ 完成（2026-07-17，PR #57）：JS 端測試基建——frontend vitest 4（jsdom）＋app jest-expo；4 測試檔（useLoadable／usePolling／MemoryTab／location 四條靜默降級）；新增 `useLoadable` 收斂 admin 七頁載入邏輯；JS 測試納入 CI | Leo 指示（spec：superpowers/specs/2026-07-17-js端測試基建-design.md） | M |
+| 辛-9 | ✅ 完成（2026-07-17）：主動問候接續上次話題——`ConversationSummaryStore.get_for_date` 三件套＋`CareAgent.proactive(recall=Recall)` 一物三用（檢索關鍵字＋注入情境＋任務條件式加碼追問）＋`worker._recall` 以 `last_active` 定位「她上次開口那天」＋真 Gemini 探針 `scripts/recall_probe.py`（三處設計皆由它逼出：定位日不可用「今天減一天」、`days_ago` 非帶不可、情境段不足以驅動行為）；早安與失聯關心同時受惠；一併修 Mem0 記憶日期晚一天（`occurred_on` 進 metadata＋排序改以對話日為主鍵） | Leo 指示（spec：superpowers/specs/2026-07-17-主動問候接續昨天話題-design.md） | S |
 
 ## 持續追蹤（非本 repo 施工）
 
@@ -245,3 +246,4 @@
 | v1.6 | 2026-07-12 | **新增辛批**（Leo 逐項指示的發表前功能補強）：辛-1 App 用藥回診編輯完成（App 12 頁，見 17 v1.6／12 v1.3） |
 | v1.7 | 2026-07-13 | 庚批 56 項結案回填（追認補記——當時 commit 未同步版頭與本表） |
 | v1.8 | 2026-07-17 | 辛批補記 7 工項並全數結案：辛-2 每晚反思、辛-3 web_search（7/14）、辛-4 自適應問候時間（7/16）、辛-5 長輩地點、辛-6 天氣正確性、辛-7 JS lint、辛-8 JS 測試基建（7/17）；標記庚-09 結案矛盾（55/56，待 Leo 確認） |
+| v1.9 | 2026-07-17 | 新增辛-9 主動問候接續上次話題（讀「她上次開口那天」的摘要當檢索關鍵字＋注入＋任務加碼；否決 Mem0 昨晚整理項的理由見 spec）；一併修 Mem0 記憶日期晚一天；D-33「摘要無讀取端」現況自此失效（07 v1.3 同步） |

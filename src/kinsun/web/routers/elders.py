@@ -16,9 +16,18 @@ from kinsun.web.routers.deps import GuardianAuth, GuardianScope
 
 class CreateElderIn(BaseModel):
     """payload 三端統一為 {name}（✅ 庚-29／F-9）：LIFF 首次建家屬檔的命名
-    改取 ID token 的 LINE 顯示名稱（GuardianAuth.display_name），不再由前端自送。"""
+    改取 ID token 的 LINE 顯示名稱（GuardianAuth.display_name），不再由前端自送。
+
+    nickname＝金孫對長輩的稱謂（如「秀英阿嬤」，2026-07-17）；選填，空＝未設定。"""
 
     name: str
+    nickname: str = Field(default="", max_length=50)
+
+
+class ElderProfileIn(BaseModel):
+    """家屬補設／更改稱謂；空字串＝清除（情境注入退回名字保底）。"""
+
+    nickname: str = Field(max_length=50)
 
 
 class ElderAccountIn(BaseModel):
@@ -38,19 +47,40 @@ def create_elders_router(
     def my_elders(auth: GuardianAuth = Depends(current_guardian)) -> dict:
         """列登入家屬管理的長輩（✅ D-28：/me/elders 改名；列表＝data 裸陣列）。"""
         elders = scope.elders_of(auth)
-        return ok([{"elder_id": e.elder_id, "name": e.name} for e in elders])
+        return ok(
+            [{"elder_id": e.elder_id, "name": e.name, "nickname": e.nickname} for e in elders]
+        )
 
     @router.post("/elders", status_code=201)
     def create_elder(body: CreateElderIn, auth: GuardianAuth = Depends(current_guardian)) -> dict:
         name = body.name.strip()
+        nickname = body.nickname.strip()
         if not name:
             raise HTTPException(status_code=400, detail=ErrorCode.NAME_REQUIRED)
         if auth.guardian_id is not None:
-            elder = accounts.create_elder_for_guardian(auth.guardian_id, name)
+            elder = accounts.create_elder_for_guardian(auth.guardian_id, name, nickname)
         else:
-            elder = accounts.create_elder(auth.line_user_id or "", auth.display_name, name)
+            elder = accounts.create_elder(
+                auth.line_user_id or "", auth.display_name, name, nickname
+            )
         invite = accounts.generate_invite(elder.elder_id, InviteRole.ELDER)
-        return ok({"elder_id": elder.elder_id, "name": elder.name, "invite_code": invite.code})
+        return ok(
+            {
+                "elder_id": elder.elder_id,
+                "name": elder.name,
+                "nickname": elder.nickname,
+                "invite_code": invite.code,
+            }
+        )
+
+    @router.put("/elders/{elder_id}/profile")
+    def update_elder_profile(
+        elder_id: str, body: ElderProfileIn, auth: GuardianAuth = Depends(current_guardian)
+    ) -> dict:
+        """家屬補設／更改稱謂（2026-07-17）：PUT＝upsert，重呼即改。"""
+        scope.assert_manages(auth, elder_id)
+        elder = accounts.set_elder_nickname(elder_id, body.nickname.strip())
+        return ok({"elder_id": elder.elder_id, "nickname": elder.nickname})
 
     @router.post("/elders/{elder_id}/guardian-invites", status_code=201)
     def create_guardian_invite(
