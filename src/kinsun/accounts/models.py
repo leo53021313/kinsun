@@ -25,6 +25,9 @@ class ConsentBy(StrEnum):
 class Elder:
     elder_id: str
     name: str
+    # 稱謂（如「秀英阿嬤」）：金孫對長輩的稱呼，由家屬設定。空字串＝未設定，
+    # 情境注入退回「用名字＋不猜性別」（2026-07-17：模型會亂猜阿公／阿嬤）。
+    nickname: str = ""
 
 
 @dataclass(frozen=True)

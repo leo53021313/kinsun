@@ -222,3 +222,69 @@ def test_set_elder_account_scope_guard_404():
     stranger = _client(_FakeVerifier("U-stranger"), accounts)
     res = _put_account(stranger, elder_id, {"phone": "0912345678", "password": "sunsun-8888"})
     assert res.status_code == 404
+
+
+# --- 稱謂欄位（2026-07-17：金孫亂猜「阿公／阿嬤」的資料源修正）---
+
+
+def _app_client_with_token():
+    repo_svc = _accounts()
+    _, token = repo_svc.register_guardian_account("son@example.com", "correct-horse-8", "兒子")
+    client = _client(_FakeVerifier(boom=True), repo_svc)
+    return client, {"Authorization": f"Bearer {token}"}
+
+
+def test_create_elder_with_nickname():
+    client, auth = _app_client_with_token()
+    created = client.post(
+        "/api/v1/elders", json={"name": "王秀英", "nickname": "秀英阿嬤"}, headers=auth
+    )
+    assert created.status_code == 201
+    assert created.json()["data"]["nickname"] == "秀英阿嬤"
+
+    listed = client.get("/api/v1/elders", headers=auth)
+    rows = {e["name"]: e for e in listed.json()["data"]}
+    assert rows["王秀英"]["nickname"] == "秀英阿嬤"
+
+
+def test_create_elder_without_nickname_defaults_empty():
+    client, auth = _app_client_with_token()
+    created = client.post("/api/v1/elders", json={"name": "陳阿土"}, headers=auth)
+    assert created.status_code == 201
+    assert created.json()["data"]["nickname"] == ""
+
+
+def test_update_elder_profile_sets_nickname():
+    client, auth = _app_client_with_token()
+    elder_id = client.post("/api/v1/elders", json={"name": "王秀英"}, headers=auth).json()["data"][
+        "elder_id"
+    ]
+    res = client.put(
+        f"/api/v1/elders/{elder_id}/profile", json={"nickname": "秀英阿嬤"}, headers=auth
+    )
+    assert res.status_code == 200
+    assert res.json()["data"]["nickname"] == "秀英阿嬤"
+
+    listed = client.get("/api/v1/elders", headers=auth)
+    assert [e["nickname"] for e in listed.json()["data"] if e["elder_id"] == elder_id] == [
+        "秀英阿嬤"
+    ]
+
+
+def test_update_elder_profile_rejects_unmanaged():
+    client, auth = _app_client_with_token()
+    res = client.put(
+        "/api/v1/elders/id1/profile", json={"nickname": "亂改"}, headers=auth
+    )  # id1 屬於 U-son（LIFF 家屬），不是本 App 家屬管的
+    assert res.status_code == 404
+
+
+def test_update_elder_profile_rejects_overlong_nickname():
+    client, auth = _app_client_with_token()
+    elder_id = client.post("/api/v1/elders", json={"name": "王秀英"}, headers=auth).json()["data"][
+        "elder_id"
+    ]
+    res = client.put(
+        f"/api/v1/elders/{elder_id}/profile", json={"nickname": "好" * 51}, headers=auth
+    )
+    assert res.status_code == 422
