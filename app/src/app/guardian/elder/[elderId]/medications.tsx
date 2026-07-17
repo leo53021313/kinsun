@@ -42,6 +42,11 @@ export default function MedicationsManage() {
   }, [elderId, token, signOutOn401]);
 
   useEffect(() => {
+    // reload 是 async，它的每一個 setState 都在 await 之後——effect 的同步執行
+    // 期間一個都不會跑，故不會有規則擔心的連鎖重繪。規則無法跨函式邊界分析
+    // reload 內部，只看到「effect 呼叫了會 setState 的函式」就保守回報。
+    // 已驗證 void reload() 也壓不掉，非寫法問題。
+    // eslint-disable-next-line react-compiler/set-state-in-effect
     reload();
   }, [reload]);
 

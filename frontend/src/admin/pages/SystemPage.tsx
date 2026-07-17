@@ -13,8 +13,15 @@ export function SystemPage() {
   const [busyJob, setBusyJob] = useState("");
 
   const load = useCallback(() => {
-    setError(false);
-    listJobs().then(setJobs, () => setError(true));
+    // setError(false) 放進成功處理器而非開頭：開頭是同步 setState，會在
+    // useEffect(load, [load]) 中觸發連鎖重繪。代價是錯誤橫幅留到成功才消失。
+    listJobs().then(
+      (jobs) => {
+        setJobs(jobs);
+        setError(false);
+      },
+      () => setError(true),
+    );
   }, []);
 
   useEffect(load, [load]);

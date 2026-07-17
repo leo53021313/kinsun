@@ -50,7 +50,7 @@ export default function GuardianNotifications() {
       return () => {
         alive = false;
       };
-    }, [router, sessionLoading, session]),
+    }, [router, sessionLoading, session, signOutOn401]),
   );
 
   return (

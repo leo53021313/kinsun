@@ -21,8 +21,15 @@ export function ElderTimelinePage() {
 
   const load = useCallback(() => {
     if (!elderId) return;
-    setError(false);
-    getTimeline(elderId, date).then(setTimeline, () => setError(true));
+    // setError(false) 放進成功處理器：開頭的同步 setState 會在 useEffect 中
+    // 觸發連鎖重繪。代價是錯誤橫幅留到成功才消失。
+    getTimeline(elderId, date).then(
+      (timeline) => {
+        setTimeline(timeline);
+        setError(false);
+      },
+      () => setError(true),
+    );
   }, [elderId, date]);
 
   useEffect(load, [load]);
