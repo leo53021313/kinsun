@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 from kinsun.llm import LLMClient, Message, ToolResult
+from kinsun.memory.models import FactSection, InjectedContext, format_injected_context
 from kinsun.memory.recall import SessionMemory
 from kinsun.turn_context import elder_utterance
+
+# 昨天摘要的段首（FactSection 慣例：title 自帶前後換行）。摘要是寫給家屬看的
+# 第三人稱敘述，故明講「不必逐字複述」，免得金孫像在讀報告給長輩聽。
+_RECALL_TITLE = "\n以下是她昨天的狀況（系統摘要，供你自然接續話題，不必逐字複述）：\n"
 
 SYSTEM_PROMPT = (
     "你是「金孫」，一位溫暖、有耐心的台灣長輩陪伴助理。"
@@ -97,8 +102,22 @@ class CareAgent:
         )
         return turn.text or FALLBACK_REPLY
 
-    def proactive(self, elder_id: str, intent: str) -> str:
-        system_prompt, history = self._envelope(elder_id, intent)
+    def proactive(self, elder_id: str, intent: str, *, recall: str | None = None) -> str:
+        """主動開場。recall＝昨天的對話摘要（spec 2026-07-17-主動問候接續昨天話題）。
+
+        recall 一物二用：既當長期記憶的檢索關鍵字，也直接注入給模型看。
+        - 當關鍵字：intent 是每天每位長輩都一樣的字串，拿它做語意檢索等於每天用
+          同一把萬用鑰匙開所有人的門，撈回的與她昨天講什麼無關。
+        - 也直接給看：檢索終究是機率，關鍵字對了也不保證撈得回來；摘要既已在手，
+          直接注入才能讓「記得昨天」是確定的。
+        recall=None（昨天沒講話／讀取失敗）＝一字不差維持本功能之前的行為。
+        """
+        system_prompt, history = self._envelope(elder_id, recall or intent)
+        if recall:
+            # 重用既有的事實段排版，不另立 prompt 拼裝路徑。
+            system_prompt += format_injected_context(
+                InjectedContext(sections=[FactSection(title=_RECALL_TITLE, items=[recall])])
+            )
         directive = Message("user", _PROACTIVE_DIRECTIVE.format(intent=intent))
         reply = self._llm.generate(system_prompt=system_prompt, messages=[*history, directive])
         # 留存的記憶帶主動關懷標記（✅ D-39 丙-8）：隔日 recall 看得懂這輪是系統

@@ -27,8 +27,10 @@ class SpySession:
         self._suffix = system_suffix
         self._history = history or []
         self.recorded: list[tuple[str, tuple[Message, ...]]] = []
+        self.queries: list[str] = []
 
     def assemble(self, line_user_id: str, query: str) -> _Ctx:
+        self.queries.append(query)  # 檢索關鍵字是本次的受測對象，必須留痕
         return _Ctx(self._suffix, list(self._history))
 
     def record_turn(self, line_user_id: str, *messages: Message) -> None:
@@ -76,6 +78,41 @@ def test_proactive_composes_with_memory_and_writes_back():
     assert session.recorded == [
         ("u1", (Message("assistant", "【主動關懷｜早安問候】金孫回您：好的"),))
     ]
+
+
+def test_proactive_recalls_with_given_query_instead_of_intent():
+    """檢索關鍵字改用昨天摘要（spec 2026-07-17-主動問候接續昨天話題）。
+
+    拿 intent 去搜長期記憶，每天每位長輩都是同一句話比對向量，撈回的必然與她
+    昨天講了什麼無關——問候於是收斂到 HEALTH_QUERY 撈出的健康罐頭。
+    """
+    session = SpySession()
+    agent = CareAgent(SpyLLM(), session)
+
+    agent.proactive("u1", "早安問候", recall="阿嬤昨天心情不錯，聊到孫子週末要來看她")
+
+    assert session.queries == ["阿嬤昨天心情不錯，聊到孫子週末要來看她"]
+
+
+def test_proactive_falls_back_to_intent_without_recall():
+    """昨天沒講話＝沒摘要：一字不差維持原行為，不可因此壞掉。"""
+    session = SpySession()
+    agent = CareAgent(SpyLLM(), session)
+
+    agent.proactive("u1", "早安問候")
+
+    assert session.queries == ["早安問候"]
+
+
+def test_proactive_shows_recall_to_the_model():
+    """檢索終究是機率；摘要既已在手上就直接給看，「記得昨天」才是確定的。"""
+    llm = SpyLLM()
+    agent = CareAgent(llm, SpySession(system_suffix="【記憶】"))
+
+    agent.proactive("u1", "早安問候", recall="阿嬤昨天心情不錯，聊到孫子週末要來看她")
+
+    assert "阿嬤昨天心情不錯，聊到孫子週末要來看她" in llm.system_prompt
+    assert "【記憶】" in llm.system_prompt  # 不可取代既有注入情境，是相加
 
 
 class ScriptedToolLLM:

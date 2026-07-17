@@ -139,12 +139,27 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
             except Exception:  # noqa: BLE001 - 問候時間計算失敗不影響整理、摘要與反思
                 logger.warning("問候時間計算失敗 elder=%s", elder_id)
 
+    def _yesterday_recall(elder_id: str) -> str | None:
+        """昨天的對話摘要，供主動推播接續話題（spec 2026-07-17-主動問候接續昨天話題）。
+
+        讀不到就回 None＝退回本功能之前的行為（拿 intent 當檢索關鍵字）。與問候
+        偏好讀取失敗同向（proactive/jobs.py）：降級成沒有昨天脈絡的問候，
+        比因為一張報告用的表壞掉就整批長輩沒人理她好。
+        """
+        day = (clock().date() - timedelta(days=1)).isoformat()
+        try:
+            row = summaries.get_for_date(elder_id, day)
+        except Exception:  # noqa: BLE001 - 摘要是錦上添花，不可擋下問候
+            logger.warning("昨天摘要讀取失敗，改用無脈絡問候 elder=%s", elder_id)
+            return None
+        return row.content if row else None  # 無列＝昨天沒講話
+
     def _push_to_elder(elder_id: str, intent: str, kind: str, *, ledger: bool = False) -> None:
         # 先確認可達再生成內容（避免白花一次 LLM 呼叫）；出站由 router 依綁定通道投遞。
         if not router.has_route(PrincipalType.ELDER, elder_id):
             logger.warning("主動推播略過（長輩無任何綁定通道）elder=%s kind=%s", elder_id, kind)
             return
-        content = agent.proactive(elder_id, intent)
+        content = agent.proactive(elder_id, intent, recall=_yesterday_recall(elder_id))
         if ledger:
             # ledger=True ＝ 這筆 reminder_logs 不只是觀測，它就是本推播的冪等帳本
             # （目前只有問候）：先記帳再推播，記不進去就不推。

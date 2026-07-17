@@ -30,6 +30,7 @@ class ConversationSummaryError(Exception):
 
 class ConversationSummaryStore(Protocol):
     def save(self, elder_id: str, date: str, content: str) -> None: ...
+    def get_for_date(self, elder_id: str, date: str) -> ConversationSummary | None: ...
     def list_for_elder(self, elder_id: str) -> list[ConversationSummary]: ...
 
 
@@ -46,6 +47,19 @@ class PgConversationSummaryStore:
             "content = EXCLUDED.content, created_at = EXCLUDED.created_at",
             (elder_id, date, content, self._clock().timestamp()),
         )
+
+    def get_for_date(self, elder_id: str, date: str) -> ConversationSummary | None:
+        """取某天的摘要；那天沒講話（summarize_day 未存列）回 None。
+
+        主動推播讀昨天摘要用（spec 2026-07-17-主動問候接續昨天話題）。不重用
+        list_for_elder 再過濾：它無 limit，為了一列而全撈該長輩數百列摘要。
+        """
+        row = self._db.query_one(
+            "SELECT elder_id, date, content, created_at FROM conversation_summaries "
+            "WHERE elder_id = %s AND date = %s",
+            (elder_id, date),
+        )
+        return ConversationSummary(*row) if row else None
 
     def list_for_elder(self, elder_id: str) -> list[ConversationSummary]:
         rows = self._db.query(
@@ -71,6 +85,10 @@ class FakeConversationSummaryStore:
 
     def save(self, elder_id: str, date: str, content: str) -> None:
         self._rows[(elder_id, date)] = content
+
+    def get_for_date(self, elder_id: str, date: str) -> ConversationSummary | None:
+        content = self._rows.get((elder_id, date))
+        return ConversationSummary(elder_id, date, content, 0.0) if content is not None else None
 
     def list_for_elder(self, elder_id: str) -> list[ConversationSummary]:
         items = sorted(

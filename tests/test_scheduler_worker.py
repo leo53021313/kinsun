@@ -133,14 +133,16 @@ def _fake_core(
         ),
         # 兩根共用收進 Core（✅ 庚-44）。
         risk_events=SimpleNamespace(list_for_elder=lambda elder_id: []),
-        summaries=SimpleNamespace(save=lambda *a, **k: None),
+        # get_for_date：主動推播讀昨天摘要當檢索關鍵字＋注入（spec 2026-07-17）。
+        # 預設回 None＝那天沒講話，主動推播據此退回無脈絡行為。
+        summaries=SimpleNamespace(save=lambda *a, **k: None, get_for_date=lambda *a, **k: None),
         notifications=object(),
         # 每晚反思寫入端（spec 2026-07-14）：worker 應取用 Core 現成的 store，不自建。
         strategies=SimpleNamespace(
             list_for_elder=lambda elder_id, status=None: [],
             record=lambda *a, **k: None,
         ),
-        agent=SimpleNamespace(proactive=lambda elder_id, intent: f"主動：{intent}"),
+        agent=SimpleNamespace(proactive=lambda elder_id, intent, *, recall=None: f"主動：{intent}"),
     )
 
 
@@ -487,6 +489,66 @@ def test_greeting_pushes_and_records_reminder_log(monkeypatch):
     assert [(pt, pid) for pt, pid, _ in router.sent] == [(PrincipalType.ELDER, "e1")]
     assert worker.GREETING_INTENT in router.sent[0][2]
     assert reminder_logs.recorded == [("e1", "proactive-greeting", router.sent[0][2])]
+
+
+def test_greeting_carries_yesterdays_summary(monkeypatch):
+    """問候前先讀昨天摘要餵給 agent（spec 2026-07-17-主動問候接續昨天話題）。
+
+    _clock() 是 2026-07-10，故要讀的是 07-09——不是今天，也不是 Mem0 那個
+    「凌晨三點寫入所以記成今天」的偏移日期。
+    """
+    calls: list[tuple[str, str | None]] = []
+    scheduler, core = _build(monkeypatch, _settings(), elders=["e1"])
+    core.summaries.get_for_date = lambda elder_id, date: SimpleNamespace(
+        content=f"{elder_id} 在 {date} 聊到孫子"
+    )
+    core.agent.proactive = lambda elder_id, intent, *, recall=None: (
+        calls.append((elder_id, recall)) or "阿嬤早"
+    )
+
+    _job(scheduler, "daily-greeting").run()
+
+    assert calls == [("e1", "e1 在 2026-07-09 聊到孫子")]
+
+
+def test_inactivity_care_carries_yesterdays_summary_too(monkeypatch):
+    """想念推播與問候共用同一條推播路徑，一起吃到昨天脈絡（Leo 核定：兩個一起修）。
+
+    「想念你」這種話比問候更需要記得她上次講什麼，否則更像罐頭。
+    """
+    calls: list[tuple[str, str | None]] = []
+    scheduler, core = _build(
+        monkeypatch, _settings(), elders=["e1"], last_active=lambda elder_id: 0.0
+    )
+    core.summaries.get_for_date = lambda elder_id, date: SimpleNamespace(content="她昨天提到膝蓋痛")
+    core.agent.proactive = lambda elder_id, intent, *, recall=None: (
+        calls.append((intent, recall)) or "阿嬤，好幾天沒聽到您的聲音了"
+    )
+
+    _job(scheduler, "inactivity-care").run()
+
+    assert calls == [(worker.INACTIVITY_INTENT, "她昨天提到膝蓋痛")]
+
+
+def test_greeting_survives_summary_read_failure(monkeypatch, caplog):
+    """摘要讀取失敗只能降級成沒有昨天脈絡，不可擋下問候。
+
+    與既有的問候偏好讀取失敗同向（jobs.py）：降級成本功能之前的行為，
+    比整批長輩沒人理她好。
+    """
+    router = _SpyRouter()
+    scheduler, core = _build(monkeypatch, _settings(), elders=["e1"], router=router)
+
+    def _boom(elder_id, date):
+        raise RuntimeError("摘要表掛了")
+
+    core.summaries.get_for_date = _boom
+
+    with caplog.at_level(logging.WARNING):
+        _job(scheduler, "daily-greeting").run()  # 不應拋出
+
+    assert [(pt, pid) for pt, pid, _ in router.sent] == [(PrincipalType.ELDER, "e1")]
+    assert any("昨天摘要讀取失敗" in r.getMessage() for r in caplog.records)
 
 
 def test_it_does_not_greet_her_twice_in_the_same_day(monkeypatch):
