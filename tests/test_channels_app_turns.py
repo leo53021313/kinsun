@@ -13,12 +13,13 @@ from kinsun.binding.gate import ConsentGate
 from kinsun.channels.app.turns import create_app_turns_router
 from kinsun.channels.inbound import VoiceReplyDelivery
 from kinsun.llm import Message
+from kinsun.locations.store import ElderLocation
 from kinsun.pipeline import VoicePipeline
 from kinsun.safety.detector import RiskDetector
 from kinsun.speech.asr import MockAsrClient
 from kinsun.speech.tts import TextBubbleTts, TtsResult
 from kinsun.web.envelope import install_error_envelope
-from tests.fakes import FakeAccountStore, FakeRiskEventStore, FakeTraceStore
+from tests.fakes import FakeAccountStore, FakeLocationStore, FakeRiskEventStore, FakeTraceStore
 
 TPE = timezone(timedelta(hours=8))
 NOW = datetime(2026, 7, 7, 12, 0, tzinfo=TPE)
@@ -77,7 +78,7 @@ def _bound_elder_token(svc):
     return elder, token
 
 
-def _client(svc, *, tts=None, publisher=None, traces=None):
+def _client(svc, *, tts=None, publisher=None, traces=None, locations=None):
     pipeline = VoicePipeline(
         asr=MockAsrClient("阿公早安"),
         agent=CareAgent(_EchoLLM(), _NullSession()),
@@ -98,16 +99,20 @@ def _client(svc, *, tts=None, publisher=None, traces=None):
             voice=voice,
             traces=traces,
             new_id=lambda: "trace-1",
+            locations=locations,
+            clock=lambda: NOW,
         ),
         prefix="/api/v1",
     )
     return TestClient(app)
 
 
-def _post_audio(client, token, body=b"\x00fake-audio"):
+def _post_audio(client, token, body=b"\x00fake-audio", *, location=None):
+    params = {} if location is None else {"location": location}
     return client.post(
         "/api/v1/turns",
         content=body,
+        params=params,
         headers={"Authorization": f"Bearer {token}", "Content-Type": "audio/m4a"},
     )
 
@@ -187,3 +192,49 @@ def test_turn_rejects_oversized_audio():
     _, token = _bound_elder_token(svc)
     res = _post_audio(_client(svc), token, body=b"\x00" * (10 * 1024 * 1024 + 1))
     assert res.status_code == 413
+
+
+def test_location_query_param_is_saved():
+    svc = _service()
+    elder, token = _bound_elder_token(svc)
+    locations = FakeLocationStore()
+    res = _post_audio(_client(svc, locations=locations), token, location="台南市")
+    assert res.status_code == 201
+    saved = locations.get_for_elder(elder.elder_id)
+    assert saved == ElderLocation(elder.elder_id, "台南市", NOW.timestamp())
+
+
+def test_missing_location_does_not_write():
+    svc = _service()
+    elder, token = _bound_elder_token(svc)
+    locations = FakeLocationStore()
+    _post_audio(_client(svc, locations=locations), token)
+    assert locations.get_for_elder(elder.elder_id) is None
+
+
+def test_blank_location_does_not_clear_existing():
+    # 長輩這次沒授權／室內收不到 → 不該把上次的位置抹掉。空字串＝「這輪沒有位置」，
+    # 不是「他不在任何地方」。
+    svc = _service()
+    elder, token = _bound_elder_token(svc)
+    locations = FakeLocationStore()
+    locations.save(ElderLocation(elder.elder_id, "高雄市", 1752739200.0))
+    _post_audio(_client(svc, locations=locations), token, location="   ")
+    assert locations.get_for_elder(elder.elder_id) == ElderLocation(
+        elder.elder_id, "高雄市", 1752739200.0
+    )
+
+
+def test_location_write_failure_does_not_break_the_turn():
+    # 位置是加分項，不是對話的前提。比照工具失敗的既有政策：記 log、對話照走。
+    class _ExplodingStore:
+        def save(self, location):
+            raise RuntimeError("boom")
+
+        def get_for_elder(self, elder_id):
+            return None
+
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    res = _post_audio(_client(svc, locations=_ExplodingStore()), token, location="台南市")
+    assert res.status_code == 201

@@ -235,6 +235,10 @@ def build_app() -> FastAPI:
             voice=VoiceReplyDelivery(publisher, include_text=True),
             traces=core.traces,
             inbound_audio=inbound_audio,
+            # 地點（spec 2026-07-17）：clock 與 LocationFacts 同源（皆為本函式的 clock），
+            # 否則寫入時刻與過期判斷會用到兩個不同的時鐘、讓門檻悄悄偏移。
+            locations=core.locations,
+            clock=clock,
             max_audio_bytes=settings.audio_max_upload_bytes,
         ),
         prefix="/api/v1",
