@@ -51,7 +51,7 @@ class PgConversationSummaryStore:
     def get_for_date(self, elder_id: str, date: str) -> ConversationSummary | None:
         """取某天的摘要；那天沒講話（summarize_day 未存列）回 None。
 
-        主動推播讀昨天摘要用（spec 2026-07-17-主動問候接續昨天話題）。不重用
+        主動推播讀「她上次開口那天」的摘要用（spec 2026-07-17）。不重用
         list_for_elder 再過濾：它無 limit，為了一列而全撈該長輩數百列摘要。
         """
         row = self._db.query_one(

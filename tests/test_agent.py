@@ -1,4 +1,4 @@
-from kinsun.agent import FALLBACK_REPLY, SYSTEM_PROMPT, CareAgent
+from kinsun.agent import FALLBACK_REPLY, SYSTEM_PROMPT, CareAgent, Recall
 from kinsun.llm import Message, ToolCall, ToolSpec, ToolTurn
 from kinsun.tools.registry import ToolRegistry
 
@@ -89,9 +89,9 @@ def test_proactive_recalls_with_given_query_instead_of_intent():
     session = SpySession()
     agent = CareAgent(SpyLLM(), session)
 
-    agent.proactive("u1", "早安問候", recall="阿嬤昨天心情不錯，聊到孫子週末要來看她")
+    agent.proactive("u1", "早安問候", recall=Recall("阿嬤心情不錯，聊到孫子週末要來看她", 1))
 
-    assert session.queries == ["阿嬤昨天心情不錯，聊到孫子週末要來看她"]
+    assert session.queries == ["阿嬤心情不錯，聊到孫子週末要來看她"]
 
 
 def test_proactive_falls_back_to_intent_without_recall():
@@ -109,9 +109,9 @@ def test_proactive_shows_recall_to_the_model():
     llm = SpyLLM()
     agent = CareAgent(llm, SpySession(system_suffix="【記憶】"))
 
-    agent.proactive("u1", "早安問候", recall="阿嬤昨天心情不錯，聊到孫子週末要來看她")
+    agent.proactive("u1", "早安問候", recall=Recall("阿嬤心情不錯，聊到孫子週末要來看她", 1))
 
-    assert "阿嬤昨天心情不錯，聊到孫子週末要來看她" in llm.system_prompt
+    assert "阿嬤心情不錯，聊到孫子週末要來看她" in llm.system_prompt
     assert "【記憶】" in llm.system_prompt  # 不可取代既有注入情境，是相加
 
 
@@ -226,3 +226,58 @@ def test_proactive_does_not_leak_previous_utterance():
     CareAgent(SpyLLM(), SpySession()).handle("e1", "我在台南")
 
     assert current_utterance() == ""
+
+
+def test_proactive_tells_the_model_how_long_ago_they_spoke():
+    """幾天前必須明講（spec 2026-07-17）：她上次開口可能是昨天，也可能是九天前。
+
+    真 Gemini 探針顯示，不講就會出現「你好久沒找我聊天了……孫子這週末要來」
+    這種自相矛盾的話——模型把舊摘要當成剛剛發生的事。
+    """
+    llm = SpyLLM()
+    agent = CareAgent(llm, SpySession())
+
+    agent.proactive("u1", "想念", recall=Recall("阿嬤聊到孫子要來", 5))
+
+    assert "5 天前" in llm.system_prompt
+
+
+def test_proactive_says_yesterday_rather_than_one_day_ago():
+    """「1 天前」是機器話；長輩聽到的是金孫的口語，講「昨天」。"""
+    llm = SpyLLM()
+    agent = CareAgent(llm, SpySession())
+
+    agent.proactive("u1", "早安問候", recall=Recall("阿嬤聊到孫子要來", 1))
+
+    assert "昨天" in llm.system_prompt
+    assert "1 天前" not in llm.system_prompt
+
+
+def test_proactive_asks_the_model_to_follow_up_on_the_recall():
+    """有 recall 時，任務描述要明著叫它追問那件事（spec 2026-07-17）。
+
+    真 Gemini 實測：光把摘要放進情境不夠——想念推播的 intent（「主動表達想念與
+    關心」）本身是個做得完的任務，模型做完就停，連測四輪都不理會摘要。改動任務
+    描述後才追問「孫子有來看妳嗎」。段首措辭怎麼改都推不動，槓桿在這裡。
+    """
+    llm = SpyLLM()
+    agent = CareAgent(llm, SpySession())
+
+    agent.proactive("u1", "想念", recall=Recall("阿嬤聊到孫子要來", 5))
+
+    assert "後來怎麼樣了" in llm.messages[-1].content
+
+
+def test_proactive_never_asks_to_follow_up_without_a_recall():
+    """⚠️ 安全線：沒摘要就絕不可提「上次聊的事」——沒有的東西，模型會編一個。
+
+    實測現況（無摘要時）金孫只講泛泛的問候、不編故事；這條測試防的是有人把上面
+    那句追問指示改成無條件附加，一句之差就會讓沒講過話的長輩收到憑空的回憶。
+    """
+    llm = SpyLLM()
+    agent = CareAgent(llm, SpySession())
+
+    agent.proactive("u1", "想念")
+
+    assert "後來怎麼樣了" not in llm.messages[-1].content
+    assert "上次" not in llm.messages[-1].content

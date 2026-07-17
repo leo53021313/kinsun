@@ -2,14 +2,41 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from kinsun.llm import LLMClient, Message, ToolResult
 from kinsun.memory.models import FactSection, InjectedContext, format_injected_context
 from kinsun.memory.recall import SessionMemory
 from kinsun.turn_context import elder_utterance
 
-# 昨天摘要的段首（FactSection 慣例：title 自帶前後換行）。摘要是寫給家屬看的
-# 第三人稱敘述，故明講「不必逐字複述」，免得金孫像在讀報告給長輩聽。
-_RECALL_TITLE = "\n以下是她昨天的狀況（系統摘要，供你自然接續話題，不必逐字複述）：\n"
+
+@dataclass(frozen=True)
+class Recall:
+    """她上次開口那天的對話摘要 ＋ 那天距今幾天（0＝今天稍早、1＝昨天）。
+
+    days_ago 非帶不可：主動推播可能在她沉默多日後才發（失聯關心的門檻就是 2 天），
+    此時摘要講的是好幾天前的事。真 Gemini 探針（scripts/recall_probe.py）實測：
+    不講幾天前，模型會把舊摘要當成剛發生的事，說出「你好久沒找我聊天了……孫子
+    這週末要來」這種自相矛盾的話。
+    """
+
+    content: str
+    days_ago: int
+
+
+def _recall_title(days_ago: int) -> str:
+    """摘要段的段首（FactSection 慣例：title 自帶前後換行）。
+
+    摘要是寫給家屬看的第三人稱敘述（「阿嬤今天心情不錯，聊到……」），直接貼進
+    prompt 有被複述成「根據記錄，您昨天心情不錯」的風險，故明講「不必逐字複述」。
+    """
+    when = {0: "今天稍早", 1: "昨天"}.get(days_ago, f"{days_ago} 天前")
+    return (
+        f"\n以下是她{when}跟你聊天的狀況（系統摘要，不必逐字複述）。"
+        f"可以順著裡面的事開話題，例如問問後來怎麼樣了；但那是{when}的事，"
+        "別當成現在還在發生：\n"
+    )
+
 
 SYSTEM_PROMPT = (
     "你是「金孫」，一位溫暖、有耐心的台灣長輩陪伴助理。"
@@ -40,6 +67,17 @@ SYSTEM_PROMPT = (
 
 _PROACTIVE_DIRECTIVE = (
     "（系統提示，非長者發話）請主動關心長者：{intent}。用一句溫暖、口語、簡短的話開啟對話。"
+)
+
+# 有 recall 時補在任務描述後面（spec 2026-07-17）。
+# 為什麼不寫進段首而要動任務：真 Gemini 實測四輪，想念推播**穩定**不理會摘要——
+# 它的 intent（「主動表達想念與關心」）本身就是一個做得完的任務，模型做完就停，
+# 段首怎麼寫都推不動。早安那條會用摘要是因為 intent 有「關心長者今天的狀況」，
+# 字面對上了段首的「跟你聊天的狀況」。故槓桿在任務，不在情境。
+# 條件式附加（recall=None 時完全不出現）是安全關鍵：無條件講「上次聊的事」會讓
+# 沒有摘要的長輩被憑空編一段——實測顯示現況（無摘要時）不會編，不可回頭破壞它。
+_PROACTIVE_RECALL_DIRECTIVE = (
+    "順著上面她上次聊天的狀況，關心那件事後來怎麼樣了，不要只講泛泛的問候。"
 )
 
 # 統一回退話術（✅ 庚-37）：管線失敗與 LLM 空回覆共用；inbound.FALLBACK_PROMPT 為別名。
@@ -102,23 +140,32 @@ class CareAgent:
         )
         return turn.text or FALLBACK_REPLY
 
-    def proactive(self, elder_id: str, intent: str, *, recall: str | None = None) -> str:
-        """主動開場。recall＝昨天的對話摘要（spec 2026-07-17-主動問候接續昨天話題）。
+    def proactive(self, elder_id: str, intent: str, *, recall: Recall | None = None) -> str:
+        """主動開場。recall＝她上次開口那天的摘要（spec 2026-07-17-主動問候接續昨天話題）。
 
-        recall 一物二用：既當長期記憶的檢索關鍵字，也直接注入給模型看。
+        recall 一物三用：當長期記憶的檢索關鍵字、直接注入給模型看、並讓任務描述
+        多一句追問指示（三者缺一，實測都推不動模型——見 spec）。
         - 當關鍵字：intent 是每天每位長輩都一樣的字串，拿它做語意檢索等於每天用
-          同一把萬用鑰匙開所有人的門，撈回的與她昨天講什麼無關。
+          同一把萬用鑰匙開所有人的門，撈回的與她上次講什麼無關。
         - 也直接給看：檢索終究是機率，關鍵字對了也不保證撈得回來；摘要既已在手，
-          直接注入才能讓「記得昨天」是確定的。
-        recall=None（昨天沒講話／讀取失敗）＝一字不差維持本功能之前的行為。
+          直接注入才能讓「記得上次聊什麼」是確定的。
+        recall=None（她從沒開口／那天沒摘要／讀取失敗）＝一字不差維持本功能之前
+        的行為。
         """
-        system_prompt, history = self._envelope(elder_id, recall or intent)
+        system_prompt, history = self._envelope(elder_id, recall.content if recall else intent)
         if recall:
             # 重用既有的事實段排版，不另立 prompt 拼裝路徑。
             system_prompt += format_injected_context(
-                InjectedContext(sections=[FactSection(title=_RECALL_TITLE, items=[recall])])
+                InjectedContext(
+                    sections=[
+                        FactSection(title=_recall_title(recall.days_ago), items=[recall.content])
+                    ]
+                )
             )
-        directive = Message("user", _PROACTIVE_DIRECTIVE.format(intent=intent))
+        task = _PROACTIVE_DIRECTIVE.format(intent=intent)
+        if recall:
+            task += _PROACTIVE_RECALL_DIRECTIVE
+        directive = Message("user", task)
         reply = self._llm.generate(system_prompt=system_prompt, messages=[*history, directive])
         # 留存的記憶帶主動關懷標記（✅ D-39 丙-8）：隔日 recall 看得懂這輪是系統
         # 主動開場，不是長輩憑空收到回覆；送給長輩的 reply 本身不帶標記。
