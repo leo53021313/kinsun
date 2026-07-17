@@ -29,12 +29,35 @@ describe("currentPlace", () => {
     jest.resetAllMocks();
   });
 
-  it("正常時回傳城市名", async () => {
+  it("正常時回傳地名與模糊座標", async () => {
     grantPermission();
-    mocked.getLastKnownPositionAsync.mockResolvedValue(POSITION as never);
+    mocked.getLastKnownPositionAsync.mockResolvedValue({
+      coords: { latitude: 22.9876, longitude: 120.2134 },
+    } as never);
     mocked.reverseGeocodeAsync.mockResolvedValue([{ city: "台南市" }] as never);
 
-    expect(await currentPlace()).toBe("台南市");
+    expect(await currentPlace()).toEqual({
+      place: "台南市",
+      latitude: 22.99,
+      longitude: 120.21,
+    });
+  });
+
+  it("座標四捨五入到 0.01 度（約 1.1 公里）", async () => {
+    // ⚠️ 四捨五入必須在手機端做：後端一旦收到精確值，它就已經進了伺服器的
+    // 記憶體與（潛在的）log。隱私邊界要劃在資料離開裝置之前。
+    //
+    // 0.01 度是實測出來的交會點：0.1 度（約 11 公里）會把陽明山的雷雨變成
+    // 毛毛雨；0.01 度與精確座標的天氣幾乎一致（梨山差 1.3°C，天氣類型相同）。
+    grantPermission();
+    mocked.getLastKnownPositionAsync.mockResolvedValue({
+      coords: { latitude: 25.0261234, longitude: 121.5439876 },
+    } as never);
+    mocked.reverseGeocodeAsync.mockResolvedValue([{ city: "台北市" }] as never);
+
+    const got = await currentPlace();
+    expect(got?.latitude).toBe(25.03);
+    expect(got?.longitude).toBe(121.54);
   });
 
   it("長輩拒絕定位時回空字串（靜默降級，不可阻擋對講機）", async () => {
@@ -42,7 +65,7 @@ describe("currentPlace", () => {
       status: "denied",
     } as never);
 
-    expect(await currentPlace()).toBe("");
+    expect(await currentPlace()).toBeNull();
     expect(mocked.getLastKnownPositionAsync).not.toHaveBeenCalled();
   });
 
@@ -50,7 +73,7 @@ describe("currentPlace", () => {
     grantPermission();
     mocked.getLastKnownPositionAsync.mockResolvedValue(null);
 
-    expect(await currentPlace()).toBe("");
+    expect(await currentPlace()).toBeNull();
   });
 
   it("譯不出地名時回空字串", async () => {
@@ -58,13 +81,13 @@ describe("currentPlace", () => {
     mocked.getLastKnownPositionAsync.mockResolvedValue(POSITION as never);
     mocked.reverseGeocodeAsync.mockResolvedValue([]);
 
-    expect(await currentPlace()).toBe("");
+    expect(await currentPlace()).toBeNull();
   });
 
   it("拋例外時回空字串，不往外拋", async () => {
     mocked.requestForegroundPermissionsAsync.mockRejectedValue(new Error("boom"));
 
-    await expect(currentPlace()).resolves.toBe("");
+    await expect(currentPlace()).resolves.toBeNull();
   });
 
   it("city 缺漏時退 subregion", async () => {
@@ -75,7 +98,7 @@ describe("currentPlace", () => {
       { city: null, subregion: "東區", region: "台南市" },
     ] as never);
 
-    expect(await currentPlace()).toBe("東區");
+    expect((await currentPlace())?.place).toBe("東區");
   });
 
   it("city 與 subregion 皆缺時退 region", async () => {
@@ -85,6 +108,6 @@ describe("currentPlace", () => {
       { city: null, subregion: null, region: "台南市" },
     ] as never);
 
-    expect(await currentPlace()).toBe("台南市");
+    expect((await currentPlace())?.place).toBe("台南市");
   });
 });

@@ -37,3 +37,18 @@ def test_save_is_upsert_keeping_only_latest(store, ns):
 def test_one_elder_location_does_not_leak_to_another(store, ns):
     store.save(ElderLocation(f"{ns}e1", "台南市", 1752739200.0))
     assert store.get_for_elder(f"{ns}e2") is None
+
+
+def test_save_and_get_coords(store, ns):
+    store.save(ElderLocation(f"{ns}e1", "台南市", 1752739200.0, 22.99, 120.21))
+    got = store.get_for_elder(f"{ns}e1")
+    assert got == ElderLocation(f"{ns}e1", "台南市", 1752739200.0, 22.99, 120.21)
+
+
+def test_coords_may_be_absent(store, ns):
+    # 既有列的情形：PR #55 寫入的資料沒有座標，ALTER 後為 NULL。
+    store.save(ElderLocation(f"{ns}e1", "台南市", 1752739200.0))
+    got = store.get_for_elder(f"{ns}e1")
+    assert got is not None
+    assert got.latitude is None
+    assert got.longitude is None

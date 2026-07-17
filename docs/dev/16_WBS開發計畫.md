@@ -1,6 +1,6 @@
 # WBS 開發計畫（一次性重構）- 金孫 KinSun
 
-> **版本:** v1.6 | **更新:** 2026-07-12 | **狀態:** 甲～庚批全數完成（**庚批 56 項 2026-07-13 全數結案**：50 完成＋5 擱置 RAG／著作權＋1 不改）；內測基礎建設（D-73，批次外插單）✅ 完工；**新增辛批**（Leo 逐項指示的發表前功能補強） 
+> **版本:** v1.8 | **更新:** 2026-07-17 | **狀態:** 甲～庚批完成（庚批 2026-07-13 結案：50 完成＋擱置 RAG／著作權＋1 不改；⚠ 庚-09 無完成標記且程式未接線，實為 55/56——待 Leo 確認）；內測基礎建設（D-73）✅ 完工；辛批 8 項全數完成（辛-8 迄 2026-07-17） 
 > **總工期**：2026-07-09 ～ 2026-08-20（6 週，✅ D-04 硬里程碑倒排）
 > **施工順序**：甲→乙→丙→丁→戊→己（✅ Leo 核准 2026-07-08）；**分工：全批由 Leo 一人施工**（✅ 會-16，2026-07-09）。
 > 每個工項出處文件都有細節；規模：S＝半天內、M＝1–3 天、L＝3 天以上。
@@ -102,7 +102,7 @@
 | 庚-06 | ✅ 完成（2026-07-12，TDD，含庚-13）：`run_consolidation` 改吃 `(short_term, long_term, log, now)`——掃「上次整理日之後～今日之前」每個有對話的完整日，逐日 `list_for_range` 補整理；停機跨多日重啟不再漏天。新增 `MemoryStore.list_for_range`／`day_starts_with_turns`（Pg＋Fake）。worker／CLI 皆已接線。全套 627 綠。 | A-18 | M |
 | 庚-07 | ✅ 完成（2026-07-12）：觀測五表（webhook_events／asr_calls／llm_calls／tts_calls／replies）`line_user_id` → `external_id`＋新增 `channel`，正名兼消除「line_user_id 混用」鐵律違反。含冪等 schema 遷移（DO 區塊守門 RENAME＋`ADD COLUMN IF NOT EXISTS channel`，新舊庫皆適用）、models／store（含 Fake）三件套、pipeline 全鏈 threading、邊界（inbound dispatch 取 `msg.channel.value`、LINE webhook 記 `channel="line"`）、admin `_trace_json` 回傳改 `external_id`＋`channel`、前端 TraceDetail 型別與頁面同步。`channel` 於 record 端預設 `""`（對齊 DB 欄預設）。契約測試補 channel round-trip、dispatch 測試證通道貫穿。全套 628 綠。 | A-8 | M |
 | 庚-08 | ✅ 完成（2026-07-12，跨進程方案）：新增 `PgRateLimiter`（Postgres 共享滑動視窗，per-key `pg_advisory_xact_lock` 串行「清舊→計數→寫入」精確計數、掛鐘可跨進程、fail-open）＋`rate_limit_hits` 表；抽 `RateLimiter` Protocol，app.py 正式組裝改注入 Pg 版（記憶體版留測試／單 worker fallback）。多 worker 上限不再×worker 數。Pg IT 測試鎖「兩實例共用計數」。沿用既有 `AUTH_RATE_LIMIT_*`，無新增 env。 | A-54 | M |
-| 庚-09 | 衛教升級旗標決策：`should_escalate_to_risk_engine` 接上確定性程式碼觸發 RiskDetector，或明文降級為 advisory（現唯一消費者是 agent prompt 文字，靠 LLM 自律）。緩解：pipeline 真風險引擎在 agent 前已獨立評估。 | A-27 | S |
+| 庚-09 | 衛教升級旗標決策：`should_escalate_to_risk_engine` 接上確定性程式碼觸發 RiskDetector，或明文降級為 advisory（現唯一消費者是 agent prompt 文字，靠 LLM 自律）。緩解：pipeline 真風險引擎在 agent 前已獨立評估。⚠ **2026-07-17 對齊檢查**：本項無完成標記且程式仍未接線——與表頭「56 項全數結案」不符（實為 55/56），待 Leo 確認是漏標還是漏做 | A-27 | S |
 
 ### 庚2 正確性與可靠性（MEDIUM）
 
@@ -203,6 +203,13 @@
 | # | 工項 | 依據 | 規模 |
 | :--- | :--- | :--- | :---: |
 | 辛-1 | ✅ 完成（2026-07-12）：App 家屬端用藥／回診管理頁（新增／編輯／刪除；詳情頁轉目錄＋管理入口＋focus 重載；新依賴 datetimepicker）——關閉 app/README「App 版編輯後續補」已知限制；後端零改動 | Leo 指示（spec：superpowers/specs/2026-07-12-app用藥回診編輯-design.md） | M |
+| 辛-2 | ✅ 完成（2026-07-14）：agent 自我進化——每晚反思與策略記憶：strategies 領域（store 三件套＋反思解析「全有全無」＋濾網逐條丟＋facts 注入 system prompt）＋夜間批次第三步＋admin 守則檢視／撤銷（條件式 UPDATE 回報命中）＋`REFLECTION_` 四鍵；反思訊號後移出安全關鍵路徑（fe2b252） | Leo 指示（spec：superpowers/specs/2026-07-14-agent自我進化-每晚反思與策略記憶-design.md） | L |
+| 辛-3 | ✅ 完成（2026-07-14）：web_search 上網查證工具——依主題套網域白名單＋`web_search_lookups` 查證紀錄三件套＋金鑰未設優雅降級 | Leo 指示（spec：superpowers/specs/2026-07-14-web-search上網查證工具-design.md） | M |
+| 辛-4 | ✅ 完成（2026-07-16，PR #54）：自適應問候時間——`greeting_preferences` 三件套＋純統計計算核心（死區防自我實現漂移／護軌 6–11 時／往後 60 分往前 30 分不對稱容忍）＋問候 job 改每半小時掃描（`greeted_today` kind 濾網冪等）＋記帳 at-most-once（失敗跳過本輪）＋`PROACTIVE_GREETING_*` 七鍵啟動即驗證＋`proactive/constants.py` 分層修正 | Leo 指示（spec：superpowers/specs/2026-07-16-每位長輩的問候時間-design.md） | L |
+| 辛-5 | ✅ 完成（2026-07-17，PR #55＋後續）：長輩目前地點——`elder_locations` 表（地名＋模糊座標，一人一列 upsert、既有庫 ALTER 升級）＋`LocationFacts` 注入（過期 2h 不注入、措辭「僅供參考」）＋`/turns` 位置三參數（三者齊備才寫、排在 dispatch 前）＋App 裝置端模糊化 0.01 度（精確座標不離開手機）＋`LOCATION_STALE_AFTER_HOURS` | Leo 指示（spec：superpowers/specs/2026-07-17-長輩目前地點-design.md） | L |
+| 辛-6 | ✅ 完成（2026-07-17）：天氣地點正確性——工具收座標直查跳過地理編碼＋地理編碼限台灣（countryCode=TW）＋拒答模型臆測地名（`turn_context.elder_utterance` contextvar 比對長輩原話）＋系統提示「位置是參考不是答案」三句＋anchoring 探針 `scripts/anchoring_probe.py` | Leo 指示（spec：superpowers/specs/2026-07-17-天氣地點正確性-design.md） | M |
+| 辛-7 | ✅ 完成（2026-07-17，PR #56）：JS 端 linting——frontend ESLint 9 flat config（tseslint＋react-hooks 7）＋app eslint-config-expo；順修 usePolling render 期改 ref 與 admin 七頁 effect 同步 setState；納入 CI（frontend／app job） | Leo 指示（spec：superpowers/specs/2026-07-17-js端引入linting-design.md） | M |
+| 辛-8 | ✅ 完成（2026-07-17，PR #57）：JS 端測試基建——frontend vitest 4（jsdom）＋app jest-expo；4 測試檔（useLoadable／usePolling／MemoryTab／location 四條靜默降級）；新增 `useLoadable` 收斂 admin 七頁載入邏輯；JS 測試納入 CI | Leo 指示（spec：superpowers/specs/2026-07-17-js端測試基建-design.md） | M |
 
 ## 持續追蹤（非本 repo 施工）
 
@@ -236,3 +243,5 @@
 | v1.4 | 2026-07-12 | **新增庚批**：架構文檔深化（七群深潛）發現的 58 項後端＋8 項前端差距開成 56 個工項，分七區（立即修 HIGH 9／正確性 10／安全強化 7／前端 7／清理 13／待決策 3／範圍外文檔 7）；標註兩項深化中已解決（A-12 誤判、F-8 已補圖）。庚批未排入 8/20 時程，建議至少完成庚1 |
 | v1.5 | 2026-07-12 | **內測基礎建設完工**（D-73，批次外插單，PR #45）：批①總開關＋meta＋.env 整理、批② App 雙 slot 快切、批③後台五分頁＋系統頁＋手動觸發；里程碑表補完工列 |
 | v1.6 | 2026-07-12 | **新增辛批**（Leo 逐項指示的發表前功能補強）：辛-1 App 用藥回診編輯完成（App 12 頁，見 17 v1.6／12 v1.3） |
+| v1.7 | 2026-07-13 | 庚批 56 項結案回填（追認補記——當時 commit 未同步版頭與本表） |
+| v1.8 | 2026-07-17 | 辛批補記 7 工項並全數結案：辛-2 每晚反思、辛-3 web_search（7/14）、辛-4 自適應問候時間（7/16）、辛-5 長輩地點、辛-6 天氣正確性、辛-7 JS lint、辛-8 JS 測試基建（7/17）；標記庚-09 結案矛盾（55/56，待 Leo 確認） |

@@ -68,3 +68,24 @@ def test_future_timestamp_is_treated_as_just_now():
     section = _facts(ElderLocation("e1", "台南市", _at(minutes_ago=-5))).facts("e1")
     assert section is not None
     assert section.items == ["剛剛在台南市"]
+
+
+def test_injects_coords_for_the_weather_tool():
+    section = _facts(ElderLocation("e1", "台南市", _at(minutes_ago=3), 22.99, 120.21)).facts("e1")
+    assert section is not None
+    assert section.items == ["3 分鐘前在台南市（查這裡的天氣請用座標 22.99,120.21）"]
+
+
+def test_falls_back_to_place_only_without_coords():
+    # 既有列（PR #55 寫入的）沒有座標：退回只注入地名，行為等同 PR #55。
+    section = _facts(ElderLocation("e1", "台南市", _at(minutes_ago=3))).facts("e1")
+    assert section is not None
+    assert section.items == ["3 分鐘前在台南市"]
+
+
+def test_title_frames_location_as_hint_even_with_coords():
+    # ⚠️ anchoring 防線不因座標而放鬆：實測證明這段措辭有效，一字不動。
+    section = _facts(ElderLocation("e1", "台南市", _at(minutes_ago=3), 22.99, 120.21)).facts("e1")
+    assert section is not None
+    assert "參考" in section.title
+    assert "不一定" in section.title

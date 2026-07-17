@@ -153,3 +153,39 @@ def test_system_prompt_frames_location_as_hint_not_answer():
     assert "他明確在問所在地的天氣，就直接用那個地點，不要多問" in SYSTEM_PROMPT
     assert "不可拿他目前的位置去查" in SYSTEM_PROMPT
     assert "情境沒有附位置時，一律先問" in SYSTEM_PROMPT
+
+
+def test_handle_exposes_utterance_to_tools():
+    """⚠️ 天氣工具靠這個分辨「長輩說的地點」與「模型自己猜的」。
+
+    實測（真 Gemini）：模型不知道長輩在哪時會猜「台北市」去呼叫工具，工具照查
+    照回，金孫就把台北的天氣報給別處的長輩。提示詞擋不住——這條是結構性防線的
+    上游，斷了它，防線就形同虛設而且沒有東西會紅。
+    """
+    from kinsun.turn_context import current_utterance
+
+    seen: list[str] = []
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(name="spy", description="", parameters={"type": "object", "properties": {}}),
+        lambda _args: seen.append(current_utterance()) or "ok",
+    )
+    llm = ScriptedToolLLM(
+        [
+            ToolTurn(text=None, tool_calls=[ToolCall("spy", {})]),
+            ToolTurn(text="好喔", tool_calls=[]),
+        ]
+    )
+
+    CareAgent(llm, SpySession(), tools=registry).handle("e1", "我在台南，今天天氣如何？")
+
+    assert seen == ["我在台南，今天天氣如何？"]
+
+
+def test_proactive_does_not_leak_previous_utterance():
+    """主動關懷沒有長輩原話——不可讓上一輪的話殘留在 context 裡。"""
+    from kinsun.turn_context import current_utterance
+
+    CareAgent(SpyLLM(), SpySession()).handle("e1", "我在台南")
+
+    assert current_utterance() == ""
