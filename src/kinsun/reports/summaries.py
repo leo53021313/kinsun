@@ -2,18 +2,67 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
 
 from kinsun.db import Database, _Errors
+from kinsun.llm import LLMError, Message
 
 SUMMARY_PROMPT = (
-    "你是協助家屬了解長輩近況的助手。請把以下長輩與『金孫』的對話，"
+    "你是協助家屬了解長輩近況的助手。請把使用者提供的長輩與『金孫』對話紀錄，"
     "用一兩句溫暖、客觀的台灣繁體中文摘要長輩這天的狀況與情緒。"
-    "只根據對話內容，不要編造未提及的事。"
+    "只根據對話內容，不要編造未提及的事；直接輸出摘要正文，"
+    "不要標題、粗體、分隔線或任何 Markdown 符號。"
 )
+
+_ROLE_LABELS = {"user": "長輩", "assistant": "金孫"}
+
+_TRANSCRIPT_PROMPT = "以下是長輩與『金孫』當天的對話紀錄：\n{transcript}\n請依上述要求輸出摘要。"
+
+# 生成失敗（空回應、接話）重試次數：實測 2026-07-17 空回應率 39%，重試一次可將
+# 失敗率壓到約 15%；夜間批次逐位長輩執行，再多重試效益遞減。
+_SUMMARY_ATTEMPTS = 2
+
+
+def _transcript_message(turns: list[Message]) -> Message:
+    """把整天對話組成單一 user 文字稿訊息。
+
+    為什麼不把對話當 user/assistant 歷史直接餵：模型會把自己當成對話中的人
+    「接話」（實測 2026-07-17 回出「心情有沒有比較好？」）或直接回空——它看到
+    的是一場進行中的對話，不是一份待摘要的紀錄。文字稿讓它站在旁觀者位置。
+    """
+    lines = "\n".join(f"{_ROLE_LABELS.get(m.role, '金孫')}：{m.content}" for m in turns)
+    return Message("user", _TRANSCRIPT_PROMPT.format(transcript=lines))
+
+
+_HTML_TAG = re.compile(r"</?[a-zA-Z][^>]*>")
+_MARKDOWN_CHARS = re.compile(r"[*#`＊]+")
+
+
+def _clean_summary(raw: str) -> str:
+    """去掉實測（2026-07-17）出現過的格式垃圾：Markdown 粗體與分隔線、
+    HTML 標籤（</blockquote>）、標題行與指令複述行（「請提供這段對話的摘要。」）。"""
+    text = _MARKDOWN_CHARS.sub("", _HTML_TAG.sub("", raw))
+    lines = []
+    for line in (ln.strip() for ln in text.splitlines()):
+        if not line:
+            continue
+        if line.endswith("："):  # 「長輩今日狀況摘要：」這類標題行
+            continue
+        if "請提供" in line or line.startswith("請幫我"):  # 指令複述／要求補資料
+            continue
+        lines.append(line)
+    return " ".join(lines).strip()
+
+
+def _is_usable_summary(content: str) -> bool:
+    """擋掉「接話」產物：實測失敗樣本皆為 25 字內的短問句（如「心情有沒有比較好？」）。"""
+    if not content:
+        return False
+    return not (content.endswith(("？", "?")) and len(content) < 25)
 
 
 @dataclass(frozen=True)
@@ -140,6 +189,21 @@ def summarize_day(
             + "；".join(signals)
             + "。請在摘要中自然地一併提及，讓家人知道可以多關心。"
         )
-    content = summarizer.generate(system_prompt=system_prompt, messages=turns)
+    request = [_transcript_message(turns)]
+    last_error: LLMError | None = None
+    content = ""
+    for _ in range(_SUMMARY_ATTEMPTS):
+        try:
+            raw = summarizer.generate(system_prompt=system_prompt, messages=request)
+        except LLMError as exc:
+            last_error = exc
+            continue
+        content = _clean_summary(raw)
+        if _is_usable_summary(content):
+            break
+        content = ""
+    if not content:
+        # 冒到 fanout 的 per-item 接手（跳過該長輩、留 log），與重試前的失敗語意一致。
+        raise last_error or LLMError("摘要生成不合格（空白或接話），重試後仍失敗")
     day = (clock().date() - timedelta(days=1)).isoformat()
     summaries.save(elder_id, day, content)
