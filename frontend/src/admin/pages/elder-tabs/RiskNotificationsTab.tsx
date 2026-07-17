@@ -24,8 +24,15 @@ export function RiskNotificationsTab() {
 
   const load = useCallback(() => {
     if (!elderId) return;
-    setError(false);
-    listElderRiskNotifications(elderId).then(setItems, () => setError(true));
+    // setError(false) 放進成功處理器：開頭的同步 setState 會在 useEffect 中
+    // 觸發連鎖重繪。代價是錯誤橫幅留到成功才消失。
+    listElderRiskNotifications(elderId).then(
+      (items) => {
+        setItems(items);
+        setError(false);
+      },
+      () => setError(true),
+    );
   }, [elderId]);
 
   useEffect(load, [load]);

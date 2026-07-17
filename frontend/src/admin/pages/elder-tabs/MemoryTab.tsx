@@ -12,8 +12,15 @@ export function MemoryTab() {
 
   const load = useCallback(() => {
     if (!elderId) return;
-    setError(false);
-    getElderMemory(elderId).then(setData, () => setError(true));
+    // setError(false) 放進成功處理器：開頭的同步 setState 會在 useEffect 中
+    // 觸發連鎖重繪。代價是錯誤橫幅留到成功才消失。
+    getElderMemory(elderId).then(
+      (data) => {
+        setData(data);
+        setError(false);
+      },
+      () => setError(true),
+    );
   }, [elderId]);
 
   useEffect(load, [load]);
