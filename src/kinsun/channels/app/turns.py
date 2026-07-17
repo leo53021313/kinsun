@@ -14,12 +14,14 @@ import logging
 import time
 import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from kinsun.accounts.models import Channel, PrincipalType
 from kinsun.accounts.service import AccountService
 from kinsun.channels.inbound import InboundMessage, dispatch
+from kinsun.locations.store import ElderLocation
 from kinsun.web.envelope import ok
 from kinsun.web.errors import ErrorCode
 
@@ -62,10 +64,27 @@ def create_app_turns_router(
     traces=None,
     inbound_audio=None,
     new_id: Callable[[], str] | None = None,
+    locations=None,
+    clock: Callable[[], datetime] | None = None,
     max_audio_bytes: int = _DEFAULT_MAX_AUDIO_BYTES,
 ) -> APIRouter:
     router = APIRouter(tags=["turns"])
     make_id = new_id or (lambda: uuid.uuid4().hex)
+    now = clock or (lambda: datetime.now(UTC))
+
+    def _save_location(elder_id: str, place: str) -> None:
+        """記下長輩這輪回報的地點。⚠️ 只收地名，不收也不記座標。
+
+        空字串／純空白＝「這輪沒有位置」（未授權、室內收不到），**不是**「他不在
+        任何地方」——故不寫入也不清空既有資料。
+        """
+        place = place.strip()
+        if locations is None or not place:
+            return
+        try:
+            locations.save(ElderLocation(elder_id, place, now().timestamp()))
+        except Exception:  # noqa: BLE001 - 位置是加分項，寫入失敗不可中斷對話
+            logger.warning("長輩地點寫入失敗")
 
     def current_elder(authorization: str = Header(default="")) -> str:
         token = authorization.removeprefix("Bearer ").strip()
@@ -84,7 +103,9 @@ def create_app_turns_router(
             return ""
 
     @router.post("/turns", status_code=201)
-    async def create_turn(request: Request, elder_id: str = Depends(current_elder)) -> dict:
+    async def create_turn(
+        request: Request, location: str = "", elder_id: str = Depends(current_elder)
+    ) -> dict:
         # 往返延遲起點（✅ D-05 戊-2）：請求進入處理的時刻，與 dispatch 的預設
         # timer（time.monotonic）同源；涵蓋收音檔、進站上傳與整段管線。
         received_at = time.monotonic()
@@ -99,6 +120,10 @@ def create_app_turns_router(
         audio = await request.body()
         if len(audio) > max_audio_bytes:
             raise HTTPException(status_code=413, detail=ErrorCode.AUDIO_TOO_LARGE)
+        # ⚠️ 必須排在 dispatch 之前：長輩這句話問的就是天氣時，這一輪就得用得到；
+        # 排在後面等於永遠慢一輪——而「慢一輪」在對講機上的表現就是他問第一次
+        # 還是被反問，功能等於沒做。
+        _save_location(elder_id, location)
         collector = _TurnCollector()
         msg = InboundMessage(
             Channel.APP,
