@@ -42,10 +42,12 @@ app/ 是 React Native、frontend/ 是瀏覽器 Vite app，執行環境與慣例�
 
 | 目標 | 經典層 | Compiler 層 |
 | :--- | :--- | :--- |
-| `app/` | 1 warning | 4 errors ＋ 3 warnings（其中 2 error 為通用設定的假警報，見上） |
+| `app/` | 1 warning | 2 errors ＋ 3 warnings（另 2 個 `require()` error 為通用設定的假警報，見上，不計入） |
 | `frontend/` | 幾乎全綠 | 8 errors |
 
-**採 Compiler 層（Leo 核定）**。理由：`app/app.json` 的 `experiments` 已開 `"reactCompiler": true`，這層規則對本專案不是學術問題——編譯器對這些模式的假設就是它能否安全優化的前提。代價是本輪要先修 8 處。
+實作時發現 `app/` 那 2 個 `set-state-in-effect` error（`medications.tsx`、`appointments.tsx`）**也是假警報**，與 `frontend/` 那 7 個性質不同：這兩處的 `reload` 是 async，每一個 setState 都在 `await` 之後，effect 的同步執行期間一個都不會跑；規則只是無法跨函式邊界分析（已驗證 `void reload()` 也壓不掉，非寫法問題）。故以 `eslint-disable` ＋ 理由放行。`frontend/` 那 7 個則是 `setError(false)` 寫在函式開頭、確實同步，是真的。
+
+**採 Compiler 層（Leo 核定）**。理由分兩邊：`app/` 的 `app.json` 已開 `"reactCompiler": true`，編譯器對這些模式的假設就是它能否安全優化的前提，這層規則對它不是學術問題。`frontend/` 沒跑編譯器（React 18 ＋ Vite），這層規則對它只是效能建議——但連鎖重繪在 React 18 一樣是真的，且兩邊同標準本身有價值（一個專案兩把尺，人會記不住哪邊能寫什麼）。代價是本輪要先修 8 處，而它們全在 frontend/。
 
 ## 元件設計
 
@@ -59,7 +61,9 @@ app/ 是 React Native、frontend/ 是瀏覽器 Vite app，執行環境與慣例�
 
 ### 2. `frontend/` 的設定：`frontend/eslint.config.js`
 
-`typescript-eslint` recommended ＋ react-hooks Compiler 層 ＋ `eslint-plugin-react-refresh`（Vite HMR 專用規則，確保元件檔只匯出元件）。
+`js.configs.recommended` ＋ `typescript-eslint` recommended ＋ react-hooks Compiler 層 ＋ `eslint-plugin-react-refresh`（Vite HMR 專用規則，確保元件檔只匯出元件）。
+
+⚠️ `js.configs.recommended` 的 `no-irregular-whitespace` 必須設 `skipTemplates: true, skipJSXText: true`：全形空白（U+3000）在中文文案裡是正當排版（`` `　token 入 ${input}／出 ${output}` ``），AGENTS.md 也明訂用全形標點，預設卻把它判成 error——實測 20 處全是假警報。只在**文案**放行，**程式碼**裡仍然抓：識別字或運算子之間冒出全形空白從來不是刻意的，那種才是這條規則要防的 bug。這與否決「共用設定」是同一個原則：假警報會訓練人忽略 linter。
 
 新增 devDependencies：`eslint`、`typescript-eslint`、`eslint-plugin-react-hooks`、`eslint-plugin-react-refresh`。
 新增 script：`"lint": "eslint src"`。
