@@ -231,3 +231,22 @@ def test_inactivity_isolates_failure():
         hour=10,
     ).run()
     assert cared == ["u2"]
+
+
+# --- 問候 intent 織入日期（2026-07-17：固定 intent 讓開場白 4 次 3 次逐字相同）---
+
+
+def test_greeting_intent_weaves_date_and_weekday():
+    from kinsun.proactive.jobs import GREETING_INTENT, greeting_intent
+
+    intent = greeting_intent(datetime(2026, 7, 17, 8, 0, tzinfo=TPE))  # 星期五
+    assert GREETING_INTENT in intent
+    assert "7" in intent and "17" in intent and "星期五" in intent
+
+
+def test_greeting_intent_differs_by_day():
+    from kinsun.proactive.jobs import greeting_intent
+
+    a = greeting_intent(datetime(2026, 7, 17, 8, 0, tzinfo=TPE))
+    b = greeting_intent(datetime(2026, 7, 18, 8, 0, tzinfo=TPE))
+    assert a != b

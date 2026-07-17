@@ -15,6 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
+from kinsun.accounts.facts import ElderProfileFacts
 from kinsun.accounts.models import Channel
 from kinsun.accounts.service import AccountService
 from kinsun.accounts.store import PgAccountStore
@@ -164,6 +165,9 @@ def assemble_core(
         memory,
         externals.long_term,
         facts=[
+            # 稱呼排最前（2026-07-17）：沒有它，模型每輪亂猜「阿公／阿嬤」，
+            # 真實使用一半機率叫錯；稱呼是所有段落裡最先要對的事。
+            ElderProfileFacts(account_store),
             MedicationFacts(medications),
             AppointmentFacts(appointments, clock=clock),
             # 閉環的最後一哩：反思學到的守則由此進入下一輪對話的 system prompt。
