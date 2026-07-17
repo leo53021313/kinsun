@@ -16,7 +16,7 @@ from typing import Protocol
 
 from kinsun.db import Database, _Errors
 
-_COLUMNS = "elder_id, place, recorded_at"
+_COLUMNS = "elder_id, place, recorded_at, latitude, longitude"
 
 
 @dataclass(frozen=True)
@@ -25,6 +25,10 @@ class ElderLocation:
     place: str  # 地名，如「台南市」
     # ⚠️ 我們**收到**的時刻，不是 GPS 定位的時刻；兩者落差為已知誤差來源（見 spec 已知限制 3）。
     recorded_at: float
+    # 模糊座標（約 0.01 度／1.1 公里，手機端四捨五入後才上傳）。None＝我們不知道
+    # 它在哪：PR #55 寫入的既有列即此情形，LocationFacts 會退回只注入地名。
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 class LocationError(Exception):
@@ -42,10 +46,17 @@ class PgLocationStore:
 
     def save(self, location: ElderLocation) -> None:
         self._db.execute(
-            f"INSERT INTO elder_locations ({_COLUMNS}) VALUES (%s, %s, %s) "
+            f"INSERT INTO elder_locations ({_COLUMNS}) VALUES (%s, %s, %s, %s, %s) "
             "ON CONFLICT (elder_id) DO UPDATE SET "
-            "place = EXCLUDED.place, recorded_at = EXCLUDED.recorded_at",
-            (location.elder_id, location.place, location.recorded_at),
+            "place = EXCLUDED.place, recorded_at = EXCLUDED.recorded_at, "
+            "latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude",
+            (
+                location.elder_id,
+                location.place,
+                location.recorded_at,
+                location.latitude,
+                location.longitude,
+            ),
         )
 
     def get_for_elder(self, elder_id: str) -> ElderLocation | None:

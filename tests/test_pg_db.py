@@ -244,3 +244,44 @@ def test_transaction_lets_domain_exceptions_pass_through(pg_database, ns):
         "SELECT last_run_at FROM scheduler_state WHERE job_name = %s", (f"{ns}tx-job",)
     )
     assert row == (1000.0,)  # 已回滾
+
+
+# PR #55 的 elder_locations schema：只有地名、沒有座標。正式庫就是長這樣。
+_LEGACY_ELDER_LOCATIONS_DDL = (
+    "CREATE TABLE elder_locations ("
+    "elder_id TEXT PRIMARY KEY, place TEXT NOT NULL, "
+    "recorded_at DOUBLE PRECISION NOT NULL);"
+)
+
+
+def test_ensure_schema_adds_coords_to_legacy_elder_locations(pg_url):
+    """既有庫升級：elder_locations 已於 PR #55 上線、沒有座標欄位，
+    ensure_schema 須能就地補上，且不得掉既有資料。
+
+    空庫路徑測不到這條——CREATE TABLE 一開始就會建出座標欄，ALTER 自動略過。
+    只有帶著舊表的既有庫（正式庫就是）會走到 ALTER 那條路。
+    """
+    from kinsun.db import connect, ensure_schema
+
+    with connect(pg_url) as conn:
+        conn.execute("DROP TABLE IF EXISTS elder_locations CASCADE;")
+        conn.execute(_LEGACY_ELDER_LOCATIONS_DDL)
+        conn.execute(
+            "INSERT INTO elder_locations (elder_id, place, recorded_at) VALUES (%s, %s, %s)",
+            ("legacy-e1", "台南市", 1000.0),
+        )
+        conn.commit()
+
+    ensure_schema(pg_url)
+
+    with connect(pg_url) as conn:
+        cols = _columns_of(conn, "elder_locations")
+        assert "latitude" in cols, "未補上 latitude"
+        assert "longitude" in cols, "未補上 longitude"
+        row = conn.execute(
+            "SELECT place, recorded_at, latitude, longitude FROM elder_locations "
+            "WHERE elder_id = %s",
+            ("legacy-e1",),
+        ).fetchone()
+        # 既有列必須留著，且座標為 NULL——語意正確（我們確實不知道它在哪）。
+        assert row == ("台南市", 1000.0, None, None)
