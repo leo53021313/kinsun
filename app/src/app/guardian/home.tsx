@@ -63,7 +63,7 @@ export default function GuardianHome() {
       return () => {
         alive = false;
       };
-    }, [router, loading, session]),
+    }, [router, loading, session, signOutOn401]),
   );
 
   async function addElder() {

@@ -73,7 +73,7 @@ export default function ElderDetail() {
       return () => {
         alive = false;
       };
-    }, [elderId, session]),
+    }, [elderId, session, signOutOn401]),
   );
 
   async function saveAccount() {
