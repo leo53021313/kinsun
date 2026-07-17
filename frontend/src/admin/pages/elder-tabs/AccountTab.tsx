@@ -1,30 +1,17 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
 import { useParams } from "react-router-dom";
 
-import { type AdminElderAccount, getElderAccount } from "../../api";
+import { getElderAccount } from "../../api";
 import { formatTime } from "../../format";
 import { strings } from "../../strings";
+import { useLoadable } from "../../useLoadable";
 
 /** 帳號與綁定分頁：排查「為什麼登不進去」——綁定、邀請碼、同意、帳密、token。 */
 export function AccountTab() {
   const { elderId } = useParams<{ elderId: string }>();
-  const [data, setData] = useState<AdminElderAccount | null>(null);
-  const [error, setError] = useState(false);
-
-  const load = useCallback(() => {
-    if (!elderId) return;
-    // setError(false) 放進成功處理器：開頭的同步 setState 會在 useEffect 中
-    // 觸發連鎖重繪。代價是錯誤橫幅留到成功才消失。
-    getElderAccount(elderId).then(
-      (data) => {
-        setData(data);
-        setError(false);
-      },
-      () => setError(true),
-    );
-  }, [elderId]);
-
-  useEffect(load, [load]);
+  const { data, error } = useLoadable(
+    useCallback(() => (elderId ? getElderAccount(elderId) : null), [elderId]),
+  );
 
   if (error) return <p className="error-banner">{strings.common.loadFailedRefresh}</p>;
   if (!data) return <p>{strings.common.loading}</p>;
