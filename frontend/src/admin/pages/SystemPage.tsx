@@ -1,30 +1,23 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { type AdminJob, getMeta, listJobs, runJob } from "../api";
+import { getMeta, listJobs, runJob } from "../api";
 import { formatTime } from "../format";
 import { strings } from "../strings";
+import { useLoadable } from "../useLoadable";
 
 /** 系統頁（spec 2026-07-12 §3.3–3.4）：排程任務狀態；內測模式可立即執行。 */
 export function SystemPage() {
-  const [jobs, setJobs] = useState<AdminJob[] | null>(null);
+  // 本頁不依賴路由參數，fetcher 永不回 null（其餘頁面以 null 表示「elderId 還沒
+  // 解析出來、這輪不載入」）。
+  const {
+    data: jobs,
+    error,
+    reload: load,
+  } = useLoadable(useCallback(() => listJobs(), []));
   const [testing, setTesting] = useState(false);
-  const [error, setError] = useState(false);
   const [notice, setNotice] = useState("");
   const [busyJob, setBusyJob] = useState("");
 
-  const load = useCallback(() => {
-    // setError(false) 放進成功處理器而非開頭：開頭是同步 setState，會在
-    // useEffect(load, [load]) 中觸發連鎖重繪。代價是錯誤橫幅留到成功才消失。
-    listJobs().then(
-      (jobs) => {
-        setJobs(jobs);
-        setError(false);
-      },
-      () => setError(true),
-    );
-  }, []);
-
-  useEffect(load, [load]);
   useEffect(() => {
     getMeta().then(
       (m) => setTesting(m.internal_testing),

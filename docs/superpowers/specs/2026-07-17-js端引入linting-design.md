@@ -1,7 +1,7 @@
 # JS 端引入 linting 設計文件
 
 - 日期：2026-07-17
-- 狀態：**設計中**（尚未實作）
+- 狀態：**已實作**（Task 1–5，PR #56 已併入 main）。⚠️ `/admin` 七條人工複驗尚未執行，其中錯誤狀態那條最重要——那是本設計唯一刻意改變的行為。本文已依實作結果更正三處：採 Compiler 層的理由（原文對 frontend/ 不成立）、app/ 的違規數（原文漏記 2 個 error）、frontend/ 設定漏寫 `js.configs.recommended` 及其假警報處置。
 - 相關決策：app/ 與 frontend/ 都做並加進 CI（Leo 核定）、採 React Compiler 層規則並於本輪修完既有違規（Leo 核定）、兩邊不共用設定
 
 ## 背景與動機
