@@ -93,13 +93,16 @@ class PgAccountStore:
 
     def save_elder(self, elder: Elder, *, tx: Executor | None = None) -> None:
         (tx or self._db).execute(
-            "INSERT INTO elders (elder_id, name) VALUES (%s, %s) "
-            "ON CONFLICT (elder_id) DO UPDATE SET name = EXCLUDED.name",
-            (elder.elder_id, elder.name),
+            "INSERT INTO elders (elder_id, name, nickname) VALUES (%s, %s, %s) "
+            "ON CONFLICT (elder_id) DO UPDATE SET "
+            "name = EXCLUDED.name, nickname = EXCLUDED.nickname",
+            (elder.elder_id, elder.name, elder.nickname),
         )
 
     def get_elder(self, elder_id: str) -> Elder | None:
-        rows = self._db.query("SELECT elder_id, name FROM elders WHERE elder_id = %s", (elder_id,))
+        rows = self._db.query(
+            "SELECT elder_id, name, nickname FROM elders WHERE elder_id = %s", (elder_id,)
+        )
         return Elder(*rows[0]) if rows else None
 
     def save_guardian(self, guardian: Guardian, *, tx: Executor | None = None) -> None:
