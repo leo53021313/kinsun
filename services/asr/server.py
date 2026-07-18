@@ -153,7 +153,7 @@ async def transcribe(request: Request) -> dict[str, str]:
             text = await run_in_threadpool(_transcribe, audio)
     except AudioDecodeError:
         # 壞音檔是呼叫端資料問題（4xx），不是服務故障（500）；根因已於 decode 記 log。
-        raise HTTPException(status_code=422, detail="audio_decode_failed")
+        raise HTTPException(status_code=422, detail="audio_decode_failed") from None
     finally:
         _inflight -= 1
     return {"text": text}
