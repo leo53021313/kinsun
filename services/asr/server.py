@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import logging
 import os
 import subprocess
 import tempfile
@@ -19,6 +20,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
+
+logger = logging.getLogger(__name__)
+
+
+class AudioDecodeError(Exception):
+    """音檔 bytes 無法解碼成可辨識的聲音樣本（ffmpeg 失敗或 0 樣本）。"""
+
 
 # Breeze-ASR-26（Whisper 系）輸入取樣率。
 _TARGET_SR = 16000
@@ -87,9 +95,17 @@ def _decode_to_mono16k(audio: bytes):
             capture_output=True,
             check=True,
         )
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or b"").decode("utf-8", errors="replace").strip()
+        logger.error("ffmpeg 解碼失敗 exit=%s stderr=%s", exc.returncode, stderr)
+        raise AudioDecodeError(f"ffmpeg exit {exc.returncode}") from exc
     finally:
         os.unlink(tmp_path)
-    return np.frombuffer(proc.stdout, dtype=np.float32).copy()
+    array = np.frombuffer(proc.stdout, dtype=np.float32).copy()
+    if array.size == 0:
+        logger.error("ffmpeg 解碼結果為 0 樣本（音檔無有效聲音內容）")
+        raise AudioDecodeError("decoded_zero_samples")
+    return array
 
 
 def _transcribe(audio: bytes) -> str:
@@ -136,6 +152,9 @@ async def transcribe(request: Request) -> dict[str, str]:
     try:
         async with _sem:
             text = await run_in_threadpool(_transcribe, audio)
+    except AudioDecodeError:
+        # 壞音檔是呼叫端資料問題（4xx），不是服務故障（500）；根因已於 decode 記 log。
+        raise HTTPException(status_code=422, detail="audio_decode_failed") from None
     finally:
         _inflight -= 1
     return {"text": text}
