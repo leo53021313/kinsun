@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 class AudioDecodeError(Exception):
     """音檔 bytes 無法解碼成可辨識的聲音樣本（ffmpeg 失敗或 0 樣本）。"""
 
+
 # Breeze-ASR-26（Whisper 系）輸入取樣率。
 _TARGET_SR = 16000
 
