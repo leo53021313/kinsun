@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import replace
 
-from kinsun.agent import CareAgent
+from kinsun.agent import FALLBACK_REPLY, CareAgent
 from kinsun.llm import LLMUsage, collect_llm_usage
 from kinsun.observability.store import TraceStore, safe_record
 from kinsun.reports.reminders import ReminderLogStore
@@ -98,6 +98,13 @@ class VoicePipeline:
         self, user_text: str, *, elder_id: str, external_id: str, channel: str, trace_id: str
     ) -> TtsResult:
         """會話鍵為 elder_id；external_id＋channel 僅供觀測五表標記（可為空字串）。"""
+        # 空輸入守門（2026-07-18）：靜音誤觸的 ASR 辨識為空，沒有內容可分級、
+        # 可回應也不該進記憶，直接以回退話術（仍走 TTS）請長輩再說一次。
+        if not user_text.strip():
+            result = self._synthesize(
+                FALLBACK_REPLY, external_id=external_id, channel=channel, trace_id=trace_id
+            )
+            return replace(result, transcript=user_text)
         assessment = self._assess(
             user_text, external_id=external_id, channel=channel, trace_id=trace_id
         )
