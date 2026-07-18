@@ -91,8 +91,28 @@ APPOINTMENTS_DDL = (
     "CREATE TABLE IF NOT EXISTS appointments ("
     "appointment_id TEXT PRIMARY KEY, elder_id TEXT NOT NULL, "
     "date TEXT NOT NULL, label TEXT NOT NULL, time TEXT NOT NULL DEFAULT '');"
-    "CREATE INDEX IF NOT EXISTS idx_appointments_date ON appointments (date);"
+)
+
+# 早期個人庫使用 appt_id／appt_date；先無損改名再建新索引，避免既有表在 CREATE INDEX
+# 階段因 date 尚不存在而讓整筆 schema 交易失敗。
+APPOINTMENTS_NAMING_MIGRATION_DDL = (
+    "DO $$ BEGIN "
+    "IF EXISTS (SELECT 1 FROM information_schema.columns "
+    "WHERE table_schema='public' AND table_name='appointments' AND column_name='appt_id') "
+    "AND NOT EXISTS (SELECT 1 FROM information_schema.columns "
+    "WHERE table_schema='public' AND table_name='appointments' AND column_name='appointment_id') "
+    "THEN ALTER TABLE appointments RENAME COLUMN appt_id TO appointment_id; END IF; "
+    "IF EXISTS (SELECT 1 FROM information_schema.columns "
+    "WHERE table_schema='public' AND table_name='appointments' AND column_name='appt_date') "
+    "AND NOT EXISTS (SELECT 1 FROM information_schema.columns "
+    "WHERE table_schema='public' AND table_name='appointments' AND column_name='date') "
+    "THEN ALTER TABLE appointments RENAME COLUMN appt_date TO date; END IF; "
+    "IF to_regclass('public.idx_appt_date') IS NOT NULL "
+    "AND to_regclass('public.idx_appointments_date') IS NULL "
+    "THEN ALTER INDEX idx_appt_date RENAME TO idx_appointments_date; END IF; "
+    "END $$;"
     "ALTER TABLE appointments ADD COLUMN IF NOT EXISTS time TEXT NOT NULL DEFAULT '';"
+    "CREATE INDEX IF NOT EXISTS idx_appointments_date ON appointments (date);"
 )
 
 RAG_DDL = (
@@ -101,7 +121,9 @@ RAG_DDL = (
     "source_id TEXT PRIMARY KEY, title TEXT NOT NULL, url TEXT NOT NULL, "
     "publisher TEXT NOT NULL, source_type TEXT NOT NULL, trust_level TEXT NOT NULL, "
     "copyright_status TEXT NOT NULL, recommended_status TEXT NOT NULL, "
-    "approved_for_rag BOOLEAN NOT NULL, allowed_domains TEXT NOT NULL, notes TEXT NOT NULL);"
+    "approved_for_rag BOOLEAN NOT NULL, allowed_domains TEXT NOT NULL, notes TEXT NOT NULL, "
+    "source_role TEXT NOT NULL DEFAULT 'answer');"
+    "ALTER TABLE rag_sources ADD COLUMN IF NOT EXISTS source_role TEXT NOT NULL DEFAULT 'answer';"
     "CREATE TABLE IF NOT EXISTS rag_documents ("
     "document_id TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES rag_sources(source_id), "
     "url TEXT NOT NULL, title TEXT NOT NULL, publisher TEXT NOT NULL, text TEXT NOT NULL, "
@@ -120,7 +142,10 @@ RAG_DDL = (
     "topic TEXT NOT NULL, audience TEXT NOT NULL, medical_scope TEXT NOT NULL, "
     "trust_level TEXT NOT NULL, approved_for_rag BOOLEAN NOT NULL, "
     "copyright_status TEXT NOT NULL, source_published_at DATE, source_updated_at DATE, "
-    "retrieved_at DATE NOT NULL, last_reviewed_at DATE, version TEXT);"
+    "retrieved_at DATE NOT NULL, last_reviewed_at DATE, version TEXT, "
+    "source_role TEXT NOT NULL DEFAULT 'answer', embedding_model TEXT NOT NULL DEFAULT '');"
+    "ALTER TABLE rag_chunks ADD COLUMN IF NOT EXISTS source_role TEXT NOT NULL DEFAULT 'answer';"
+    "ALTER TABLE rag_chunks ADD COLUMN IF NOT EXISTS embedding_model TEXT NOT NULL DEFAULT '';"
     "CREATE INDEX IF NOT EXISTS idx_rag_chunks_source_topic ON rag_chunks (source_id, topic);"
     "CREATE INDEX IF NOT EXISTS idx_rag_chunks_embedding "
     "ON rag_chunks USING hnsw (embedding vector_cosine_ops);"
@@ -134,6 +159,30 @@ RAG_DDL = (
     "ALTER TABLE rag_ingestion_audit_logs "
     "ADD COLUMN IF NOT EXISTS document_id TEXT NOT NULL DEFAULT '';"
     "ALTER TABLE rag_ingestion_audit_logs ADD COLUMN IF NOT EXISTS url TEXT NOT NULL DEFAULT '';"
+    "CREATE INDEX IF NOT EXISTS idx_rag_ingestion_audit_fetched "
+    "ON rag_ingestion_audit_logs (fetched_at);"
+    "CREATE TABLE IF NOT EXISTS rag_index_releases ("
+    "index_version TEXT PRIMARY KEY, status TEXT NOT NULL, embedding_model TEXT NOT NULL, "
+    "embedding_dimensions INTEGER NOT NULL, content_policy TEXT NOT NULL, "
+    "quality_metrics JSONB NOT NULL DEFAULT '{}'::jsonb, "
+    "relevance_threshold DOUBLE PRECISION, started_at DOUBLE PRECISION NOT NULL, "
+    "completed_at DOUBLE PRECISION, published_at DOUBLE PRECISION, error_message TEXT);"
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_rag_release_building "
+    "ON rag_index_releases (status) WHERE status = 'building';"
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_rag_release_active "
+    "ON rag_index_releases (status) WHERE status = 'active';"
+    "CREATE TABLE IF NOT EXISTS rag_release_documents ("
+    "index_version TEXT NOT NULL REFERENCES rag_index_releases(index_version) ON DELETE CASCADE, "
+    "document_id TEXT NOT NULL REFERENCES rag_documents(document_id) ON DELETE CASCADE, "
+    "PRIMARY KEY (index_version, document_id));"
+    "CREATE INDEX IF NOT EXISTS idx_rag_release_documents_document "
+    "ON rag_release_documents (document_id);"
+    "CREATE TABLE IF NOT EXISTS rag_release_chunks ("
+    "index_version TEXT NOT NULL REFERENCES rag_index_releases(index_version) ON DELETE CASCADE, "
+    "chunk_id TEXT NOT NULL REFERENCES rag_chunks(chunk_id) ON DELETE CASCADE, "
+    "PRIMARY KEY (index_version, chunk_id));"
+    "CREATE INDEX IF NOT EXISTS idx_rag_release_chunks_chunk "
+    "ON rag_release_chunks (chunk_id);"
 )
 
 RISK_EVENTS_DDL = (
@@ -290,9 +339,14 @@ OBSERVABILITY_TABLES_DDL = (
     "channel TEXT NOT NULL DEFAULT '', "
     "kind TEXT NOT NULL, status TEXT NOT NULL, latency_ms INTEGER NOT NULL, "
     "round_trip_ms INTEGER, audio_url TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+    "CREATE TABLE IF NOT EXISTS rag_calls ("
+    "rag_call_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, elder_id TEXT NOT NULL, "
+    "query TEXT NOT NULL, index_version TEXT NOT NULL, status TEXT NOT NULL, "
+    "latency_ms INTEGER NOT NULL, safety_level TEXT NOT NULL, reason TEXT NOT NULL, "
+    "hits JSONB NOT NULL, citations JSONB NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
 )
 
-# 觀測五表索引：須在改名遷移之後才建（idx_asr_calls_external_created 引用 external_id）。
+# 觀測六表索引：前五表須在改名遷移後才建；rag_calls 以 trace／created 索引。
 OBSERVABILITY_INDEXES_DDL = (
     "CREATE INDEX IF NOT EXISTS idx_webhook_events_trace ON webhook_events (trace_id);"
     "CREATE INDEX IF NOT EXISTS idx_webhook_events_created ON webhook_events (created_at);"
@@ -305,6 +359,8 @@ OBSERVABILITY_INDEXES_DDL = (
     "CREATE INDEX IF NOT EXISTS idx_tts_calls_created ON tts_calls (created_at);"
     "CREATE INDEX IF NOT EXISTS idx_replies_trace ON replies (trace_id);"
     "CREATE INDEX IF NOT EXISTS idx_replies_created ON replies (created_at);"
+    "CREATE INDEX IF NOT EXISTS idx_rag_calls_trace ON rag_calls (trace_id);"
+    "CREATE INDEX IF NOT EXISTS idx_rag_calls_created ON rag_calls (created_at);"
 )
 
 # 觀測五表欄位正名遷移（✅ 庚-07，冪等）：既有庫 line_user_id → external_id、補 channel。
@@ -390,6 +446,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(RATE_LIMIT_DDL)
         conn.execute(MEDICATIONS_DDL)
         conn.execute(APPOINTMENTS_DDL)
+        conn.execute(APPOINTMENTS_NAMING_MIGRATION_DDL)
         conn.execute(RAG_DDL)
         conn.execute(RISK_EVENTS_DDL)
         conn.execute(REMINDER_LOGS_DDL)

@@ -95,3 +95,16 @@ def test_unknown_retrieval_method_gets_conservative_weight():
     today = date.today()
     ranked = rerank((_result("c-1", updated_at=today, method="mystery"),))
     assert ranked[0].score == 0.85
+
+
+def test_keyword_and_vector_methods_use_equal_base_weight():
+    today = date.today()
+    ranked = rerank(
+        (
+            _result("vector", updated_at=today, method="vector"),
+            _result("keyword", updated_at=today, method="keyword"),
+        )
+    )
+
+    assert _score_of(ranked, "vector") == 1.0
+    assert _score_of(ranked, "keyword") == 1.0

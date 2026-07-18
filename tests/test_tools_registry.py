@@ -1,5 +1,5 @@
 from kinsun.llm import ToolSpec
-from kinsun.tools.registry import ToolRegistry
+from kinsun.tools.registry import ToolInvocationContext, ToolRegistry
 
 SPEC = ToolSpec(
     name="echo", description="回傳輸入", parameters={"type": "object", "properties": {}}
@@ -30,3 +30,18 @@ def test_dispatch_handler_exception_returns_friendly():
 
     reg.register(SPEC, boom)
     assert "工具執行失敗" in reg.dispatch("echo", {})  # 不拋
+
+
+def test_dispatch_passes_optional_invocation_context():
+    reg = ToolRegistry()
+    seen = []
+
+    def handler(args, context=None):
+        seen.append(context)
+        return "ok"
+
+    context = ToolInvocationContext(trace_id="trace-1", elder_id="elder-1", has_risk_signal=True)
+    reg.register(SPEC, handler)
+
+    assert reg.dispatch("echo", {}, context=context) == "ok"
+    assert seen == [context]

@@ -7,6 +7,8 @@ from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from croniter import croniter
+
 # 只從無相依的常數模組取用，不要改成 import greeting_time：那會沿著
 # greeting_time → memory.shortterm → db 把 psycopg 拖進這個全庫最低層的模組，
 # 並讓任何「db／llm 想讀設定」的合理需求變成硬循環匯入。回歸測試見
@@ -76,6 +78,11 @@ class Settings:
     rag_top_k: int
     location_stale_after_hours: int
     tavily_api_key: str
+    rag_content_policy: str
+    rag_embedding_model: str
+    rag_refresh_enabled: bool
+    rag_refresh_cron: str
+    rag_audit_retention_days: int
     liff_channel_id: str
     liff_timeout_seconds: float
     rich_menu_id: str
@@ -113,6 +120,22 @@ class Settings:
     proactive_greeting_latest_hour: int
     proactive_greeting_max_shift_minutes: int
     proactive_greeting_lag_tolerance_minutes: int
+
+
+@dataclass(frozen=True)
+class RagWorkerSettings:
+    """獨立 RAG Worker 所需設定，不綁 LINE、語音、LIFF 或主動關懷。"""
+
+    database_url: str
+    database_pool_max_size: int
+    gemini_api_key: str
+    timezone: str
+    scheduler_tick_seconds: int
+    rag_content_policy: str
+    rag_embedding_model: str
+    rag_refresh_enabled: bool
+    rag_refresh_cron: str
+    rag_audit_retention_days: int
 
 
 # 讀成 False 的值。`off` 與空值（含純空白）必須在列：布林旗標裡有緊急關閉開關
@@ -155,6 +178,31 @@ def _require_hour(env: Mapping[str, str], key: str, default: str) -> int:
     if not 0 <= value <= 23:
         raise ConfigError(f"{key}（{value}）必須介於 0 到 23 之間。")
     return value
+
+
+def load_rag_worker_settings(env: Mapping[str, str]) -> RagWorkerSettings:
+    """只載入 RAG 週更程序實際依賴，避免被其他 channel 的金鑰阻擋。"""
+    return RagWorkerSettings(
+        database_url=_require(env, "DATABASE_URL"),
+        database_pool_max_size=_positive_int(
+            env.get("DATABASE_POOL_MAX_SIZE", "5"),
+            "DATABASE_POOL_MAX_SIZE",
+        ),
+        gemini_api_key=_require(env, "GEMINI_API_KEY"),
+        timezone=env.get("TIMEZONE", "Asia/Taipei"),
+        scheduler_tick_seconds=_positive_int(
+            env.get("SCHEDULER_TICK_SECONDS", "60"),
+            "SCHEDULER_TICK_SECONDS",
+        ),
+        rag_content_policy=_rag_content_policy(env.get("RAG_CONTENT_POLICY", "allowed_only")),
+        rag_embedding_model=env.get("RAG_EMBEDDING_MODEL", "") or "gemini-embedding-001",
+        rag_refresh_enabled=_parse_bool(env.get("RAG_REFRESH_ENABLED", "false")),
+        rag_refresh_cron=_rag_refresh_cron(env.get("RAG_REFRESH_CRON", "") or "0 3 * * 0"),
+        rag_audit_retention_days=_positive_int(
+            env.get("RAG_AUDIT_RETENTION_DAYS", "90"),
+            "RAG_AUDIT_RETENTION_DAYS",
+        ),
+    )
 
 
 def load_settings(env: Mapping[str, str]) -> Settings:
@@ -303,6 +351,14 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         location_stale_after_hours=_require_positive_int(env, "LOCATION_STALE_AFTER_HOURS", "2"),
         # 上網查證金鑰（spec 2026-07-14）：留空＝不註冊 web_search 工具（優雅降級）。
         tavily_api_key=env.get("TAVILY_API_KEY", ""),
+        rag_content_policy=_rag_content_policy(env.get("RAG_CONTENT_POLICY", "allowed_only")),
+        rag_embedding_model=env.get("RAG_EMBEDDING_MODEL", "") or "gemini-embedding-001",
+        rag_refresh_enabled=_parse_bool(env.get("RAG_REFRESH_ENABLED", "false")),
+        rag_refresh_cron=_rag_refresh_cron(env.get("RAG_REFRESH_CRON", "") or "0 3 * * 0"),
+        rag_audit_retention_days=_positive_int(
+            env.get("RAG_AUDIT_RETENTION_DAYS", "90"),
+            "RAG_AUDIT_RETENTION_DAYS",
+        ),
         liff_channel_id=env.get("LIFF_CHANNEL_ID", ""),
         liff_timeout_seconds=float(env.get("LIFF_TIMEOUT_SECONDS", "10")),
         rich_menu_id=env.get("RICH_MENU_ID", ""),
@@ -350,3 +406,27 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         # （約 3～6 萬 token）。超量時丟的是最舊的輪次，並記 warning。
         reflection_max_turns=_require_positive_int(env, "REFLECTION_MAX_TURNS", "600"),
     )
+
+
+def _rag_content_policy(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized not in {"allowed_only", "classroom_demo"}:
+        raise ConfigError("RAG_CONTENT_POLICY 必須為 allowed_only 或 classroom_demo。")
+    return normalized
+
+
+def _rag_refresh_cron(value: str) -> str:
+    normalized = value.strip()
+    if not croniter.is_valid(normalized):
+        raise ConfigError("RAG_REFRESH_CRON 不是有效的 cron 表達式。")
+    return normalized
+
+
+def _positive_int(value: str, key: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise ConfigError(f"{key} 必須是正整數。") from exc
+    if parsed <= 0:
+        raise ConfigError(f"{key} 必須是正整數。")
+    return parsed
