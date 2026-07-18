@@ -1,0 +1,121 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="展示版" id="showcase-care-arch">
+    <mxGraphModel dx="1768" dy="939" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1060" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#24446C;strokeColor=none;fontColor=#FFFFFF;align=center;verticalAlign=middle;" value="&lt;font style=&quot;font-size:24px&quot;&gt;&lt;b&gt;金孫 KinSun｜聽得懂台語的 AI 金孫&lt;/b&gt;&lt;/font&gt;&lt;div style=&quot;font-size:13px&quot;&gt;會記得、會關心、會守護的長輩語音陪伴系統——長輩按住說話，AI 像孫子一樣回應；家屬遠端安心守護&lt;/div&gt;" vertex="1">
+          <mxGeometry height="80" width="1520" x="40" y="30" as="geometry" />
+        </mxCell>
+        <mxCell id="flowband" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF9E6;strokeColor=#D6B656;verticalAlign=top;align=left;fontStyle=1;fontSize=14;spacingLeft=10;spacingTop=6;" value="⚡ 一次對話的旅程" vertex="1">
+          <mxGeometry height="120" width="1520" x="40" y="130" as="geometry" />
+        </mxCell>
+        <mxCell id="s1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D6B656;" value="&lt;b&gt;① 按住說話&lt;/b&gt;&lt;div&gt;長輩對 App 講國台語&lt;/div&gt;&lt;div&gt;大字對講機·零學習門檻&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="260" x="60" y="170" as="geometry" />
+        </mxCell>
+        <mxCell id="s2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D6B656;" value="&lt;b&gt;② 語音轉文字&lt;/b&gt;&lt;div&gt;自架 ASR·台語也聽得懂&lt;/div&gt;&lt;div&gt;國台語混講→繁中文字&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="260" x="365" y="170" as="geometry" />
+        </mxCell>
+        <mxCell id="s3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D6B656;" value="&lt;b&gt;③ AI 金孫思考&lt;/b&gt;&lt;div&gt;帶著記憶·查工具·守人設&lt;/div&gt;&lt;div&gt;像認識多年的孫子在回話&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="260" x="670" y="170" as="geometry" />
+        </mxCell>
+        <mxCell id="s4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#B85450;" value="&lt;b&gt;④ 危急同步偵測&lt;/b&gt;&lt;div&gt;每句話同步分級判讀&lt;/div&gt;&lt;div&gt;有警訊即刻通知家屬&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="260" x="975" y="170" as="geometry" />
+        </mxCell>
+        <mxCell id="s5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D6B656;" value="&lt;b&gt;⑤ 語音播回&lt;/b&gt;&lt;div&gt;自架 TTS 溫暖聲線&lt;/div&gt;&lt;div&gt;長輩放開手就聽到回答&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="260" x="1280" y="170" as="geometry" />
+        </mxCell>
+        <mxCell id="f1" edge="1" parent="1" source="s1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;strokeWidth=2;strokeColor=#B46504;" target="s2" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f2" edge="1" parent="1" source="s2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;strokeWidth=2;strokeColor=#B46504;" target="s3" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f3" edge="1" parent="1" source="s3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;strokeWidth=2;strokeColor=#B46504;" target="s4" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f4" edge="1" parent="1" source="s4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;strokeWidth=2;strokeColor=#B46504;" target="s5" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="userband" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EDF4FC;strokeColor=#6C8EBF;verticalAlign=top;align=left;fontStyle=1;fontSize=14;spacingLeft=10;spacingTop=6;" value="👪 三種角色，一套系統" vertex="1">
+          <mxGeometry height="150" width="1520" x="40" y="270" as="geometry" />
+        </mxCell>
+        <mxCell id="u1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6C8EBF;" value="&lt;b&gt;📱 長輩端 App｜零學習門檻&lt;/b&gt;&lt;div&gt;對講機介面：按住說話、放開就聽到回答&lt;/div&gt;&lt;div&gt;大字體·聽得懂國台語·像金孫一樣陪聊&lt;/div&gt;" vertex="1">
+          <mxGeometry height="90" width="480" x="60" y="310" as="geometry" />
+        </mxCell>
+        <mxCell id="u2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6C8EBF;" value="&lt;b&gt;👨‍👩‍👧 家屬端 App｜遠端安心守護&lt;/b&gt;&lt;div&gt;用藥/回診設定·每日健康摘要·掃碼即綁定&lt;/div&gt;&lt;div&gt;長輩有異狀，App＋LINE 即時通知&lt;/div&gt;" vertex="1">
+          <mxGeometry height="90" width="480" x="560" y="310" as="geometry" />
+        </mxCell>
+        <mxCell id="u3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6C8EBF;" value="&lt;b&gt;🖥 營運後台｜全鏈路透視&lt;/b&gt;&lt;div&gt;對話·記憶·危急事件·排程一目了然&lt;/div&gt;&lt;div&gt;可手動觸發任務，問題現場重現&lt;/div&gt;" vertex="1">
+          <mxGeometry height="90" width="480" x="1060" y="310" as="geometry" />
+        </mxCell>
+        <mxCell id="brainband" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E6;strokeColor=#D79B00;verticalAlign=top;align=left;fontStyle=1;fontSize=14;spacingLeft=10;spacingTop=6;" value="🧠 AI 大腦——不只會聊天" vertex="1">
+          <mxGeometry height="170" width="1520" x="40" y="440" as="geometry" />
+        </mxCell>
+        <mxCell id="b1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D79B00;" value="&lt;b&gt;CareAgent 對話核心&lt;/b&gt;&lt;div&gt;每輪自動組裝：人設＋記憶＋工具＋當下對話&lt;/div&gt;&lt;div&gt;LLM 可連續呼叫工具，查證完才回答&lt;/div&gt;" vertex="1">
+          <mxGeometry height="110" width="350" x="60" y="480" as="geometry" />
+        </mxCell>
+        <mxCell id="b2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D79B00;" value="&lt;b&gt;三層記憶系統&lt;/b&gt;&lt;div&gt;今日對話＋長期語意記憶（Mem0）＋健康事實&lt;/div&gt;&lt;div&gt;聊過的事都記得——對話有溫度、不斷片&lt;/div&gt;" vertex="1">
+          <mxGeometry height="110" width="350" x="430" y="480" as="geometry" />
+        </mxCell>
+        <mxCell id="b3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D79B00;" value="&lt;b&gt;每晚自我進化&lt;/b&gt;&lt;div&gt;AI 夜間自動反思近日互動，沉澱「照顧守則」&lt;/div&gt;&lt;div&gt;越用越懂這位長輩——個人化持續累積&lt;/div&gt;" vertex="1">
+          <mxGeometry height="110" width="350" x="800" y="480" as="geometry" />
+        </mxCell>
+        <mxCell id="b4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF5F5;strokeColor=#B85450;" value="&lt;b&gt;🚨 即時危急偵測&lt;/b&gt;&lt;div&gt;每句話雙重判讀：危急詞直判＋LLM 三級分級&lt;/div&gt;&lt;div&gt;警訊立即通知家屬·送達留痕可稽核&lt;/div&gt;" vertex="1">
+          <mxGeometry height="110" width="350" x="1170" y="480" as="geometry" />
+        </mxCell>
+        <mxCell id="toolband" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFDE7;strokeColor=#D6B656;verticalAlign=top;align=left;fontStyle=1;fontSize=14;spacingLeft=10;spacingTop=6;" value="🧰 工具生態——AI 不瞎編" vertex="1">
+          <mxGeometry height="150" width="740" x="40" y="630" as="geometry" />
+        </mxCell>
+        <mxCell id="t1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D6B656;" value="&lt;b&gt;⛅ 天氣&lt;/b&gt;&lt;div&gt;查她所在地的天氣&lt;/div&gt;" vertex="1">
+          <mxGeometry height="85" width="160" x="60" y="675" as="geometry" />
+        </mxCell>
+        <mxCell id="t2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D6B656;" value="&lt;b&gt;🕐 時鐘&lt;/b&gt;&lt;div&gt;報時·日期·星期&lt;/div&gt;" vertex="1">
+          <mxGeometry height="85" width="160" x="240" y="675" as="geometry" />
+        </mxCell>
+        <mxCell id="t3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D6B656;" value="&lt;b&gt;📚 衛教知識&lt;/b&gt;&lt;div&gt;RAG 檢索·答案帶出處&lt;/div&gt;" vertex="1">
+          <mxGeometry height="85" width="160" x="420" y="675" as="geometry" />
+        </mxCell>
+        <mxCell id="t4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D6B656;" value="&lt;b&gt;🔍 上網查證&lt;/b&gt;&lt;div&gt;僅限白名單網站&lt;/div&gt;" vertex="1">
+          <mxGeometry height="85" width="160" x="600" y="675" as="geometry" />
+        </mxCell>
+        <mxCell id="voiceband" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EDF7ED;strokeColor=#82B366;verticalAlign=top;align=left;fontStyle=1;fontSize=14;spacingLeft=10;spacingTop=6;" value="🎙 語音引擎——自架模型跑在 NVIDIA DGX，服務化設計搬家零改碼" vertex="1">
+          <mxGeometry height="150" width="760" x="800" y="630" as="geometry" />
+        </mxCell>
+        <mxCell id="v1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#82B366;" value="&lt;b&gt;語音辨識 ASR&lt;/b&gt;&lt;div&gt;Breeze-ASR-26 自架&lt;/div&gt;&lt;div&gt;國台語混講→繁中文字&lt;/div&gt;" vertex="1">
+          <mxGeometry height="85" width="350" x="820" y="675" as="geometry" />
+        </mxCell>
+        <mxCell id="v2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#82B366;" value="&lt;b&gt;語音合成 TTS&lt;/b&gt;&lt;div&gt;CosyVoice 3 自架&lt;/div&gt;&lt;div&gt;溫暖自然聲線·台語版微調中&lt;/div&gt;" vertex="1">
+          <mxGeometry height="85" width="350" x="1190" y="675" as="geometry" />
+        </mxCell>
+        <mxCell id="proband" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FDEDED;strokeColor=#B85450;verticalAlign=top;align=left;fontStyle=1;fontSize=14;spacingLeft=10;spacingTop=6;" value="⏰ 主動關懷——AI 會主動開口" vertex="1">
+          <mxGeometry height="150" width="740" x="40" y="800" as="geometry" />
+        </mxCell>
+        <mxCell id="p1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#B85450;" value="&lt;b&gt;每日問候&lt;/b&gt;&lt;div&gt;時間自動貼合她的作息&lt;/div&gt;&lt;div&gt;接續昨天話題不重複&lt;/div&gt;" vertex="1">
+          <mxGeometry height="90" width="220" x="60" y="845" as="geometry" />
+        </mxCell>
+        <mxCell id="p2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#B85450;" value="&lt;b&gt;用藥/回診提醒&lt;/b&gt;&lt;div&gt;時間到就開口提醒&lt;/div&gt;&lt;div&gt;家屬遠端設定&lt;/div&gt;" vertex="1">
+          <mxGeometry height="90" width="220" x="300" y="845" as="geometry" />
+        </mxCell>
+        <mxCell id="p3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#B85450;" value="&lt;b&gt;失聯關心＋每日摘要&lt;/b&gt;&lt;div&gt;久未開口主動關心&lt;/div&gt;&lt;div&gt;每晚整理摘要給家屬&lt;/div&gt;" vertex="1">
+          <mxGeometry height="90" width="220" x="540" y="845" as="geometry" />
+        </mxCell>
+        <mxCell id="secband" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3EDF7;strokeColor=#9673A6;verticalAlign=top;align=left;fontStyle=1;fontSize=14;spacingLeft=10;spacingTop=6;" value="🔒 隱私安全·全鏈路可觀測" vertex="1">
+          <mxGeometry height="150" width="760" x="800" y="800" as="geometry" />
+        </mxCell>
+        <mxCell id="c1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#9673A6;" value="&lt;b&gt;知情同意閘門&lt;/b&gt;&lt;div&gt;未同意，一句話&lt;/div&gt;&lt;div&gt;都不進 AI&lt;/div&gt;" vertex="1">
+          <mxGeometry height="90" width="230" x="820" y="845" as="geometry" />
+        </mxCell>
+        <mxCell id="c2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#9673A6;" value="&lt;b&gt;隱私內建&lt;/b&gt;&lt;div&gt;精確定位不離開手機&lt;/div&gt;&lt;div&gt;音檔私有＋限時連結&lt;/div&gt;" vertex="1">
+          <mxGeometry height="90" width="230" x="1070" y="845" as="geometry" />
+        </mxCell>
+        <mxCell id="c3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#9673A6;" value="&lt;b&gt;全鏈路可觀測&lt;/b&gt;&lt;div&gt;每輪延遲/用量落庫&lt;/div&gt;&lt;div&gt;健康檢查·故障告警&lt;/div&gt;" vertex="1">
+          <mxGeometry height="90" width="220" x="1320" y="845" as="geometry" />
+        </mxCell>
+        <mxCell id="techstrip" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#666666;align=center;verticalAlign=middle;fontSize=12;" value="&lt;b&gt;技術棧&lt;/b&gt;｜Expo React Native · FastAPI · Supabase Postgres＋pgvector · Mem0 長期記憶 · Google Gemini · NVIDIA DGX 自架 ASR/TTS · 通道中立架構（App／LINE 隨插即用）" vertex="1">
+          <mxGeometry height="50" width="1520" x="40" y="970" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
