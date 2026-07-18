@@ -11,6 +11,7 @@
 | 回應 | JSON `{"text": "<繁體國語漢字>"}` |
 | 健康檢查 | `GET /healthz` → `{"status": "ok", "model_loaded": <bool>}` |
 | 過載 | 等候請求數超過 `ASR_MAX_CONCURRENCY + ASR_MAX_QUEUE` → 回 503 |
+| 解碼失敗 | 音檔無法解碼（ffmpeg 失敗或 0 樣本）→ 回 422（`audio_decode_failed`），ffmpeg stderr 記入服務 log 供查根因 |
 | 呼叫端 | [`kinsun.speech.asr.DgxAsrClient`](../../src/kinsun/speech/asr.py) |
 
 ## 部署（DGX）
