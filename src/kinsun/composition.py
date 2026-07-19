@@ -15,6 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
+from kinsun import tracing
 from kinsun.accounts.facts import ElderProfileFacts
 from kinsun.accounts.models import Channel
 from kinsun.accounts.service import AccountService
@@ -26,7 +27,6 @@ from kinsun.appointments.store import PgAppointmentStore
 from kinsun.channels.app.outbound import AppOutboundChannel
 from kinsun.channels.line.messenger import LineApiMessenger, LineOutboundChannel
 from kinsun.channels.router import ChannelRouter
-from kinsun import tracing
 from kinsun.config import Settings
 from kinsun.db import Database, ensure_schema
 from kinsun.llm import GeminiClient, LLMClient
