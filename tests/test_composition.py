@@ -87,3 +87,41 @@ def test_care_agent_constructed_only_in_composition():
         if "CareAgent(" in path.read_text(encoding="utf-8") and path.name != "composition.py"
     ]
     assert offenders == [], f"CareAgent 只能在 composition.py 建構，違規：{offenders}"
+
+
+def test_build_externals_configures_tracing(monkeypatch):
+    import kinsun.composition as composition
+    from kinsun import tracing
+    from kinsun.config import load_settings
+
+    configured = {}
+
+    def fake_configure(settings):
+        configured["called"] = settings.opik_enabled
+
+    monkeypatch.setattr(tracing, "configure", fake_configure)
+    monkeypatch.setattr(tracing, "wrap_genai", lambda c: c)
+    monkeypatch.setattr(composition, "ensure_schema", lambda url: None)
+
+    class _FakeDB:
+        @staticmethod
+        def open(url, max_size):
+            return object()
+
+    monkeypatch.setattr(composition, "Database", _FakeDB)
+    monkeypatch.setattr(composition, "GeminiClient", lambda **kw: object())
+    monkeypatch.setattr(composition, "Mem0LongTermStore", lambda *a, **k: object())
+    monkeypatch.setattr(composition, "build_mem0_memory", lambda s: object())
+    monkeypatch.setattr(composition, "LineApiMessenger", lambda t: object())
+
+    settings = load_settings(
+        {
+            "LINE_CHANNEL_SECRET": "s",
+            "LINE_CHANNEL_ACCESS_TOKEN": "t",
+            "GEMINI_API_KEY": "k",
+            "DATABASE_URL": "postgresql://x",
+            "OPIK_ENABLED": "false",
+        }
+    )
+    composition.build_externals(settings)
+    assert configured["called"] is False

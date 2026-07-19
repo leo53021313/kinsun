@@ -26,6 +26,7 @@ from kinsun.appointments.store import PgAppointmentStore
 from kinsun.channels.app.outbound import AppOutboundChannel
 from kinsun.channels.line.messenger import LineApiMessenger, LineOutboundChannel
 from kinsun.channels.router import ChannelRouter
+from kinsun import tracing
 from kinsun.config import Settings
 from kinsun.db import Database, ensure_schema
 from kinsun.llm import GeminiClient, LLMClient
@@ -104,12 +105,15 @@ class Core:
 
 def build_externals(settings: Settings) -> Externals:
     """接外部相依：先建表，再開連線與各外部 client。會連線，不進單元測試。"""
+    # 工程觀測開關在最前面決定（configure 只設環境變數與旗標，不連線）。
+    tracing.configure(settings)
     ensure_schema(settings.database_url)
     db = Database.open(settings.database_url, max_size=settings.database_pool_max_size)
     gemini = GeminiClient(
         api_key=settings.gemini_api_key,
         model=settings.gemini_model,
         timeout=settings.gemini_timeout_seconds,
+        client_wrapper=tracing.wrap_genai,
     )
     long_term = Mem0LongTermStore(
         build_mem0_memory(settings),

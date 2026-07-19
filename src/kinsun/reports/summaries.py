@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
 
+from kinsun import tracing
 from kinsun.db import Database, _Errors
 from kinsun.llm import LLMError, Message
 
@@ -168,6 +169,7 @@ def _l1_signals_for_day(risk_events, elder_id: str, now: datetime) -> list[str]:
     ]
 
 
+@tracing.track(name="daily_summary", type="general", capture_input=False, capture_output=False)
 def summarize_day(
     elder_id: str,
     *,
@@ -180,6 +182,7 @@ def summarize_day(
     turns = short_term.previous_day(elder_id)
     if not turns:
         return
+    tracing.update_trace_metadata(elder_id=elder_id, flow="daily_summary")
     system_prompt = SUMMARY_PROMPT
     signals = _l1_signals_for_day(risk_events, elder_id, clock()) if risk_events else []
     if signals:
