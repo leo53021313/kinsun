@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Protocol
 
+from kinsun import tracing
 from kinsun.accounts.models import ElderGuardian, PrincipalType
 from kinsun.safety.tiers import RiskAssessment, RiskTier
 
@@ -96,6 +97,7 @@ class GuardianNotifier:
         except Exception:  # noqa: BLE001 - 留痕失敗不可反噬通知
             logger.warning("送達紀錄寫入失敗 elder=%s guardian=%s", elder_id, guardian_id)
 
+    @tracing.track(name="guardian_notify", type="general", capture_input=False, capture_output=False)
     def notify(self, elder_id: str, assessment: RiskAssessment) -> None:
         try:
             targets = [eg.guardian_id for eg in self._directory.guardians_of(elder_id)]
