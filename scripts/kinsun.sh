@@ -343,13 +343,40 @@ launch_ngrok() {
 
 # ── 子指令 ────────────────────────────────────────────────────────────
 # 服務名合法性檢查——打錯字時直接說清楚，不要默默什麼都沒做。
+# Opik 公開隧道（Cloudflare Quick Tunnel → :5273）。opt-in：不在 START_ORDER，
+# 故 `start`（全部）不會自動開；需遠端看 Opik 時才 `start opik`，看完 `stop opik`。
+# ⚠️ 免網域的 Quick Tunnel＝臨時網址（每次重啟會變）且【公開、無認證】。真實長輩
+# 資料進入 Opik 前切勿長時間開啟（見 docs/dev/14）。網址由 status 動態顯示。
+launch_opik() {
+  _precheck opik || return 0
+  if ! command -v cloudflared >/dev/null 2>&1; then
+    warn "opik：找不到 cloudflared，跳過（安裝見 docs/dev/14）"
+    return 0
+  fi
+  if ! _port_open 5273; then
+    warn "opik：本機 Opik（:5273）未啟動，請先 cd /home/leo29/opik && ./opik.sh"
+    return 0
+  fi
+  warn "opik 隧道為【公開且無認證】的臨時網址；看完請 stop opik，勿在有真實長輩資料時長開。"
+  info "啟動 Opik 公開隧道（Cloudflare Quick Tunnel → :5273）…"
+  _bg opik cloudflared tunnel --url http://localhost:5273 --no-autoupdate
+}
+
+# 從隧道 log 取當前 trycloudflare 網址（每次重啟會變，取最後一個）。
+_opik_tunnel_url() {
+  local f="$LOG_DIR/opik.log"
+  [ -f "$f" ] || return 0
+  grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$f" 2>/dev/null | tail -1
+}
+
 _assert_service() {
   local name="$1" s
-  for s in "${START_ORDER[@]}"; do
+  # opik 為 opt-in 服務（Opik 公開隧道），不在 START_ORDER 內但可單獨 start/stop。
+  for s in "${START_ORDER[@]}" opik; do
     [ "$s" = "$name" ] && return 0
   done
   err "未知服務：$name"
-  err "可用服務：${START_ORDER[*]}"
+  err "可用服務：${START_ORDER[*]} opik"
   exit 2
 }
 
@@ -412,7 +439,8 @@ stop_one() {
 
 cmd_stop() {
   local only="${1:-}"
-  local targets=("${STOP_ORDER[@]}")
+  # stop（全部）連同 opik 公開隧道一起關——避免停掉服務卻把公開隧道遺留在外。
+  local targets=("${STOP_ORDER[@]}" opik)
   if [ -n "$only" ]; then
     _assert_service "$only"
     targets=("$only")
@@ -487,7 +515,16 @@ _opik_note() {
     ""|0|false|no|off) flag="OPIK_ENABLED=false（app 不送 trace）" ;;
     *)                 flag="OPIK_ENABLED=true（app 送 trace）" ;;
   esac
-  printf '%s[kinsun]%s Opik 觀測後台：%s  %b  |  %s\n' "$C_INFO" "$C_OFF" "$ui" "$state" "$flag"
+  printf '%s[kinsun]%s Opik 觀測後台（本機）：%s  %b  |  %s\n' "$C_INFO" "$C_OFF" "$ui" "$state" "$flag"
+  # 公開隧道（opt-in 服務 opik）：跑著就顯示當前 trycloudflare 網址＋無認證警告。
+  if is_running opik; then
+    local pub; pub="$(_opik_tunnel_url)"
+    printf '%s[kinsun]%s Opik 公開隧道：%s  %b\n' "$C_INFO" "$C_OFF" \
+      "${pub:-啟動中…（見 logs/opik.log）}" "${C_WARN}⚠ 公開無認證，看完請 stop opik${C_OFF}"
+  else
+    printf '%s[kinsun]%s Opik 公開隧道：未開（遠端要看時：scripts/kinsun.sh start opik）\n' \
+      "$C_INFO" "$C_OFF"
+  fi
 }
 
 cmd_status() {
@@ -523,10 +560,16 @@ usage() {
   restart [服務]   先 stop 再 start
   status           檢視各服務狀態（PID／埠／健康）＋ Opik 觀測後台連結
 
-服務名：asr　tts　webhook　scheduler　frontend　app　ngrok
+服務名：asr　tts　webhook　scheduler　frontend　app　ngrok　opik（opt-in 隧道）
 
-Opik 工程觀測：status／start 結尾會印出後台連結（預設 http://localhost:5273）與服務狀態。
+Opik 工程觀測：status／start 結尾會印出本機後台連結（預設 http://localhost:5273）與服務狀態。
   服務本身由 /home/leo29/opik 的 ./opik.sh 獨立管理；app 要送 trace 需設 OPIK_ENABLED=true。
+
+Opik 公開隧道（遠端／隊友檢視）：
+  scripts/kinsun.sh start opik    開 Cloudflare Quick Tunnel（→ :5273）；status 顯示當前公開網址
+  scripts/kinsun.sh stop opik     關閉隧道（stop 全部時也會一併關）
+  ⚠️ Quick Tunnel 免網域但【公開、無認證】且網址每次會變——只在需要時開、看完就關；
+     真實長輩資料進入 Opik 前勿長時間開啟（正式版需 Cloudflare 網域＋Access，見 docs/dev/14）。
 
 App（Expo Go）：
   scripts/kinsun.sh start app      啟動（預設 tunnel，對外可連、不必同網段）
