@@ -49,7 +49,9 @@ def test_disable_telemetry_sets_env_only_if_absent():
 def test_config_pins_history_db_under_repo_data():
     """✅ D-65（丙-13）：mem0 稽核檔固定進 repo 的 data/mem0/，不落執行機家目錄。"""
     config = build_mem0_config(load_settings(_ENV))
-    assert config["history_db_path"].endswith("data/mem0/history.db")
+    from pathlib import Path
+
+    assert Path(config["history_db_path"]).parts[-3:] == ("data", "mem0", "history.db")
 
 
 def test_reranker_config_present_when_enabled():

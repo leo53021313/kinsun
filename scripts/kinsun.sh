@@ -9,7 +9,7 @@
 #
 # 設計文件：docs/superpowers/specs/2026-07-03-全功能啟停腳本-design.md
 #
-# 管理的程序：ASR(8001)、TTS(8002)、Webhook(8000)、Scheduler、前端 LIFF(5173)、
+# 管理的程序：ASR(8001)、TTS(8002)、Webhook(8000)、Scheduler、RAG Worker、前端 LIFF(5173)、
 #             App Expo dev server(8081)、ngrok、opik（Opik 後端 docker ＋ 公開隧道，複合服務）。
 # 每個程序以 setsid 起在獨立 process group，log 寫 logs/<name>.log、PID 寫 .run/<name>.pid。
 # 可選元件（TTS/前端/App/ngrok/opik）缺依賴時只警告並跳過，不中斷整體。
@@ -26,8 +26,8 @@ RUN_DIR="$ROOT/.run"
 # 啟動順序（GPU 服務先起、載模型較慢）；停止則反序。
 # opik＝Opik 公開隧道（Cloudflare Quick Tunnel）；隨堆疊一起起停。啟動需本機 Opik（:5273）
 # 已在跑，否則 launch_opik 會警告並略過。⚠️ 公開且無認證，見 launch_opik 與 docs/dev/14。
-START_ORDER=(asr tts webhook scheduler frontend app ngrok opik)
-STOP_ORDER=(opik ngrok app frontend scheduler webhook tts asr)
+START_ORDER=(asr tts webhook scheduler rag_worker frontend app ngrok opik)
+STOP_ORDER=(opik ngrok app frontend rag_worker scheduler webhook tts asr)
 
 declare -A PORT=([asr]=8001 [tts]=8002 [webhook]=8000 [frontend]=5173 [app]=8081)
 
@@ -211,6 +211,19 @@ launch_scheduler() {
   (
     export PYTHONPATH="src${PYTHONPATH:+:$PYTHONPATH}"
     _bg scheduler uv run python -m kinsun.scheduler
+  )
+}
+
+launch_rag_worker() {
+  _precheck rag_worker || return 0
+  if ! command -v uv >/dev/null 2>&1; then
+    warn "RAG Worker：找不到 uv，跳過"
+    return 0
+  fi
+  info "啟動 RAG Worker…"
+  (
+    export PYTHONPATH="src${PYTHONPATH:+:$PYTHONPATH}"
+    _bg rag_worker uv run python -m kinsun.rag.worker
   )
 }
 
@@ -566,7 +579,7 @@ _health_note() {
       else
         echo "—"
       fi ;;
-    scheduler)
+    scheduler|rag_worker)
       echo "（無對外埠）" ;;
     ngrok)
       local d; d="$(read_env NGROK_DOMAIN)"
@@ -616,7 +629,7 @@ usage() {
   restart [服務]   先 stop 再 start
   status           檢視各服務狀態（PID／埠／健康）＋ Opik 觀測後台連結
 
-服務名：asr　tts　webhook　scheduler　frontend　app　ngrok　opik
+服務名：asr　tts　webhook　scheduler　rag_worker　frontend　app　ngrok　opik
 
 Opik 工程觀測：status／start 結尾會印出本機後台連結（預設 http://localhost:5273）與服務狀態。
   服務本身由 /home/leo29/opik 的 ./opik.sh 獨立管理；app 要送 trace 需設 OPIK_ENABLED=true。

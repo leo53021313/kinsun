@@ -62,6 +62,20 @@ class RecommendedStatus(StrEnum):
     OUT_OF_SCOPE = "out_of_scope"
 
 
+class SourceRole(StrEnum):
+    """來源在 RAG 管線中的用途。discovery 只找更新，不直接支撐回答。"""
+
+    ANSWER = "answer"
+    DISCOVERY = "discovery"
+
+
+class ContentPolicy(StrEnum):
+    """內容授權政策；classroom_demo 僅供非商用課堂展示。"""
+
+    ALLOWED_ONLY = "allowed_only"
+    CLASSROOM_DEMO = "classroom_demo"
+
+
 class SafetyLevel(StrEnum):
     NORMAL = "normal"
     CAUTION = "caution"
@@ -88,6 +102,7 @@ class Source:
     approved_for_rag: bool
     allowed_domains: tuple[str, ...] = field(default_factory=tuple)
     notes: str = ""
+    role: SourceRole = SourceRole.ANSWER
 
 
 @dataclass(frozen=True)
@@ -132,6 +147,7 @@ class ChunkMetadata:
     retrieved_at: date
     last_reviewed_at: date | None = None
     version: str | None = None
+    source_role: SourceRole = SourceRole.ANSWER
 
 
 @dataclass(frozen=True)
@@ -162,8 +178,9 @@ class RagAnswer:
     answer: str
     safety_level: SafetyLevel
     citations: tuple[Citation, ...]
-    should_escalate_to_risk_engine: bool
+    requires_safety_attention: bool
     reason: str
+    evidence: tuple[SearchResult, ...] = ()
 
 
 @dataclass(frozen=True)

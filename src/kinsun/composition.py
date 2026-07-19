@@ -130,12 +130,16 @@ def build_tool_registry(
     rag_service: HealthEducationRagService,
     tavily_api_key: str = "",
     lookups: WebSearchLookupStore | None = None,
+    traces: PgTraceStore | None = None,
 ) -> ToolRegistry:
     """集中組工具：日後新增工具只改這裡，兩個組裝根自動都有。"""
     registry = ToolRegistry()
     registry.register(WEATHER_SPEC, build_weather_handler())
     registry.register(CURRENT_TIME_SPEC, build_current_time_handler(clock))
-    registry.register(HEALTH_RAG_SPEC, build_health_rag_handler(rag_service))
+    registry.register(
+        HEALTH_RAG_SPEC,
+        build_health_rag_handler(rag_service, traces=traces),
+    )
     # 金鑰未設＝跳過註冊（優雅降級）：金孫少一個上網查證能力，其餘功能照常運作。
     if tavily_api_key:
         registry.register(WEB_SEARCH_SPEC, build_web_search_handler(tavily_api_key, lookups))
@@ -190,12 +194,14 @@ def assemble_core(
             vector_store=PgVectorStore(db),
             embedding_model=GeminiEmbeddingModel(
                 api_key=settings.gemini_api_key,
-                model=settings.longterm_embedding_model,
+                model=settings.rag_embedding_model,
+                request_timeout_seconds=settings.gemini_timeout_seconds,
             ),
         ),
         llm=externals.gemini,
         top_k=settings.rag_top_k,
     )
+    traces = PgTraceStore(db, clock=clock, new_id=new_id)
     web_search_lookups = PgWebSearchLookupStore(db, clock=clock, new_id=new_id)
     agent = CareAgent(
         externals.gemini,
@@ -205,6 +211,7 @@ def assemble_core(
             rag_service=rag_service,
             tavily_api_key=settings.tavily_api_key,
             lookups=web_search_lookups,
+            traces=traces,
         ),
     )
     notifications = PgAppNotificationStore(db, clock=clock, new_id=new_id)
@@ -233,7 +240,7 @@ def assemble_core(
         memory=memory,
         risk_events=risk_events,
         summaries=summaries,
-        traces=PgTraceStore(db, clock=clock, new_id=new_id),
+        traces=traces,
         reminder_logs=PgReminderLogStore(db, clock=clock, new_id=new_id),
         notifications=notifications,
         strategies=strategies,

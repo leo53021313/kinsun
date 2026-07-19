@@ -143,7 +143,12 @@ class VoicePipeline:
         # 都流經此處，故標記一次即涵蓋兩條路徑。
         self._mark_reminder_responded(elder_id)
         reply_text = self._generate(
-            elder_id, user_text, external_id=external_id, channel=channel, trace_id=trace_id
+            elder_id,
+            user_text,
+            external_id=external_id,
+            channel=channel,
+            trace_id=trace_id,
+            has_risk_signal=assessment.tier >= RiskTier.L1,
         )
         result = self._synthesize(
             reply_text, external_id=external_id, channel=channel, trace_id=trace_id
@@ -266,7 +271,14 @@ class VoicePipeline:
 
     @tracing.track(name="agent_generate", type="llm", capture_input=False, capture_output=False)
     def _generate(
-        self, elder_id: str, user_text: str, *, external_id: str, channel: str, trace_id: str
+        self,
+        elder_id: str,
+        user_text: str,
+        *,
+        external_id: str,
+        channel: str,
+        trace_id: str,
+        has_risk_signal: bool,
     ) -> str:
         # 每輪記一筆（涵蓋整個 agent 含工具迴圈）；token 用量由收集器彙總本輪
         # 所有 Gemini 呼叫（✅ D-05 戊-2）。零申報（假 LLM／無 usage_metadata）
@@ -288,7 +300,12 @@ class VoicePipeline:
             )
         ):
             with collect_llm_usage(usage):
-                reply = self._agent.handle(elder_id, user_text)
+                reply = self._agent.handle(
+                    elder_id,
+                    user_text,
+                    trace_id=trace_id,
+                    has_risk_signal=has_risk_signal,
+                )
         return reply
 
     @tracing.track(name="tts", type="general", capture_input=False, capture_output=False)

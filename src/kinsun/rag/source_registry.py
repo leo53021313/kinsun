@@ -6,13 +6,29 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import replace
 
 from kinsun.rag.schemas import (
     CopyrightStatus,
     RecommendedStatus,
     Source,
+    SourceRole,
     SourceType,
     TrustLevel,
+)
+
+DISCOVERY_SOURCE_IDS = frozenset(
+    {
+        "mohw_health_list",
+        "cdc_home",
+        "fda_home",
+        "hpa_news_api",
+        "hpa_rss_index",
+        "cdc_rss",
+        "fda_open_data",
+        "data_gov_tw",
+        "data_gov_m2m",
+    }
 )
 
 DEFAULT_SOURCES: tuple[Source, ...] = (
@@ -385,7 +401,14 @@ DEFAULT_SOURCES: tuple[Source, ...] = (
 
 class SourceRegistry:
     def __init__(self, sources: Iterable[Source] = DEFAULT_SOURCES) -> None:
-        self._sources = {source.source_id: source for source in sources}
+        self._sources = {
+            source.source_id: (
+                replace(source, role=SourceRole.DISCOVERY)
+                if source.source_id in DISCOVERY_SOURCE_IDS
+                else source
+            )
+            for source in sources
+        }
 
     def get(self, source_id: str) -> Source:
         return self._sources[source_id]
@@ -395,3 +418,10 @@ class SourceRegistry:
 
     def approved_for_rag(self) -> tuple[Source, ...]:
         return tuple(source for source in self._sources.values() if source.approved_for_rag)
+
+    def answer_sources(self) -> tuple[Source, ...]:
+        return tuple(
+            source
+            for source in self._sources.values()
+            if source.approved_for_rag and source.role == SourceRole.ANSWER
+        )

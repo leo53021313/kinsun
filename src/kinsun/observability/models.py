@@ -48,6 +48,22 @@ class LlmCall:
 
 
 @dataclass(frozen=True)
+class RagCall:
+    rag_call_id: str
+    trace_id: str
+    elder_id: str
+    query: str
+    index_version: str
+    status: str
+    latency_ms: int
+    safety_level: str
+    reason: str
+    hits: list[dict]
+    citations: list[dict]
+    created_at: float
+
+
+@dataclass(frozen=True)
 class TtsCall:
     tts_call_id: str
     trace_id: str
@@ -92,6 +108,7 @@ class Trace:
     webhook_event: WebhookEvent | None
     asr_call: AsrCall | None
     llm_calls: list[LlmCall]
+    rag_calls: list[RagCall]
     tts_call: TtsCall | None
     reply: Reply | None
     risk_events: list[TraceRiskEvent]
