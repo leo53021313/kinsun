@@ -190,3 +190,21 @@ def test_generate_without_usage_metadata_records_nothing():
     with collect_llm_usage(usage):
         client.generate(system_prompt="s", messages=[Message("user", "嗨")])
     assert (usage.input_tokens, usage.output_tokens) == (0, 0)
+
+
+def test_gemini_client_applies_client_wrapper():
+    marker = object()
+    seen = {}
+
+    def wrapper(client):
+        seen["inner"] = client
+        return marker
+
+    client = GeminiClient(api_key="dummy", model="m", timeout=30.0, client_wrapper=wrapper)
+    assert client._client is marker
+    assert seen["inner"] is not None  # 底層 genai.Client 有被建出來並傳入
+
+
+def test_gemini_client_without_wrapper_keeps_native_client():
+    client = GeminiClient(api_key="dummy", model="m", timeout=30.0)
+    assert client._client is not None
