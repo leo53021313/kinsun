@@ -19,6 +19,7 @@ import sys
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from kinsun import tracing
 from kinsun.config import load_settings
 from kinsun.memory.longterm import provenance
 from kinsun.memory.longterm.consolidation_log import ConsolidationLogStore
@@ -28,6 +29,7 @@ from kinsun.memory.shortterm import MemoryStore
 _DAY_SECONDS = 86400.0  # 台灣無日光節約時間，一天固定 86400 秒。
 
 
+@tracing.track(name="memory_consolidation", type="general", capture_input=False, capture_output=False)
 def run_consolidation(
     elder_id: str,
     *,
@@ -37,6 +39,7 @@ def run_consolidation(
     now: datetime,
 ) -> int:
     """補整理 elder 今日之前尚未整理的每個完整日，回傳寫入 turn 總數。"""
+    tracing.update_trace_metadata(elder_id=elder_id, flow="memory_consolidation")
     tz = now.tzinfo
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     already = log.consolidated_days(elder_id)

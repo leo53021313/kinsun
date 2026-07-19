@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
+from kinsun import tracing
 from kinsun.llm import ToolSpec
 
 logger = logging.getLogger("kinsun.tools")
@@ -22,6 +23,7 @@ class ToolRegistry:
     def specs(self) -> list[ToolSpec]:
         return list(self._specs.values())
 
+    @tracing.track(type="tool", capture_input=True, capture_output=True)
     def dispatch(self, name: str, arguments: dict) -> str:
         handler = self._handlers.get(name)
         if handler is None:

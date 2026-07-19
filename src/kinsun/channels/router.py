@@ -10,6 +10,7 @@ import logging
 from collections.abc import Mapping
 from typing import Protocol
 
+from kinsun import tracing
 from kinsun.accounts.models import Channel, ChannelBinding, PrincipalType
 from kinsun.channels.outbound import OutboundChannel
 
@@ -43,6 +44,7 @@ class ChannelRouter:
         """對本人的每個可達通道各送一次文字；回傳成功送出的通道數。"""
         return len(self.send_text_channels(principal_type, principal_id, text))
 
+    @tracing.track(name="outbound_send", type="general", capture_input=False, capture_output=True)
     def send_text_channels(
         self, principal_type: PrincipalType, principal_id: str, text: str
     ) -> list[str]:

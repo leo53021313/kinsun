@@ -6,6 +6,7 @@ import json
 import re
 from dataclasses import dataclass
 
+from kinsun import tracing
 from kinsun.llm import LLMClient, Message, ToolResult
 from kinsun.memory.models import FactSection, InjectedContext, format_injected_context
 from kinsun.memory.recall import SessionMemory
@@ -148,6 +149,7 @@ class CareAgent:
         ctx = self._session.assemble(elder_id, query)
         return SYSTEM_PROMPT + ctx.system_suffix, ctx.history
 
+    @tracing.track(name="care_agent", type="general", capture_input=False, capture_output=False)
     def handle(self, elder_id: str, user_text: str) -> str:
         system_prompt, history = self._envelope(elder_id, user_text)
         user_msg = Message("user", user_text)
@@ -187,6 +189,7 @@ class CareAgent:
         )
         return turn.text or FALLBACK_REPLY
 
+    @tracing.track(name="proactive_turn", type="general", capture_input=False, capture_output=False)
     def proactive(self, elder_id: str, intent: str, *, recall: Recall | None = None) -> str:
         """主動開場。recall＝她上次開口那天的摘要（spec 2026-07-17-主動問候接續昨天話題）。
 
@@ -199,6 +202,8 @@ class CareAgent:
         recall=None（她從沒開口／那天沒摘要／讀取失敗）＝一字不差維持本功能之前
         的行為。
         """
+        # 主動問候也是對話的一部分：掛進該長輩的 thread，與其他回合串起來（E1）。
+        tracing.tag_current_trace(elder_id=elder_id, channel="proactive")
         system_prompt, history = self._envelope(elder_id, recall.content if recall else intent)
         if recall:
             # 重用既有的事實段排版，不另立 prompt 拼裝路徑。
