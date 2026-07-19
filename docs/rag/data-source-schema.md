@@ -8,9 +8,12 @@
 |---|---|
 | `rag_sources` | 來源清冊、publisher、trust、allowlist domain |
 | `rag_documents` | 單篇文章／PDF 文字、content hash、topic、日期 |
-| `rag_chunks` | chunk 文字、metadata、`embedding vector(768)` |
-| `rag_crawl_jobs` | crawler 工作紀錄 |
+| `rag_chunks` | chunk 文字、metadata、embedding 模型與 `embedding vector(768)` |
 | `rag_ingestion_audit_logs` | ingestion 成功／失敗、chunk 數、parser |
+| `rag_index_releases` | 版本、狀態、模型／維度、threshold、品質指標與時間 |
+| `rag_release_documents` | release 與文件 membership |
+| `rag_release_chunks` | release 與實際 chunk variant membership；隔離不同模型的 embedding |
+| `rag_calls` | 查詢觀測、命中、分數、方法與 Admin 完整 citation |
 
 ## Chunk Metadata Schema
 
@@ -34,9 +37,12 @@
   "source_updated_at": "date|null",
   "retrieved_at": "date",
   "last_reviewed_at": "date|null",
-  "version": "string|null"
+  "version": "string|null",
+  "source_role": "answer | discovery"
 }
 ```
+
+`embedding_model` 是 `rag_chunks` 的內部相容性欄位，不放入對外 citation；實際選用的模型以 release 設定與 `rag_release_chunks` membership 為準。
 
 ## Source Registry Schema
 
@@ -53,10 +59,11 @@
 | `approved_for_rag` | 是 | 是否允許 ingestion；期末非商用展示不以授權狀態阻擋 |
 | `allowed_domains` | 是 | crawler allowlist |
 | `notes` | 否 | 驗證理由 |
+| `role` | 是 | `answer` 可支撐回答；`discovery` 只找更新與留稽核 |
 
 ## JSONL Seed Schema
 
-`uv run python -m kinsun.rag.ingest --input data/rag/demo_seed.jsonl --no-crawl`
+`PYTHONPATH=src uv run python -m kinsun.rag.ingest --input data/rag/demo_seed.jsonl --no-crawl`
 
 ```json
 {
@@ -92,11 +99,12 @@
 {
   "answer": "string",
   "safety_level": "normal | caution | urgent | unsupported",
-  "citations": [],
-  "should_escalate_to_risk_engine": false,
+  "requires_safety_attention": false,
   "reason": "string"
 }
 ```
+
+完整 `citations` 與 evidence 分數不進長輩工具 payload，只存 `rag_calls` 供 Admin 稽核。
 
 ## Ingestion Audit Log
 

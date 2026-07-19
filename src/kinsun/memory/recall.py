@@ -36,7 +36,9 @@ class SessionMemory:
         self._long_term = long_term
         self._facts = facts or []
 
-    @tracing.track(name="memory_assemble", type="general", capture_input=False, capture_output=False)
+    @tracing.track(
+        name="memory_assemble", type="general", capture_input=False, capture_output=False
+    )
     def assemble(self, elder_id: str, query: str) -> TurnContext:
         return TurnContext(
             injected=self._inject(elder_id, query),

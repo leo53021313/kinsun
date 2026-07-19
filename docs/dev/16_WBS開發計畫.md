@@ -1,6 +1,6 @@
 # WBS 開發計畫（一次性重構）- 金孫 KinSun
 
-> **版本:** v1.9 | **更新:** 2026-07-17 | **狀態:** 甲～庚批完成（庚批 2026-07-13 結案：50 完成＋擱置 RAG／著作權＋1 不改；⚠ 庚-09 無完成標記且程式未接線，實為 55/56——待 Leo 確認）；內測基礎建設（D-73）✅ 完工；辛批 9 項全數完成（辛-9 迄 2026-07-17） 
+> **版本:** v1.12 | **更新:** 2026-07-18 | **狀態:** 第 5 層 RAG 正式化、版本發布、單庫原地遷移與個人 Supabase 驗收均已完成；active release、獨立週更 Worker、Agent 查詢與 Admin citation trace 已實測。甲～庚批、內測基礎建設（D-73）與辛批 9 項其餘狀態維持原表。
 > **總工期**：2026-07-09 ～ 2026-08-20（6 週，✅ D-04 硬里程碑倒排）
 > **施工順序**：甲→乙→丙→丁→戊→己（✅ Leo 核准 2026-07-08）；**分工：全批由 Leo 一人施工**（✅ 會-16，2026-07-09）。
 > 每個工項出處文件都有細節；規模：S＝半天內、M＝1–3 天、L＝3 天以上。
@@ -68,7 +68,7 @@
 | :--- | :--- | :--- | :---: |
 | 戊-1 | ✅ 完成（2026-07-10）：CI 五 job——pytest＋ruff／Pg 合約測試（pgvector service container）／frontend tsc＋建置／app tsc／pip＋npm audit（警示不擋門） | A-6 | M |
 | 戊-2 | ✅ 完成（2026-07-10）：Gemini usage 落庫 llm_calls（收集器彙總工具迴圈）＋replies.round_trip_ms 端到端往返＋overview 各階段 p50／p95 與往返統計（admin 前端同步顯示） | D-05（A-7、G-6） | M |
-| 戊-3 | ✅ 完成（2026-07-10）：worker 接線 100%＋app.py 組裝根 97%＋LineApiMessenger 100%＋rag 支援四模組 100%；pytest-cov 上 CI（--cov-fail-under=80，現況 87%） | M-8 | M |
+| 戊-3 | ✅ 完成（2026-07-10）：worker 接線 100%＋app.py 組裝根 97%＋LineApiMessenger 100%＋rag 支援四模組 100%；pytest-cov 上 CI（--cov-fail-under=80，2026-07-18 實測 88.24%） | M-8 | M |
 | 戊-4 | ✅ 完成（2026-07-10）：標注集草案 60 句（含轉述／否定／比喻等困難負例，實測期修訂）＋`safety/evaluation.py` P/R 量測 CLI（詞表離線模式＋完整偵測器模式；漏報清單顯式列出） | D-05 | M |
 
 ## 己、會議決議回填批（✅ 2026-07-09 決議回填完成，穿插各批或殿後施工）
@@ -81,7 +81,7 @@
 | 己-4 | ✅ 完成（2026-07-10）：三級制落地——絕對詞直判 L2、單一降級門檻（HIGH 移除）、prompt 改 0–2、119 提示掛 absolute 訊號、舊資料夾回、三端與文件標注集同步 | D-72＋D-10（會-5） | M |
 | 己-5 | ✅ 完成（2026-07-10）：摘要提示納入摘要日 L1 理由（排除 L2 與 fail-safe 留痕）；worker 接 PgRiskEventStore | D-10（會-5） | S |
 | 己-6 | ✅ 完成（2026-07-10）：帳號＝手機號碼（Leo 拍板）；首次掃碼配對＋帳密只管重登（未配對 403）；PUT /elders/{id}/account 代辦＋POST /elder-sessions（節流）＋App 兩端 UI＋elder_accounts 新表 | D-71 | L |
-| 己-7 | 衛教資料遷移：自負責組員的 Supabase 取得資料 → 本專案 Supabase 入庫＋回答品質驗收 | D-03（會-14） | M |
+| 己-7 | ✅ 完成（2026-07-18）：唯讀 migrate dry-run／原始資料備份／重切重嵌入、版本化候選、golden set 品質閘門、原子發布與 rollback；個人 Supabase 已發布 `rag-20260718T055933Z`（790 文件／2,808 chunks，threshold 0.65，recall 100%、false-positive 0%、安全 100%、citation correctness 90%），Agent→RAG→Admin citation trace 與獨立週更 Worker 均已驗收。 | D-03（會-14） | M |
 | 己-8 | ✅ 完成（2026-07-10，範圍 Leo 核可）：revoke_consent 刪除；can_view_transcript 方法＋欄位全刪（冪等 DROP）；escalation_order 保留（家屬排序仍用） | D-13／09／10 | S |
 
 無需工項的決議：會-6 詞表（實測時滾動加）、會-7 門檻數值（實測再調）、會-11 問候維持文字、會-15 麥克風文案照現值；會-8／9／10／13 擱置、會-12 掛起。
@@ -96,13 +96,13 @@
 | :--- | :--- | :---: | :---: |
 | 庚-01 | ✅ 完成（2026-07-12，TDD）：pipeline 落庫門檻放寬至 ≥L1（通知維持 ≥L2），D-10 己-5「L1 小訊號進每日摘要」生產路徑生效；契約測試改寫＋全套 591 綠。已知副作用：健康報告出現「關注」級事件（本無 tier 過濾，接受；不想顯示另開工項） | A-39 | M |
 | 庚-02 | ✅ 完成（2026-07-12，TDD）：admin overview 新增 `guardian_notification_failure` 告警——近 60 分鐘任一筆 `delivered=False` 即紅字橫幅（門檻 1，不設噪音緩衝）；`RiskNotificationLogStore.count_failed_since` 三件套＋契約測試；OverviewPage 依 kind 分文字。採最小方案（Leo 拍板：不做重試／死信，發表期靠後台盯）。 | A-40 | M |
-| 庚-03 | ⏸ **擱置（Leo 2026-07-12：著作權相關先不處理）**——RAG 來源著作權把關：`SourceValidator` 補查 `copyright_status`，或撤 `ntuh_epaper`／`cgmh`（DISALLOWED）的 `approved_for_rag`。 | A-26 | S |
+| 庚-03 | ✅ 完成（2026-07-16）：安全預設 `allowed_only` 阻擋非 ALLOWED；課堂以 `classroom_demo` 明確保留並在 Admin 警告。 | A-26 | S |
 | 庚-04 | ✅ 完成（2026-07-12，TDD）：`bind_elder_device` redeem 前驗 `invite.role is ELDER`，家屬邀請碼回 409 `invite_wrong_role`（未消耗碼、未發 token）；06 端點表＋錯誤碼表同步 | A-46 | S |
 | 庚-05 | ✅ 完成（2026-07-12，TDD）：`DELETE /api/v1/sessions/all`＋`AccountService.logout_all_devices`（撤該家屬全部 token），與長輩 `revoke_elder_device` 對稱；06 端點表同步 | A-47 | S |
 | 庚-06 | ✅ 完成（2026-07-12，TDD，含庚-13）：`run_consolidation` 改吃 `(short_term, long_term, log, now)`——掃「上次整理日之後～今日之前」每個有對話的完整日，逐日 `list_for_range` 補整理；停機跨多日重啟不再漏天。新增 `MemoryStore.list_for_range`／`day_starts_with_turns`（Pg＋Fake）。worker／CLI 皆已接線。全套 627 綠。 | A-18 | M |
 | 庚-07 | ✅ 完成（2026-07-12）：觀測五表（webhook_events／asr_calls／llm_calls／tts_calls／replies）`line_user_id` → `external_id`＋新增 `channel`，正名兼消除「line_user_id 混用」鐵律違反。含冪等 schema 遷移（DO 區塊守門 RENAME＋`ADD COLUMN IF NOT EXISTS channel`，新舊庫皆適用）、models／store（含 Fake）三件套、pipeline 全鏈 threading、邊界（inbound dispatch 取 `msg.channel.value`、LINE webhook 記 `channel="line"`）、admin `_trace_json` 回傳改 `external_id`＋`channel`、前端 TraceDetail 型別與頁面同步。`channel` 於 record 端預設 `""`（對齊 DB 欄預設）。契約測試補 channel round-trip、dispatch 測試證通道貫穿。全套 628 綠。 | A-8 | M |
 | 庚-08 | ✅ 完成（2026-07-12，跨進程方案）：新增 `PgRateLimiter`（Postgres 共享滑動視窗，per-key `pg_advisory_xact_lock` 串行「清舊→計數→寫入」精確計數、掛鐘可跨進程、fail-open）＋`rate_limit_hits` 表；抽 `RateLimiter` Protocol，app.py 正式組裝改注入 Pg 版（記憶體版留測試／單 worker fallback）。多 worker 上限不再×worker 數。Pg IT 測試鎖「兩實例共用計數」。沿用既有 `AUTH_RATE_LIMIT_*`，無新增 env。 | A-54 | M |
-| 庚-09 | 衛教升級旗標決策：`should_escalate_to_risk_engine` 接上確定性程式碼觸發 RiskDetector，或明文降級為 advisory（現唯一消費者是 agent prompt 文字，靠 LLM 自律）。緩解：pipeline 真風險引擎在 agent 前已獨立評估。⚠ **2026-07-17 對齊檢查**：本項無完成標記且程式仍未接線——與表頭「56 項全數結案」不符（實為 55/56），待 Leo 確認是漏標還是漏做 | A-27 | S |
+| 庚-09 | ✅ 完成（2026-07-16）：RiskDetector 維持唯一權威，透過 ToolInvocationContext 傳入；RAG 旗標正名 `requires_safety_attention` 並留稽核。 | A-27 | S |
 
 ### 庚2 正確性與可靠性（MEDIUM）
 
@@ -124,9 +124,9 @@
 | # | 工項 | 問題 | 規模 |
 | :--- | :--- | :---: | :---: |
 | 庚-20 | ✅ 完成（2026-07-13，TDD）：PROD_SCRYPT_N=2**17（OWASP 2024）＋動態 maxmem，參數隨值存零遷移；`_validate_password` 下沉服務層（password_too_short）；測試環境 conftest 降 2**14 保速、生產參數專測把關。 | A-50 | S |
-| 庚-21 | ⏸ **擱置（Leo 2026-07-12：RAG 相關先不處理）** | A-28 | S |
-| 庚-22 | ⏸ **擱置（Leo 2026-07-12：RAG 相關先不處理）** | A-29 | S |
-| 庚-23 | ⏸ **擱置（Leo 2026-07-12：RAG 相關先不處理）** | A-30 | S |
+| 庚-21 | ✅ 完成（2026-07-16）：文件與查詢統一 `RAG_EMBEDDING_MODEL`，release 記模型＋768 維；不符停用向量。 | A-28 | S |
+| 庚-22 | ✅ 完成（2026-07-16）：中文同義詞、疑問贅詞移除與 2～4 字 n-gram keyword fallback。 | A-29 | S |
+| 庚-23 | ✅ 完成（2026-07-16）：版本化索引、原子發布、週更 Worker、RAG trace／Admin 稽核與品質驗收。 | A-30 | S |
 | 庚-24 | ✅ 完成（2026-07-13）：兩服務各補離線特性測試（金鑰 401、空/超大輸入、併發閘 503、healthz、TTS 回應契約 audio/mp4＋X-Duration-Ms）——假模型 monkeypatch，CI 無 GPU 可跑（12 測試）。 | A-13 | M |
 | 庚-25 | ✅ 完成（2026-07-13）：`web/errors.py` ErrorCode（StrEnum，34 碼）唯一出處，web 層字面值全換；雙向完整性測試（每碼必有繁中文案／文案表無孤兒，overloaded 掛 _PENDING_REMOVAL 待庚-43）；06 §3 表同步（兼辦庚-51 表半邊）。 | A-56 | S |
 | 庚-26 | ✅ 完成（2026-07-13）：DATABASE_POOL_MAX_SIZE（預設 5）入 config；總量公式（WEB_WORKERS×池＋排程×池 ≤ 直連 60、WEB_WORKERS 安全上限約 8、勿換 6543 交易池化埠）寫入 .env.example／kinsun.sh／14 §3.5。 | A-55 | S |
@@ -247,3 +247,6 @@
 | v1.7 | 2026-07-13 | 庚批 56 項結案回填（追認補記——當時 commit 未同步版頭與本表） |
 | v1.8 | 2026-07-17 | 辛批補記 7 工項並全數結案：辛-2 每晚反思、辛-3 web_search（7/14）、辛-4 自適應問候時間（7/16）、辛-5 長輩地點、辛-6 天氣正確性、辛-7 JS lint、辛-8 JS 測試基建（7/17）；標記庚-09 結案矛盾（55/56，待 Leo 確認） |
 | v1.9 | 2026-07-17 | 新增辛-9 主動問候接續上次話題（讀「她上次開口那天」的摘要當檢索關鍵字＋注入＋任務加碼；否決 Mem0 昨晚整理項的理由見 spec）；一併修 Mem0 記憶日期晚一天；D-33「摘要無讀取端」現況自此失效（07 v1.3 同步） |
+| v1.10 | 2026-07-18 | 己-7 補單庫 `--in-place` 遷移、寫入前 gzip＋SHA-256 備份與版本化個人庫驗收流程。 |
+| v1.11 | 2026-07-18 | 己-7 實測回填：DISCOVERY 無回答向量、Gemini 批次 timeout／failed release 復用、舊 appointments schema 升級；個人庫 active 發布因 free-tier 每日 1,000 次 embedding 額度維持待驗收。 |
+| v1.12 | 2026-07-18 | 己-7 結案：提高額度後完成 790 文件／2,808 chunks 的 active 發布、golden set 與結構閘門、Agent/Admin citation E2E、最小設定 RAG Worker 啟動驗收。 |

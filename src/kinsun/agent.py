@@ -10,6 +10,7 @@ from kinsun import tracing
 from kinsun.llm import LLMClient, Message, ToolResult
 from kinsun.memory.models import FactSection, InjectedContext, format_injected_context
 from kinsun.memory.recall import SessionMemory
+from kinsun.tools.registry import ToolInvocationContext
 from kinsun.turn_context import elder_utterance
 
 
@@ -53,7 +54,7 @@ SYSTEM_PROMPT = (
     "（5）結尾自然帶一句關心或反問，讓對話能接下去。"
     "你不是醫師，絕不提供醫療診斷或用藥劑量建議；遇到健康疑慮，溫柔建議對方告訴家人或就醫。"
     "回答一般健康衛教時，必須先使用 health_education_rag 工具查詢可信來源；"
-    "若工具回傳 unsupported 或 should_escalate_to_risk_engine，"
+    "若工具回傳 unsupported 或 requires_safety_attention，"
     "就照工具結果保守回覆，不可自行補醫療建議。"
     # 地點三句（spec 2026-07-17）：三種情形各一句，缺一不可。第一句消滅「每次都反問」
     # （本功能的目的），第二句擋 anchoring（本功能最大的坑——位置每輪無條件進 prompt，
@@ -150,7 +151,14 @@ class CareAgent:
         return SYSTEM_PROMPT + ctx.system_suffix, ctx.history
 
     @tracing.track(name="care_agent", type="general", capture_input=False, capture_output=False)
-    def handle(self, elder_id: str, user_text: str) -> str:
+    def handle(
+        self,
+        elder_id: str,
+        user_text: str,
+        *,
+        trace_id: str = "",
+        has_risk_signal: bool = False,
+    ) -> str:
         system_prompt, history = self._envelope(elder_id, user_text)
         user_msg = Message("user", user_text)
         base = [*history, user_msg]
@@ -161,12 +169,22 @@ class CareAgent:
             # 靠它分辨「長輩說的地點」與「模型自己猜的」。實測顯示模型不知道地點時
             # 會猜「台北市」去呼叫，而提示詞擋不住——那道防線的上游就在這裡。
             with elder_utterance(user_text):
-                reply = self._run_tool_loop(system_prompt, base)
+                reply = self._run_tool_loop(
+                    system_prompt,
+                    base,
+                    context=ToolInvocationContext(trace_id, elder_id, has_risk_signal),
+                )
         reply = _speakable(reply)
         self._session.record_turn(elder_id, user_msg, Message("assistant", reply))
         return reply
 
-    def _run_tool_loop(self, system_prompt: str, base: list[Message]) -> str:
+    def _run_tool_loop(
+        self,
+        system_prompt: str,
+        base: list[Message],
+        *,
+        context: ToolInvocationContext | None = None,
+    ) -> str:
         results: list[ToolResult] = []
         for _ in range(self._max_tool_iters):
             turn = self._llm.generate_tool_turn(
@@ -178,7 +196,12 @@ class CareAgent:
             if not turn.tool_calls:
                 return turn.text or FALLBACK_REPLY
             for call in turn.tool_calls:
-                results.append(ToolResult(call, self._tools.dispatch(call.name, call.arguments)))
+                results.append(
+                    ToolResult(
+                        call,
+                        self._tools.dispatch(call.name, call.arguments, context=context),
+                    )
+                )
         # 末輪修復（✅ 庚-35／A-14）：迭代上限用盡但工具結果已在手——再讓模型
         # 消化一次產出文字，不把成功的工具工作丟掉；仍堅持要工具（無文字）才回退。
         turn = self._llm.generate_tool_turn(
@@ -225,7 +248,11 @@ class CareAgent:
             # 問候也走工具迴圈（2026-07-17）：可查天氣、時間等。原話明確設為空——
             # 長輩沒開口，天氣工具據此只信座標、拒絕模型自選地名（weather._is_from_elder）。
             with elder_utterance(""):
-                reply = self._run_tool_loop(system_prompt, base)
+                reply = self._run_tool_loop(
+                    system_prompt,
+                    base,
+                    context=ToolInvocationContext("", elder_id, False),
+                )
         reply = _speakable(reply)
         # 留存的記憶帶主動關懷標記（✅ D-39 丙-8）：隔日 recall 看得懂這輪是系統
         # 主動開場，不是長輩憑空收到回覆；送給長輩的 reply 本身不帶標記。

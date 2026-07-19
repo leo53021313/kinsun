@@ -6,13 +6,13 @@ KinSun 衛教 RAG 的原則是：
 
 本系統不是醫療診斷、治療建議、急救判斷或用藥決策系統。
 
-期末專案為非商用展示，授權狀態不作 ingestion 阻擋條件；但回答仍必須保留 citation，並在 metadata 中保存 `copyright_status`，讓資料來源可追溯。
+安全預設 `RAG_CONTENT_POLICY=allowed_only` 會阻擋非 `ALLOWED`。只有非商用課堂展示可明確改用 `classroom_demo` 保留其他授權狀態；metadata、稽核與 Admin 必須警告，且不得公開部署。
 
 ## 回答分級
 
 | safety_level | 使用時機 | 行為 |
 |---|---|---|
-| `normal` | 一般衛教，證據足夠，沒有風險訊號 | 可用簡短口語回答，必須附 citation |
+| `normal` | 一般衛教，證據足夠，沒有風險訊號 | 可用簡短口語回答；完整 citation 只在 Admin 顯示 |
 | `caution` | 一般衛教但需要提醒就醫或詢問專業人員 | 可回答一般資訊，但不可判斷病因 |
 | `urgent` | 紅旗症狀、自傷、胸痛、呼吸困難、疑似中風、跌倒重傷等 | 不用 RAG 安撫或診斷，交給 Risk Engine |
 | `unsupported` | 查不到可信來源、資料不足、來源矛盾、授權不明 | 拒答並建議詢問專業人員 |
@@ -34,26 +34,19 @@ KinSun 衛教 RAG 的原則是：
 {
   "answer": "string",
   "safety_level": "normal | caution | urgent | unsupported",
-  "citations": [
-    {
-      "source_id": "string",
-      "title": "string",
-      "publisher": "string",
-      "url": "string",
-      "chunk_id": "string"
-    }
-  ],
-  "should_escalate_to_risk_engine": true,
+  "requires_safety_attention": true,
   "reason": "string"
 }
 ```
+
+危急分級仍由 Agent 前方的 `RiskDetector` 唯一決定，透過 `ToolInvocationContext` 傳入；RAG 不再自行呼叫或觸發第二次分級。
 
 ## 長輩版語氣
 
 - 使用台灣繁體中文。
 - 短句、口語、不要堆疊專有名詞。
 - 不使用絕對語氣，例如「一定沒事」、「一定是某病」。
-- 先講重點，再講來源。
+- 只講衛教重點，不在語音中朗讀長 URL 或完整 citation。
 - 若有就醫或告知家人的必要，只能用一般提醒，不判定風險等級。
 
 範例：
@@ -62,7 +55,6 @@ KinSun 衛教 RAG 的原則是：
 我查到的衛教資料是：規律活動、均衡飲食和定期量血壓，對高血壓照護很重要。
 如果您最近有胸痛、喘不過氣或突然半邊無力，請先通知家人或撥 119。
 
-來源：衛生福利部國民健康署，高血壓相關衛教。
 ```
 
 ## 家屬／照護者版語氣

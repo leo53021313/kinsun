@@ -84,6 +84,15 @@ export const strings = {
   // 系統排程
   system: {
     title: "系統排程",
+    rag: {
+      heading: "衛教 RAG 索引",
+      active: "目前版本",
+      latest: "最近更新",
+      none: "尚無",
+      policy: "內容政策",
+      counts: (documents: number, chunks: number) =>
+        `文件 ${documents} 份／chunk ${chunks} 段`,
+    },
     runFailed: "執行失敗，請確認內測模式是否開啟。",
     jobExecuted: (jobName: string) => `已執行 ${jobName}。`,
     columns: {
@@ -118,9 +127,10 @@ export const strings = {
     steps: {
       webhook: "1. Webhook 收到",
       asr: "2. ASR 辨識",
-      llm: "3. LLM 生成",
-      tts: "4. TTS 合成",
-      reply: "5. 回覆送出",
+      rag: "3. 衛教 RAG 檢索",
+      llm: "4. LLM 生成",
+      tts: "5. TTS 合成",
+      reply: "6. 回覆送出",
       risk: "風險事件",
     },
     typeLabel: "類型：",
@@ -129,6 +139,11 @@ export const strings = {
     asrTranscript: "辨識結果：",
     llmTokens: (input: number, output: number | null) => `　token 入 ${input}／出 ${output}`,
     llmReply: "回覆：",
+    ragQuery: "查詢：",
+    ragRelease: "索引版本：",
+    ragReason: "判定：",
+    ragHits: "檢索命中",
+    ragCitations: "完整引用",
     replyKindLabel: "形式：",
     replyVoice: "語音",
     replyText: "文字",
