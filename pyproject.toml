@@ -23,6 +23,9 @@ dependencies = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# transport_agent 為尚未接線的獨立原型（台北交通 AI 助理，自帶 Flask/HTML），
+# 暫不納入主程式碼的 lint/format 品質閘門；待日後正式接線重構時再移除本排除。
+extend-exclude = ["src/kinsun/tools/transport_agent"]
 
 [tool.ruff.lint]
 # E/W: pycodestyle, F: pyflakes, I: isort(import 排序),
