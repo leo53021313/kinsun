@@ -94,9 +94,7 @@ class VoicePipeline:
             trace_id=trace_id,
         )
 
-    @tracing.track(
-        name="care_turn_text", type="general", capture_input=False, capture_output=False
-    )
+    @tracing.track(name="care_turn_text", type="general", capture_input=False, capture_output=False)
     def process_text(
         self,
         text: str,
