@@ -12,6 +12,7 @@ import logging
 import urllib.parse
 from collections.abc import Callable
 
+from kinsun import tracing
 from kinsun.llm import ToolSpec
 from kinsun.tools.lookups import (
     STATUS_EMPTY,
@@ -78,6 +79,8 @@ def _site_of(url: str) -> str:
     return urllib.parse.urlparse(url).netloc.removeprefix("www.")
 
 
+# capture_input=False：本函式第二個參數是 api_key，絕不可被觀測層記錄。
+@tracing.track(name="web_search_tavily", type="tool", capture_input=False, capture_output=False)
 def _search(http: Transport, api_key: str, query: str, topic: str) -> list[dict]:
     payload: dict = {"query": query, "search_depth": "basic", "max_results": _MAX_RESULTS}
     domains = _ALLOWED_DOMAINS[topic]

@@ -14,8 +14,21 @@ from kinsun.transport import (
     TransportError,
     UrllibTransport,
     get_json,
+    header_value,
     read_json,
 )
+
+
+def test_header_value_matches_case_insensitively():
+    """HTTP 標頭名不分大小寫：真實線路上 uvicorn/Starlette 一律送小寫
+    （如 x-duration-ms），讀取端不可假設寫法。"""
+    response = Response(200, {"x-duration-ms": "680"}, b"")
+    assert header_value(response, "X-Duration-Ms") == "680"
+    assert header_value(response, "x-duration-ms") == "680"
+
+
+def test_header_value_returns_none_when_absent():
+    assert header_value(Response(200, {}, b""), "X-Duration-Ms") is None
 
 
 def test_get_json_issues_get_and_decodes_body():
