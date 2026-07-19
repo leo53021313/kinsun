@@ -73,6 +73,28 @@ def test_created_at_follows_fake_clock():
     assert store.replies[0].created_at == 42.0
 
 
+def test_get_trace_uses_rag_elder_when_no_channel_event_exists():
+    store = FakeTraceStore()
+    store.seed_elder("e1", "阿公")
+    store.record_rag(
+        trace_id="rag-only",
+        elder_id="e1",
+        query="高血壓要注意什麼？",
+        index_version="rag-v1",
+        status="normal",
+        latency_ms=12,
+        safety_level="normal",
+        reason="ok",
+        hits=[],
+        citations=[],
+    )
+
+    trace = store.get_trace("rag-only")
+
+    assert trace is not None
+    assert trace.elder_name == "阿公"
+
+
 def test_safe_record_swallows_exceptions():
     from kinsun.observability.store import safe_record
 
@@ -225,6 +247,18 @@ def test_overview_stats_round_trip_stage_p50_p95():
 def test_purge_only_removes_old_observability_rows():
     store = FakeTraceStore()
     store.now = 10.0
+    store.record_rag(
+        trace_id="t1",
+        elder_id="e1",
+        query="高血壓",
+        index_version="rag-v1",
+        status="normal",
+        latency_ms=1,
+        safety_level="normal",
+        reason="ok",
+        hits=[],
+        citations=[],
+    )
     store.record_reply(
         trace_id="t1", external_id="U1", kind="text", status="ok", latency_ms=1, audio_url=""
     )
@@ -235,4 +269,5 @@ def test_purge_only_removes_old_observability_rows():
     store.seed_turn("U1", "user", "對話不清", 10.0)
     store.purge_older_than(50.0)
     assert [r.trace_id for r in store.replies] == ["t2"]
+    assert store.rag_calls == []
     assert len(store.turns) == 1  # 既有表不在清理範圍

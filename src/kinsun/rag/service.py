@@ -42,9 +42,14 @@ class HealthEducationRagService:
             safety_level=answer.safety_level,
             # LLM 消化的是全部 evidence——citation 以同一範圍重組對位（✅ 庚-39）。
             citations=assemble_citations(evidence[: self._top_k]),
-            should_escalate_to_risk_engine=answer.should_escalate_to_risk_engine,
+            requires_safety_attention=answer.requires_safety_attention,
             reason=answer.reason,
+            evidence=evidence,
         )
+
+    def active_release_version(self) -> str:
+        reader = getattr(self._retriever, "active_release_version", None)
+        return reader() if reader is not None else ""
 
     def _rewrite_with_llm(
         self,

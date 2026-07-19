@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from kinsun.config import ConfigError, Settings, load_dotenv, load_settings
+from kinsun.config import (
+    ConfigError,
+    Settings,
+    load_dotenv,
+    load_rag_worker_settings,
+    load_settings,
+)
 
 BASE_ENV = {
     "LINE_CHANNEL_SECRET": "secret",
@@ -43,6 +49,11 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.appointment_reminder_hour == 8
     assert settings.rag_top_k == 5
     assert settings.location_stale_after_hours == 2  # 保守門檻：只影響主動問候路徑
+    assert settings.rag_content_policy == "allowed_only"
+    assert settings.rag_embedding_model == "gemini-embedding-001"
+    assert settings.rag_refresh_enabled is False
+    assert settings.rag_refresh_cron == "0 3 * * 0"
+    assert settings.rag_audit_retention_days == 90
     assert settings.liff_channel_id == ""
     assert settings.liff_timeout_seconds == 10
     assert settings.rich_menu_id == ""
@@ -85,6 +96,27 @@ def test_load_settings_requires_database_url():
     }
     with pytest.raises(ConfigError):
         load_settings(env)
+
+
+def test_load_settings_rejects_unknown_rag_content_policy():
+    with pytest.raises(ConfigError, match="RAG_CONTENT_POLICY"):
+        load_settings({**BASE_ENV, "RAG_CONTENT_POLICY": "public_demo"})
+
+
+@pytest.mark.parametrize("value", ["不是 cron", "0 25 * * *", "* * *"])
+def test_load_settings_rejects_invalid_rag_refresh_cron(value):
+    with pytest.raises(ConfigError, match="RAG_REFRESH_CRON"):
+        load_settings({**BASE_ENV, "RAG_REFRESH_CRON": value})
+
+
+def test_load_settings_empty_rag_refresh_cron_uses_default():
+    assert load_settings({**BASE_ENV, "RAG_REFRESH_CRON": ""}).rag_refresh_cron == "0 3 * * 0"
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "不是數字"])
+def test_load_settings_rejects_invalid_rag_audit_retention_days(value):
+    with pytest.raises(ConfigError, match="RAG_AUDIT_RETENTION_DAYS"):
+        load_settings({**BASE_ENV, "RAG_AUDIT_RETENTION_DAYS": value})
 
 
 def test_load_settings_missing_required_raises():
@@ -144,6 +176,34 @@ def test_load_dotenv_missing_file_is_noop(tmp_path):
     environ = {}
     load_dotenv(tmp_path / "nope.env", environ=environ)
     assert environ == {}
+
+
+def test_rag_worker_settings_do_not_require_unrelated_channel_secrets():
+    settings = load_rag_worker_settings(
+        {
+            "DATABASE_URL": "postgresql://rag-worker/example",
+            "GEMINI_API_KEY": "test-gemini-key",
+            "RAG_CONTENT_POLICY": "classroom_demo",
+            "RAG_REFRESH_ENABLED": "true",
+        }
+    )
+
+    assert settings.database_url == "postgresql://rag-worker/example"
+    assert settings.rag_refresh_enabled is True
+    assert settings.rag_refresh_cron == "0 3 * * 0"
+    assert settings.rag_content_policy == "classroom_demo"
+
+
+@pytest.mark.parametrize("missing_key", ["DATABASE_URL", "GEMINI_API_KEY"])
+def test_rag_worker_settings_require_only_their_external_dependencies(missing_key):
+    env = {
+        "DATABASE_URL": "postgresql://rag-worker/example",
+        "GEMINI_API_KEY": "test-gemini-key",
+    }
+    del env[missing_key]
+
+    with pytest.raises(ConfigError, match=missing_key):
+        load_rag_worker_settings(env)
 
 
 def test_load_settings_asr_debug_show_transcript_default_false():

@@ -17,6 +17,7 @@ import type {
   Meta,
   Overview,
   OverviewAlert,
+  RagStatus,
   StageStats,
   Timeline,
   TimelineItem,
@@ -36,6 +37,7 @@ export type {
   Meta,
   Overview,
   OverviewAlert,
+  RagStatus,
   StageStats,
   Timeline,
   TimelineItem,
@@ -143,6 +145,10 @@ export async function listElderRiskNotifications(
 
 export async function listJobs(): Promise<AdminJob[]> {
   return (await apiFetch<AdminJob[]>("/api/v1/admin/jobs")).data;
+}
+
+export async function getRagStatus(): Promise<RagStatus> {
+  return (await apiFetch<RagStatus>("/api/v1/admin/rag/status")).data;
 }
 
 /** 內測限定：立即執行排程任務。 */

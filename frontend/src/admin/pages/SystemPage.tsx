@@ -1,6 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 
-import { getMeta, listJobs, runJob } from "../api";
+import {
+  getMeta,
+  getRagStatus,
+  listJobs,
+  runJob,
+} from "../api";
 import { formatTime } from "../format";
 import { strings } from "../strings";
 import { useLoadable } from "../useLoadable";
@@ -10,20 +15,17 @@ export function SystemPage() {
   // 本頁不依賴路由參數，fetcher 永不回 null（其餘頁面以 null 表示「elderId 還沒
   // 解析出來、這輪不載入」）。
   const {
-    data: jobs,
+    data,
     error,
     reload: load,
-  } = useLoadable(useCallback(() => listJobs(), []));
-  const [testing, setTesting] = useState(false);
+  } = useLoadable(
+    useCallback(async () => {
+      const [jobs, rag, meta] = await Promise.all([listJobs(), getRagStatus(), getMeta()]);
+      return { jobs, rag, testing: meta.internal_testing };
+    }, []),
+  );
   const [notice, setNotice] = useState("");
   const [busyJob, setBusyJob] = useState("");
-
-  useEffect(() => {
-    getMeta().then(
-      (m) => setTesting(m.internal_testing),
-      () => setTesting(false),
-    );
-  }, []);
 
   async function run(jobName: string) {
     setNotice("");
@@ -40,11 +42,32 @@ export function SystemPage() {
   }
 
   if (error) return <p className="error-banner">{strings.common.loadFailedRefresh}</p>;
-  if (!jobs) return <p>{strings.common.loading}</p>;
+  if (!data) return <p>{strings.common.loading}</p>;
+  const { jobs, rag, testing } = data;
   return (
     <section>
       <h2>{strings.system.title}</h2>
       {notice && <p className="card">{notice}</p>}
+      <div className="card">
+        <h3>{strings.system.rag.heading}</h3>
+        {rag.warnings.map((warning) => (
+          <p className="error-banner" key={warning}>
+            {warning}
+          </p>
+        ))}
+        <p>
+          {strings.system.rag.active}：{rag.active_release ?? strings.system.rag.none}
+          {rag.active_published_at ? `（${formatTime(rag.active_published_at)}）` : ""}
+        </p>
+        <p>
+          {strings.system.rag.latest}：{rag.latest_release ?? strings.system.rag.none}／
+          {rag.latest_status ?? strings.system.rag.none}
+        </p>
+        <p>
+          {strings.system.rag.counts(rag.document_count, rag.chunk_count)}　
+          {strings.system.rag.policy}：{rag.content_policy}
+        </p>
+      </div>
       <table className="jobs-table">
         <thead>
           <tr>

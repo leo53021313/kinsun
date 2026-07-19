@@ -29,6 +29,7 @@ from kinsun.config import load_dotenv, load_settings
 from kinsun.llm import build_gemini_for
 from kinsun.medications.flow import MedicationMenu
 from kinsun.pipeline import VoicePipeline
+from kinsun.rag.releases import PgRagReleaseStore
 from kinsun.safety.classifier import LlmRiskClassifier
 from kinsun.safety.deliveries import PgRiskNotificationLogStore
 from kinsun.safety.detector import RiskDetector
@@ -190,6 +191,8 @@ def build_app() -> FastAPI:
             summaries=summaries,
             long_term=core.long_term,
             deliveries=deliveries,
+            rag_releases=PgRagReleaseStore(db),
+            rag_content_policy=settings.rag_content_policy,
         ),
         prefix="/api/v1/admin",
     )

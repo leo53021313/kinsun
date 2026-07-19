@@ -12,9 +12,11 @@ from datetime import date
 
 import pytest
 
+from kinsun.rag.releases import PgRagReleaseStore
 from kinsun.rag.schemas import (
     Audience,
     ChunkMetadata,
+    ContentPolicy,
     CopyrightStatus,
     DocumentChunk,
     Language,
@@ -32,6 +34,23 @@ pytestmark = pytest.mark.skipif(
 )
 
 _DIM = 768
+
+
+@pytest.fixture(autouse=True)
+def cleanup_vector_rows(pg_database, ns):
+    yield
+    pg_database.execute(
+        "DELETE FROM rag_index_releases WHERE index_version LIKE %s",
+        (f"{ns}%",),
+    )
+    pg_database.execute(
+        "DELETE FROM rag_documents WHERE document_id LIKE %s",
+        (f"{ns}%",),
+    )
+    pg_database.execute(
+        "DELETE FROM rag_sources WHERE source_id LIKE %s",
+        (f"{ns}%",),
+    )
 
 
 def _chunk(ns: str, text: str, index: int) -> DocumentChunk:
@@ -100,10 +119,34 @@ def _seed_source_and_document(store: PgVectorStore, ns: str) -> None:
 
 
 def test_add_then_search_returns_most_similar_first(pg_database, ns):
-    store = PgVectorStore(pg_database)
+    index_version = f"{ns}v1"
+    embedding_model = "pgvector-test"
+    releases = PgRagReleaseStore(pg_database)
+    releases.begin_release(
+        index_version,
+        embedding_model=embedding_model,
+        content_policy=ContentPolicy.ALLOWED_ONLY,
+    )
+    store = PgVectorStore(pg_database, embedding_model=embedding_model)
     _seed_source_and_document(store, ns)
-    store.add(_chunk(ns, "規律量血壓。", 1), _vector(1.0))
-    store.add(_chunk(ns, "少鹽少油。", 2), _vector(-1.0))
-    results = store.search(_vector(1.0), top_k=2)
+    chunks = (_chunk(ns, "規律量血壓。", 1), _chunk(ns, "少鹽少油。", 2))
+    store.add(chunks[0], _vector(1.0))
+    store.add(chunks[1], _vector(-1.0))
+    pg_database.execute(
+        "INSERT INTO rag_release_documents (index_version, document_id) VALUES (%s,%s)",
+        (index_version, f"{ns}doc"),
+    )
+    for chunk in chunks:
+        pg_database.execute(
+            "INSERT INTO rag_release_chunks (index_version, chunk_id) VALUES (%s,%s)",
+            (index_version, chunk.metadata.chunk_id),
+        )
+    pg_database.execute(
+        "UPDATE rag_index_releases SET status='candidate' WHERE index_version=%s",
+        (index_version,),
+    )
+    releases.publish(index_version)
+
+    results = PgVectorStore(pg_database).search(_vector(1.0), top_k=2)
     texts = [r.chunk.text for r in results if r.chunk.metadata.chunk_id.startswith(ns)]
     assert texts and texts[0] == "規律量血壓。"

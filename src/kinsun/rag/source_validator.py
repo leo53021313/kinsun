@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from kinsun.rag.schemas import RecommendedStatus, Source, TrustLevel
+from kinsun.rag.schemas import (
+    ContentPolicy,
+    CopyrightStatus,
+    RecommendedStatus,
+    Source,
+    TrustLevel,
+)
 
 
 @dataclass(frozen=True)
@@ -15,6 +21,9 @@ class SourceValidationResult:
 
 
 class SourceValidator:
+    def __init__(self, *, content_policy: ContentPolicy = ContentPolicy.ALLOWED_ONLY) -> None:
+        self._content_policy = content_policy
+
     def validate(self, source: Source) -> SourceValidationResult:
         issues: list[str] = []
         if not source.approved_for_rag:
@@ -26,6 +35,11 @@ class SourceValidator:
             issues.append(f"來源驗證狀態為 {source.recommended_status.value}。")
         if source.trust_level == TrustLevel.LOW:
             issues.append("來源可信度為 low。")
+        if (
+            self._content_policy == ContentPolicy.ALLOWED_ONLY
+            and source.copyright_status != CopyrightStatus.ALLOWED
+        ):
+            issues.append(f"來源授權狀態為 {source.copyright_status.value}。")
         if not source.allowed_domains:
             issues.append("缺少 crawler allowlist 網域。")
         return SourceValidationResult(

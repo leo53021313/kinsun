@@ -124,7 +124,18 @@ uv run pytest           # 單元測試全離線；Pg 整合測試自動連上面
 
 ## 衛教 RAG ingestion
 
-衛教 RAG 使用同一組 `DATABASE_URL`，但以 `rag_sources`、`rag_documents`、`rag_chunks` 等獨立資料表和 Mem0 長期記憶分開。Supabase 需啟用 pgvector。
+衛教 RAG 使用同一組 `DATABASE_URL`，但以獨立資料表和 Mem0 長期記憶分開。線上查詢只讀 `active` release；所有匯入先建立候選版，通過品質閘門才原子發布，失敗時舊版不受影響。Supabase 需啟用 pgvector。
+
+同一個個人 Supabase 原地升級時只需既有 `DATABASE_URL`。`--in-place` 先以同一個唯讀交易載入原始備份紀錄與正規化文件，正式寫入前自動備份到 `~/.kinsun/backups/rag/<release>/`，再以新 ID 建候選版；舊 chunks 不會加入 release。禁止使用 `--reset`：
+
+```powershell
+$env:PYTHONPATH="src"; uv run python -m kinsun.rag.migrate --in-place --dry-run
+$env:PYTHONPATH="src"; uv run python -m kinsun.rag.migrate --in-place
+```
+
+`--dry-run` 不建立 schema、不建立備份、不寫資料庫。正式原地遷移的備份為保留舊 `document_id`、URL、文字與 hash 原值的 gzip JSONL，旁附 SHA-256 manifest；備份失敗就中止。ANSWER 文件會重新清洗、700 字切塊與 embedding；DISCOVERY 文件只保存版本 membership 與稽核，不建立回答向量。中止或失敗 release 中已原子完成、模型與結構皆相容的文件可供下版重用，最終仍須重新通過完整 golden set 與發布閘門。
+
+若來源與目標是不同資料庫，則不加 `--in-place`，並設定唯讀來源 `RAG_SOURCE_DATABASE_URL` 與目標 `DATABASE_URL`；兩個連線不得指向同一資料庫。
 
 匯入期末展示 seed：
 
@@ -146,15 +157,43 @@ PYTHONPATH=src uv run python -m kinsun.rag.ingest --max-pages 20 --delay 2 --emb
 $env:PYTHONPATH="src"; uv run python -m kinsun.rag.ingest --max-pages 20 --delay 2 --embedding-delay 6 --embedding-retries 5
 ```
 
-免費 Gemini 額度建議使用上述保守設定；預設值也已採同樣策略。若仍遇到 `429`，把 `--embedding-delay` 提高到 `10` 或 `15`。也可在 `.env` 固定設定：
+免費 Gemini 額度建議使用上述保守設定；預設值也已採同樣策略。`--embedding-delay` 只能處理每分鐘限制，不能突破每日額度。額度用盡時 release 會維持 failed，待額度恢復或方案提高後重跑即可重用已完成文件，不得降低品質閘門。也可在 `.env` 固定設定：
 
 ```dotenv
 RAG_CRAWLER_MAX_PAGES=20
 RAG_CRAWLER_DELAY_SECONDS=2
 RAG_EMBEDDING_DELAY_SECONDS=6
+RAG_EMBEDDING_TIMEOUT_SECONDS=60
+RAG_EMBEDDING_BATCH_SIZE=20
 RAG_EMBEDDING_RETRIES=5
 RAG_EMBEDDING_RETRY_INITIAL_DELAY_SECONDS=30
 RAG_EMBEDDING_RETRY_MAX_DELAY_SECONDS=300
+RAG_CONTENT_POLICY=allowed_only
+RAG_EMBEDDING_MODEL=gemini-embedding-001
+RAG_REFRESH_ENABLED=true
+RAG_REFRESH_CRON=0 3 * * 0
+RAG_AUDIT_RETENTION_DAYS=90
+```
+
+`RAG_CONTENT_POLICY=classroom_demo` 只適用非商用課堂展示；Admin 會持續顯示授權警告。正式或公開環境必須維持 `allowed_only`。
+
+獨立週更 Worker（只重抓 active 版本的已知 URL；RSS／API 新發現只留稽核）：
+
+```bash
+PYTHONPATH=src uv run python -m kinsun.rag.worker
+PYTHONPATH=src uv run python -m kinsun.rag.worker --once
+```
+
+Worker 使用專用的最小設定載入器，只要求資料庫、Gemini、時區、排程與 RAG 相關環境變數；不依賴 LINE、LIFF、ASR、TTS 或音檔設定。線上檢索會先拒絕明顯屬於天氣預報、股價、食譜、即時新聞或過期規定的範圍外問題，再執行向量／中文關鍵字聯集檢索。
+
+2026-07-18 個人 Supabase 原地升級驗收已發布 `rag-20260718T055933Z`：790 份文件、2,808 個 chunks，門檻 0.65，supported top-3 recall 100%、unsupported false-positive 0%、安全案例 100%、citation correctness 90%，且重複 URL、孤兒、空 embedding 與超長 chunk 均為 0。
+
+Release 管理：
+
+```bash
+PYTHONPATH=src uv run python -m kinsun.rag.release_cli list
+PYTHONPATH=src uv run python -m kinsun.rag.release_cli rollback <index_version>
+PYTHONPATH=src uv run python -m kinsun.rag.release_cli cleanup
 ```
 
 指定單一來源重建：
