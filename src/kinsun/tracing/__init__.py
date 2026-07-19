@@ -8,5 +8,6 @@ from __future__ import annotations
 
 from kinsun.tracing.client import configure, is_enabled
 from kinsun.tracing.decorators import tag_current_trace, track
+from kinsun.tracing.genai import wrap_genai
 
-__all__ = ["configure", "is_enabled", "tag_current_trace", "track"]
+__all__ = ["configure", "is_enabled", "tag_current_trace", "track", "wrap_genai"]
