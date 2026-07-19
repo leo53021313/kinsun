@@ -121,6 +121,23 @@ def test_pipeline_empty_transcript_short_circuits_to_fallback():
     assert result.transcript == ""
 
 
+def test_pipeline_punctuation_only_transcript_short_circuits_to_fallback():
+    """Whisper 系 ASR 對近無聲短檔會確定性幻覺出純標點（實錄「? ? ?」）：去標點後
+    無可辨識內容，等同空辨識——不進 detector 與 agent，直接回退話術。原話仍原樣保留
+    在 transcript 供 debug 檢視。"""
+    pipeline = VoicePipeline(
+        asr=MockAsrClient(" ? ? ? ? ? ? ? ?"),
+        agent=_BoomAgent(),  # 被呼叫即炸：斷言不進 agent
+        tts=TextBubbleTts(),
+        detector=_BoomDetector(),  # 被呼叫即炸：斷言不進分級
+        notifier=SpyNotifier(),
+        risk_events=FakeRiskEventStore(),
+    )
+    result = pipeline.process(b"\x00", elder_id="u1")
+    assert result.text == FALLBACK_REPLY
+    assert result.transcript == " ? ? ? ? ? ? ? ?"
+
+
 def test_pipeline_notifies_before_reply_generation():
     """危急通知不可依賴回覆生成：agent 生成回覆丟例外時，家屬通知仍須先送出。"""
     notifier = SpyNotifier()

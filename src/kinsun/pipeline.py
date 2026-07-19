@@ -22,6 +22,15 @@ from kinsun.speech.tts import TTSClient, TTSError, TtsResult
 logger = logging.getLogger("kinsun.pipeline")
 
 
+def _has_recognizable_speech(text: str) -> bool:
+    """辨識結果是否含可辨識語音（任一字母／數字／漢字）。
+
+    Whisper 系 ASR 對近無聲的極短音檔會確定性幻覺出純標點（實錄「? ? ?」）：去掉
+    標點與空白後為空，內容上等同空辨識，故與空字串一併走回退話術，不進分級與 agent。
+    """
+    return any(char.isalnum() for char in text)
+
+
 class VoicePipeline:
     def __init__(
         self,
@@ -98,9 +107,10 @@ class VoicePipeline:
         self, user_text: str, *, elder_id: str, external_id: str, channel: str, trace_id: str
     ) -> TtsResult:
         """會話鍵為 elder_id；external_id＋channel 僅供觀測五表標記（可為空字串）。"""
-        # 空輸入守門（2026-07-18）：靜音誤觸的 ASR 辨識為空，沒有內容可分級、
-        # 可回應也不該進記憶，直接以回退話術（仍走 TTS）請長輩再說一次。
-        if not user_text.strip():
+        # 空輸入守門（2026-07-18）：靜音誤觸的 ASR 辨識為空、或幻覺出純標點（Whisper 系
+        # 對近無聲短檔的確定性幻覺，實錄「? ? ?」），去標點後皆無內容可分級、可回應也不
+        # 該進記憶，直接以回退話術（仍走 TTS）請長輩再說一次。
+        if not _has_recognizable_speech(user_text):
             result = self._synthesize(
                 FALLBACK_REPLY, external_id=external_id, channel=channel, trace_id=trace_id
             )
