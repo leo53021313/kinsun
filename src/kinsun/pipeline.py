@@ -120,6 +120,7 @@ class VoicePipeline:
         # 對近無聲短檔的確定性幻覺，實錄「? ? ?」），去標點後皆無內容可分級、可回應也不
         # 該進記憶，直接以回退話術（仍走 TTS）請長輩再說一次。
         if not _has_recognizable_speech(user_text):
+            tracing.update_trace_metadata(fallback="empty_speech")
             result = self._synthesize(
                 FALLBACK_REPLY, external_id=external_id, channel=channel, trace_id=trace_id
             )
@@ -127,6 +128,7 @@ class VoicePipeline:
         assessment = self._assess(
             user_text, external_id=external_id, channel=channel, trace_id=trace_id
         )
+        tracing.update_trace_metadata(risk_tier=assessment.tier.name)
         # 危急通知須獨立於回覆生成：先落庫＋通知家屬，才產生回覆。
         # 否則 agent 生成回覆時若丟例外，會讓已偵測到的危急漏通知。
         # 落庫門檻＝L1：一般 L1（小訊號）是每日摘要的資料來源（✅ D-10 己-5，庚-01），
