@@ -75,3 +75,43 @@ def test_item_id_used_for_failure_log(caplog):
             item_id=lambda it: it[0],
         ).run()
     assert "e1" in caplog.text
+
+
+def _enable_hermetic_tracing(monkeypatch) -> list[dict]:
+    """把工程觀測切成啟用、但完全 hermetic（不連 Opik）：假的 track＝identity、
+    update_current_trace 改為記錄呼叫。回傳的 list 收集每次 trace metadata 更新，
+    用來斷言啟用路徑確實被走到（否則測試會空過）。"""
+    import opik
+
+    from kinsun.tracing import client as tracing_client
+
+    calls: list[dict] = []
+    monkeypatch.setattr(tracing_client, "_ENABLED", True)
+    monkeypatch.setattr(opik, "track", lambda **kw: lambda f: f)
+    monkeypatch.setattr(opik.opik_context, "update_current_trace", lambda **kw: calls.append(kw))
+    return calls
+
+
+def test_transparent_when_tracing_enabled(monkeypatch):
+    """啟用 Opik 時，每筆包一層 root @track 仍須逐筆照跑、單筆失敗照隔離，
+    且該筆的 job／item metadata 確實掛上 trace（證明走的是啟用路徑）。"""
+    calls = _enable_hermetic_tracing(monkeypatch)
+    done = []
+
+    def action(item):
+        if item == "boom":
+            raise RuntimeError("x")
+        done.append(item)
+
+    fanout_job(
+        name="daily-greeting",
+        hour=8,
+        population=lambda: ["a", "boom", "b"],
+        action=action,
+    ).run()
+    assert done == ["a", "b"]
+    # 三筆都各自更新過 trace metadata，且帶上 job 名稱。
+    metas = [c["metadata"] for c in calls if "metadata" in c]
+    assert {"job": "daily-greeting", "item": "a"} in metas
+    assert all(m["job"] == "daily-greeting" for m in metas)
+    assert len(metas) == 3
