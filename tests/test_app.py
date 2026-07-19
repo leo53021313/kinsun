@@ -68,6 +68,24 @@ def test_build_app_mounts_v1_routers(monkeypatch):
     assert any(path.startswith("/api/v1/") and "elders" in path for path in paths)  # 家屬面
 
 
+def test_build_app_wires_show_transcript_to_every_voice_delivery(monkeypatch):
+    """ASR_DEBUG_SHOW_TRANSCRIPT 必須同時作用於 LINE 與 App 兩通道：App 對講機的
+    VoiceReplyDelivery 是獨立實例，漏傳旗標會讓 debug 模式只有 LINE 看得到辨識文字、
+    App 只剩回覆文字（2026-07-19 實錄）。"""
+    captured: list[bool] = []
+
+    class _SpyDelivery(app_module.VoiceReplyDelivery):
+        def __init__(self, *args, **kwargs):
+            captured.append(bool(kwargs.get("show_transcript", False)))
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(app_module, "VoiceReplyDelivery", _SpyDelivery)
+    monkeypatch.setenv("ASR_DEBUG_SHOW_TRANSCRIPT", "1")
+    _build_app(monkeypatch)
+    assert captured, "build_app 應至少建構一個 VoiceReplyDelivery"
+    assert all(captured), f"有 VoiceReplyDelivery 漏傳 show_transcript：{captured}"
+
+
 def test_build_app_installs_security_headers_and_envelope(monkeypatch):
     app = _build_app(monkeypatch)
     with TestClient(app) as client:

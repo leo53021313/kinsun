@@ -12,6 +12,7 @@
 | 健康檢查 | `GET /healthz` → `{"status": "ok", "model_loaded": <bool>}` |
 | 過載 | 等候請求數超過 `ASR_MAX_CONCURRENCY + ASR_MAX_QUEUE` → 回 503 |
 | 解碼失敗 | 音檔無法解碼（ffmpeg 失敗或 0 樣本）→ 回 422（`audio_decode_failed`），ffmpeg stderr 記入服務 log 供查根因 |
+| 純靜音 | 峰值低於 `ASR_SILENCE_PEAK` → 直接回 `{"text": ""}`、不進模型（Whisper 對靜音會幻覺出重複語句） |
 | 呼叫端 | [`kinsun.speech.asr.DgxAsrClient`](../../src/kinsun/speech/asr.py) |
 
 ## 部署（DGX）
@@ -38,6 +39,7 @@ pipeline——因為 HF 內建的 `ffmpeg_read` 是把 bytes 灌進 ffmpeg `stdi
 | `ASR_API_KEY` | 空 | 共用金鑰（✅ D-56）：設定後驗 `X-Api-Key`（錯誤回 401）；留空＝內網不驗 |
 | `ASR_MAX_BODY_BYTES` | `10485760` | 單請求 body 上限（bytes）；超過回 413、空 body 回 400（✅ D-26） |
 | `ASR_PRELOAD` | `0` | 設 `1` 於服務啟動（lifespan）即載入模型，預設延遲載入 |
+| `ASR_SILENCE_PEAK` | `0.001` | 靜音峰值閘（約 -60 dBFS）：解碼後峰值低於此值視為純靜音，回空字串不進模型（2026-07-18 實錄：0.35 秒空錄音讓模型幻覺「來，請坐…」迴圈、一輪空燒約 10 秒 GPU） |
 
 > DGX Spark（GB10）實機驗證：不指定 device 會落在 CPU、一句數十秒；GPU + fp16 才夠即時（真人聲實測約 1.1 秒）。
 > `server.py` 已依此鎖定 `device=0`／`torch.float16`（無 GPU 時退回 CPU／fp32，供開發機無 GPU 情境使用）。
