@@ -469,6 +469,27 @@ _health_note() {
   esac
 }
 
+# Opik 工程觀測後台連結（服務由 /home/leo29/opik 的 ./opik.sh 獨立管理，本腳本只顯示）。
+# UI 網址由 OPIK_URL_OVERRIDE 去掉 /api 推得（預設 http://localhost:5273）；真實環境變數優先，
+# 否則讀 .env。同時顯示服務是否在跑與 app 端旗標，讓「有連結但沒開觀測」不會被誤會。
+_opik_note() {
+  local url ui port state enabled flag
+  url="${OPIK_URL_OVERRIDE:-$(read_env OPIK_URL_OVERRIDE)}"
+  ui="${url:-http://localhost:5273/api}"; ui="${ui%/api}"; ui="${ui%/}"
+  port="$(printf '%s' "$ui" | sed -n 's#.*:\([0-9][0-9]*\).*#\1#p')"; [ -n "$port" ] || port=5273
+  if _port_open "$port"; then
+    state="${C_OK}● 執行中${C_OFF}"
+  else
+    state="${C_ERR}● 未啟動${C_OFF}（cd /home/leo29/opik && ./opik.sh）"
+  fi
+  enabled="${OPIK_ENABLED:-$(read_env OPIK_ENABLED)}"
+  case "$(printf '%s' "$enabled" | tr '[:upper:]' '[:lower:]')" in
+    ""|0|false|no|off) flag="OPIK_ENABLED=false（app 不送 trace）" ;;
+    *)                 flag="OPIK_ENABLED=true（app 送 trace）" ;;
+  esac
+  printf '%s[kinsun]%s Opik 觀測後台：%s  %b  |  %s\n' "$C_INFO" "$C_OFF" "$ui" "$state" "$flag"
+}
+
 cmd_status() {
   printf '%-11s %-9s %-8s %s\n' "SERVICE" "STATE" "PID" "PORT / HEALTH"
   printf '%-11s %-9s %-8s %s\n' "-------" "-----" "---" "-------------"
@@ -488,6 +509,8 @@ cmd_status() {
     fi
     printf '%b %-9s %-9s %-8s %s\n' "$dot" "$name" "$state" "$pid" "$note"
   done
+  echo
+  _opik_note
 }
 
 usage() {
@@ -498,9 +521,12 @@ usage() {
   start [服務]     背景啟動全部或指定服務
   stop [服務]      關閉全部或指定服務
   restart [服務]   先 stop 再 start
-  status           檢視各服務狀態（PID／埠／健康）
+  status           檢視各服務狀態（PID／埠／健康）＋ Opik 觀測後台連結
 
 服務名：asr　tts　webhook　scheduler　frontend　app　ngrok
+
+Opik 工程觀測：status／start 結尾會印出後台連結（預設 http://localhost:5273）與服務狀態。
+  服務本身由 /home/leo29/opik 的 ./opik.sh 獨立管理；app 要送 trace 需設 OPIK_ENABLED=true。
 
 App（Expo Go）：
   scripts/kinsun.sh start app      啟動（預設 tunnel，對外可連、不必同網段）
