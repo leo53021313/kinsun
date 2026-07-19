@@ -55,6 +55,16 @@ from kinsun.tools.clock import CURRENT_TIME_SPEC, build_current_time_handler
 from kinsun.tools.health_rag import HEALTH_RAG_SPEC, build_health_rag_handler
 from kinsun.tools.lookups import PgWebSearchLookupStore, WebSearchLookupStore
 from kinsun.tools.registry import ToolRegistry
+from kinsun.tools.transport import (
+    BUS_ARRIVAL_SPEC,
+    MRT_LINE_SPEC,
+    PARKING_SPEC,
+    ROUTE_SPEC,
+    build_bus_arrival_handler,
+    build_mrt_line_handler,
+    build_parking_handler,
+    build_route_handler,
+)
 from kinsun.tools.weather import WEATHER_SPEC, build_weather_handler
 from kinsun.tools.web_search import WEB_SEARCH_SPEC, build_web_search_handler
 
@@ -129,6 +139,8 @@ def build_tool_registry(
     clock: Callable[[], datetime],
     rag_service: HealthEducationRagService,
     tavily_api_key: str = "",
+    tdx_client_id: str = "",
+    tdx_client_secret: str = "",
     lookups: WebSearchLookupStore | None = None,
     traces: PgTraceStore | None = None,
 ) -> ToolRegistry:
@@ -140,9 +152,18 @@ def build_tool_registry(
         HEALTH_RAG_SPEC,
         build_health_rag_handler(rag_service, traces=traces),
     )
+    # 路線走免金鑰的 OSRM，永遠註冊。
+    registry.register(ROUTE_SPEC, build_route_handler())
     # 金鑰未設＝跳過註冊（優雅降級）：金孫少一個上網查證能力，其餘功能照常運作。
     if tavily_api_key:
         registry.register(WEB_SEARCH_SPEC, build_web_search_handler(tavily_api_key, lookups))
+    # TDX 憑證未齊＝跳過公車／捷運／停車工具（優雅降級）；路線工具不受影響。
+    if tdx_client_id and tdx_client_secret:
+        registry.register(
+            BUS_ARRIVAL_SPEC, build_bus_arrival_handler(tdx_client_id, tdx_client_secret)
+        )
+        registry.register(MRT_LINE_SPEC, build_mrt_line_handler(tdx_client_id, tdx_client_secret))
+        registry.register(PARKING_SPEC, build_parking_handler(tdx_client_id, tdx_client_secret))
     return registry
 
 
@@ -210,6 +231,8 @@ def assemble_core(
             clock=clock,
             rag_service=rag_service,
             tavily_api_key=settings.tavily_api_key,
+            tdx_client_id=settings.tdx_client_id,
+            tdx_client_secret=settings.tdx_client_secret,
             lookups=web_search_lookups,
             traces=traces,
         ),
