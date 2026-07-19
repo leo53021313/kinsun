@@ -235,7 +235,11 @@ def build_app() -> FastAPI:
             accounts=core.accounts,
             pipeline=pipeline,
             gate=gate,
-            voice=VoiceReplyDelivery(publisher, include_text=True),
+            voice=VoiceReplyDelivery(
+                publisher,
+                include_text=True,
+                show_transcript=settings.asr_debug_show_transcript,
+            ),
             traces=core.traces,
             inbound_audio=inbound_audio,
             # 地點（spec 2026-07-17）：clock 與 LocationFacts 同源（皆為本函式的 clock），
