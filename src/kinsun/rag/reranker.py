@@ -24,7 +24,8 @@ _SOURCE_WEIGHT = {
 
 _METHOD_WEIGHT = {
     "vector": 1.0,
-    "keyword": 0.9,
+    # keyword 與 cosine 分數未共用量尺；精確中文詞命中不應固定被向量降權。
+    "keyword": 1.0,
 }
 
 
