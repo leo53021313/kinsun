@@ -40,7 +40,7 @@ def track(name=None, type="general", capture_input=True, capture_output=True):
     return decorator
 
 
-def tag_current_trace(*, trace_id, channel="", elder_id="", **extra) -> None:
+def tag_current_trace(*, trace_id="", channel="", elder_id="", **extra) -> None:
     """把 kinsun 的 trace_id 掛到當前 Opik trace（metadata + tags + thread），供 UI 關聯與搜尋。
 
     - elder_id 非空時設為 thread_id：同一長輩的多回合在 Opik 串成一條對話串（E1）。
