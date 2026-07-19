@@ -120,6 +120,10 @@ class Settings:
     proactive_greeting_latest_hour: int
     proactive_greeting_max_shift_minutes: int
     proactive_greeting_lag_tolerance_minutes: int
+    opik_enabled: bool
+    opik_url_override: str
+    opik_workspace: str
+    opik_project_name: str
 
 
 @dataclass(frozen=True)
@@ -405,6 +409,11 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         # 600 ＝ 七天 × 每天約 85 輪：涵蓋絕大多數長輩的整個回顧窗，token 成本仍可控
         # （約 3～6 萬 token）。超量時丟的是最舊的輪次，並記 warning。
         reflection_max_turns=_require_positive_int(env, "REFLECTION_MAX_TURNS", "600"),
+        # 工程觀測 Opik（OPIK_ 前綴）：預設關閉＝全模組 no-op；開啟才送 trace。
+        opik_enabled=_parse_bool(env.get("OPIK_ENABLED", "false")),
+        opik_url_override=env.get("OPIK_URL_OVERRIDE", "http://localhost:5273/api"),
+        opik_workspace=env.get("OPIK_WORKSPACE", "default"),
+        opik_project_name=env.get("OPIK_PROJECT_NAME", "kinsun"),
     )
 
 

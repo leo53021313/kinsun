@@ -13,6 +13,7 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
+from kinsun import tracing
 from kinsun.db import Database, ensure_schema
 from kinsun.rag.crawler import CrawlerConfig, HealthEducationCrawler
 from kinsun.rag.embeddings import GeminiEmbeddingModel
@@ -30,6 +31,7 @@ from kinsun.rag.source_validator import SourceValidator
 from kinsun.rag.vector_store import PgVectorStore
 
 
+@tracing.track(name="rag_ingest", type="general", capture_input=False, capture_output=False)
 def main() -> None:
     _load_dotenv(Path(".env"))
     args = _parse_args()

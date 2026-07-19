@@ -137,12 +137,17 @@ def _extract_tool_calls(response) -> list[ToolCall]:
 
 
 class GeminiClient:
-    def __init__(self, *, api_key: str, model: str, timeout: float) -> None:
+    def __init__(
+        self, *, api_key: str, model: str, timeout: float, client_wrapper=None
+    ) -> None:
         if not api_key:
             raise LLMError("缺少 GEMINI_API_KEY")
         from google import genai
 
-        self._client = genai.Client(api_key=api_key)
+        client = genai.Client(api_key=api_key)
+        # client_wrapper 為觀測層的注入點（如 Opik track_genai）；None＝不包裝。
+        # 保持 llm.py 不 import 觀測套件（依賴反轉），包裝由組裝層決定。
+        self._client = client_wrapper(client) if client_wrapper is not None else client
         self._model = model
         self._timeout = timeout
 
@@ -228,8 +233,11 @@ class GeminiClient:
         return ToolTurn(text=text, tool_calls=[])
 
 
-def build_gemini_for(settings, model: str) -> GeminiClient:
+def build_gemini_for(settings, model: str, *, client_wrapper=None) -> GeminiClient:
     """按用途建 Gemini client（✅ D-16 丁-5）：模型同主設定時呼叫端應直接共用主 client。"""
     return GeminiClient(
-        api_key=settings.gemini_api_key, model=model, timeout=settings.gemini_timeout_seconds
+        api_key=settings.gemini_api_key,
+        model=model,
+        timeout=settings.gemini_timeout_seconds,
+        client_wrapper=client_wrapper,
     )

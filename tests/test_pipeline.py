@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from kinsun.agent import CareAgent
+from kinsun.agent import FALLBACK_REPLY, CareAgent
 from kinsun.llm import LLMError, Message, report_llm_usage
 from kinsun.pipeline import VoicePipeline
 from kinsun.reports.reminders import REMINDER_KIND_MEDICATION
@@ -98,6 +98,44 @@ def test_pipeline_does_not_record_l0():
 class _BoomAgent:
     def handle(self, elder_id, user_text, **kwargs):
         raise RuntimeError("llm down")
+
+
+class _BoomDetector:
+    def assess(self, text: str) -> RiskAssessment:
+        raise AssertionError("空辨識不得進風險分級")
+
+
+def test_pipeline_empty_transcript_short_circuits_to_fallback():
+    """ASR 辨識為空（靜音誤觸）：沒有內容可分級、可回應，不進 detector 與 agent，
+    直接以回退話術請長輩再說一次；仍走 TTS，長輩才聽得到語音提示。"""
+    pipeline = VoicePipeline(
+        asr=MockAsrClient(""),
+        agent=_BoomAgent(),  # 被呼叫即炸：斷言不進 agent
+        tts=TextBubbleTts(),
+        detector=_BoomDetector(),  # 被呼叫即炸：斷言不進分級
+        notifier=SpyNotifier(),
+        risk_events=FakeRiskEventStore(),
+    )
+    result = pipeline.process(b"\x00", elder_id="u1")
+    assert result.text == FALLBACK_REPLY
+    assert result.transcript == ""
+
+
+def test_pipeline_punctuation_only_transcript_short_circuits_to_fallback():
+    """Whisper 系 ASR 對近無聲短檔會確定性幻覺出純標點（實錄「? ? ?」）：去標點後
+    無可辨識內容，等同空辨識——不進 detector 與 agent，直接回退話術。原話仍原樣保留
+    在 transcript 供 debug 檢視。"""
+    pipeline = VoicePipeline(
+        asr=MockAsrClient(" ? ? ? ? ? ? ? ?"),
+        agent=_BoomAgent(),  # 被呼叫即炸：斷言不進 agent
+        tts=TextBubbleTts(),
+        detector=_BoomDetector(),  # 被呼叫即炸：斷言不進分級
+        notifier=SpyNotifier(),
+        risk_events=FakeRiskEventStore(),
+    )
+    result = pipeline.process(b"\x00", elder_id="u1")
+    assert result.text == FALLBACK_REPLY
+    assert result.transcript == " ? ? ? ? ? ? ? ?"
 
 
 def test_pipeline_notifies_before_reply_generation():
@@ -499,3 +537,25 @@ def test_marking_failure_does_not_break_the_reply():
 
     assert result.transcript == "你好"
     assert result.text == "你說的是：你好"
+
+
+def test_pipeline_process_text_unchanged_when_tracing_disabled():
+    # 工程觀測停用（預設）時，pipeline 行為與整合前一致：回覆照常、自建觀測照常。
+    from kinsun.tracing import client as tracing_client
+
+    tracing_client.reset_for_test()
+    traces = FakeTraceStore()
+    pipeline = VoicePipeline(
+        asr=_ExplodingAsr(),
+        agent=CareAgent(EchoLLM(), NullSession()),
+        tts=TextBubbleTts(),
+        detector=StubDetector(RiskTier.L0),
+        notifier=SpyNotifier(),
+        risk_events=FakeRiskEventStore(),
+        traces=traces,
+    )
+    result = pipeline.process_text(
+        "阿嬤今天想吃什麼", elder_id="e1", external_id="u1", channel="line", trace_id="t1"
+    )
+    assert result.text  # 回覆照常產生
+    assert traces.llm_calls  # 自建觀測（業務視角）照常記錄

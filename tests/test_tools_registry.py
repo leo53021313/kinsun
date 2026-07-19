@@ -45,3 +45,13 @@ def test_dispatch_passes_optional_invocation_context():
 
     assert reg.dispatch("echo", {}, context=context) == "ok"
     assert seen == [context]
+
+
+def test_dispatch_unchanged_when_tracing_disabled():
+    # 工程觀測停用（預設）時，dispatch 行為與加裝飾器前一致。
+    from kinsun.tracing import client as tracing_client
+
+    tracing_client.reset_for_test()
+    reg = ToolRegistry()
+    reg.register(SPEC, lambda args: f"echo:{args.get('x')}")
+    assert reg.dispatch("echo", {"x": 7}) == "echo:7"

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Protocol
 
+from kinsun import tracing
 from kinsun.llm import Message
 from kinsun.memory.longterm import provenance as prov
 from kinsun.memory.models import MemoryItem
@@ -81,6 +82,7 @@ class Mem0LongTermStore:
         self._top_k = top_k
         self._health_top_k = health_top_k
 
+    @tracing.track(name="mem0_add", type="general", capture_input=False, capture_output=False)
     def add(
         self,
         elder_id: str,
@@ -137,6 +139,7 @@ class Mem0LongTermStore:
         ordered = sorted(items, key=_recency_key, reverse=True)
         return [item for item in map(_to_memory_item, ordered) if item.text]
 
+    @tracing.track(name="mem0_search", type="general", capture_input=True, capture_output=True)
     def search(self, elder_id: str, query: str, *, top_k: int | None = None) -> list[MemoryItem]:
         user_items = self._search_raw(query, elder_id, top_k or self._top_k)
         health_items = self._search_raw(HEALTH_QUERY, elder_id, self._health_top_k)

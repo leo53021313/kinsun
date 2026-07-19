@@ -10,9 +10,10 @@
 # 設計文件：docs/superpowers/specs/2026-07-03-全功能啟停腳本-design.md
 #
 # 管理的程序：ASR(8001)、TTS(8002)、Webhook(8000)、Scheduler、RAG Worker、前端 LIFF(5173)、
-#             App Expo dev server(8081)、ngrok。
+#             App Expo dev server(8081)、ngrok、opik（Opik 後端 docker ＋ 公開隧道，複合服務）。
 # 每個程序以 setsid 起在獨立 process group，log 寫 logs/<name>.log、PID 寫 .run/<name>.pid。
-# 可選元件（TTS/前端/App/ngrok）缺依賴時只警告並跳過，不中斷整體。
+# 可選元件（TTS/前端/App/ngrok/opik）缺依賴時只警告並跳過，不中斷整體。
+# 四個指令（start/stop/status/restart）預設對「全部」服務；亦可加服務名只操作單一（如 restart app）。
 
 set -o pipefail
 
@@ -23,10 +24,15 @@ LOG_DIR="$ROOT/logs"
 RUN_DIR="$ROOT/.run"
 
 # 啟動順序（GPU 服務先起、載模型較慢）；停止則反序。
-START_ORDER=(asr tts webhook scheduler rag_worker frontend app ngrok)
-STOP_ORDER=(ngrok app frontend rag_worker scheduler webhook tts asr)
+# opik＝Opik 公開隧道（Cloudflare Quick Tunnel）；隨堆疊一起起停。啟動需本機 Opik（:5273）
+# 已在跑，否則 launch_opik 會警告並略過。⚠️ 公開且無認證，見 launch_opik 與 docs/dev/14。
+START_ORDER=(asr tts webhook scheduler rag_worker frontend app ngrok opik)
+STOP_ORDER=(opik ngrok app frontend rag_worker scheduler webhook tts asr)
 
 declare -A PORT=([asr]=8001 [tts]=8002 [webhook]=8000 [frontend]=5173 [app]=8081)
+
+# Opik 後端（docker）自架位置；隧道與後端啟停都在此執行 ./opik.sh（見「Opik 複合服務」段）。
+OPIK_DIR="${OPIK_DIR:-/home/leo29/opik}"
 
 # ── 輸出小工具 ────────────────────────────────────────────────────────
 if [ -t 1 ]; then
@@ -58,6 +64,8 @@ read_env() {
 _pid_of() { local f="$RUN_DIR/$1.pid"; [ -f "$f" ] && cat "$f" 2>/dev/null; }
 
 is_running() {
+  # opik 是複合服務：以「後端（docker :5273）是否在跑」為狀態依據；隧道狀態另在 health note 顯示。
+  if [ "$1" = opik ]; then _opik_backend_up; return; fi
   local pid; pid="$(_pid_of "$1")"
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
 }
@@ -354,6 +362,100 @@ launch_ngrok() {
   )
 }
 
+# ── Opik 複合服務（後端 docker 堆疊 ＋ 公開隧道）──────────────────────────
+# 後端由 $OPIK_DIR 的 ./opik.sh（docker compose）管理，非單一 PID，故不走 _bg；
+# 隧道（cloudflared）才走 _bg／pidfile。啟動＝先確保後端起來再開隧道；停止＝先關隧道
+# （stop_one 的 pidfile）再由 _post_stop_opik 停後端。埠沿用首次建置的 5273 組態。
+_opik_backend_up() { _port_open 5273; }
+
+_opik_backend_start() {
+  if [ ! -x "$OPIK_DIR/opik.sh" ]; then
+    warn "opik：找不到 $OPIK_DIR/opik.sh，略過後端啟動（自架位置見 docs/dev/14）"
+    return 1
+  fi
+  info "啟動 Opik 後端（docker；冷啟需等 clickhouse/mysql 健康，約 30–60 秒）…"
+  ( cd "$OPIK_DIR" && NGINX_PORT=5273 SERVER_ADMIN_PORT=8091 PYTHON_BACKEND_PORT=8010 \
+      ./opik.sh ) >> "$LOG_DIR/opik-backend.log" 2>&1
+}
+
+_opik_backend_stop() {
+  [ -x "$OPIK_DIR/opik.sh" ] || return 0
+  info "停止 Opik 後端（docker）…"
+  ( cd "$OPIK_DIR" && ./opik.sh --stop ) >> "$LOG_DIR/opik-backend.log" 2>&1
+}
+
+# 隧道是否在跑（is_running(opik) 已被特化為「後端是否在」，隧道另用 pidfile 判斷）。
+_opik_tunnel_running() {
+  local p; p="$(_pid_of opik)"
+  [ -n "$p" ] && kill -0 "$p" 2>/dev/null
+}
+
+# 從隧道 log 取當前 trycloudflare 網址。log 會跨重啟累積，故只看最後一次
+# 「=== opik start ===」之後的區段，避免抓到前一輪已失效的舊網址。
+_opik_tunnel_url() {
+  local f="$LOG_DIR/opik.log"
+  [ -f "$f" ] || return 0
+  awk '/=== opik start /{buf=""} {buf=buf $0 ORS} END{printf "%s",buf}' "$f" 2>/dev/null \
+    | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1
+}
+
+# start opik＝後端(docker)＋公開隧道。⚠️ 隧道為 Quick Tunnel【公開、無認證】且網址每次
+# 會變；真實長輩資料進入 Opik 前切勿長時間開（見 docs/dev/14）。
+launch_opik() {
+  # 1) 後端：不在則帶起來，並等 5273 就緒（上限約 60 秒）。
+  if _opik_backend_up; then
+    info "opik 後端已在跑（:5273）"
+  else
+    _opik_backend_start
+    local i
+    for i in $(seq 1 12); do _opik_backend_up && break; sleep 5; done
+  fi
+  if ! _opik_backend_up; then
+    warn "opik：後端（:5273）未就緒，略過公開隧道（見 logs/opik-backend.log）"
+    return 0
+  fi
+  # 2) 公開隧道：需 cloudflared；已在跑就跳過。
+  if ! command -v cloudflared >/dev/null 2>&1; then
+    warn "opik：找不到 cloudflared，只起後端、略過公開隧道（安裝見 docs/dev/14）"
+    return 0
+  fi
+  if _opik_tunnel_running; then
+    warn "opik 隧道：已在執行 (PID $(_pid_of opik))，跳過"
+    return 0
+  fi
+  warn "opik 隧道為【公開且無認證】的臨時網址；看完請 stop opik，勿在有真實長輩資料時長開。"
+  info "啟動 Opik 公開隧道（Cloudflare Quick Tunnel → :5273）…"
+  _bg opik cloudflared tunnel --url http://localhost:5273 --no-autoupdate
+}
+
+# stop_one 收尾鉤：關掉隧道 pid 後，把 docker 後端也停掉（即使隧道沒在跑也要停後端）。
+_post_stop_opik() {
+  _opik_backend_up || return 1
+  _opik_backend_stop
+  return 0
+}
+
+# status 尾端那行：本機後台連結（OPIK_URL_OVERRIDE 去 /api 推得，預設 http://localhost:5273；
+# 真實環境變數優先，否則讀 .env）＋ OPIK_ENABLED 旗標，讓「有連結但沒開觀測」不會被誤會。
+# 公開隧道的網址與狀態則由服務表的 opik 那列（_health_note）顯示。
+_opik_note() {
+  local url ui port state enabled flag
+  url="${OPIK_URL_OVERRIDE:-$(read_env OPIK_URL_OVERRIDE)}"
+  ui="${url:-http://localhost:5273/api}"; ui="${ui%/api}"; ui="${ui%/}"
+  port="$(printf '%s' "$ui" | sed -n 's#.*:\([0-9][0-9]*\).*#\1#p')"; [ -n "$port" ] || port=5273
+  if _port_open "$port"; then
+    state="${C_OK}● 執行中${C_OFF}"
+  else
+    state="${C_ERR}● 未啟動${C_OFF}（cd /home/leo29/opik && ./opik.sh）"
+  fi
+  enabled="${OPIK_ENABLED:-$(read_env OPIK_ENABLED)}"
+  case "$(printf '%s' "$enabled" | tr '[:upper:]' '[:lower:]')" in
+    ""|0|false|no|off) flag="OPIK_ENABLED=false（app 不送 trace）" ;;
+    *)                 flag="OPIK_ENABLED=true（app 送 trace）" ;;
+  esac
+  printf '%s[kinsun]%s Opik 觀測後台（本機）：%s  %b  |  %s\n' "$C_INFO" "$C_OFF" "$ui" "$state" "$flag"
+}
+
 # ── 子指令 ────────────────────────────────────────────────────────────
 # 服務名合法性檢查——打錯字時直接說清楚，不要默默什麼都沒做。
 _assert_service() {
@@ -397,30 +499,34 @@ cmd_start() {
 stop_one() {
   local name="$1"
   local pidfile="$RUN_DIR/$name.pid"
-  local pid i
-  if [ ! -f "$pidfile" ]; then
-    return 1
+  local pid i stopped=1
+  if [ -f "$pidfile" ]; then
+    pid="$(cat "$pidfile" 2>/dev/null)"
+    if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+      warn "$name：無存活程序，清除舊 PID 檔"
+      rm -f "$pidfile"
+    else
+      info "$name：送 SIGTERM (PID $pid)…"
+      kill -TERM -- -"$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+      i=0
+      while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 20 ]; do
+        sleep 0.5; i=$((i + 1))
+      done
+      if kill -0 "$pid" 2>/dev/null; then
+        warn "$name：逾時未退，送 SIGKILL"
+        kill -KILL -- -"$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null
+        sleep 0.5
+      fi
+      rm -f "$pidfile"
+      ok "$name：已停止"
+      stopped=0
+    fi
   fi
-  pid="$(cat "$pidfile" 2>/dev/null)"
-  if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
-    warn "$name：無存活程序，清除舊 PID 檔"
-    rm -f "$pidfile"
-    return 1
+  # 每服務可選的收尾鉤（如 opik 停 docker 後端）；即使沒有 pidfile 也要跑。
+  if declare -F "_post_stop_${name}" >/dev/null 2>&1; then
+    if "_post_stop_${name}"; then stopped=0; fi
   fi
-  info "$name：送 SIGTERM (PID $pid)…"
-  kill -TERM -- -"$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
-  i=0
-  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 20 ]; do
-    sleep 0.5; i=$((i + 1))
-  done
-  if kill -0 "$pid" 2>/dev/null; then
-    warn "$name：逾時未退，送 SIGKILL"
-    kill -KILL -- -"$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null
-    sleep 0.5
-  fi
-  rm -f "$pidfile"
-  ok "$name：已停止"
-  return 0
+  return "$stopped"
 }
 
 cmd_stop() {
@@ -478,6 +584,14 @@ _health_note() {
     ngrok)
       local d; d="$(read_env NGROK_DOMAIN)"
       if [ -n "$d" ]; then echo "https://$d"; else echo "臨時網域（見 log）"; fi ;;
+    opik)
+      # 狀態列＝後端（is_running=後端在）；此處補隧道：開了顯示網址＋無認證警告，否則「隧道未開」。
+      if _opik_tunnel_running; then
+        local u; u="$(_opik_tunnel_url)"
+        echo "後端 :5273　|　隧道 ${u:-啟動中…}　⚠公開無認證"
+      else
+        echo "後端 :5273　|　隧道未開（start opik 開）"
+      fi ;;
     *) echo "—" ;;
   esac
 }
@@ -501,6 +615,8 @@ cmd_status() {
     fi
     printf '%b %-9s %-9s %-8s %s\n' "$dot" "$name" "$state" "$pid" "$note"
   done
+  echo
+  _opik_note
 }
 
 usage() {
@@ -511,9 +627,18 @@ usage() {
   start [服務]     背景啟動全部或指定服務
   stop [服務]      關閉全部或指定服務
   restart [服務]   先 stop 再 start
-  status           檢視各服務狀態（PID／埠／健康）
+  status           檢視各服務狀態（PID／埠／健康）＋ Opik 觀測後台連結
 
-服務名：asr　tts　webhook　scheduler　rag_worker　frontend　app　ngrok
+服務名：asr　tts　webhook　scheduler　rag_worker　frontend　app　ngrok　opik
+
+Opik 工程觀測：status／start 結尾會印出本機後台連結（預設 http://localhost:5273）與服務狀態。
+  服務本身由 /home/leo29/opik 的 ./opik.sh 獨立管理；app 要送 trace 需設 OPIK_ENABLED=true。
+
+Opik 公開隧道（服務名 opik，Cloudflare Quick Tunnel → :5273，遠端／隊友檢視）：
+  隨 start／stop／restart（全部）一起起停；也可 start opik／stop opik 單獨操作。
+  status 的 opik 那列顯示當前公開網址（每次重啟會變）。需本機 Opik（:5273）已在跑才會起。
+  ⚠️ Quick Tunnel 免網域但【公開、無認證】——真實長輩資料進入 Opik 前，
+     請改用正式版（Cloudflare 網域＋Access，見 docs/dev/14）或先 stop opik。
 
 App（Expo Go）：
   scripts/kinsun.sh start app      啟動（預設 tunnel，對外可連、不必同網段）

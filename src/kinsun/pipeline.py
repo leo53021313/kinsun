@@ -8,7 +8,8 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import replace
 
-from kinsun.agent import CareAgent
+from kinsun import tracing
+from kinsun.agent import FALLBACK_REPLY, CareAgent
 from kinsun.llm import LLMUsage, collect_llm_usage
 from kinsun.observability.store import TraceStore, safe_record
 from kinsun.reports.reminders import ReminderLogStore
@@ -20,6 +21,15 @@ from kinsun.speech.asr import ASRClient
 from kinsun.speech.tts import TTSClient, TTSError, TtsResult
 
 logger = logging.getLogger("kinsun.pipeline")
+
+
+def _has_recognizable_speech(text: str) -> bool:
+    """辨識結果是否含可辨識語音（任一字母／數字／漢字）。
+
+    Whisper 系 ASR 對近無聲的極短音檔會確定性幻覺出純標點（實錄「? ? ?」）：去掉
+    標點與空白後為空，內容上等同空辨識，故與空字串一併走回退話術，不進分級與 agent。
+    """
+    return any(char.isalnum() for char in text)
 
 
 class VoicePipeline:
@@ -53,6 +63,9 @@ class VoicePipeline:
         self._reminder_logs = reminder_logs
         self._response_window_seconds = response_window_seconds
 
+    @tracing.track(
+        name="care_turn_voice", type="general", capture_input=False, capture_output=False
+    )
     def process(
         self,
         audio: bytes,
@@ -64,6 +77,7 @@ class VoicePipeline:
         trace_id: str = "",
         audio_url: str = "",
     ) -> TtsResult:
+        tracing.tag_current_trace(trace_id=trace_id, channel=channel, elder_id=elder_id)
         user_text = self._transcribe(
             audio,
             content_type=content_type,
@@ -80,6 +94,9 @@ class VoicePipeline:
             trace_id=trace_id,
         )
 
+    @tracing.track(
+        name="care_turn_text", type="general", capture_input=False, capture_output=False
+    )
     def process_text(
         self,
         text: str,
@@ -90,6 +107,7 @@ class VoicePipeline:
         trace_id: str = "",
     ) -> TtsResult:
         """文字輸入路徑（✅ D-11 正式）：跳過 ASR，其餘與語音同管線（危急偵測＋回覆＋記憶）。"""
+        tracing.tag_current_trace(trace_id=trace_id, channel=channel, elder_id=elder_id)
         return self._process_transcribed(
             text, elder_id=elder_id, external_id=external_id, channel=channel, trace_id=trace_id
         )
@@ -98,9 +116,19 @@ class VoicePipeline:
         self, user_text: str, *, elder_id: str, external_id: str, channel: str, trace_id: str
     ) -> TtsResult:
         """會話鍵為 elder_id；external_id＋channel 僅供觀測五表標記（可為空字串）。"""
+        # 空輸入守門（2026-07-18）：靜音誤觸的 ASR 辨識為空、或幻覺出純標點（Whisper 系
+        # 對近無聲短檔的確定性幻覺，實錄「? ? ?」），去標點後皆無內容可分級、可回應也不
+        # 該進記憶，直接以回退話術（仍走 TTS）請長輩再說一次。
+        if not _has_recognizable_speech(user_text):
+            tracing.update_trace_metadata(fallback="empty_speech")
+            result = self._synthesize(
+                FALLBACK_REPLY, external_id=external_id, channel=channel, trace_id=trace_id
+            )
+            return replace(result, transcript=user_text)
         assessment = self._assess(
             user_text, external_id=external_id, channel=channel, trace_id=trace_id
         )
+        tracing.update_trace_metadata(risk_tier=assessment.tier.name)
         # 危急通知須獨立於回覆生成：先落庫＋通知家屬，才產生回覆。
         # 否則 agent 生成回覆時若丟例外，會讓已偵測到的危急漏通知。
         # 落庫門檻＝L1：一般 L1（小訊號）是每日摘要的資料來源（✅ D-10 己-5，庚-01），
@@ -161,6 +189,7 @@ class VoicePipeline:
     def _latency_ms(self, started: float) -> int:
         return int((self._timer() - started) * 1000)
 
+    @tracing.track(name="risk_assess", type="general", capture_input=False, capture_output=False)
     def _assess(
         self, user_text: str, *, external_id: str, channel: str, trace_id: str
     ) -> RiskAssessment:
@@ -215,6 +244,7 @@ class VoicePipeline:
                 latency_ms = self._latency_ms(started)
                 safe_record(lambda: record(traces, status, latency_ms, error_message))
 
+    @tracing.track(name="asr", type="general", capture_input=False, capture_output=False)
     def _transcribe(
         self,
         audio: bytes,
@@ -241,6 +271,7 @@ class VoicePipeline:
             text = self._asr.transcribe(audio, content_type=content_type)
         return text
 
+    @tracing.track(name="agent_generate", type="llm", capture_input=False, capture_output=False)
     def _generate(
         self,
         elder_id: str,
@@ -279,6 +310,7 @@ class VoicePipeline:
                 )
         return reply
 
+    @tracing.track(name="tts", type="general", capture_input=False, capture_output=False)
     def _synthesize(
         self, reply_text: str, *, external_id: str, channel: str, trace_id: str
     ) -> TtsResult:

@@ -665,3 +665,18 @@ def test_importing_config_does_not_pull_in_the_database_driver():
         + "\n\n請找出 config 新增的那條 import，改為只依賴無相依的常數／純函式模組"
         "（如 kinsun.proactive.constants）。"
     )
+
+
+def test_opik_settings_default_disabled():
+    settings = load_settings(BASE_ENV)
+    assert settings.opik_enabled is False
+    assert settings.opik_url_override == "http://localhost:5273/api"
+    assert settings.opik_workspace == "default"
+    assert settings.opik_project_name == "kinsun"
+
+
+def test_opik_enabled_parses_truthy():
+    env = {**BASE_ENV, "OPIK_ENABLED": "true", "OPIK_PROJECT_NAME": "kinsun-dev"}
+    settings = load_settings(env)
+    assert settings.opik_enabled is True
+    assert settings.opik_project_name == "kinsun-dev"

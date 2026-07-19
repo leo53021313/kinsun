@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from linebot.v3 import WebhookParser
 
+from kinsun import tracing
 from kinsun.appointments.flow import AppointmentMenu
 from kinsun.audio.publisher import build_audio_publisher
 from kinsun.binding.flow import BindingFlow
@@ -80,7 +81,9 @@ def build_app() -> FastAPI:
     safety_llm = (
         core.gemini
         if settings.gemini_model_safety == settings.gemini_model
-        else build_gemini_for(settings, settings.gemini_model_safety)
+        else build_gemini_for(
+            settings, settings.gemini_model_safety, client_wrapper=tracing.wrap_genai
+        )
     )
     # 危急送達留痕：notifier 寫入、admin 觀測讀取，共用同一實例。
     deliveries = PgRiskNotificationLogStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex)
@@ -235,7 +238,11 @@ def build_app() -> FastAPI:
             accounts=core.accounts,
             pipeline=pipeline,
             gate=gate,
-            voice=VoiceReplyDelivery(publisher, include_text=True),
+            voice=VoiceReplyDelivery(
+                publisher,
+                include_text=True,
+                show_transcript=settings.asr_debug_show_transcript,
+            ),
             traces=core.traces,
             inbound_audio=inbound_audio,
             # 地點（spec 2026-07-17）：clock 與 LocationFacts 同源（皆為本函式的 clock），

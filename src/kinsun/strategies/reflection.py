@@ -48,6 +48,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Protocol
 
+from kinsun import tracing
 from kinsun.llm import Message
 from kinsun.memory.shortterm import MemoryStore, previous_day_bounds
 from kinsun.reports.reminders import ReminderLog, ReminderLogStore
@@ -117,6 +118,7 @@ class Reflector(Protocol):
     def generate(self, *, system_prompt: str, messages: list[Message]) -> str: ...
 
 
+@tracing.track(name="nightly_reflection", type="general", capture_input=False, capture_output=False)
 def reflect_days(
     elder_id: str,
     *,
@@ -131,6 +133,7 @@ def reflect_days(
     max_turns: int,
 ) -> None:
     """反思這位長輩過去 lookback_days 天的互動，把通過濾網的守則寫成生效中的守則。"""
+    tracing.update_trace_metadata(elder_id=elder_id, flow="nightly_reflection")
     # 迄點＝今日零時：只反思已完整結束的日子，今天才過幾小時的片段不算一天。
     _, end = previous_day_bounds(clock())
     start = end - lookback_days * _SECONDS_PER_DAY

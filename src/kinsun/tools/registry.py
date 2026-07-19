@@ -7,6 +7,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from kinsun import tracing
 from kinsun.llm import ToolSpec
 
 logger = logging.getLogger("kinsun.tools")
@@ -34,6 +35,7 @@ class ToolRegistry:
     def specs(self) -> list[ToolSpec]:
         return list(self._specs.values())
 
+    @tracing.track(type="tool", capture_input=True, capture_output=True)
     def dispatch(
         self,
         name: str,

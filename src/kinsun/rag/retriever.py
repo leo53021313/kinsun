@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 
+from kinsun import tracing
 from kinsun.rag.embeddings import QueryEmbeddingModel
 from kinsun.rag.keyword_index import InMemoryKeywordIndex
 from kinsun.rag.reranker import rerank
@@ -60,6 +61,7 @@ class HealthEducationRetriever:
         self._vector_store = vector_store
         self._embedding_model = embedding_model
 
+    @tracing.track(name="rag_retrieve", type="general", capture_input=True, capture_output=True)
     def retrieve(self, query: str, *, top_k: int = 5) -> tuple[SearchResult, ...]:
         normalized = normalize_query(query)
         if _is_obviously_out_of_scope(normalized):

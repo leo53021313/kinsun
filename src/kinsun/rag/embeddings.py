@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from typing import Protocol
 
+from kinsun import tracing
 from kinsun.rag.schemas import RAG_EMBEDDING_DIMENSIONS
 
 _GEMINI_EMBEDDING_001 = "gemini-embedding-001"
@@ -122,6 +123,7 @@ class GeminiEmbeddingModel:
             )
         return tuple(vectors)
 
+    @tracing.track(name="embedding", type="general", capture_input=False, capture_output=False)
     def _embed(self, text: str, *, task_type: str, title: str | None = None) -> tuple[float, ...]:
         return self._embed_many((text,), task_type=task_type, title=title)[0]
 
