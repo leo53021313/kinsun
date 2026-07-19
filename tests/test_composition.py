@@ -19,6 +19,12 @@ from kinsun.medications.facts import MedicationFacts
 from kinsun.strategies.facts import StrategyFacts
 from kinsun.tools.clock import CURRENT_TIME_SPEC
 from kinsun.tools.health_rag import HEALTH_RAG_SPEC
+from kinsun.tools.transport import (
+    BUS_ARRIVAL_SPEC,
+    MRT_LINE_SPEC,
+    PARKING_SPEC,
+    ROUTE_SPEC,
+)
 from kinsun.tools.weather import WEATHER_SPEC
 from kinsun.tools.web_search import WEB_SEARCH_SPEC
 
@@ -43,10 +49,17 @@ def _core():
     return assemble_core(load_settings(_ENV), _fake_externals(), clock=_clock)
 
 
-def test_assemble_core_agent_has_all_three_tools():
+def test_assemble_core_agent_has_baseline_tools():
+    # 無金鑰的預設環境：天氣、時間、衛教 RAG、路線（route 走免金鑰 OSRM，一律註冊）。
+    # web_search（Tavily）與 TDX 三工具需金鑰，預設環境未設，故不在內。
     core = _core()
     names = {spec.name for spec in core.agent._tools.specs()}
-    assert names == {WEATHER_SPEC.name, CURRENT_TIME_SPEC.name, HEALTH_RAG_SPEC.name}
+    assert names == {
+        WEATHER_SPEC.name,
+        CURRENT_TIME_SPEC.name,
+        HEALTH_RAG_SPEC.name,
+        ROUTE_SPEC.name,
+    }
 
 
 def test_assemble_core_injects_five_fact_providers_in_order():
@@ -63,9 +76,32 @@ def test_assemble_core_injects_five_fact_providers_in_order():
     ]
 
 
-def test_build_tool_registry_registers_three_tools():
+def test_build_tool_registry_registers_baseline_tools():
+    # 無金鑰：天氣、時間、衛教 RAG、路線 共 4 個（route 免金鑰一律註冊）。
     registry = build_tool_registry(clock=_clock, rag_service=object())
-    assert len(registry.specs()) == 3
+    names = {spec.name for spec in registry.specs()}
+    assert names == {
+        WEATHER_SPEC.name,
+        CURRENT_TIME_SPEC.name,
+        HEALTH_RAG_SPEC.name,
+        ROUTE_SPEC.name,
+    }
+
+
+def test_build_tool_registry_registers_tdx_tools_when_creds_present():
+    registry = build_tool_registry(
+        clock=_clock, rag_service=object(), tdx_client_id="cid", tdx_client_secret="secret"
+    )
+    names = {spec.name for spec in registry.specs()}
+    assert {BUS_ARRIVAL_SPEC.name, MRT_LINE_SPEC.name, PARKING_SPEC.name} <= names
+
+
+def test_build_tool_registry_skips_tdx_tools_without_creds():
+    # 優雅降級：TDX 憑證未齊時公車／捷運／停車不註冊；路線工具不受影響。
+    registry = build_tool_registry(clock=_clock, rag_service=object(), tdx_client_id="cid")
+    names = {spec.name for spec in registry.specs()}
+    assert not ({BUS_ARRIVAL_SPEC.name, MRT_LINE_SPEC.name, PARKING_SPEC.name} & names)
+    assert ROUTE_SPEC.name in names
 
 
 def test_build_tool_registry_registers_web_search_when_key_present():
