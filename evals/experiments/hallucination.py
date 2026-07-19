@@ -21,12 +21,8 @@ _SYSTEM_PROMPT = "你是金孫，一位溫暖的台灣長輩陪伴助理，只�
 
 def _task(item: dict) -> dict:
     settings = load_settings(os.environ)
-    gemini = build_gemini_for(
-        settings, settings.gemini_model, client_wrapper=tracing.wrap_genai
-    )
-    reply = gemini.generate(
-        system_prompt=_SYSTEM_PROMPT, messages=[Message("user", item["input"])]
-    )
+    gemini = build_gemini_for(settings, settings.gemini_model, client_wrapper=tracing.wrap_genai)
+    reply = gemini.generate(system_prompt=_SYSTEM_PROMPT, messages=[Message("user", item["input"])])
     return {"output": reply}
 
 

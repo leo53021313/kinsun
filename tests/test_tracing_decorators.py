@@ -27,7 +27,7 @@ def test_track_defers_enable_check_to_call_time(monkeypatch):
     # 避免啟用時真的初始化 Opik client 去連線。
     import opik
 
-    monkeypatch.setattr(opik, "track", lambda **kw: (lambda f: f))
+    monkeypatch.setattr(opik, "track", lambda **kw: lambda f: f)
     monkeypatch.setattr(tracing_client, "is_enabled", lambda: True)
     assert g(41) == 42
 
@@ -50,6 +50,4 @@ def test_log_feedback_score_noop_when_disabled():
 
 def test_tag_current_trace_accepts_extra_metadata_when_disabled():
     tracing_client.reset_for_test()
-    assert (
-        tracing.tag_current_trace(trace_id="t", channel="line", elder_id="e", tier="L1") is None
-    )
+    assert tracing.tag_current_trace(trace_id="t", channel="line", elder_id="e", tier="L1") is None
