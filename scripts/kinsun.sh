@@ -10,9 +10,10 @@
 # 設計文件：docs/superpowers/specs/2026-07-03-全功能啟停腳本-design.md
 #
 # 管理的程序：ASR(8001)、TTS(8002)、Webhook(8000)、Scheduler、前端 LIFF(5173)、
-#             App Expo dev server(8081)、ngrok。
+#             App Expo dev server(8081)、ngrok、opik（Opik 後端 docker ＋ 公開隧道，複合服務）。
 # 每個程序以 setsid 起在獨立 process group，log 寫 logs/<name>.log、PID 寫 .run/<name>.pid。
-# 可選元件（TTS/前端/App/ngrok）缺依賴時只警告並跳過，不中斷整體。
+# 可選元件（TTS/前端/App/ngrok/opik）缺依賴時只警告並跳過，不中斷整體。
+# 四個指令（start/stop/status/restart）預設對「全部」服務；亦可加服務名只操作單一（如 restart app）。
 
 set -o pipefail
 
@@ -29,6 +30,9 @@ START_ORDER=(asr tts webhook scheduler frontend app ngrok opik)
 STOP_ORDER=(opik ngrok app frontend scheduler webhook tts asr)
 
 declare -A PORT=([asr]=8001 [tts]=8002 [webhook]=8000 [frontend]=5173 [app]=8081)
+
+# Opik 後端（docker）自架位置；隧道與後端啟停都在此執行 ./opik.sh（見「Opik 複合服務」段）。
+OPIK_DIR="${OPIK_DIR:-/home/leo29/opik}"
 
 # ── 輸出小工具 ────────────────────────────────────────────────────────
 if [ -t 1 ]; then
@@ -345,14 +349,10 @@ launch_ngrok() {
   )
 }
 
-# ── 子指令 ────────────────────────────────────────────────────────────
-# 服務名合法性檢查——打錯字時直接說清楚，不要默默什麼都沒做。
-# ── Opik（複合服務：後端 docker 堆疊 ＋ 公開隧道）────────────────────────────
-# 後端由 /home/leo29/opik 的 ./opik.sh（docker compose）管理，非單一 PID，故不走 _bg；
+# ── Opik 複合服務（後端 docker 堆疊 ＋ 公開隧道）──────────────────────────
+# 後端由 $OPIK_DIR 的 ./opik.sh（docker compose）管理，非單一 PID，故不走 _bg；
 # 隧道（cloudflared）才走 _bg／pidfile。啟動＝先確保後端起來再開隧道；停止＝先關隧道
 # （stop_one 的 pidfile）再由 _post_stop_opik 停後端。埠沿用首次建置的 5273 組態。
-OPIK_DIR="${OPIK_DIR:-/home/leo29/opik}"
-
 _opik_backend_up() { _port_open 5273; }
 
 _opik_backend_start() {
@@ -422,6 +422,29 @@ _post_stop_opik() {
   return 0
 }
 
+# status 尾端那行：本機後台連結（OPIK_URL_OVERRIDE 去 /api 推得，預設 http://localhost:5273；
+# 真實環境變數優先，否則讀 .env）＋ OPIK_ENABLED 旗標，讓「有連結但沒開觀測」不會被誤會。
+# 公開隧道的網址與狀態則由服務表的 opik 那列（_health_note）顯示。
+_opik_note() {
+  local url ui port state enabled flag
+  url="${OPIK_URL_OVERRIDE:-$(read_env OPIK_URL_OVERRIDE)}"
+  ui="${url:-http://localhost:5273/api}"; ui="${ui%/api}"; ui="${ui%/}"
+  port="$(printf '%s' "$ui" | sed -n 's#.*:\([0-9][0-9]*\).*#\1#p')"; [ -n "$port" ] || port=5273
+  if _port_open "$port"; then
+    state="${C_OK}● 執行中${C_OFF}"
+  else
+    state="${C_ERR}● 未啟動${C_OFF}（cd /home/leo29/opik && ./opik.sh）"
+  fi
+  enabled="${OPIK_ENABLED:-$(read_env OPIK_ENABLED)}"
+  case "$(printf '%s' "$enabled" | tr '[:upper:]' '[:lower:]')" in
+    ""|0|false|no|off) flag="OPIK_ENABLED=false（app 不送 trace）" ;;
+    *)                 flag="OPIK_ENABLED=true（app 送 trace）" ;;
+  esac
+  printf '%s[kinsun]%s Opik 觀測後台（本機）：%s  %b  |  %s\n' "$C_INFO" "$C_OFF" "$ui" "$state" "$flag"
+}
+
+# ── 子指令 ────────────────────────────────────────────────────────────
+# 服務名合法性檢查——打錯字時直接說清楚，不要默默什麼都沒做。
 _assert_service() {
   local name="$1" s
   for s in "${START_ORDER[@]}"; do
@@ -558,28 +581,6 @@ _health_note() {
       fi ;;
     *) echo "—" ;;
   esac
-}
-
-# Opik 工程觀測後台連結（服務由 /home/leo29/opik 的 ./opik.sh 獨立管理，本腳本只顯示）。
-# UI 網址由 OPIK_URL_OVERRIDE 去掉 /api 推得（預設 http://localhost:5273）；真實環境變數優先，
-# 否則讀 .env。同時顯示服務是否在跑與 app 端旗標，讓「有連結但沒開觀測」不會被誤會。
-_opik_note() {
-  local url ui port state enabled flag
-  url="${OPIK_URL_OVERRIDE:-$(read_env OPIK_URL_OVERRIDE)}"
-  ui="${url:-http://localhost:5273/api}"; ui="${ui%/api}"; ui="${ui%/}"
-  port="$(printf '%s' "$ui" | sed -n 's#.*:\([0-9][0-9]*\).*#\1#p')"; [ -n "$port" ] || port=5273
-  if _port_open "$port"; then
-    state="${C_OK}● 執行中${C_OFF}"
-  else
-    state="${C_ERR}● 未啟動${C_OFF}（cd /home/leo29/opik && ./opik.sh）"
-  fi
-  enabled="${OPIK_ENABLED:-$(read_env OPIK_ENABLED)}"
-  case "$(printf '%s' "$enabled" | tr '[:upper:]' '[:lower:]')" in
-    ""|0|false|no|off) flag="OPIK_ENABLED=false（app 不送 trace）" ;;
-    *)                 flag="OPIK_ENABLED=true（app 送 trace）" ;;
-  esac
-  # 本機後台連結＋旗標；公開隧道（服務 opik）狀態與網址由上方服務表的 opik 那列顯示。
-  printf '%s[kinsun]%s Opik 觀測後台（本機）：%s  %b  |  %s\n' "$C_INFO" "$C_OFF" "$ui" "$state" "$flag"
 }
 
 cmd_status() {
