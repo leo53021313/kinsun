@@ -96,7 +96,7 @@ def test_pipeline_does_not_record_l0():
 
 
 class _BoomAgent:
-    def handle(self, elder_id, user_text):
+    def handle(self, elder_id, user_text, **kwargs):
         raise RuntimeError("llm down")
 
 

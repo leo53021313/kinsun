@@ -137,9 +137,7 @@ def _extract_tool_calls(response) -> list[ToolCall]:
 
 
 class GeminiClient:
-    def __init__(
-        self, *, api_key: str, model: str, timeout: float, client_wrapper=None
-    ) -> None:
+    def __init__(self, *, api_key: str, model: str, timeout: float, client_wrapper=None) -> None:
         if not api_key:
             raise LLMError("缺少 GEMINI_API_KEY")
         from google import genai

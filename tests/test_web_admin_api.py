@@ -24,6 +24,8 @@ from kinsun.appointments.store import FakeAppointmentStore
 from kinsun.medications.models import Medication, MedicationSlot
 from kinsun.medications.store import FakeMedicationStore
 from kinsun.memory.models import MemoryItem
+from kinsun.rag.releases import RagIndexRelease, ReleaseStatus
+from kinsun.rag.schemas import ContentPolicy
 from kinsun.reports.reminders import FakeReminderLogStore
 from kinsun.reports.summaries import FakeConversationSummaryStore
 from kinsun.safety.deliveries import FakeRiskNotificationLogStore
@@ -70,6 +72,17 @@ class _FakeLongTerm:
         return self.items.get(elder_id, [])[:limit]
 
 
+class _StubRagReleases:
+    def __init__(self, *releases: RagIndexRelease) -> None:
+        self.releases = releases
+
+    def get_active(self):
+        return next((release for release in self.releases if release.status == "active"), None)
+
+    def list_releases(self, *, limit: int = 20):
+        return self.releases[:limit]
+
+
 def _client(
     traces=None,
     *,
@@ -82,6 +95,8 @@ def _client(
     summaries=None,
     long_term=None,
     deliveries=None,
+    rag_releases=None,
+    rag_content_policy="allowed_only",
 ):
     app = FastAPI()
     app.include_router(
@@ -97,6 +112,8 @@ def _client(
             summaries=summaries or FakeConversationSummaryStore(),
             long_term=long_term or _FakeLongTerm(),
             deliveries=deliveries or FakeRiskNotificationLogStore(),
+            rag_releases=rag_releases,
+            rag_content_policy=rag_content_policy,
         ),
         prefix="/api/v1/admin",
     )
@@ -286,8 +303,44 @@ def test_trace_detail_and_404():
     assert body["elder_name"] == "阿公"
     assert body["asr_call"]["transcript"] == "嗨"
     assert body["webhook_event"] is None
+    assert body["rag_calls"] == []
     missing = _client(traces).get("/api/v1/admin/traces/nope", headers=_auth())
     assert missing.status_code == 404
+
+
+def test_rag_status_warns_when_no_release_store_is_configured():
+    response = _client().get("/api/v1/admin/rag/status", headers=_auth())
+
+    assert response.status_code == 200
+    body = response.json()["data"]
+    assert body["active_release"] is None
+    assert body["document_count"] == 0
+    assert body["warnings"] == ["目前沒有 active RAG release。"]
+
+
+def test_rag_status_warns_for_active_classroom_demo_release():
+    active = RagIndexRelease(
+        index_version="rag-v1",
+        status=ReleaseStatus.ACTIVE,
+        embedding_model="gemini-embedding-001",
+        embedding_dimensions=768,
+        content_policy=ContentPolicy.CLASSROOM_DEMO,
+        quality_metrics={"document_count": 12, "chunk_count": 30},
+        relevance_threshold=0.7,
+        started_at=1.0,
+        completed_at=2.0,
+        published_at=3.0,
+        error_message=None,
+    )
+
+    response = _client(rag_releases=_StubRagReleases(active)).get(
+        "/api/v1/admin/rag/status", headers=_auth()
+    )
+    body = response.json()["data"]
+
+    assert body["content_policy"] == "classroom_demo"
+    assert body["document_count"] == 12
+    assert any("不得用於公開服務" in warning for warning in body["warnings"])
 
 
 def test_elder_reminders_shape():

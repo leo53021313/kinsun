@@ -41,7 +41,7 @@ class AnswerPolicy:
                 answer=_URGENT_ANSWER,
                 safety_level=SafetyLevel.URGENT,
                 citations=(),
-                should_escalate_to_risk_engine=True,
+                requires_safety_attention=True,
                 reason="偵測到需由 Risk Engine 處理的風險訊號。",
             )
         if _is_medical_action_request(query):
@@ -49,7 +49,7 @@ class AnswerPolicy:
                 answer=_UNSUPPORTED_ANSWER,
                 safety_level=SafetyLevel.UNSUPPORTED,
                 citations=(),
-                should_escalate_to_risk_engine=True,
+                requires_safety_attention=True,
                 reason="使用者要求診斷、急症判斷或用藥決策。",
             )
         if not evidence:
@@ -57,7 +57,7 @@ class AnswerPolicy:
                 answer=_UNSUPPORTED_ANSWER,
                 safety_level=SafetyLevel.UNSUPPORTED,
                 citations=(),
-                should_escalate_to_risk_engine=False,
+                requires_safety_attention=False,
                 reason="沒有足夠可信來源可支撐回答。",
             )
 
@@ -70,7 +70,7 @@ class AnswerPolicy:
                 answer=_UNSUPPORTED_ANSWER,
                 safety_level=SafetyLevel.UNSUPPORTED,
                 citations=(),
-                should_escalate_to_risk_engine=False,
+                requires_safety_attention=False,
                 reason="無法組出完整 citation。",
             )
 
@@ -80,8 +80,9 @@ class AnswerPolicy:
             answer=answer,
             safety_level=SafetyLevel.NORMAL,
             citations=citations,
-            should_escalate_to_risk_engine=False,
+            requires_safety_attention=False,
             reason="已找到可信來源並完成 citation。",
+            evidence=evidence,
         )
 
 

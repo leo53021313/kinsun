@@ -8,6 +8,9 @@ from typing import Protocol
 from kinsun import tracing
 from kinsun.rag.schemas import RAG_EMBEDDING_DIMENSIONS
 
+_GEMINI_EMBEDDING_001 = "gemini-embedding-001"
+_DEFAULT_EMBEDDING_BATCH_SIZE = 20
+
 
 class EmbeddingError(Exception):
     """Embedding 產生失敗。"""
@@ -18,6 +21,10 @@ class EmbeddingModel(Protocol):
 
 
 class QueryEmbeddingModel(EmbeddingModel, Protocol):
+    @property
+    def model_name(self) -> str: ...
+    @property
+    def dimensions(self) -> int: ...
     def embed_query(self, text: str) -> tuple[float, ...]: ...
     def embed_document(self, text: str, *, title: str | None = None) -> tuple[float, ...]: ...
 
@@ -38,6 +45,8 @@ class GeminiEmbeddingModel:
         max_retries: int = 0,
         retry_initial_delay_seconds: float = 30.0,
         retry_max_delay_seconds: float = 300.0,
+        request_timeout_seconds: float = 60.0,
+        batch_size: int = _DEFAULT_EMBEDDING_BATCH_SIZE,
         client=None,
         sleeper=time.sleep,
     ) -> None:
@@ -51,10 +60,18 @@ class GeminiEmbeddingModel:
             raise EmbeddingError("embedding max retries 不可小於 0")
         if retry_initial_delay_seconds < 0 or retry_max_delay_seconds < 0:
             raise EmbeddingError("embedding retry delay 不可小於 0")
+        if request_timeout_seconds <= 0:
+            raise EmbeddingError("embedding request timeout 必須大於 0")
+        if batch_size <= 0:
+            raise EmbeddingError("embedding batch size 必須大於 0")
         if client is None:
             from google import genai
+            from google.genai import types
 
-            client = genai.Client(api_key=api_key)
+            client = genai.Client(
+                api_key=api_key,
+                http_options=types.HttpOptions(timeout=int(request_timeout_seconds * 1000)),
+            )
         self._client = client
         self._model = model
         self._dimensions = dimensions
@@ -62,7 +79,16 @@ class GeminiEmbeddingModel:
         self._max_retries = max_retries
         self._retry_initial_delay_seconds = retry_initial_delay_seconds
         self._retry_max_delay_seconds = retry_max_delay_seconds
+        self._batch_size = batch_size
         self._sleep = sleeper
+
+    @property
+    def model_name(self) -> str:
+        return self._model
+
+    @property
+    def dimensions(self) -> int:
+        return self._dimensions
 
     def embed(self, text: str) -> tuple[float, ...]:
         return self.embed_document(text)
@@ -73,9 +99,42 @@ class GeminiEmbeddingModel:
     def embed_document(self, text: str, *, title: str | None = None) -> tuple[float, ...]:
         return self._embed(text, task_type="RETRIEVAL_DOCUMENT", title=title)
 
+    def embed_documents(
+        self,
+        texts: tuple[str, ...],
+        *,
+        title: str | None = None,
+    ) -> tuple[tuple[float, ...], ...]:
+        """批次產生同一文件的 chunk embeddings；舊模型以逐筆呼叫維持語意。"""
+        if not texts:
+            return ()
+        if self._model.rsplit("/", 1)[-1] != _GEMINI_EMBEDDING_001:
+            return tuple(
+                self._embed(text, task_type="RETRIEVAL_DOCUMENT", title=title) for text in texts
+            )
+        vectors: list[tuple[float, ...]] = []
+        for start in range(0, len(texts), self._batch_size):
+            vectors.extend(
+                self._embed_many(
+                    texts[start : start + self._batch_size],
+                    task_type="RETRIEVAL_DOCUMENT",
+                    title=title,
+                )
+            )
+        return tuple(vectors)
+
     @tracing.track(name="embedding", type="general", capture_input=False, capture_output=False)
     def _embed(self, text: str, *, task_type: str, title: str | None = None) -> tuple[float, ...]:
-        if not text.strip():
+        return self._embed_many((text,), task_type=task_type, title=title)[0]
+
+    def _embed_many(
+        self,
+        texts: tuple[str, ...],
+        *,
+        task_type: str,
+        title: str | None = None,
+    ) -> tuple[tuple[float, ...], ...]:
+        if not texts or any(not text.strip() for text in texts):
             raise EmbeddingError("不可對空白文字產生 embedding")
         from google.genai import types
 
@@ -91,7 +150,7 @@ class GeminiEmbeddingModel:
             try:
                 response = self._client.models.embed_content(
                     model=self._model,
-                    contents=text,
+                    contents=texts[0] if len(texts) == 1 else list(texts),
                     config=config,
                 )
                 break
@@ -107,12 +166,19 @@ class GeminiEmbeddingModel:
                 )
                 attempt += 1
         embeddings = response.embeddings or []
-        if not embeddings or not embeddings[0].values:
+        if len(embeddings) != len(texts):
+            raise EmbeddingError(
+                f"Gemini embedding 數量不符：預期 {len(texts)}，實際 {len(embeddings)}"
+            )
+        if any(not embedding.values for embedding in embeddings):
             raise EmbeddingError("Gemini embedding 回應為空")
-        values = tuple(float(value) for value in embeddings[0].values)
-        if len(values) != self._dimensions:
-            raise EmbeddingError(f"embedding 維度不符：預期 {self._dimensions}，實際 {len(values)}")
-        return values
+        vectors = tuple(
+            tuple(float(value) for value in embedding.values) for embedding in embeddings
+        )
+        invalid = next((len(vector) for vector in vectors if len(vector) != self._dimensions), None)
+        if invalid is not None:
+            raise EmbeddingError(f"embedding 維度不符：預期 {self._dimensions}，實際 {invalid}")
+        return vectors
 
 
 def _is_retryable_embedding_error(exc: Exception) -> bool:
@@ -125,6 +191,10 @@ def _is_retryable_embedding_error(exc: Exception) -> bool:
         "quota",
         "temporarily unavailable",
         "503",
+        "timed out",
+        "timeout",
+        "readtimeout",
+        "connecttimeout",
     )
     return any(marker in message for marker in retryable_markers)
 
@@ -154,6 +224,14 @@ class CharacterHashEmbedding:
         if length == 0:
             return tuple(vector)
         return tuple(value / length for value in vector)
+
+    @property
+    def model_name(self) -> str:
+        return "character-hash-test"
+
+    @property
+    def dimensions(self) -> int:
+        return self._dimensions
 
     def embed_query(self, text: str) -> tuple[float, ...]:
         return self.embed(text)

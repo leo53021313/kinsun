@@ -8,7 +8,8 @@ class _FakeEmbedding:
 
 
 class _FakeResponse:
-    embeddings = [_FakeEmbedding()]
+    def __init__(self, count=1):
+        self.embeddings = [_FakeEmbedding() for _ in range(count)]
 
 
 class _FakeModels:
@@ -22,7 +23,7 @@ class _FakeModels:
         )
         if self.failures:
             raise self.failures.pop(0)
-        return _FakeResponse()
+        return _FakeResponse(len(contents) if isinstance(contents, list) else 1)
 
 
 class _FakeClient:
@@ -51,6 +52,60 @@ def test_gemini_embedding_rejects_empty_text():
     model = GeminiEmbeddingModel(api_key="", model="m", dimensions=3, client=_FakeClient())
     with pytest.raises(EmbeddingError):
         model.embed_query(" ")
+
+
+def test_gemini_embedding_batches_document_chunks():
+    client = _FakeClient()
+    model = GeminiEmbeddingModel(
+        api_key="",
+        model="gemini-embedding-001",
+        dimensions=3,
+        client=client,
+    )
+
+    vectors = model.embed_documents(("第一段", "第二段"), title="高血壓")
+
+    assert vectors == ((0.1, 0.2, 0.3), (0.1, 0.2, 0.3))
+    assert client.models.calls == [
+        (
+            "gemini-embedding-001",
+            ["第一段", "第二段"],
+            "RETRIEVAL_DOCUMENT",
+            3,
+            "高血壓",
+        )
+    ]
+
+
+def test_gemini_embedding_respects_configured_batch_size():
+    client = _FakeClient()
+    model = GeminiEmbeddingModel(
+        api_key="",
+        model="gemini-embedding-001",
+        dimensions=3,
+        batch_size=1,
+        client=client,
+    )
+
+    assert len(model.embed_documents(("第一段", "第二段"))) == 2
+    assert [call[1] for call in client.models.calls] == ["第一段", "第二段"]
+
+
+def test_gemini_embedding_rejects_invalid_timeout_and_batch_size():
+    with pytest.raises(EmbeddingError, match="timeout"):
+        GeminiEmbeddingModel(
+            api_key="",
+            model="gemini-embedding-001",
+            request_timeout_seconds=0,
+            client=_FakeClient(),
+        )
+    with pytest.raises(EmbeddingError, match="batch size"):
+        GeminiEmbeddingModel(
+            api_key="",
+            model="gemini-embedding-001",
+            batch_size=0,
+            client=_FakeClient(),
+        )
 
 
 def test_gemini_embedding_retries_429_with_backoff():
