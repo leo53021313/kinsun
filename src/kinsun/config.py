@@ -78,6 +78,8 @@ class Settings:
     rag_top_k: int
     location_stale_after_hours: int
     tavily_api_key: str
+    tdx_client_id: str
+    tdx_client_secret: str
     rag_content_policy: str
     rag_embedding_model: str
     rag_refresh_enabled: bool
@@ -355,6 +357,10 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         location_stale_after_hours=_require_positive_int(env, "LOCATION_STALE_AFTER_HOURS", "2"),
         # 上網查證金鑰（spec 2026-07-14）：留空＝不註冊 web_search 工具（優雅降級）。
         tavily_api_key=env.get("TAVILY_API_KEY", ""),
+        # TDX 交通資料憑證：兩者皆留空＝不註冊公車／捷運／停車工具（優雅降級）；
+        # 路線工具走免金鑰的 OSRM，不受此影響、永遠可用。
+        tdx_client_id=env.get("TDX_CLIENT_ID", ""),
+        tdx_client_secret=env.get("TDX_CLIENT_SECRET", ""),
         rag_content_policy=_rag_content_policy(env.get("RAG_CONTENT_POLICY", "allowed_only")),
         rag_embedding_model=env.get("RAG_EMBEDDING_MODEL", "") or "gemini-embedding-001",
         rag_refresh_enabled=_parse_bool(env.get("RAG_REFRESH_ENABLED", "false")),
