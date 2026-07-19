@@ -537,3 +537,25 @@ def test_marking_failure_does_not_break_the_reply():
 
     assert result.transcript == "你好"
     assert result.text == "你說的是：你好"
+
+
+def test_pipeline_process_text_unchanged_when_tracing_disabled():
+    # 工程觀測停用（預設）時，pipeline 行為與整合前一致：回覆照常、自建觀測照常。
+    from kinsun.tracing import client as tracing_client
+
+    tracing_client.reset_for_test()
+    traces = FakeTraceStore()
+    pipeline = VoicePipeline(
+        asr=_ExplodingAsr(),
+        agent=CareAgent(EchoLLM(), NullSession()),
+        tts=TextBubbleTts(),
+        detector=StubDetector(RiskTier.L0),
+        notifier=SpyNotifier(),
+        risk_events=FakeRiskEventStore(),
+        traces=traces,
+    )
+    result = pipeline.process_text(
+        "阿嬤今天想吃什麼", elder_id="e1", external_id="u1", channel="line", trace_id="t1"
+    )
+    assert result.text  # 回覆照常產生
+    assert traces.llm_calls  # 自建觀測（業務視角）照常記錄

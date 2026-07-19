@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import replace
 
+from kinsun import tracing
 from kinsun.agent import FALLBACK_REPLY, CareAgent
 from kinsun.llm import LLMUsage, collect_llm_usage
 from kinsun.observability.store import TraceStore, safe_record
@@ -62,6 +63,9 @@ class VoicePipeline:
         self._reminder_logs = reminder_logs
         self._response_window_seconds = response_window_seconds
 
+    @tracing.track(
+        name="care_turn_voice", type="general", capture_input=False, capture_output=False
+    )
     def process(
         self,
         audio: bytes,
@@ -73,6 +77,7 @@ class VoicePipeline:
         trace_id: str = "",
         audio_url: str = "",
     ) -> TtsResult:
+        tracing.tag_current_trace(trace_id=trace_id, channel=channel, elder_id=elder_id)
         user_text = self._transcribe(
             audio,
             content_type=content_type,
@@ -89,6 +94,9 @@ class VoicePipeline:
             trace_id=trace_id,
         )
 
+    @tracing.track(
+        name="care_turn_text", type="general", capture_input=False, capture_output=False
+    )
     def process_text(
         self,
         text: str,
@@ -99,6 +107,7 @@ class VoicePipeline:
         trace_id: str = "",
     ) -> TtsResult:
         """文字輸入路徑（✅ D-11 正式）：跳過 ASR，其餘與語音同管線（危急偵測＋回覆＋記憶）。"""
+        tracing.tag_current_trace(trace_id=trace_id, channel=channel, elder_id=elder_id)
         return self._process_transcribed(
             text, elder_id=elder_id, external_id=external_id, channel=channel, trace_id=trace_id
         )
@@ -173,6 +182,7 @@ class VoicePipeline:
     def _latency_ms(self, started: float) -> int:
         return int((self._timer() - started) * 1000)
 
+    @tracing.track(name="risk_assess", type="general", capture_input=False, capture_output=False)
     def _assess(
         self, user_text: str, *, external_id: str, channel: str, trace_id: str
     ) -> RiskAssessment:
@@ -227,6 +237,7 @@ class VoicePipeline:
                 latency_ms = self._latency_ms(started)
                 safe_record(lambda: record(traces, status, latency_ms, error_message))
 
+    @tracing.track(name="asr", type="general", capture_input=False, capture_output=False)
     def _transcribe(
         self,
         audio: bytes,
@@ -253,6 +264,7 @@ class VoicePipeline:
             text = self._asr.transcribe(audio, content_type=content_type)
         return text
 
+    @tracing.track(name="agent_generate", type="llm", capture_input=False, capture_output=False)
     def _generate(
         self, elder_id: str, user_text: str, *, external_id: str, channel: str, trace_id: str
     ) -> str:
@@ -279,6 +291,7 @@ class VoicePipeline:
                 reply = self._agent.handle(elder_id, user_text)
         return reply
 
+    @tracing.track(name="tts", type="general", capture_input=False, capture_output=False)
     def _synthesize(
         self, reply_text: str, *, external_id: str, channel: str, trace_id: str
     ) -> TtsResult:
