@@ -23,9 +23,12 @@ def test_track_defers_enable_check_to_call_time(monkeypatch):
     def g(a):
         return a + 1
 
-    monkeypatch.setattr(tracing_client, "_ENABLED", True)
+    # 單元測試須 hermetic：用假的 opik.track（回傳 identity 裝飾器）取代真 SDK，
+    # 避免啟用時真的初始化 Opik client 去連線。
+    import opik
+
+    monkeypatch.setattr(opik, "track", lambda **kw: (lambda f: f))
     monkeypatch.setattr(tracing_client, "is_enabled", lambda: True)
-    # opik.track 存在且可用；即使包裝，回傳值不變。
     assert g(41) == 42
 
 

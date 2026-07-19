@@ -207,7 +207,7 @@ def test_summary_model_override_builds_dedicated_client(monkeypatch):
     """✅ D-16（丁-5）：GEMINI_MODEL_SUMMARY 與主模型不同時，摘要用專屬 client。"""
     built_models: list[str] = []
 
-    def _spy_build(settings, model):
+    def _spy_build(settings, model, *, client_wrapper=None):
         built_models.append(model)
         return _FakeLLM()
 
