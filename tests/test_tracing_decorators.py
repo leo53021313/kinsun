@@ -36,3 +36,20 @@ def test_tag_current_trace_noop_when_disabled():
     tracing_client.reset_for_test()
     # 停用時純 no-op、不得拋例外。
     assert tracing.tag_current_trace(trace_id="abc", channel="line") is None
+
+
+def test_update_trace_metadata_noop_when_disabled():
+    tracing_client.reset_for_test()
+    assert tracing.update_trace_metadata(tier="L2") is None
+
+
+def test_log_feedback_score_noop_when_disabled():
+    tracing_client.reset_for_test()
+    assert tracing.log_feedback_score("helpful", 1.0) is None
+
+
+def test_tag_current_trace_accepts_extra_metadata_when_disabled():
+    tracing_client.reset_for_test()
+    assert (
+        tracing.tag_current_trace(trace_id="t", channel="line", elder_id="e", tier="L1") is None
+    )
