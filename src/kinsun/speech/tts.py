@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from typing import Protocol
 
-from kinsun.transport import Transport, TransportError, UrllibTransport
+from kinsun.transport import Transport, TransportError, UrllibTransport, header_value
 
 
 class TTSError(Exception):
@@ -64,7 +64,7 @@ class DgxTtsClient:
         except TransportError as exc:
             raise TTSError(f"DGX TTS 呼叫失敗：{exc}") from exc
         audio = response.body
-        raw_ms = response.headers.get("X-Duration-Ms")
+        raw_ms = header_value(response, "X-Duration-Ms")
         if raw_ms is None:
             raise TTSError("DGX TTS 回應缺少 X-Duration-Ms 標頭")
         try:

@@ -38,6 +38,10 @@ ASR_MAX_QUEUE = int(os.environ.get("ASR_MAX_QUEUE", "8"))
 ASR_MAX_BODY_BYTES = int(os.environ.get("ASR_MAX_BODY_BYTES", "10485760"))
 # 共用金鑰（✅ D-56 乙方向丙-10）：設定後驗 X-Api-Key；未設＝內網開發模式不驗。
 ASR_API_KEY = os.environ.get("ASR_API_KEY", "")
+# 靜音峰值閘（2026-07-18）：峰值低於此值（約 -60 dBFS）視為純靜音、不進模型。
+# Whisper 系模型對靜音會確定性幻覺出重複語句（實錄「來，請坐…」迴圈），
+# 一輪空跑約 10 秒 GPU；正常說話峰值遠高於此，誤殺風險極低。
+ASR_SILENCE_PEAK = float(os.environ.get("ASR_SILENCE_PEAK", "0.001"))
 ASR_PRELOAD = os.environ.get("ASR_PRELOAD", "0") not in {"0", "false", "no"}
 
 _model = None
@@ -110,6 +114,9 @@ def _decode_to_mono16k(audio: bytes):
 
 def _transcribe(audio: bytes) -> str:
     array = _decode_to_mono16k(audio)
+    if float(abs(array).max()) < ASR_SILENCE_PEAK:
+        logger.info("進站音檔為純靜音（峰值 < %s），跳過辨識", ASR_SILENCE_PEAK)
+        return ""
     result = _get_model()({"raw": array, "sampling_rate": _TARGET_SR})
     return result["text"]
 

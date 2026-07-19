@@ -63,6 +63,19 @@ class UrllibTransport:
             raise TransportError(f"HTTP 請求失敗：{url}：{exc}") from exc
 
 
+def header_value(response: Response, name: str) -> str | None:
+    """取回應標頭值，名稱不分大小寫（RFC 9110）；不存在回 None。
+
+    真實線路上 uvicorn/Starlette 一律送小寫標頭名，直接對 headers dict 用
+    原寫法 get 會永遠查不到。
+    """
+    lowered = name.lower()
+    for key, value in response.headers.items():
+        if key.lower() == lowered:
+            return value
+    return None
+
+
 def read_json(response: Response) -> Any:
     """把回應 body 解為 JSON（物件或陣列）；解析失敗一律 TransportError。"""
     try:

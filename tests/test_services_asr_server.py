@@ -81,6 +81,23 @@ def test_decode_failure_raises_when_no_samples(monkeypatch):
         asr_server._decode_to_mono16k(b"\x00\x01")
 
 
+def test_transcribe_silent_audio_returns_empty_without_model(monkeypatch):
+    """純靜音不得進模型（2026-07-18 實錄）：誤觸的 0.35 秒空錄音（全零樣本）會讓
+    Whisper 系模型確定性幻覺出「來，請坐…」重複迴圈直到 token 上限，一輪燒約
+    10 秒 GPU，還污染下游回覆與風險分級。靜音直接回空字串。"""
+    import numpy as np
+
+    monkeypatch.setattr(
+        asr_server, "_decode_to_mono16k", lambda audio: np.zeros(16000, dtype=np.float32)
+    )
+
+    def boom():
+        raise AssertionError("靜音不得進模型")
+
+    monkeypatch.setattr(asr_server, "_get_model", boom)
+    assert asr_server._transcribe(b"\x00\x01") == ""
+
+
 def test_transcribe_returns_422_when_audio_undecodable(client, monkeypatch):
     def undecodable(audio):
         raise asr_server.AudioDecodeError("ffmpeg exit 183")

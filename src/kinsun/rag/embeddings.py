@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from typing import Protocol
 
+from kinsun import tracing
 from kinsun.rag.schemas import RAG_EMBEDDING_DIMENSIONS
 
 
@@ -72,6 +73,7 @@ class GeminiEmbeddingModel:
     def embed_document(self, text: str, *, title: str | None = None) -> tuple[float, ...]:
         return self._embed(text, task_type="RETRIEVAL_DOCUMENT", title=title)
 
+    @tracing.track(name="embedding", type="general", capture_input=False, capture_output=False)
     def _embed(self, text: str, *, task_type: str, title: str | None = None) -> tuple[float, ...]:
         if not text.strip():
             raise EmbeddingError("不可對空白文字產生 embedding")
