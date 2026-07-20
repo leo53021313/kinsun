@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from typing import Protocol
 
+from tenacity import Retrying, retry_if_exception, stop_after_attempt, wait_exponential
+
 from kinsun import tracing
 from kinsun.rag.schemas import RAG_EMBEDDING_DIMENSIONS
 
@@ -143,28 +145,35 @@ class GeminiEmbeddingModel:
             title=title,
             output_dimensionality=self._dimensions,
         )
-        attempt = 0
-        while True:
+
+        def _call():
+            # 每次呼叫前的節流（含首次）：這是配額節流，不是重試退避，故留在被重試的
+            # 函式內；重試間的退避由 tenacity 的 wait 負責，兩者共用注入的 self._sleep。
             if self._request_delay_seconds:
                 self._sleep(self._request_delay_seconds)
-            try:
-                response = self._client.models.embed_content(
-                    model=self._model,
-                    contents=texts[0] if len(texts) == 1 else list(texts),
-                    config=config,
-                )
-                break
-            except Exception as exc:  # noqa: BLE001 - 統一翻成可辨識錯誤
-                if attempt >= self._max_retries or not _is_retryable_embedding_error(exc):
-                    raise EmbeddingError(f"Gemini embedding 失敗：{exc}") from exc
-                self._sleep(
-                    _retry_delay(
-                        attempt,
-                        self._retry_initial_delay_seconds,
-                        self._retry_max_delay_seconds,
-                    )
-                )
-                attempt += 1
+            return self._client.models.embed_content(
+                model=self._model,
+                contents=texts[0] if len(texts) == 1 else list(texts),
+                config=config,
+            )
+
+        # 指數退避 initial*2**n（上限 max）與原 _retry_delay 等價；只重試可重試錯誤
+        # （429／quota／逾時），其餘立即拋出。sleep 走注入的 self._sleep 讓測試可斷言。
+        retrying = Retrying(
+            stop=stop_after_attempt(self._max_retries + 1),
+            wait=wait_exponential(
+                multiplier=self._retry_initial_delay_seconds,
+                exp_base=2,
+                max=self._retry_max_delay_seconds,
+            ),
+            retry=retry_if_exception(_is_retryable_embedding_error),
+            sleep=self._sleep,
+            reraise=True,
+        )
+        try:
+            response = retrying(_call)
+        except Exception as exc:  # noqa: BLE001 - 統一翻成可辨識錯誤
+            raise EmbeddingError(f"Gemini embedding 失敗：{exc}") from exc
         embeddings = response.embeddings or []
         if len(embeddings) != len(texts):
             raise EmbeddingError(
@@ -197,12 +206,6 @@ def _is_retryable_embedding_error(exc: Exception) -> bool:
         "connecttimeout",
     )
     return any(marker in message for marker in retryable_markers)
-
-
-def _retry_delay(attempt: int, initial_delay: float, max_delay: float) -> float:
-    if initial_delay == 0:
-        return 0.0
-    return min(max_delay, initial_delay * (2**attempt))
 
 
 class CharacterHashEmbedding:
