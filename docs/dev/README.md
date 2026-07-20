@@ -16,10 +16,10 @@
 | 04 | [ADR（04_adr/）](04_adr/README.md) | ✅ 定稿（11 筆；ADR-003 補述 庚-54） | 2026-07-13 |
 | 05 | [架構與設計](05_架構與設計.md) | ✅ v1.24（§12 工程觀測 Opik：排程 job 於 fanout 收斂為 root＋後台手動觸發 root；併入 RAG 版本發布等；tools 加入交通工具 transport） | 2026-07-20 |
 | 06 | [API設計規範](06_API設計規範.md) | ✅ v1.2（稱謂欄位：POST /elders 收 nickname、新增 PUT /elders/{elder_id}/profile） | 2026-07-17 |
-| 07 | [模組規格與測試](07_模組規格與測試.md) | ✅ v1.13（併入 RAG 契約與測試；新增交通四工具 transport，總測試 1417） | 2026-07-20 |
+| 07 | [模組規格與測試](07_模組規格與測試.md) | ✅ v1.14（自建輪子換 OSS：傳輸層→httpx、RAG 重試→tenacity、設定→pydantic-settings，行為零改變，總測試 1423） | 2026-07-20 |
 | 08 | [專案結構指南](08_專案結構指南.md) | ✅ v1.5（補 RAG 模組；tools 補交通 transport，transport_agent 原型 ruff 排除） | 2026-07-20 |
-| 09 | [模組依賴關係](09_模組依賴關係.md) | ✅ v1.4（Protocol 42；locations／strategies 入圖；Expo 54 依賴對齊） | 2026-07-17 |
-| 10 | [類別關係](10_類別關係.md) | ✅ v1.12（RAG release／write store、Gemini 批次嵌入與檢索關係） | 2026-07-18 |
+| 09 | [模組依賴關係](09_模組依賴關係.md) | ✅ v1.5（httpx 升 runtime＋新增 tenacity／pydantic-settings 直接依賴） | 2026-07-20 |
+| 10 | [類別關係](10_類別關係.md) | ✅ v1.13（傳輸層 `UrllibTransport`→`HttpxTransport`，改用 httpx） | 2026-07-20 |
 | 11 | [審查與重構指南](11_審查與重構指南.md) | ✅ v1.1（CI 已落地；docs/dev 同步鐵律入自查） | 2026-07-17 |
 | 12 | [前端架構規範](12_前端架構規範.md) | ✅ v1.5（JS lint／測試基建落地；F-2／F-8～F-15 全結案） | 2026-07-17 |
 | 13 | [安全與就緒檢查](13_安全與就緒檢查.md) | ✅ v1.4（位置隱私列；依賴掃描與 healthz 結案） | 2026-07-17 |
