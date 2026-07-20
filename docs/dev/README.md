@@ -14,7 +14,7 @@
 | 02 | [專案簡報與PRD](02_專案簡報與PRD.md) | ✅ v1.3（KPI 數值⏸實測後定；US-B3 問候自適應註記） | 2026-07-17 |
 | 03 | [BDD情境](03_BDD情境.md) | ✅ 定稿（D-72 三級制已落地） | 2026-07-09 |
 | 04 | [ADR（04_adr/）](04_adr/README.md) | ✅ 定稿（11 筆；ADR-003 補述 庚-54） | 2026-07-13 |
-| 05 | [架構與設計](05_架構與設計.md) | ✅ v1.23（§12 工程觀測 Opik；併入 RAG 版本發布等；tools 加入交通工具 transport） | 2026-07-20 |
+| 05 | [架構與設計](05_架構與設計.md) | ✅ v1.24（§12 工程觀測 Opik：排程 job 於 fanout 收斂為 root＋後台手動觸發 root；併入 RAG 版本發布等；tools 加入交通工具 transport） | 2026-07-20 |
 | 06 | [API設計規範](06_API設計規範.md) | ✅ v1.2（稱謂欄位：POST /elders 收 nickname、新增 PUT /elders/{elder_id}/profile） | 2026-07-17 |
 | 07 | [模組規格與測試](07_模組規格與測試.md) | ✅ v1.13（併入 RAG 契約與測試；新增交通四工具 transport，總測試 1417） | 2026-07-20 |
 | 08 | [專案結構指南](08_專案結構指南.md) | ✅ v1.5（補 RAG 模組；tools 補交通 transport，transport_agent 原型 ruff 排除） | 2026-07-20 |
