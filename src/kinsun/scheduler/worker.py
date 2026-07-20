@@ -13,6 +13,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from kinsun import tracing
 from kinsun.accounts.models import PrincipalType
 from kinsun.agent import Recall
 from kinsun.appointments.jobs import build_appointment_reminder_job
@@ -61,7 +62,9 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
     gemini = (
         core.gemini
         if settings.gemini_model_summary == settings.gemini_model
-        else build_gemini_for(settings, settings.gemini_model_summary)
+        else build_gemini_for(
+            settings, settings.gemini_model_summary, client_wrapper=tracing.wrap_genai
+        )
     )
     accounts = core.accounts
     med_store = core.med_store

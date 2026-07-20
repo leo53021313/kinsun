@@ -80,6 +80,39 @@ def test_proactive_composes_with_memory_and_writes_back():
     ]
 
 
+def test_proactive_writes_reply_to_trace_output(monkeypatch):
+    """主動問候把回覆寫進 trace output，Opik Threads 才顯示這則主動訊息（不寫 input）。"""
+    from kinsun import tracing
+
+    calls: list[dict] = []
+    monkeypatch.setattr(tracing, "set_current_trace_io", lambda **kw: calls.append(kw))
+    reply = CareAgent(SpyLLM(), SpySession()).proactive("u1", "早安問候")
+    assert calls == [{"assistant_output": reply}]
+
+
+def test_handle_attaches_care_system_prompt(monkeypatch):
+    """回合把 SYSTEM_PROMPT 註冊/連結到 trace（方案 A：程式碼為真相、Opik 只反映關聯）。"""
+    from kinsun import tracing
+
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        tracing, "attach_prompt", lambda name, content: calls.append((name, content))
+    )
+    CareAgent(SpyLLM(), SpySession()).handle("u1", "嗨")
+    assert ("care_system", SYSTEM_PROMPT) in calls
+
+
+def test_proactive_attaches_care_system_prompt(monkeypatch):
+    from kinsun import tracing
+
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        tracing, "attach_prompt", lambda name, content: calls.append((name, content))
+    )
+    CareAgent(SpyLLM(), SpySession()).proactive("u1", "早安問候")
+    assert ("care_system", SYSTEM_PROMPT) in calls
+
+
 def test_proactive_recalls_with_given_query_instead_of_intent():
     """檢索關鍵字改用昨天摘要（spec 2026-07-17-主動問候接續昨天話題）。
 

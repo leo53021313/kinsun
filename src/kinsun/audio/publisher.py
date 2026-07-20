@@ -14,7 +14,8 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Protocol
 
-from kinsun.transport import Transport, TransportError, UrllibTransport, read_json
+from kinsun import tracing
+from kinsun.transport import HttpxTransport, Transport, TransportError, read_json
 
 logger = logging.getLogger("kinsun.audio")
 
@@ -48,12 +49,13 @@ class SupabaseAudioPublisher:
         self._clock = clock
         self._new_id = new_id
         self._prefix = prefix.strip("/")
-        self._transport = transport or UrllibTransport()
+        self._transport = transport or HttpxTransport()
         self._signed_url_expires_seconds = signed_url_expires_seconds
 
     def _object_path(self, name: str) -> str:
         return f"{self._prefix}/{self._clock().strftime('%Y%m%d')}/{name}"
 
+    @tracing.track(name="audio_upload", type="general", capture_input=False, capture_output=True)
     def publish(self, audio: bytes, *, content_type: str) -> str:
         path = self._object_path(f"{self._new_id()}.m4a")
         upload_url = f"{self._base}/storage/v1/object/{self._bucket}/{path}"

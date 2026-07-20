@@ -42,6 +42,40 @@ def test_summarize_day_writes_summary():
     assert rows[0].content == "阿公今天聊天氣，心情不錯"
 
 
+def test_summarize_day_writes_summary_to_span_io(monkeypatch):
+    """摘要成品攤在 span output（raw LLM I/O 已在 wrap_genai 子 span）。"""
+    from kinsun import tracing
+
+    calls: list[dict] = []
+    monkeypatch.setattr(tracing, "set_current_span_io", lambda **kw: calls.append(kw))
+    turns = [Message("user", "今天天氣真好"), Message("assistant", "是啊")]
+    summarize_day(
+        "u1",
+        short_term=_ShortTerm(turns),
+        summarizer=_StubSummarizer(),
+        summaries=FakeConversationSummaryStore(),
+        clock=lambda: NOW,
+    )
+    assert calls == [{"span_output": {"summary": "阿公今天聊天氣，心情不錯"}}]
+
+
+def test_summarize_day_attaches_summary_prompt(monkeypatch):
+    """每日摘要把 SUMMARY_PROMPT 註冊/連結到 trace（方案 A）。"""
+    from kinsun import tracing
+    from kinsun.reports.summaries import SUMMARY_PROMPT
+
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(tracing, "attach_prompt", lambda n, c: calls.append((n, c)))
+    summarize_day(
+        "u1",
+        short_term=_ShortTerm([Message("user", "嗨"), Message("assistant", "好")]),
+        summarizer=_StubSummarizer(),
+        summaries=FakeConversationSummaryStore(),
+        clock=lambda: NOW,
+    )
+    assert ("daily_summary", SUMMARY_PROMPT) in calls
+
+
 def test_summarize_day_skips_when_no_turns():
     summaries = FakeConversationSummaryStore()
     summarize_day(

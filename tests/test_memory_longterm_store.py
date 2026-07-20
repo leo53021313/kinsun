@@ -63,6 +63,36 @@ def test_add_maps_messages_and_metadata():
     assert metadata == {"provenance": "self_claimed"}
 
 
+def test_add_writes_stored_facts_to_span_io(monkeypatch):
+    """寫入長期記憶的對話與出處攤在 span input，供 Opik 檢視。"""
+    from kinsun import tracing
+
+    calls: list[dict] = []
+    monkeypatch.setattr(tracing, "set_current_span_io", lambda **kw: calls.append(kw))
+    Mem0LongTermStore(_FakeMem0()).add(
+        "sess1", [Message("user", "我叫王大明")], provenance="self_claimed"
+    )
+    assert calls == [
+        {
+            "span_input": {
+                "messages": [{"role": "user", "content": "我叫王大明"}],
+                "metadata": {"provenance": "self_claimed"},
+            }
+        }
+    ]
+
+
+def test_add_attaches_fact_extraction_prompt(monkeypatch):
+    """mem0 寫入把抽取事實用的 prompt 註冊/連結到 trace（方案 A）。"""
+    from kinsun import tracing
+    from kinsun.memory.longterm import provenance as prov
+
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(tracing, "attach_prompt", lambda n, c: calls.append((n, c)))
+    Mem0LongTermStore(_FakeMem0()).add("s1", [Message("user", "我叫王大明")])
+    assert ("mem0_fact_extraction", prov.CUSTOM_FACT_EXTRACTION_PROMPT) in calls
+
+
 def test_search_returns_memory_items():
     mem = _FakeMem0(search_return={"results": [{"memory": "喜歡下棋", "metadata": {}}]})
     items = Mem0LongTermStore(mem).search("興趣", "sess1")

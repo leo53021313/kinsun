@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
 
+from kinsun import tracing
 from kinsun.db import Database, _Errors
 from kinsun.llm import LLMError, Message
 
@@ -168,6 +169,7 @@ def _l1_signals_for_day(risk_events, elder_id: str, now: datetime) -> list[str]:
     ]
 
 
+@tracing.track(name="daily_summary", type="general", capture_input=False, capture_output=False)
 def summarize_day(
     elder_id: str,
     *,
@@ -180,7 +182,9 @@ def summarize_day(
     turns = short_term.previous_day(elder_id)
     if not turns:
         return
+    tracing.update_trace_metadata(elder_id=elder_id, flow="daily_summary")
     system_prompt = SUMMARY_PROMPT
+    tracing.attach_prompt("daily_summary", SUMMARY_PROMPT)
     signals = _l1_signals_for_day(risk_events, elder_id, clock()) if risk_events else []
     if signals:
         # L1 小訊號進每日摘要（✅ D-10 己-5）：不即時通知、改讓家人在摘要看到。
@@ -205,5 +209,7 @@ def summarize_day(
     if not content:
         # 冒到 fanout 的 per-item 接手（跳過該長輩、留 log），與重試前的失敗語意一致。
         raise last_error or LLMError("摘要生成不合格（空白或接話），重試後仍失敗")
+    # 摘要文字攤在本層 span（raw LLM I/O 已在 wrap_genai 子 span，這裡放後處理的成品）。
+    tracing.set_current_span_io(span_output={"summary": content})
     day = (clock().date() - timedelta(days=1)).isoformat()
     summaries.save(elder_id, day, content)

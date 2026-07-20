@@ -7,7 +7,7 @@ import urllib.parse
 from collections.abc import Callable
 
 from kinsun.llm import ToolSpec
-from kinsun.transport import Transport, UrllibTransport, get_json
+from kinsun.transport import HttpxTransport, Transport, get_json
 from kinsun.turn_context import current_utterance
 
 # ⚠️ 本描述與 agent.py 的地點三句必須語意一致。Bug 2 的根因就是兩者矛盾：工具
@@ -152,7 +152,7 @@ def _is_from_elder(location: str) -> bool:
 
 
 def build_weather_handler(transport: Transport | None = None) -> Callable[[dict], str]:
-    http = transport or UrllibTransport()
+    http = transport or HttpxTransport()
 
     def handler(args: dict) -> str:
         location = (args.get("location") or "").strip()

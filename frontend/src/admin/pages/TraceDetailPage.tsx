@@ -41,6 +41,12 @@ export function TraceDetailPage() {
       <button type="button" onClick={load}>
         {strings.common.refresh}
       </button>
+      {/* 工程觀測開啟且捕捉到 Opik trace id 時才有網址；否則後端回空字串，這裡不渲染。 */}
+      {trace.opik_url && (
+        <a className="opik-link" href={trace.opik_url} target="_blank" rel="noreferrer">
+          {strings.trace.openInOpik}
+        </a>
+      )}
 
       <div className={`trace-step${trace.webhook_event ? "" : " error"}`}>
         <h3>{strings.trace.steps.webhook}</h3>
@@ -84,6 +90,63 @@ export function TraceDetailPage() {
         ) : (
           <p>{strings.trace.noRecord}</p>
         )}
+      </div>
+
+      <div
+        className={`trace-step${
+          trace.rag_calls.some((call) => call.status === "error" || call.status === "urgent")
+            ? " error"
+            : ""
+        }`}
+      >
+        <h3>{strings.trace.steps.rag}</h3>
+        {trace.rag_calls.length === 0 && <p>{strings.trace.noRecord}</p>}
+        {trace.rag_calls.map((call, index) => (
+          <div key={`${call.created_at}-${index}`}>
+            <p>
+              <StatusBadge status={call.status === "normal" ? "ok" : call.status} />　
+              {formatLatency(call.latency_ms)}　{strings.trace.ragRelease}
+              {call.index_version || "—"}
+            </p>
+            <p>
+              {strings.trace.ragQuery}
+              {call.query}
+            </p>
+            <p>
+              {strings.trace.ragReason}
+              {call.reason}
+            </p>
+            {call.hits.length > 0 && (
+              <details>
+                <summary>{strings.trace.ragHits}</summary>
+                <ul>
+                  {call.hits.map((hit) => (
+                    <li key={hit.chunk_id}>
+                      {hit.source_id}／{hit.chunk_id}／{hit.retrieval_method}／
+                      {hit.score.toFixed(3)}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+            {call.citations.length > 0 && (
+              <details>
+                <summary>{strings.trace.ragCitations}</summary>
+                <ul>
+                  {call.citations.map((citation) => (
+                    <li key={citation.chunk_id}>
+                      <a href={citation.url} target="_blank" rel="noreferrer">
+                        {citation.title}｜{citation.publisher}
+                      </a>
+                      <br />
+                      <code>{citation.chunk_id}</code>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
+        ))}
       </div>
 
       <div

@@ -48,6 +48,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Protocol
 
+from kinsun import tracing
 from kinsun.llm import Message
 from kinsun.memory.shortterm import MemoryStore, previous_day_bounds
 from kinsun.reports.reminders import ReminderLog, ReminderLogStore
@@ -60,6 +61,25 @@ logger = logging.getLogger("kinsun.strategies.reflection")
 _SECONDS_PER_DAY = 86400.0  # 台灣無日光節約，一天固定 86400 秒。
 
 _REQUIRED_FIELDS = ("content", "category", "evidence", "observed_days")
+
+# 受控生成 schema：把回傳約束成合法的守則陣列，減少「格式故障→整批丟棄」的空轉夜。
+# schema 只管結構，語意（四類守則、禁醫療詞、跨多天證據等）仍靠 REFLECTION_PROMPT。
+# supersedes 設 nullable optional：模型輸出整數 id 會被 _to_candidate 判型別錯而整批丟棄，
+# 約束成 string|null 可避免這個失效；observed_days 約束成整數，evidence 約束成字串。
+_REFLECTION_SCHEMA = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "content": {"type": "string"},
+            "category": {"type": "string"},
+            "evidence": {"type": "string"},
+            "observed_days": {"type": "integer"},
+            "supersedes": {"type": ["string", "null"]},
+        },
+        "required": ["content", "category", "evidence", "observed_days"],
+    },
+}
 
 # 反思的系統提示。第 3、5 條是對濾網的「事前緩解」而非重複防護：
 # 濾網（policy.py）會擋掉含醫療字眼與過長／多行的守則，但它只能丟棄、無法改寫，
@@ -114,9 +134,16 @@ REFLECTION_PROMPT = (
 class Reflector(Protocol):
     """反思用的 LLM 呼叫端；形狀同 `summarize_day` 的 summarizer（見 llm.LLMClient）。"""
 
-    def generate(self, *, system_prompt: str, messages: list[Message]) -> str: ...
+    def generate(
+        self,
+        *,
+        system_prompt: str,
+        messages: list[Message],
+        response_schema: dict | None = None,
+    ) -> str: ...
 
 
+@tracing.track(name="nightly_reflection", type="general", capture_input=False, capture_output=False)
 def reflect_days(
     elder_id: str,
     *,
@@ -131,6 +158,7 @@ def reflect_days(
     max_turns: int,
 ) -> None:
     """反思這位長輩過去 lookback_days 天的互動，把通過濾網的守則寫成生效中的守則。"""
+    tracing.update_trace_metadata(elder_id=elder_id, flow="nightly_reflection")
     # 迄點＝今日零時：只反思已完整結束的日子，今天才過幾小時的片段不算一天。
     _, end = previous_day_bounds(clock())
     start = end - lookback_days * _SECONDS_PER_DAY
@@ -151,7 +179,10 @@ def reflect_days(
     logs = reminder_logs.list_for_range(elder_id, start=start, end=end)
     adopted = strategies.list_for_elder(elder_id, status=STRATEGY_STATUS_ADOPTED)
     system_prompt = _build_prompt(logs, adopted, lookback_days, min_observed_days, max_strategies)
-    reply = reflector.generate(system_prompt=system_prompt, messages=turns)
+    tracing.attach_prompt("nightly_reflection", REFLECTION_PROMPT)
+    reply = reflector.generate(
+        system_prompt=system_prompt, messages=turns, response_schema=_REFLECTION_SCHEMA
+    )
 
     candidates = _parse(reply)
     if candidates is None:
@@ -166,6 +197,12 @@ def reflect_days(
         adopted_count=len(adopted),
         max_strategies=max_strategies,
         adopted_ids={row.strategy_id for row in adopted},
+    )
+    # 過濾後真正採納的守則攤在本層 span（raw LLM I/O 已在 wrap_genai 子 span）。
+    tracing.set_current_span_io(
+        span_output={
+            "strategies": [{"category": c.category, "content": c.content} for c in accepted]
+        }
     )
     for candidate, reason in [*forged, *rejected]:
         # 逐條記錄、理由原文照登：理由字串本身就是拒絕分類（醫療攔截／輕蔑攔截／結構
@@ -376,7 +413,11 @@ def _to_observed_days(value: object) -> int | None:
 
 
 def _strip_code_fence(reply: str) -> str:
-    """去掉模型偶爾加上的 markdown code fence（```json ... ```）。"""
+    """去掉模型偶爾加上的 markdown code fence（```json ... ```）。
+
+    縱深防禦：response_schema 已約束輸出為乾淨 JSON，正常不會有 fence；此撈殼刻意
+    保留，讓受控生成偶爾失常時仍能救回，而非整批丟棄一整晚的反思。
+    """
     text = reply.strip()
     if not text.startswith("```"):
         return text

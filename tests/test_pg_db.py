@@ -131,6 +131,52 @@ def test_session_key_schema_supports_elder_keys(pg_database, pg_url, ns):
     assert rows == [("v2",)]
 
 
+_LEGACY_APPOINTMENTS_DDL = (
+    "CREATE TABLE appointments ("
+    "appt_id TEXT PRIMARY KEY, elder_id TEXT NOT NULL, "
+    "appt_date TEXT NOT NULL, label TEXT NOT NULL);"
+    "CREATE INDEX idx_appt_date ON appointments (appt_date);"
+)
+
+
+def test_ensure_schema_upgrades_legacy_appointment_columns(pg_url):
+    """既有個人庫的 appt_id／appt_date 必須無損正名，且補齊 time。"""
+    from kinsun.db import connect, ensure_schema
+
+    with connect(pg_url) as conn:
+        conn.execute("DROP TABLE IF EXISTS appointments CASCADE;")
+        conn.execute(_LEGACY_APPOINTMENTS_DDL)
+        conn.execute(
+            "INSERT INTO appointments (appt_id, elder_id, appt_date, label) VALUES (%s,%s,%s,%s)",
+            ("legacy-appointment", "elder-1", "2026-08-01", "回診"),
+        )
+        conn.commit()
+
+    ensure_schema(pg_url)
+
+    with connect(pg_url) as conn:
+        columns = _columns_of(conn, "appointments")
+        assert {"appointment_id", "date", "time"} <= columns
+        assert "appt_id" not in columns
+        assert "appt_date" not in columns
+        row = conn.execute(
+            "SELECT appointment_id, elder_id, date, label, time FROM appointments "
+            "WHERE appointment_id=%s",
+            ("legacy-appointment",),
+        ).fetchone()
+        assert row == ("legacy-appointment", "elder-1", "2026-08-01", "回診", "")
+        indexes = {
+            item[0]
+            for item in conn.execute(
+                "SELECT indexname FROM pg_indexes WHERE tablename='appointments'"
+            ).fetchall()
+        }
+        assert "idx_appt_date" not in indexes
+        assert "idx_appointments_date" in indexes
+
+    ensure_schema(pg_url)
+
+
 # 庚-07 正名前的觀測五表 schema（取自 commit e7ec9d0）：欄位還叫 line_user_id、
 # 沒有 channel。正式庫就是長這樣，用來重現「既有庫升級」路徑。
 _LEGACY_OBSERVABILITY_DDL = (

@@ -7,6 +7,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from kinsun import tracing
 from kinsun.accounts.models import Channel
 from kinsun.agent import FALLBACK_REPLY
 from kinsun.llm import LLMError
@@ -75,6 +76,7 @@ class VoiceReplyDelivery:
             return "\n\n".join(parts)
         return result.text if include_reply else None
 
+    @tracing.track(name="deliver", type="general", capture_input=False, capture_output=False)
     def deliver(self, msg: InboundMessage, result: TtsResult) -> DeliveryOutcome:
         if result.audio is None or self._publisher is None or msg.reply_voice is None:
             msg.reply(self._compose_text(result, include_reply=True) or result.text)
@@ -155,6 +157,7 @@ def dispatch(
     )
 
 
+@tracing.track(name="care_conversation", type="general", capture_input=False, capture_output=False)
 def _run_pipeline(
     msg: InboundMessage,
     produce: Callable[[], TtsResult],
@@ -163,7 +166,11 @@ def _run_pipeline(
     traces: TraceStore | None,
     timer: Callable[[], float],
 ) -> None:
-    """執行對話管線並發送回覆：語音與文字共用。任一階段失敗回退提示。"""
+    """執行對話管線並發送回覆：語音與文字共用。任一階段失敗回退提示。
+
+    這是一次對話的 Opik trace root（工程視角）：內含 pipeline 各階段 span 與投遞 span，
+    kinsun trace_id／elder_id 由 pipeline 內的 tag_current_trace 掛上（含 thread 分組）。
+    """
     try:
         result = produce()
     except (ASRError, LLMError, MemoryStoreError) as exc:
@@ -193,6 +200,8 @@ def _record_reply(
     latency_ms = int((ended - started) * 1000)
     # 往返延遲（✅ D-05 戊-2）：通道收件 → 回覆送達的端到端耗時；起點未知記 NULL。
     round_trip_ms = int((ended - msg.received_at) * 1000) if msg.received_at else None
+    # 在 care_conversation trace context 內抓 Opik trace id 存下，供後台深連結（停用回空字串）。
+    opik_trace_id = tracing.current_opik_trace_id()
     safe_record(
         lambda: traces.record_reply(
             trace_id=msg.trace_id,
@@ -203,5 +212,6 @@ def _record_reply(
             latency_ms=latency_ms,
             round_trip_ms=round_trip_ms,
             audio_url=outcome.audio_url,
+            opik_trace_id=opik_trace_id,
         )
     )

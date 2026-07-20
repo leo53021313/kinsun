@@ -21,6 +21,7 @@ from kinsun.observability.models import (
     HourlyCount,
     LlmCall,
     OverviewStats,
+    RagCall,
     Reply,
     StageStats,
     TimelineItem,
@@ -82,6 +83,20 @@ class TraceStore(Protocol):
         content: str,
         error_message: str,
     ) -> None: ...
+    def record_rag(
+        self,
+        *,
+        trace_id: str,
+        elder_id: str,
+        query: str,
+        index_version: str,
+        status: str,
+        latency_ms: int,
+        safety_level: str,
+        reason: str,
+        hits: list[dict],
+        citations: list[dict],
+    ) -> None: ...
     def record_tts_call(
         self,
         *,
@@ -104,6 +119,7 @@ class TraceStore(Protocol):
         latency_ms: int,
         round_trip_ms: int | None = None,
         audio_url: str,
+        opik_trace_id: str = "",
     ) -> None: ...
     def get_trace(self, trace_id: str) -> Trace | None: ...
     def list_feed(
@@ -161,6 +177,40 @@ class PgTraceStore:
                 event_type,
                 message_type,
                 Json(payload),
+                self._now(),
+            ),
+        )
+
+    def record_rag(
+        self,
+        *,
+        trace_id: str,
+        elder_id: str,
+        query: str,
+        index_version: str,
+        status: str,
+        latency_ms: int,
+        safety_level: str,
+        reason: str,
+        hits: list[dict],
+        citations: list[dict],
+    ) -> None:
+        self._db.execute(
+            "INSERT INTO rag_calls (rag_call_id, trace_id, elder_id, query, index_version, "
+            "status, latency_ms, safety_level, reason, hits, citations, created_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (
+                self._new_id(),
+                trace_id,
+                elder_id,
+                query,
+                index_version,
+                status,
+                latency_ms,
+                safety_level,
+                reason,
+                Json(hits),
+                Json(citations),
                 self._now(),
             ),
         )
@@ -268,11 +318,12 @@ class PgTraceStore:
         latency_ms: int,
         round_trip_ms: int | None = None,
         audio_url: str,
+        opik_trace_id: str = "",
     ) -> None:
         self._db.execute(
             "INSERT INTO replies (reply_id, trace_id, external_id, channel, kind, status, "
-            "latency_ms, round_trip_ms, audio_url, created_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "latency_ms, round_trip_ms, audio_url, created_at, opik_trace_id) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 self._new_id(),
                 trace_id,
@@ -284,6 +335,7 @@ class PgTraceStore:
                 round_trip_ms,
                 audio_url,
                 self._now(),
+                opik_trace_id,
             ),
         )
 
@@ -306,6 +358,12 @@ class PgTraceStore:
             "FROM llm_calls WHERE trace_id = %s ORDER BY created_at",
             (trace_id,),
         )
+        rag_rows = self._db.query(
+            "SELECT rag_call_id, trace_id, elder_id, query, index_version, status, latency_ms, "
+            "safety_level, reason, hits, citations, created_at "
+            "FROM rag_calls WHERE trace_id = %s ORDER BY created_at",
+            (trace_id,),
+        )
         tts_row = self._db.query_one(
             "SELECT tts_call_id, trace_id, external_id, channel, status, latency_ms, content, "
             "error_message, created_at FROM tts_calls WHERE trace_id = %s "
@@ -314,7 +372,7 @@ class PgTraceStore:
         )
         reply_row = self._db.query_one(
             "SELECT reply_id, trace_id, external_id, channel, kind, status, latency_ms, "
-            "round_trip_ms, audio_url, created_at FROM replies WHERE trace_id = %s "
+            "round_trip_ms, audio_url, created_at, opik_trace_id FROM replies WHERE trace_id = %s "
             "ORDER BY created_at LIMIT 1",
             (trace_id,),
         )
@@ -326,10 +384,11 @@ class PgTraceStore:
         webhook_event = WebhookEvent(*webhook_row) if webhook_row else None
         asr_call = AsrCall(*asr_row) if asr_row else None
         llm_calls = [LlmCall(*r) for r in llm_rows]
+        rag_calls = [RagCall(*r) for r in rag_rows]
         tts_call = TtsCall(*tts_row) if tts_row else None
         reply = Reply(*reply_row) if reply_row else None
         risk_events = [TraceRiskEvent(*r) for r in risk_rows]
-        if not any([webhook_event, asr_call, llm_calls, tts_call, reply, risk_events]):
+        if not any([webhook_event, asr_call, llm_calls, rag_calls, tts_call, reply, risk_events]):
             return None
         rows_with_source = [webhook_event, asr_call, tts_call, reply, *llm_calls]
         external_id = next((x.external_id for x in rows_with_source if x), "")
@@ -339,6 +398,11 @@ class PgTraceStore:
             "WHERE b.external_id = %s AND b.principal_type = 'elder' LIMIT 1",
             (external_id,),
         )
+        if name_row is None and rag_calls:
+            name_row = self._db.query_one(
+                "SELECT name FROM elders WHERE elder_id = %s LIMIT 1",
+                (rag_calls[0].elder_id,),
+            )
         return Trace(
             trace_id=trace_id,
             external_id=external_id,
@@ -346,10 +410,12 @@ class PgTraceStore:
             webhook_event=webhook_event,
             asr_call=asr_call,
             llm_calls=llm_calls,
+            rag_calls=rag_calls,
             tts_call=tts_call,
             reply=reply,
             risk_events=risk_events,
             elder_name=name_row[0] if name_row else "",
+            opik_trace_id=reply.opik_trace_id if reply else "",
         )
 
     def list_feed(self, *, after: float, before: float | None = None, limit: int) -> list[FeedItem]:
@@ -505,7 +571,14 @@ class PgTraceStore:
 
     def purge_older_than(self, cutoff: float) -> None:
         # 表名為固定白名單、非外部輸入，f-string 無注入風險。
-        for table in ("webhook_events", "asr_calls", "llm_calls", "tts_calls", "replies"):
+        for table in (
+            "webhook_events",
+            "asr_calls",
+            "llm_calls",
+            "rag_calls",
+            "tts_calls",
+            "replies",
+        ):
             self._db.execute(f"DELETE FROM {table} WHERE created_at < %s", (cutoff,))
 
 
@@ -523,6 +596,7 @@ class FakeTraceStore:
         self.webhook_events: list[WebhookEvent] = []
         self.asr_calls: list[AsrCall] = []
         self.llm_calls: list[LlmCall] = []
+        self.rag_calls: list[RagCall] = []
         self.tts_calls: list[TtsCall] = []
         self.replies: list[Reply] = []
         # (elder_id, role, content, created_at)
@@ -653,6 +727,37 @@ class FakeTraceStore:
             )
         )
 
+    def record_rag(
+        self,
+        *,
+        trace_id: str,
+        elder_id: str,
+        query: str,
+        index_version: str,
+        status: str,
+        latency_ms: int,
+        safety_level: str,
+        reason: str,
+        hits: list[dict],
+        citations: list[dict],
+    ) -> None:
+        self.rag_calls.append(
+            RagCall(
+                self._next_id(),
+                trace_id,
+                elder_id,
+                query,
+                index_version,
+                status,
+                latency_ms,
+                safety_level,
+                reason,
+                hits,
+                citations,
+                self.now,
+            )
+        )
+
     def record_tts_call(
         self,
         *,
@@ -689,6 +794,7 @@ class FakeTraceStore:
         latency_ms: int,
         round_trip_ms: int | None = None,
         audio_url: str,
+        opik_trace_id: str = "",
     ) -> None:
         self.replies.append(
             Reply(
@@ -702,6 +808,7 @@ class FakeTraceStore:
                 round_trip_ms,
                 audio_url,
                 self.now,
+                opik_trace_id,
             )
         )
 
@@ -711,17 +818,20 @@ class FakeTraceStore:
         webhook_event = next((e for e in self.webhook_events if e.trace_id == trace_id), None)
         asr_call = next((c for c in self.asr_calls if c.trace_id == trace_id), None)
         llm_calls = [c for c in self.llm_calls if c.trace_id == trace_id]
+        rag_calls = [c for c in self.rag_calls if c.trace_id == trace_id]
         tts_call = next((c for c in self.tts_calls if c.trace_id == trace_id), None)
         reply = next((r for r in self.replies if r.trace_id == trace_id), None)
         risk_events = [
             TraceRiskEvent(t, reason, ts) for _, t, reason, ts, tid in self.risks if tid == trace_id
         ]
-        if not any([webhook_event, asr_call, llm_calls, tts_call, reply, risk_events]):
+        if not any([webhook_event, asr_call, llm_calls, rag_calls, tts_call, reply, risk_events]):
             return None
         rows_with_source = [webhook_event, asr_call, tts_call, reply, *llm_calls]
         external_id = next((x.external_id for x in rows_with_source if x), "")
         channel = next((x.channel for x in rows_with_source if x), "")
         elder_name = self._elder_name_by_id(self._elder_id_by_external(external_id))
+        if not elder_name and rag_calls:
+            elder_name = self._elder_name_by_id(rag_calls[0].elder_id)
         return Trace(
             trace_id,
             external_id,
@@ -729,10 +839,12 @@ class FakeTraceStore:
             webhook_event,
             asr_call,
             llm_calls,
+            rag_calls,
             tts_call,
             reply,
             risk_events,
             elder_name,
+            reply.opik_trace_id if reply else "",
         )
 
     def list_feed(self, *, after: float, before: float | None = None, limit: int) -> list[FeedItem]:
@@ -893,5 +1005,6 @@ class FakeTraceStore:
         self.webhook_events = [e for e in self.webhook_events if e.created_at >= cutoff]
         self.asr_calls = [c for c in self.asr_calls if c.created_at >= cutoff]
         self.llm_calls = [c for c in self.llm_calls if c.created_at >= cutoff]
+        self.rag_calls = [c for c in self.rag_calls if c.created_at >= cutoff]
         self.tts_calls = [c for c in self.tts_calls if c.created_at >= cutoff]
         self.replies = [r for r in self.replies if r.created_at >= cutoff]

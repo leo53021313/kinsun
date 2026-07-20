@@ -38,8 +38,21 @@ def test_prompt_only_offers_three_tiers():
 
 
 class _BoomLLM:
-    def generate(self, *, system_prompt: str, messages: list[Message]) -> str:
+    def generate(self, *, system_prompt: str, messages: list[Message], response_schema=None) -> str:
         raise LLMError("boom")
+
+
+def test_classify_attaches_safety_prompt(monkeypatch):
+    """危急分級把 CLASSIFY_SYSTEM_PROMPT 註冊/連結到 trace（方案 A：程式碼為真相）。"""
+    from kinsun import tracing
+    from kinsun.safety.classifier import CLASSIFY_SYSTEM_PROMPT
+
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        tracing, "attach_prompt", lambda name, content: calls.append((name, content))
+    )
+    LlmRiskClassifier(_BoomLLM()).classify("我不太舒服")
+    assert ("safety_classify", CLASSIFY_SYSTEM_PROMPT) in calls
 
 
 def test_classifier_failsafe_on_llm_error():
@@ -49,7 +62,7 @@ def test_classifier_failsafe_on_llm_error():
 
 
 class _StubLLM:
-    def generate(self, *, system_prompt: str, messages: list[Message]) -> str:
+    def generate(self, *, system_prompt: str, messages: list[Message], response_schema=None) -> str:
         return '{"tier": 1, "confidence": 0.3, "reason": "情緒低落"}'
 
 
@@ -57,3 +70,18 @@ def test_classifier_returns_parsed():
     a = LlmRiskClassifier(_StubLLM()).classify("我好孤單")
     assert a.tier == RiskTier.L1
     assert a.reason == "情緒低落"
+
+
+def test_classify_requests_structured_output():
+    """危急分級走受控生成（response_schema），降低格式故障導致的 L0 假陰性。"""
+    from kinsun.safety.classifier import _CLASSIFY_SCHEMA
+
+    captured = {}
+
+    class _CapturingLLM:
+        def generate(self, *, system_prompt, messages, response_schema=None):
+            captured["schema"] = response_schema
+            return '{"tier": 0, "confidence": 0.1, "reason": "ok"}'
+
+    LlmRiskClassifier(_CapturingLLM()).classify("你好")
+    assert captured["schema"] == _CLASSIFY_SCHEMA

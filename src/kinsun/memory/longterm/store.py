@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Protocol
 
+from kinsun import tracing
 from kinsun.llm import Message
 from kinsun.memory.longterm import provenance as prov
 from kinsun.memory.models import MemoryItem
@@ -81,6 +82,7 @@ class Mem0LongTermStore:
         self._top_k = top_k
         self._health_top_k = health_top_k
 
+    @tracing.track(name="mem0_add", type="general", capture_input=False, capture_output=False)
     def add(
         self,
         elder_id: str,
@@ -98,6 +100,10 @@ class Mem0LongTermStore:
         metadata = {"provenance": provenance}
         if occurred_on:
             metadata["occurred_on"] = occurred_on
+        # 寫入的對話與出處攤在本層 span（span I/O，非 capture——首參 self 是 mem0 client）。
+        tracing.set_current_span_io(span_input={"messages": payload, "metadata": metadata})
+        # mem0 內部抽取事實用的 prompt（config 層設定）也註冊/連結，供版本追蹤。
+        tracing.attach_prompt("mem0_fact_extraction", prov.CUSTOM_FACT_EXTRACTION_PROMPT)
         self._memory.add(payload, user_id=elder_id, metadata=metadata)
 
     def _search_raw(self, query: str, elder_id: str, top_k: int) -> list[dict]:
@@ -137,6 +143,7 @@ class Mem0LongTermStore:
         ordered = sorted(items, key=_recency_key, reverse=True)
         return [item for item in map(_to_memory_item, ordered) if item.text]
 
+    @tracing.track(name="mem0_search", type="general", capture_input=True, capture_output=True)
     def search(self, elder_id: str, query: str, *, top_k: int | None = None) -> list[MemoryItem]:
         user_items = self._search_raw(query, elder_id, top_k or self._top_k)
         health_items = self._search_raw(HEALTH_QUERY, elder_id, self._health_top_k)

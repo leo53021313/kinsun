@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Protocol
 
+from kinsun import tracing
 from kinsun.llm import Message
 from kinsun.memory.longterm.store import LongTermStore
 from kinsun.memory.models import FactSection, InjectedContext, TurnContext
@@ -35,6 +36,9 @@ class SessionMemory:
         self._long_term = long_term
         self._facts = facts or []
 
+    # capture_output=True：回傳的 TurnContext（注入情境＋歷史）是乾淨資料、不含 self，
+    # 攤在 span 上可直接看到模型當輪被餵了什麼記憶與事實。input 仍關（首參是 self）。
+    @tracing.track(name="memory_assemble", type="general", capture_input=False, capture_output=True)
     def assemble(self, elder_id: str, query: str) -> TurnContext:
         return TurnContext(
             injected=self._inject(elder_id, query),

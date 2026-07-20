@@ -1,19 +1,20 @@
 """app 層對外 HTTP 的統一出口（傳輸層）。
 
-`Transport` 只有一個 `request`；正式用 `UrllibTransport`，錯誤統一為 `TransportError`。
-各 client（asr／tts／audio／auth／weather）建構時可注入 transport（預設 `UrllibTransport`），
-測試注入 `FakeTransport` 即可，不必 monkeypatch urllib 全域。便利函式 `get_json`／
-`read_json` 讓「讀 JSON」有一致寫法，且對真假 Transport 皆通用。無重試。
+`Transport` 只有一個 `request`；正式用 `HttpxTransport`，錯誤統一為 `TransportError`。
+各 client（asr／tts／audio／auth／weather）建構時可注入 transport（預設 `HttpxTransport`），
+測試注入 `FakeTransport` 即可，不必動全域網路。便利函式 `get_json`／`read_json` 讓
+「讀 JSON」有一致寫法，且對真假 Transport 皆通用。無重試（重試留給需要的上層，如
+RAG embedding／crawler 各自以 tenacity 處理）。
 """
 
 from __future__ import annotations
 
 import json
-import urllib.error
-import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
+
+import httpx
 
 
 class TransportError(Exception):
@@ -39,8 +40,16 @@ class Transport(Protocol):
     ) -> Response: ...
 
 
-class UrllibTransport:
-    """以標準庫 urllib 實作的 Transport。無重試；逾時與錯誤統一翻成 TransportError。"""
+class HttpxTransport:
+    """以 httpx 實作的 Transport。無重試；持有可重用連線池的 httpx.Client。
+
+    行為與原 urllib 版對齊：跟隨轉址（`follow_redirects=True`）、非 2xx 以
+    `raise_for_status` 翻成 `TransportError`、連線／逾時錯誤同樣翻成 `TransportError`。
+    測試可注入自帶 `httpx.MockTransport` 的 client，不必動真網路。
+    """
+
+    def __init__(self, client: httpx.Client | None = None) -> None:
+        self._client = client or httpx.Client(follow_redirects=True)
 
     def request(
         self,
@@ -51,16 +60,35 @@ class UrllibTransport:
         headers: Mapping[str, str] | None = None,
         timeout: float,
     ) -> Response:
-        request = urllib.request.Request(url, data=data, headers=dict(headers or {}), method=method)
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                return Response(
-                    status=response.status,
-                    headers=dict(response.headers.items()),
-                    body=response.read(),
-                )
-        except (urllib.error.URLError, OSError) as exc:
+            response = self._client.request(
+                method,
+                url,
+                content=data,
+                headers=dict(headers or {}),
+                timeout=timeout,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
             raise TransportError(f"HTTP 請求失敗：{url}：{exc}") from exc
+        return Response(
+            status=response.status_code,
+            headers=dict(response.headers),
+            body=response.content,
+        )
+
+
+def header_value(response: Response, name: str) -> str | None:
+    """取回應標頭值，名稱不分大小寫（RFC 9110）；不存在回 None。
+
+    真實線路上 uvicorn/Starlette 一律送小寫標頭名，直接對 headers dict 用
+    原寫法 get 會永遠查不到。
+    """
+    lowered = name.lower()
+    for key, value in response.headers.items():
+        if key.lower() == lowered:
+            return value
+    return None
 
 
 def read_json(response: Response) -> Any:

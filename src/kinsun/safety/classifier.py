@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Protocol
 
+from kinsun import tracing
 from kinsun.llm import LLMClient, LLMError, Message
 from kinsun.safety.tiers import RiskAssessment, RiskTier
 
@@ -20,12 +21,26 @@ CLASSIFY_SYSTEM_PROMPT = (
 _FAILSAFE_REASON = "llm 無法判定"
 _FAILSAFE_SIGNALS = ["llm:error"]
 
+# 受控生成 schema：讓模型被約束為合法 JSON，減少「格式故障→fail-safe 誤退 L0」的
+# 危急假陰性。schema 只約束結構、不約束語意，tier 的 0-2 定義仍靠 CLASSIFY_SYSTEM_PROMPT。
+_CLASSIFY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "tier": {"type": "integer"},
+        "confidence": {"type": "number"},
+        "reason": {"type": "string"},
+    },
+    "required": ["tier", "confidence", "reason"],
+}
+
 
 class RiskClassifier(Protocol):
     def classify(self, text: str) -> RiskAssessment: ...
 
 
 def _extract_json(raw: str) -> str:
+    # 縱深防禦：response_schema 已約束模型輸出合法 JSON，此撈殼（第一個 { 到最後一個 }）
+    # 刻意保留——這是危急分級器，即使受控生成偶爾失常，仍寧可撈回也不要誤退 L0。
     start = raw.find("{")
     end = raw.rfind("}")
     if start == -1 or end == -1 or end < start:
@@ -49,9 +64,12 @@ class LlmRiskClassifier:
         self._llm = llm
 
     def classify(self, text: str) -> RiskAssessment:
+        tracing.attach_prompt("safety_classify", CLASSIFY_SYSTEM_PROMPT)
         try:
             raw = self._llm.generate(
-                system_prompt=CLASSIFY_SYSTEM_PROMPT, messages=[Message("user", text)]
+                system_prompt=CLASSIFY_SYSTEM_PROMPT,
+                messages=[Message("user", text)],
+                response_schema=_CLASSIFY_SCHEMA,
             )
         except LLMError:
             return RiskAssessment(RiskTier.L0, 0.0, _FAILSAFE_REASON, list(_FAILSAFE_SIGNALS))

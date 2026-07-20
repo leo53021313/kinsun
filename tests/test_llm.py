@@ -64,10 +64,12 @@ class _FakeGenAI:
     def __init__(self, *responses):
         self._responses = list(responses)
         self.last_contents = None
+        self.last_config = None
         self.models = self
 
     def generate_content(self, *, model, contents, config):
         self.last_contents = contents
+        self.last_config = config
         return self._responses.pop(0)
 
 
@@ -130,6 +132,39 @@ def test_generate_tool_turn_echoes_thought_signature_back():
     assert _find_function_call_signature(fake.last_contents, "get_weather") == b"SIG-1"
 
 
+# --- 結構化輸出（response_schema → 受控生成）---
+
+
+def test_generate_passes_response_json_schema_when_given():
+    client = GeminiClient(api_key="dummy", model="m", timeout=30.0)
+    fake = _FakeGenAI(_FakeResp(parts=[], text='{"tier": 1, "confidence": 0.3, "reason": "x"}'))
+    client._client = fake
+    schema = {
+        "type": "object",
+        "properties": {"tier": {"type": "integer"}},
+        "required": ["tier"],
+    }
+
+    out = client.generate(
+        system_prompt="s", messages=[Message("user", "嗨")], response_schema=schema
+    )
+
+    assert out == '{"tier": 1, "confidence": 0.3, "reason": "x"}'
+    assert fake.last_config.response_json_schema == schema
+    assert fake.last_config.response_mime_type == "application/json"
+
+
+def test_generate_omits_response_config_without_schema():
+    client = GeminiClient(api_key="dummy", model="m", timeout=30.0)
+    fake = _FakeGenAI(_FakeResp(parts=[], text="一般聊天回覆"))
+    client._client = fake
+
+    client.generate(system_prompt="s", messages=[Message("user", "嗨")])
+
+    assert fake.last_config.response_json_schema is None
+    assert fake.last_config.response_mime_type is None
+
+
 # --- LLM 用量收集（✅ D-05 戊-2：token 用量落庫的量測 seam）---
 
 
@@ -190,3 +225,21 @@ def test_generate_without_usage_metadata_records_nothing():
     with collect_llm_usage(usage):
         client.generate(system_prompt="s", messages=[Message("user", "嗨")])
     assert (usage.input_tokens, usage.output_tokens) == (0, 0)
+
+
+def test_gemini_client_applies_client_wrapper():
+    marker = object()
+    seen = {}
+
+    def wrapper(client):
+        seen["inner"] = client
+        return marker
+
+    client = GeminiClient(api_key="dummy", model="m", timeout=30.0, client_wrapper=wrapper)
+    assert client._client is marker
+    assert seen["inner"] is not None  # 底層 genai.Client 有被建出來並傳入
+
+
+def test_gemini_client_without_wrapper_keeps_native_client():
+    client = GeminiClient(api_key="dummy", model="m", timeout=30.0)
+    assert client._client is not None

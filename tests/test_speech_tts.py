@@ -32,6 +32,16 @@ def test_dgx_tts_returns_audio_and_duration():
     assert headers["Content-Type"] == "application/json"
 
 
+def test_dgx_tts_reads_duration_header_case_insensitively():
+    """真實線路 regression（2026-07-18）：uvicorn/Starlette 送出的標頭名一律小寫，
+    大小寫敏感查找會把每一輪 TTS 都誤判成缺標頭、全數退化成純文字。"""
+    transport = FakeTransport([Response(200, {"x-duration-ms": "680"}, b"AUDIOBYTES")])
+    client = DgxTtsClient("http://dgx:8002/synthesize", 30.0, transport=transport)
+    result = client.synthesize("阿公您好")
+    assert result.audio == b"AUDIOBYTES"
+    assert result.duration_ms == 680
+
+
 def test_dgx_tts_missing_duration_header_raises():
     transport = FakeTransport([Response(200, {}, b"A")])
     with pytest.raises(TTSError):

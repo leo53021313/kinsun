@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
+from kinsun import tracing
 from kinsun.accounts.models import PrincipalType
 from kinsun.accounts.store import AccountStore
 from kinsun.appointments.store import AppointmentStore
@@ -21,6 +22,7 @@ from kinsun.observability.models import (
     Trace,
 )
 from kinsun.observability.store import TraceStore
+from kinsun.rag.releases import PgRagReleaseStore, ReleaseStatus
 from kinsun.reports.reminders import ReminderLogStore
 from kinsun.reports.summaries import ConversationSummaryStore
 from kinsun.safety.deliveries import RiskNotificationLogStore
@@ -64,6 +66,9 @@ def create_admin_router(
     summaries: ConversationSummaryStore,
     long_term: LongTermStore,
     deliveries: RiskNotificationLogStore,
+    rag_releases: PgRagReleaseStore | None = None,
+    rag_content_policy: str = "allowed_only",
+    opik_url_override: str = "",
 ) -> APIRouter:
     router = APIRouter(tags=["admin"])
     require_admin = build_require_admin(admin_api_key)
@@ -170,7 +175,38 @@ def create_admin_router(
         trace = traces.get_trace(trace_id)
         if trace is None:
             raise HTTPException(status_code=404, detail=ErrorCode.TRACE_NOT_FOUND)
-        return ok(_trace_json(trace))
+        payload = _trace_json(trace)
+        # 深連結：有捕捉到 Opik trace id 且設了 URL 才組得出；否則空字串，前端據此隱藏連結。
+        payload["opik_url"] = tracing.opik_trace_url(trace.opik_trace_id, opik_url_override)
+        return ok(payload)
+
+    @router.get("/rag/status", dependencies=[Depends(require_admin)])
+    def rag_status() -> dict:
+        releases = rag_releases.list_releases(limit=3) if rag_releases else ()
+        active = rag_releases.get_active() if rag_releases else None
+        latest = releases[0] if releases else None
+        warnings: list[str] = []
+        if active is None:
+            warnings.append("目前沒有 active RAG release。")
+        if latest is not None and latest.status == ReleaseStatus.FAILED:
+            warnings.append(f"最近一次 RAG 更新失敗：{latest.error_message or '未提供原因'}")
+        displayed_policy = active.content_policy.value if active else rag_content_policy
+        if displayed_policy == "classroom_demo":
+            warnings.append("課堂展示政策允許未確認或禁止授權內容，不得用於公開服務。")
+        metrics = active.quality_metrics if active else {}
+        return ok(
+            {
+                "active_release": active.index_version if active else None,
+                "active_published_at": active.published_at if active else None,
+                "latest_release": latest.index_version if latest else None,
+                "latest_status": latest.status.value if latest else None,
+                "latest_completed_at": latest.completed_at if latest else None,
+                "document_count": int(metrics.get("document_count", 0)),
+                "chunk_count": int(metrics.get("chunk_count", 0)),
+                "content_policy": displayed_policy,
+                "warnings": warnings,
+            }
+        )
 
     # --- 長輩詳情分頁（spec 2026-07-12 §3.3）：以 elder_id 主鍵直查，與時間軸的
     # _find_elder（掃活動清單）分工——這幾頁不依賴長輩曾有對話。 ---
@@ -410,6 +446,20 @@ def _trace_json(t: Trace) -> dict:
                 "created_at": c.created_at,
             }
             for c in t.llm_calls
+        ],
+        "rag_calls": [
+            {
+                "query": c.query,
+                "index_version": c.index_version,
+                "status": c.status,
+                "latency_ms": c.latency_ms,
+                "safety_level": c.safety_level,
+                "reason": c.reason,
+                "hits": c.hits,
+                "citations": c.citations,
+                "created_at": c.created_at,
+            }
+            for c in t.rag_calls
         ],
         "tts_call": None
         if t.tts_call is None

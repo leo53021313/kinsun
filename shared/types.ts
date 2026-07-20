@@ -115,6 +115,28 @@ export type TraceReply = {
   created_at: number;
 };
 export type TraceRiskEvent = { tier: number; reason: string; created_at: number };
+export type TraceRagCall = {
+  query: string;
+  index_version: string;
+  status: string;
+  latency_ms: number;
+  safety_level: string;
+  reason: string;
+  hits: {
+    chunk_id: string;
+    source_id: string;
+    score: number;
+    retrieval_method: string;
+  }[];
+  citations: {
+    source_id: string;
+    title: string;
+    publisher: string;
+    url: string;
+    chunk_id: string;
+  }[];
+  created_at: number;
+};
 export type TraceDetail = {
   trace_id: string;
   external_id: string;
@@ -123,9 +145,12 @@ export type TraceDetail = {
   webhook_event: TraceWebhookEvent | null;
   asr_call: TraceAsrCall | null;
   llm_calls: TraceLlmCall[];
+  rag_calls: TraceRagCall[];
   tts_call: TraceTtsCall | null;
   reply: TraceReply | null;
   risk_events: TraceRiskEvent[];
+  // 直達對應 Opik trace 的深連結；工程觀測開啟且捕捉到 id 時才有，否則空字串（前端隱藏連結）。
+  opik_url: string;
 };
 
 // --- 觀測後台：長輩詳情分頁（spec 2026-07-12） ---
@@ -179,6 +204,17 @@ export type AdminRiskNotification = {
   created_at: number;
 };
 export type AdminJob = { job_name: string; cron: string; last_run_at: number | null };
+export type RagStatus = {
+  active_release: string | null;
+  active_published_at: number | null;
+  latest_release: string | null;
+  latest_status: string | null;
+  latest_completed_at: number | null;
+  document_count: number;
+  chunk_count: number;
+  content_policy: "allowed_only" | "classroom_demo";
+  warnings: string[];
+};
 
 // --- 公開 meta（spec 2026-07-12 內測基礎建設） ---
 export type Meta = { internal_testing: boolean };

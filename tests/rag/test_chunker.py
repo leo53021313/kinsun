@@ -47,3 +47,22 @@ def test_chunk_text_preserves_metadata_and_assigns_chunk_ids():
 def test_chunk_text_rejects_too_small_limit():
     with pytest.raises(ValueError):
         chunk_text("短文", _metadata(), max_chars=20)
+
+
+def test_chunk_text_hard_splits_long_sentence_with_80_char_overlap():
+    text = "甲" * 1500
+
+    chunks = chunk_text(text, _metadata(), max_chars=700, overlap_chars=80)
+
+    assert all(0 < len(chunk.text) <= 700 for chunk in chunks)
+    assert chunks[0].text[-80:] == chunks[1].text[:80]
+
+
+def test_chunk_text_splits_on_chinese_punctuation_and_newlines():
+    chunks = chunk_text(
+        "第一句；第二句？\n第三段！第四句。",
+        _metadata(),
+        max_chars=80,
+    )
+
+    assert "\n" in chunks[0].text

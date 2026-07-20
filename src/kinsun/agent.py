@@ -6,9 +6,11 @@ import json
 import re
 from dataclasses import dataclass
 
+from kinsun import tracing
 from kinsun.llm import LLMClient, Message, ToolResult
 from kinsun.memory.models import FactSection, InjectedContext, format_injected_context
 from kinsun.memory.recall import SessionMemory
+from kinsun.tools.registry import ToolInvocationContext
 from kinsun.turn_context import elder_utterance
 
 
@@ -52,7 +54,7 @@ SYSTEM_PROMPT = (
     "（5）結尾自然帶一句關心或反問，讓對話能接下去。"
     "你不是醫師，絕不提供醫療診斷或用藥劑量建議；遇到健康疑慮，溫柔建議對方告訴家人或就醫。"
     "回答一般健康衛教時，必須先使用 health_education_rag 工具查詢可信來源；"
-    "若工具回傳 unsupported 或 should_escalate_to_risk_engine，"
+    "若工具回傳 unsupported 或 requires_safety_attention，"
     "就照工具結果保守回覆，不可自行補醫療建議。"
     # 地點三句（spec 2026-07-17）：三種情形各一句，缺一不可。第一句消滅「每次都反問」
     # （本功能的目的），第二句擋 anchoring（本功能最大的坑——位置每輪無條件進 prompt，
@@ -65,6 +67,10 @@ SYSTEM_PROMPT = (
     "衛教問題一律先用 health_education_rag，它查不到才用 web_search。"
     "引用查到的內容要口語帶一句來源，例如「衛福部網站說」「查核中心說這是假的」，"
     "絕不唸出網址；查不到就保守回覆、建議長輩問家人或醫師，不可自行編答案。"
+    # 交通工具（transport.py）：路線一律可用；公車／捷運／停車視 TDX 金鑰而定，
+    # 未註冊時模型自然看不到該工具，故 prompt 提及也無妨。
+    "長輩問怎麼去某地、要開多久，用 get_route 查路線（起點用他目前的位置，沒有就先開口問）；"
+    "問公車到站、捷運在哪條線、哪裡有停車位時，用對應的交通工具查詢，查到再口語轉述，不要自己編。"
     "你是 AI，不要假裝是真人或家人；避免讓長者過度依賴你，適度鼓勵他與家人和現實生活互動。"
     "若長者陳述前後不一或可能記錯，不要爭辯，溫和回應即可。"
 )
@@ -148,7 +154,16 @@ class CareAgent:
         ctx = self._session.assemble(elder_id, query)
         return SYSTEM_PROMPT + ctx.system_suffix, ctx.history
 
-    def handle(self, elder_id: str, user_text: str) -> str:
+    @tracing.track(name="care_agent", type="general", capture_input=False, capture_output=False)
+    def handle(
+        self,
+        elder_id: str,
+        user_text: str,
+        *,
+        trace_id: str = "",
+        has_risk_signal: bool = False,
+    ) -> str:
+        tracing.attach_prompt("care_system", SYSTEM_PROMPT)
         system_prompt, history = self._envelope(elder_id, user_text)
         user_msg = Message("user", user_text)
         base = [*history, user_msg]
@@ -159,12 +174,22 @@ class CareAgent:
             # 靠它分辨「長輩說的地點」與「模型自己猜的」。實測顯示模型不知道地點時
             # 會猜「台北市」去呼叫，而提示詞擋不住——那道防線的上游就在這裡。
             with elder_utterance(user_text):
-                reply = self._run_tool_loop(system_prompt, base)
+                reply = self._run_tool_loop(
+                    system_prompt,
+                    base,
+                    context=ToolInvocationContext(trace_id, elder_id, has_risk_signal),
+                )
         reply = _speakable(reply)
         self._session.record_turn(elder_id, user_msg, Message("assistant", reply))
         return reply
 
-    def _run_tool_loop(self, system_prompt: str, base: list[Message]) -> str:
+    def _run_tool_loop(
+        self,
+        system_prompt: str,
+        base: list[Message],
+        *,
+        context: ToolInvocationContext | None = None,
+    ) -> str:
         results: list[ToolResult] = []
         for _ in range(self._max_tool_iters):
             turn = self._llm.generate_tool_turn(
@@ -176,7 +201,12 @@ class CareAgent:
             if not turn.tool_calls:
                 return turn.text or FALLBACK_REPLY
             for call in turn.tool_calls:
-                results.append(ToolResult(call, self._tools.dispatch(call.name, call.arguments)))
+                results.append(
+                    ToolResult(
+                        call,
+                        self._tools.dispatch(call.name, call.arguments, context=context),
+                    )
+                )
         # 末輪修復（✅ 庚-35／A-14）：迭代上限用盡但工具結果已在手——再讓模型
         # 消化一次產出文字，不把成功的工具工作丟掉；仍堅持要工具（無文字）才回退。
         turn = self._llm.generate_tool_turn(
@@ -187,6 +217,7 @@ class CareAgent:
         )
         return turn.text or FALLBACK_REPLY
 
+    @tracing.track(name="proactive_turn", type="general", capture_input=False, capture_output=False)
     def proactive(self, elder_id: str, intent: str, *, recall: Recall | None = None) -> str:
         """主動開場。recall＝她上次開口那天的摘要（spec 2026-07-17-主動問候接續昨天話題）。
 
@@ -199,6 +230,9 @@ class CareAgent:
         recall=None（她從沒開口／那天沒摘要／讀取失敗）＝一字不差維持本功能之前
         的行為。
         """
+        # 主動問候也是對話的一部分：掛進該長輩的 thread，與其他回合串起來（E1）。
+        tracing.tag_current_trace(elder_id=elder_id, channel="proactive")
+        tracing.attach_prompt("care_system", SYSTEM_PROMPT)
         system_prompt, history = self._envelope(elder_id, recall.content if recall else intent)
         if recall:
             # 重用既有的事實段排版，不另立 prompt 拼裝路徑。
@@ -220,8 +254,15 @@ class CareAgent:
             # 問候也走工具迴圈（2026-07-17）：可查天氣、時間等。原話明確設為空——
             # 長輩沒開口，天氣工具據此只信座標、拒絕模型自選地名（weather._is_from_elder）。
             with elder_utterance(""):
-                reply = self._run_tool_loop(system_prompt, base)
+                reply = self._run_tool_loop(
+                    system_prompt,
+                    base,
+                    context=ToolInvocationContext("", elder_id, False),
+                )
         reply = _speakable(reply)
+        # 主動開場的回覆寫進 trace output，Opik Threads 才顯示這則主動訊息；長輩沒開口，
+        # 故不寫 input（問候 vs 失聯關心由 job root 名區分，不需塞進 I/O）。
+        tracing.set_current_trace_io(assistant_output=reply)
         # 留存的記憶帶主動關懷標記（✅ D-39 丙-8）：隔日 recall 看得懂這輪是系統
         # 主動開場，不是長輩憑空收到回覆；送給長輩的 reply 本身不帶標記。
         self._session.record_turn(elder_id, Message("assistant", f"【主動關懷｜{intent}】{reply}"))

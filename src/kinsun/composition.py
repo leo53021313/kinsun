@@ -15,6 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
+from kinsun import tracing
 from kinsun.accounts.facts import ElderProfileFacts
 from kinsun.accounts.models import Channel
 from kinsun.accounts.service import AccountService
@@ -55,6 +56,16 @@ from kinsun.tools.clock import CURRENT_TIME_SPEC, build_current_time_handler
 from kinsun.tools.health_rag import HEALTH_RAG_SPEC, build_health_rag_handler
 from kinsun.tools.lookups import PgWebSearchLookupStore, WebSearchLookupStore
 from kinsun.tools.registry import ToolRegistry
+from kinsun.tools.transport import (
+    BUS_ARRIVAL_SPEC,
+    MRT_LINE_SPEC,
+    PARKING_SPEC,
+    ROUTE_SPEC,
+    build_bus_arrival_handler,
+    build_mrt_line_handler,
+    build_parking_handler,
+    build_route_handler,
+)
 from kinsun.tools.weather import WEATHER_SPEC, build_weather_handler
 from kinsun.tools.web_search import WEB_SEARCH_SPEC, build_web_search_handler
 
@@ -107,12 +118,15 @@ class Core:
 
 def build_externals(settings: Settings) -> Externals:
     """接外部相依：先建表，再開連線與各外部 client。會連線，不進單元測試。"""
+    # 工程觀測開關在最前面決定（configure 只設環境變數與旗標，不連線）。
+    tracing.configure(settings)
     ensure_schema(settings.database_url)
     db = Database.open(settings.database_url, max_size=settings.database_pool_max_size)
     gemini = GeminiClient(
         api_key=settings.gemini_api_key,
         model=settings.gemini_model,
         timeout=settings.gemini_timeout_seconds,
+        client_wrapper=tracing.wrap_genai,
     )
     long_term = Mem0LongTermStore(
         build_mem0_memory(settings),
@@ -128,16 +142,31 @@ def build_tool_registry(
     clock: Callable[[], datetime],
     rag_service: HealthEducationRagService,
     tavily_api_key: str = "",
+    tdx_client_id: str = "",
+    tdx_client_secret: str = "",
     lookups: WebSearchLookupStore | None = None,
+    traces: PgTraceStore | None = None,
 ) -> ToolRegistry:
     """集中組工具：日後新增工具只改這裡，兩個組裝根自動都有。"""
     registry = ToolRegistry()
     registry.register(WEATHER_SPEC, build_weather_handler())
     registry.register(CURRENT_TIME_SPEC, build_current_time_handler(clock))
-    registry.register(HEALTH_RAG_SPEC, build_health_rag_handler(rag_service))
+    registry.register(
+        HEALTH_RAG_SPEC,
+        build_health_rag_handler(rag_service, traces=traces),
+    )
+    # 路線走免金鑰的 OSRM，永遠註冊。
+    registry.register(ROUTE_SPEC, build_route_handler())
     # 金鑰未設＝跳過註冊（優雅降級）：金孫少一個上網查證能力，其餘功能照常運作。
     if tavily_api_key:
         registry.register(WEB_SEARCH_SPEC, build_web_search_handler(tavily_api_key, lookups))
+    # TDX 憑證未齊＝跳過公車／捷運／停車工具（優雅降級）；路線工具不受影響。
+    if tdx_client_id and tdx_client_secret:
+        registry.register(
+            BUS_ARRIVAL_SPEC, build_bus_arrival_handler(tdx_client_id, tdx_client_secret)
+        )
+        registry.register(MRT_LINE_SPEC, build_mrt_line_handler(tdx_client_id, tdx_client_secret))
+        registry.register(PARKING_SPEC, build_parking_handler(tdx_client_id, tdx_client_secret))
     return registry
 
 
@@ -189,12 +218,14 @@ def assemble_core(
             vector_store=PgVectorStore(db),
             embedding_model=GeminiEmbeddingModel(
                 api_key=settings.gemini_api_key,
-                model=settings.longterm_embedding_model,
+                model=settings.rag_embedding_model,
+                request_timeout_seconds=settings.gemini_timeout_seconds,
             ),
         ),
         llm=externals.gemini,
         top_k=settings.rag_top_k,
     )
+    traces = PgTraceStore(db, clock=clock, new_id=new_id)
     web_search_lookups = PgWebSearchLookupStore(db, clock=clock, new_id=new_id)
     agent = CareAgent(
         externals.gemini,
@@ -203,7 +234,10 @@ def assemble_core(
             clock=clock,
             rag_service=rag_service,
             tavily_api_key=settings.tavily_api_key,
+            tdx_client_id=settings.tdx_client_id,
+            tdx_client_secret=settings.tdx_client_secret,
             lookups=web_search_lookups,
+            traces=traces,
         ),
     )
     notifications = PgAppNotificationStore(db, clock=clock, new_id=new_id)
@@ -232,7 +266,7 @@ def assemble_core(
         memory=memory,
         risk_events=risk_events,
         summaries=summaries,
-        traces=PgTraceStore(db, clock=clock, new_id=new_id),
+        traces=traces,
         reminder_logs=PgReminderLogStore(db, clock=clock, new_id=new_id),
         notifications=notifications,
         strategies=strategies,

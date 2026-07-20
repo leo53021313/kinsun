@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from linebot.v3 import WebhookParser
 
+from kinsun import tracing
 from kinsun.appointments.flow import AppointmentMenu
 from kinsun.audio.publisher import build_audio_publisher
 from kinsun.binding.flow import BindingFlow
@@ -28,6 +29,7 @@ from kinsun.config import load_dotenv, load_settings
 from kinsun.llm import build_gemini_for
 from kinsun.medications.flow import MedicationMenu
 from kinsun.pipeline import VoicePipeline
+from kinsun.rag.releases import PgRagReleaseStore
 from kinsun.safety.classifier import LlmRiskClassifier
 from kinsun.safety.deliveries import PgRiskNotificationLogStore
 from kinsun.safety.detector import RiskDetector
@@ -79,7 +81,9 @@ def build_app() -> FastAPI:
     safety_llm = (
         core.gemini
         if settings.gemini_model_safety == settings.gemini_model
-        else build_gemini_for(settings, settings.gemini_model_safety)
+        else build_gemini_for(
+            settings, settings.gemini_model_safety, client_wrapper=tracing.wrap_genai
+        )
     )
     # 危急送達留痕：notifier 寫入、admin 觀測讀取，共用同一實例。
     deliveries = PgRiskNotificationLogStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex)
@@ -187,6 +191,9 @@ def build_app() -> FastAPI:
             summaries=summaries,
             long_term=core.long_term,
             deliveries=deliveries,
+            rag_releases=PgRagReleaseStore(db),
+            rag_content_policy=settings.rag_content_policy,
+            opik_url_override=settings.opik_url_override,
         ),
         prefix="/api/v1/admin",
     )
@@ -232,7 +239,11 @@ def build_app() -> FastAPI:
             accounts=core.accounts,
             pipeline=pipeline,
             gate=gate,
-            voice=VoiceReplyDelivery(publisher, include_text=True),
+            voice=VoiceReplyDelivery(
+                publisher,
+                include_text=True,
+                show_transcript=settings.asr_debug_show_transcript,
+            ),
             traces=core.traces,
             inbound_audio=inbound_audio,
             # 地點（spec 2026-07-17）：clock 與 LocationFacts 同源（皆為本函式的 clock），

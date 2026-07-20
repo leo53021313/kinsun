@@ -71,6 +71,33 @@ def _record_full_trace(store, *, trace_id: str, external_id: str, channel: str =
         content="早安，睡得好嗎？",
         error_message="",
     )
+    store.record_rag(
+        trace_id=trace_id,
+        elder_id="elder-1",
+        query="高血壓要注意什麼？",
+        index_version="rag-v1",
+        status="normal",
+        latency_ms=220,
+        safety_level="normal",
+        reason="有可信來源。",
+        hits=[
+            {
+                "chunk_id": "doc#chunk-1",
+                "source_id": "hpa",
+                "score": 0.88,
+                "retrieval_method": "vector",
+            }
+        ],
+        citations=[
+            {
+                "source_id": "hpa",
+                "title": "高血壓衛教",
+                "publisher": "國民健康署",
+                "url": "https://example.test/hpa",
+                "chunk_id": "doc#chunk-1",
+            }
+        ],
+    )
     store.record_tts_call(
         trace_id=trace_id,
         external_id=external_id,
@@ -121,6 +148,12 @@ def test_record_then_get_trace_roundtrip(store, ns):
     assert trace.llm_calls[0].input_tokens == 512
     assert trace.llm_calls[0].output_tokens == 64
 
+    assert len(trace.rag_calls) == 1
+    assert trace.rag_calls[0].query == "高血壓要注意什麼？"
+    assert trace.rag_calls[0].index_version == "rag-v1"
+    assert trace.rag_calls[0].hits[0]["retrieval_method"] == "vector"
+    assert trace.rag_calls[0].citations[0]["publisher"] == "國民健康署"
+
     assert trace.tts_call is not None
     assert trace.tts_call.content == "早安，睡得好嗎？"
     assert trace.tts_call.latency_ms == 300
@@ -153,6 +186,7 @@ def test_get_trace_with_only_reply_still_bundles(store, ns):
         latency_ms=10,
         round_trip_ms=None,
         audio_url="",
+        opik_trace_id="opik-xyz",
     )
     trace = store.get_trace(trace_id)
     assert trace is not None
@@ -160,6 +194,10 @@ def test_get_trace_with_only_reply_still_bundles(store, ns):
     assert trace.webhook_event is None
     assert trace.asr_call is None
     assert trace.llm_calls == []
+    assert trace.rag_calls == []
     assert trace.tts_call is None
     assert trace.reply is not None
     assert trace.reply.kind == "text"
+    # Opik trace id 隨 reply 落庫、由 get_trace 帶到 Trace 頂層（後台深連結用）。
+    assert trace.reply.opik_trace_id == "opik-xyz"
+    assert trace.opik_trace_id == "opik-xyz"

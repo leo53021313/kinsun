@@ -94,7 +94,13 @@ class ToolTurn:
 
 
 class LLMClient(Protocol):
-    def generate(self, *, system_prompt: str, messages: list[Message]) -> str: ...
+    def generate(
+        self,
+        *,
+        system_prompt: str,
+        messages: list[Message],
+        response_schema: dict | None = None,
+    ) -> str: ...
     def generate_tool_turn(
         self,
         *,
@@ -137,23 +143,39 @@ def _extract_tool_calls(response) -> list[ToolCall]:
 
 
 class GeminiClient:
-    def __init__(self, *, api_key: str, model: str, timeout: float) -> None:
+    def __init__(self, *, api_key: str, model: str, timeout: float, client_wrapper=None) -> None:
         if not api_key:
             raise LLMError("缺少 GEMINI_API_KEY")
         from google import genai
 
-        self._client = genai.Client(api_key=api_key)
+        client = genai.Client(api_key=api_key)
+        # client_wrapper 為觀測層的注入點（如 Opik track_genai）；None＝不包裝。
+        # 保持 llm.py 不 import 觀測套件（依賴反轉），包裝由組裝層決定。
+        self._client = client_wrapper(client) if client_wrapper is not None else client
         self._model = model
         self._timeout = timeout
 
-    def generate(self, *, system_prompt: str, messages: list[Message]) -> str:
+    def generate(
+        self,
+        *,
+        system_prompt: str,
+        messages: list[Message],
+        response_schema: dict | None = None,
+    ) -> str:
         from google.genai import types
 
+        config_kwargs: dict = {"system_instruction": system_prompt}
+        if response_schema is not None:
+            # 受控生成：模型被約束為合法 JSON，呼叫端可直接 json.loads（免撈殼）。用
+            # response_json_schema（純 JSON schema dict），與工具的 parameters_json_schema
+            # 同調，讓 app 層呼叫端只傳 dict、不 import google.genai（維持依賴反轉）。
+            config_kwargs["response_mime_type"] = "application/json"
+            config_kwargs["response_json_schema"] = response_schema
         try:
             response = self._client.models.generate_content(
                 model=self._model,
                 contents=_to_contents(messages),
-                config=types.GenerateContentConfig(system_instruction=system_prompt),
+                config=types.GenerateContentConfig(**config_kwargs),
             )
         except Exception as exc:  # noqa: BLE001 - 統一轉成可辨識的 LLMError
             raise LLMError(f"Gemini 呼叫失敗：{exc}") from exc
@@ -228,8 +250,11 @@ class GeminiClient:
         return ToolTurn(text=text, tool_calls=[])
 
 
-def build_gemini_for(settings, model: str) -> GeminiClient:
+def build_gemini_for(settings, model: str, *, client_wrapper=None) -> GeminiClient:
     """按用途建 Gemini client（✅ D-16 丁-5）：模型同主設定時呼叫端應直接共用主 client。"""
     return GeminiClient(
-        api_key=settings.gemini_api_key, model=model, timeout=settings.gemini_timeout_seconds
+        api_key=settings.gemini_api_key,
+        model=model,
+        timeout=settings.gemini_timeout_seconds,
+        client_wrapper=client_wrapper,
     )
