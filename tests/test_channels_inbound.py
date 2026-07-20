@@ -418,6 +418,25 @@ def test_dispatch_records_text_reply_when_no_voice():
     assert traces.replies[0].audio_url == ""
 
 
+def test_dispatch_stores_opik_trace_id_on_reply(monkeypatch):
+    """care_conversation trace context 內抓到的 Opik trace id 隨 reply 落庫（供後台深連結）。"""
+    from kinsun import tracing
+
+    monkeypatch.setattr(tracing, "current_opik_trace_id", lambda: "opik-999")
+    traces = FakeTraceStore()
+    r = _Replies()
+    msg = InboundMessage(Channel.LINE, "U-1", "audio", "", b"xy", r, trace_id="t9")
+    dispatch(
+        msg,
+        pipeline=_VoicePipeline(TtsResult(text="嗨")),
+        binding=_Binding(None),
+        gate=_Gate(True),
+        traces=traces,
+        timer=iter([0.0, 0.1]).__next__,
+    )
+    assert traces.replies[0].opik_trace_id == "opik-999"
+
+
 def test_dispatch_without_trace_id_records_nothing():
     traces = FakeTraceStore()
     r = _Replies()

@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
+from kinsun import tracing
 from kinsun.accounts.models import PrincipalType
 from kinsun.accounts.store import AccountStore
 from kinsun.appointments.store import AppointmentStore
@@ -67,6 +68,7 @@ def create_admin_router(
     deliveries: RiskNotificationLogStore,
     rag_releases: PgRagReleaseStore | None = None,
     rag_content_policy: str = "allowed_only",
+    opik_url_override: str = "",
 ) -> APIRouter:
     router = APIRouter(tags=["admin"])
     require_admin = build_require_admin(admin_api_key)
@@ -173,7 +175,10 @@ def create_admin_router(
         trace = traces.get_trace(trace_id)
         if trace is None:
             raise HTTPException(status_code=404, detail=ErrorCode.TRACE_NOT_FOUND)
-        return ok(_trace_json(trace))
+        payload = _trace_json(trace)
+        # 深連結：有捕捉到 Opik trace id 且設了 URL 才組得出；否則空字串，前端據此隱藏連結。
+        payload["opik_url"] = tracing.opik_trace_url(trace.opik_trace_id, opik_url_override)
+        return ok(payload)
 
     @router.get("/rag/status", dependencies=[Depends(require_admin)])
     def rag_status() -> dict:
