@@ -197,6 +197,12 @@ def reflect_days(
         max_strategies=max_strategies,
         adopted_ids={row.strategy_id for row in adopted},
     )
+    # 過濾後真正採納的守則攤在本層 span（raw LLM I/O 已在 wrap_genai 子 span）。
+    tracing.set_current_span_io(
+        span_output={
+            "strategies": [{"category": c.category, "content": c.content} for c in accepted]
+        }
+    )
     for candidate, reason in [*forged, *rejected]:
         # 逐條記錄、理由原文照登：理由字串本身就是拒絕分類（醫療攔截／輕蔑攔截／結構
         # 驗證／證據不足／證據捏造／撞上限），聚合成一句就失去可分類統計的價值。

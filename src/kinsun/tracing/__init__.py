@@ -9,6 +9,8 @@ from __future__ import annotations
 from kinsun.tracing.client import configure, is_enabled
 from kinsun.tracing.decorators import (
     log_feedback_score,
+    set_current_span_io,
+    set_current_trace_io,
     tag_current_trace,
     track,
     update_trace_metadata,
@@ -19,6 +21,8 @@ __all__ = [
     "configure",
     "is_enabled",
     "log_feedback_score",
+    "set_current_span_io",
+    "set_current_trace_io",
     "tag_current_trace",
     "track",
     "update_trace_metadata",

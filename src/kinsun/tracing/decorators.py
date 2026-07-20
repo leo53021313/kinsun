@@ -88,3 +88,50 @@ def log_feedback_score(name, value, *, reason="") -> None:
         )
     except Exception:  # noqa: BLE001 - 觀測失敗絕不中斷對話
         logger.warning("Opik feedback 掛載失敗 name=%s", name)
+
+
+def set_current_trace_io(*, user_input: str = "", assistant_output: str = "") -> None:
+    """把該輪的長輩原話與金孫回覆寫進當前 trace 的 input/output，讓 Opik Threads
+    視圖顯示實際對話（First／Last message）；停用/失敗 no-op。
+
+    刻意獨立於 @track 的 capture_input/output——那會連 audio bytes 與內部物件一起吞；
+    這裡只寫乾淨文字。空字串者略過（如靜音誤觸沒有可顯示的原話）。update_current_trace
+    對 input/output 是合併寫入、對 None 略過，故與既有的 metadata/thread 標記互不覆蓋。
+    """
+    if not is_enabled():
+        return
+    try:
+        from opik import opik_context
+
+        payload: dict = {}
+        if user_input:
+            payload["input"] = {"text": user_input}
+        if assistant_output:
+            payload["output"] = {"text": assistant_output}
+        if payload:
+            opik_context.update_current_trace(**payload)
+    except Exception:  # noqa: BLE001 - 觀測失敗絕不中斷對話
+        logger.warning("Opik trace I/O 寫入失敗")
+
+
+def set_current_span_io(*, span_input=None, span_output=None) -> None:
+    """把乾淨內容寫進當前 span（非 trace）的 input/output；停用/失敗 no-op。
+
+    用於巢狀在 root 下的子流程（記憶寫入／每日摘要／每晚反思）——這些函式的參數多為
+    store/client 物件（含 self），不能用 @track 的 capture_input/output（會吞內部物件、
+    甚至 api_key／連線池），故在算出乾淨文字的點明確寫入本層 span。None 者略過。
+    """
+    if not is_enabled():
+        return
+    try:
+        from opik import opik_context
+
+        payload: dict = {}
+        if span_input is not None:
+            payload["input"] = span_input
+        if span_output is not None:
+            payload["output"] = span_output
+        if payload:
+            opik_context.update_current_span(**payload)
+    except Exception:  # noqa: BLE001 - 觀測失敗絕不中斷對話
+        logger.warning("Opik span I/O 寫入失敗")

@@ -119,6 +119,24 @@ def test_a_valid_candidate_is_adopted_straight_away():
     assert [(r.content, r.observed_days) for r in rows] == [("早上七點半再問候", 3)]
 
 
+def test_reflection_writes_accepted_strategies_to_span_io(monkeypatch):
+    """過濾後採納的守則攤在 span output，供 Opik 檢視反思成品。"""
+    from kinsun import tracing
+
+    calls: list[dict] = []
+    monkeypatch.setattr(tracing, "set_current_span_io", lambda **kw: calls.append(kw))
+    _run(_one_candidate())
+    assert calls == [
+        {
+            "span_output": {
+                "strategies": [
+                    {"category": STRATEGY_CATEGORY_ROUTINE, "content": "早上七點半再問候"}
+                ]
+            }
+        }
+    ]
+
+
 def test_reflection_requests_structured_output():
     """反思走受控生成（response_schema），減少格式故障導致整批丟棄的空轉夜。"""
     from kinsun.strategies.reflection import _REFLECTION_SCHEMA
