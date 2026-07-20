@@ -38,7 +38,7 @@ def test_prompt_only_offers_three_tiers():
 
 
 class _BoomLLM:
-    def generate(self, *, system_prompt: str, messages: list[Message]) -> str:
+    def generate(self, *, system_prompt: str, messages: list[Message], response_schema=None) -> str:
         raise LLMError("boom")
 
 
@@ -49,7 +49,7 @@ def test_classifier_failsafe_on_llm_error():
 
 
 class _StubLLM:
-    def generate(self, *, system_prompt: str, messages: list[Message]) -> str:
+    def generate(self, *, system_prompt: str, messages: list[Message], response_schema=None) -> str:
         return '{"tier": 1, "confidence": 0.3, "reason": "情緒低落"}'
 
 
@@ -57,3 +57,18 @@ def test_classifier_returns_parsed():
     a = LlmRiskClassifier(_StubLLM()).classify("我好孤單")
     assert a.tier == RiskTier.L1
     assert a.reason == "情緒低落"
+
+
+def test_classify_requests_structured_output():
+    """危急分級走受控生成（response_schema），降低格式故障導致的 L0 假陰性。"""
+    from kinsun.safety.classifier import _CLASSIFY_SCHEMA
+
+    captured = {}
+
+    class _CapturingLLM:
+        def generate(self, *, system_prompt, messages, response_schema=None):
+            captured["schema"] = response_schema
+            return '{"tier": 0, "confidence": 0.1, "reason": "ok"}'
+
+    LlmRiskClassifier(_CapturingLLM()).classify("你好")
+    assert captured["schema"] == _CLASSIFY_SCHEMA

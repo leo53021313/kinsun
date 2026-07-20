@@ -97,6 +97,7 @@ def _client(
     deliveries=None,
     rag_releases=None,
     rag_content_policy="allowed_only",
+    opik_url_override="",
 ):
     app = FastAPI()
     app.include_router(
@@ -114,6 +115,7 @@ def _client(
             deliveries=deliveries or FakeRiskNotificationLogStore(),
             rag_releases=rag_releases,
             rag_content_policy=rag_content_policy,
+            opik_url_override=opik_url_override,
         ),
         prefix="/api/v1/admin",
     )
@@ -306,6 +308,48 @@ def test_trace_detail_and_404():
     assert body["rag_calls"] == []
     missing = _client(traces).get("/api/v1/admin/traces/nope", headers=_auth())
     assert missing.status_code == 404
+
+
+def test_trace_detail_includes_opik_deeplink():
+    """有捕捉到 Opik trace id ＋ 設了 URL：詳情回傳直達 Opik 的深連結。"""
+    traces = FakeTraceStore()
+    traces.now = TODAY_TS
+    traces.record_reply(
+        trace_id="t1",
+        external_id="U1",
+        kind="text",
+        status="ok",
+        latency_ms=5,
+        round_trip_ms=None,
+        audio_url="",
+        opik_trace_id="opik-abc",
+    )
+    res = _client(traces, opik_url_override="http://localhost:5273/api").get(
+        "/api/v1/admin/traces/t1", headers=_auth()
+    )
+    assert res.status_code == 200
+    url = res.json()["data"]["opik_url"]
+    assert "trace_id=opik-abc" in url
+    assert "redirect/projects" in url
+
+
+def test_trace_detail_opik_url_empty_without_captured_id():
+    """沒捕捉到 Opik trace id（如工程觀測停用）：opik_url 為空，前端據此隱藏連結。"""
+    traces = FakeTraceStore()
+    traces.now = TODAY_TS
+    traces.record_reply(
+        trace_id="t1",
+        external_id="U1",
+        kind="text",
+        status="ok",
+        latency_ms=5,
+        round_trip_ms=None,
+        audio_url="",
+    )
+    res = _client(traces, opik_url_override="http://localhost:5273/api").get(
+        "/api/v1/admin/traces/t1", headers=_auth()
+    )
+    assert res.json()["data"]["opik_url"] == ""
 
 
 def test_rag_status_warns_when_no_release_store_is_configured():

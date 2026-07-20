@@ -258,6 +258,9 @@ class CareAgent:
                     context=ToolInvocationContext("", elder_id, False),
                 )
         reply = _speakable(reply)
+        # 主動開場的回覆寫進 trace output，Opik Threads 才顯示這則主動訊息；長輩沒開口，
+        # 故不寫 input（問候 vs 失聯關心由 job root 名區分，不需塞進 I/O）。
+        tracing.set_current_trace_io(assistant_output=reply)
         # 留存的記憶帶主動關懷標記（✅ D-39 丙-8）：隔日 recall 看得懂這輪是系統
         # 主動開場，不是長輩憑空收到回覆；送給長輩的 reply 本身不帶標記。
         self._session.record_turn(elder_id, Message("assistant", f"【主動關懷｜{intent}】{reply}"))

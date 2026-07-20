@@ -119,6 +119,7 @@ class TraceStore(Protocol):
         latency_ms: int,
         round_trip_ms: int | None = None,
         audio_url: str,
+        opik_trace_id: str = "",
     ) -> None: ...
     def get_trace(self, trace_id: str) -> Trace | None: ...
     def list_feed(
@@ -317,11 +318,12 @@ class PgTraceStore:
         latency_ms: int,
         round_trip_ms: int | None = None,
         audio_url: str,
+        opik_trace_id: str = "",
     ) -> None:
         self._db.execute(
             "INSERT INTO replies (reply_id, trace_id, external_id, channel, kind, status, "
-            "latency_ms, round_trip_ms, audio_url, created_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "latency_ms, round_trip_ms, audio_url, created_at, opik_trace_id) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 self._new_id(),
                 trace_id,
@@ -333,6 +335,7 @@ class PgTraceStore:
                 round_trip_ms,
                 audio_url,
                 self._now(),
+                opik_trace_id,
             ),
         )
 
@@ -369,7 +372,7 @@ class PgTraceStore:
         )
         reply_row = self._db.query_one(
             "SELECT reply_id, trace_id, external_id, channel, kind, status, latency_ms, "
-            "round_trip_ms, audio_url, created_at FROM replies WHERE trace_id = %s "
+            "round_trip_ms, audio_url, created_at, opik_trace_id FROM replies WHERE trace_id = %s "
             "ORDER BY created_at LIMIT 1",
             (trace_id,),
         )
@@ -412,6 +415,7 @@ class PgTraceStore:
             reply=reply,
             risk_events=risk_events,
             elder_name=name_row[0] if name_row else "",
+            opik_trace_id=reply.opik_trace_id if reply else "",
         )
 
     def list_feed(self, *, after: float, before: float | None = None, limit: int) -> list[FeedItem]:
@@ -790,6 +794,7 @@ class FakeTraceStore:
         latency_ms: int,
         round_trip_ms: int | None = None,
         audio_url: str,
+        opik_trace_id: str = "",
     ) -> None:
         self.replies.append(
             Reply(
@@ -803,6 +808,7 @@ class FakeTraceStore:
                 round_trip_ms,
                 audio_url,
                 self.now,
+                opik_trace_id,
             )
         )
 
@@ -838,6 +844,7 @@ class FakeTraceStore:
             reply,
             risk_events,
             elder_name,
+            reply.opik_trace_id if reply else "",
         )
 
     def list_feed(self, *, after: float, before: float | None = None, limit: int) -> list[FeedItem]:

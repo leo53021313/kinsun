@@ -339,6 +339,7 @@ OBSERVABILITY_TABLES_DDL = (
     "channel TEXT NOT NULL DEFAULT '', "
     "kind TEXT NOT NULL, status TEXT NOT NULL, latency_ms INTEGER NOT NULL, "
     "round_trip_ms INTEGER, audio_url TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+    "ALTER TABLE replies ADD COLUMN IF NOT EXISTS opik_trace_id TEXT NOT NULL DEFAULT '';"
     "CREATE TABLE IF NOT EXISTS rag_calls ("
     "rag_call_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, elder_id TEXT NOT NULL, "
     "query TEXT NOT NULL, index_version TEXT NOT NULL, status TEXT NOT NULL, "

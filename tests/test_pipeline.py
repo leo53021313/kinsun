@@ -188,6 +188,28 @@ def test_pipeline_sets_transcript_from_asr():
     assert result.transcript == "阿公早安"
 
 
+def test_pipeline_writes_trace_io_for_thread_view(monkeypatch):
+    """對話輪次把原話＋回覆寫進 trace I/O，Opik Threads 才顯示 First／Last message。"""
+    from kinsun import tracing
+
+    calls: list[dict] = []
+    monkeypatch.setattr(tracing, "set_current_trace_io", lambda **kw: calls.append(kw))
+    result = _pipeline(StubDetector(RiskTier.L0), SpyNotifier()).process_text(
+        "我今天很好", elder_id="u1"
+    )
+    assert calls == [{"user_input": "我今天很好", "assistant_output": result.text}]
+
+
+def test_pipeline_writes_trace_io_on_empty_speech_fallback(monkeypatch):
+    """靜音誤觸走回退話術：thread 仍顯示回覆，空原話不寫 input（由 helper 略過）。"""
+    from kinsun import tracing
+
+    calls: list[dict] = []
+    monkeypatch.setattr(tracing, "set_current_trace_io", lambda **kw: calls.append(kw))
+    _pipeline(StubDetector(RiskTier.L0), SpyNotifier()).process_text("", elder_id="u1")
+    assert calls == [{"user_input": "", "assistant_output": FALLBACK_REPLY}]
+
+
 class BoomLLM:
     def generate(self, *, system_prompt: str, messages: list[Message]) -> str:
         raise LLMError("模型掛了")

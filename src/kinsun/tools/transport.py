@@ -16,9 +16,9 @@ from collections.abc import Callable
 
 from kinsun.llm import ToolSpec
 from kinsun.transport import (
+    HttpxTransport,
     Transport,
     TransportError,
-    UrllibTransport,
     get_json,
     read_json,
 )
@@ -156,7 +156,7 @@ def _tdx_get(http: Transport, url: str, token: str) -> object:
 
 
 def build_route_handler(transport: Transport | None = None) -> Callable[[dict], str]:
-    http = transport or UrllibTransport()
+    http = transport or HttpxTransport()
 
     def handler(args: dict) -> str:
         destination = (args.get("destination") or "").strip()
@@ -194,7 +194,7 @@ def build_route_handler(transport: Transport | None = None) -> Callable[[dict], 
 def build_bus_arrival_handler(
     client_id: str, client_secret: str, transport: Transport | None = None
 ) -> Callable[[dict], str]:
-    http = transport or UrllibTransport()
+    http = transport or HttpxTransport()
 
     def handler(args: dict) -> str:
         route_name = (args.get("route_name") or "").strip()
@@ -223,7 +223,7 @@ def build_bus_arrival_handler(
 def build_mrt_line_handler(
     client_id: str, client_secret: str, transport: Transport | None = None
 ) -> Callable[[dict], str]:
-    http = transport or UrllibTransport()
+    http = transport or HttpxTransport()
 
     def handler(args: dict) -> str:
         station_name = (args.get("station_name") or "").strip()
@@ -250,7 +250,7 @@ def build_mrt_line_handler(
 def build_parking_handler(
     client_id: str, client_secret: str, transport: Transport | None = None
 ) -> Callable[[dict], str]:
-    http = transport or UrllibTransport()
+    http = transport or HttpxTransport()
 
     def handler(args: dict) -> str:
         city = _city_code(args.get("city"))

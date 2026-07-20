@@ -1,18 +1,17 @@
 """傳輸層單元測試：get_json／read_json 用 FakeTransport（離線），
-UrllibTransport 的 urllib 整合則就地 monkeypatch urlopen（測 adapter 本身）。
+HttpxTransport 的 httpx 整合則以 httpx.MockTransport 注入假回應（測 adapter 本身）。
 """
 
 from __future__ import annotations
 
-import urllib.error
-
+import httpx
 import pytest
 
 from kinsun.transport import (
     FakeTransport,
+    HttpxTransport,
     Response,
     TransportError,
-    UrllibTransport,
     get_json,
     header_value,
     read_json,
@@ -59,50 +58,42 @@ def test_fake_transport_handler_dispatches_on_request():
     assert transport.request("GET", "http://x", timeout=5).body == b"GET"
 
 
-class _FakeHttpResponse:
-    def __init__(self, status: int, headers: dict, body: bytes) -> None:
-        self.status = status
-        self.headers = _FakeHeaders(headers)
-        self._body = body
-
-    def read(self) -> bytes:
-        return self._body
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
+def _mock_client(handler) -> httpx.Client:
+    """建一個以 httpx.MockTransport 攔截請求的 client，供 adapter 測試注入。"""
+    return httpx.Client(transport=httpx.MockTransport(handler))
 
 
-class _FakeHeaders:
-    def __init__(self, headers: dict) -> None:
-        self._headers = headers
-
-    def items(self):
-        return self._headers.items()
-
-
-def test_urllib_transport_returns_response(monkeypatch):
+def test_httpx_transport_returns_response():
     captured = {}
 
-    def fake_urlopen(request, timeout):
-        captured["method"] = request.get_method()
-        captured["timeout"] = timeout
-        return _FakeHttpResponse(200, {"X-Duration-Ms": "42"}, b"audio-bytes")
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["content"] = request.content
+        return httpx.Response(200, headers={"X-Duration-Ms": "42"}, content=b"audio-bytes")
 
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    resp = UrllibTransport().request("POST", "http://dgx/x", data=b"payload", timeout=8)
+    resp = HttpxTransport(client=_mock_client(handler)).request(
+        "POST", "http://dgx/x", data=b"payload", timeout=8
+    )
     assert resp.status == 200
-    assert resp.headers["X-Duration-Ms"] == "42"
+    # httpx 將標頭名正規化為小寫（與真實線路一致）；讀取端一律走大小寫不敏感的 header_value。
+    assert header_value(resp, "X-Duration-Ms") == "42"
     assert resp.body == b"audio-bytes"
-    assert captured == {"method": "POST", "timeout": 8}
+    assert captured == {"method": "POST", "content": b"payload"}
 
 
-def test_urllib_transport_wraps_urlerror(monkeypatch):
-    def fake_urlopen(request, timeout):
-        raise urllib.error.URLError("refused")
+def test_httpx_transport_wraps_connection_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
 
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
     with pytest.raises(TransportError):
-        UrllibTransport().request("GET", "http://dgx/x", timeout=8)
+        HttpxTransport(client=_mock_client(handler)).request("GET", "http://dgx/x", timeout=8)
+
+
+def test_httpx_transport_wraps_non_2xx_status():
+    """非 2xx 一律翻成 TransportError（對齊原 urllib 版對 4xx/5xx 拋 HTTPError 的行為）。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, content=b"not found")
+
+    with pytest.raises(TransportError):
+        HttpxTransport(client=_mock_client(handler)).request("GET", "http://dgx/x", timeout=8)

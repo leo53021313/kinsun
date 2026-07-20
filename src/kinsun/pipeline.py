@@ -119,6 +119,7 @@ class VoicePipeline:
         # 該進記憶，直接以回退話術（仍走 TTS）請長輩再說一次。
         if not _has_recognizable_speech(user_text):
             tracing.update_trace_metadata(fallback="empty_speech")
+            tracing.set_current_trace_io(user_input=user_text, assistant_output=FALLBACK_REPLY)
             result = self._synthesize(
                 FALLBACK_REPLY, external_id=external_id, channel=channel, trace_id=trace_id
             )
@@ -150,6 +151,8 @@ class VoicePipeline:
             trace_id=trace_id,
             has_risk_signal=assessment.tier >= RiskTier.L1,
         )
+        # 對話原話＋回覆寫進 trace I/O，Opik Threads 才顯示 First／Last message。
+        tracing.set_current_trace_io(user_input=user_text, assistant_output=reply_text)
         result = self._synthesize(
             reply_text, external_id=external_id, channel=channel, trace_id=trace_id
         )
