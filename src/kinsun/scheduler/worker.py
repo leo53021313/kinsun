@@ -25,6 +25,11 @@ from kinsun.medications.jobs import build_medication_slot_job
 from kinsun.medications.models import MedicationSlot
 from kinsun.memory.longterm.consolidation import run_consolidation
 from kinsun.memory.longterm.consolidation_log import PgConsolidationLogStore
+from kinsun.news.fetchers.mohw import MohwNewsFetcher
+from kinsun.news.fetchers.news_api import NewsApiFetcher
+from kinsun.news.fetchers.protocol import NewsFetcher
+from kinsun.news.jobs import build_news_cleanup_job, build_news_crawl_job
+from kinsun.news.models import NewsItem
 from kinsun.observability.jobs import build_observability_cleanup_job
 from kinsun.proactive.greeting_time import update_greeting_time
 from kinsun.proactive.jobs import (
@@ -72,6 +77,8 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
     strategies = core.strategies
     # 問候偏好：夜間批次（run_one 第四步）寫、問候 job 讀，同一個 store。
     greeting_prefs = core.greeting_prefs
+    # 話題新聞（spec 2026-07-20）：爬取／清除 job 寫、問候 job 讀，同一個 store。
+    news = core.news
     # 整理進度標記（✅ 庚-06／庚-13）：逐日補齊＋冪等，避免停機漏天與重覆寫入。
     consolidation_log = PgConsolidationLogStore(db, clock=clock)
 
@@ -192,11 +199,23 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
         # 主動推播補記 reminder_logs（純觀測，失敗不影響推播）。
         safe_record(reminder_logs.record, elder_id, kind, content)
 
+    def _recent_news() -> list[NewsItem]:
+        """近一天內爬到的新聞，當開場話題素材；讀取失敗降級為無新聞，不擋問候。"""
+        try:
+            return news.list_recent(since=clock().timestamp() - 86400)
+        except Exception:  # noqa: BLE001 - 新聞是錦上添花，不可擋下問候
+            logger.warning("話題新聞讀取失敗，改用無新聞問候")
+            return []
+
     def greet_one(elder_id: str) -> None:
         # ledger=True：問候的冪等靠 greeted_today 讀這張表，記帳因此是安全關鍵。
-        # intent 織入今天的日期（2026-07-17 問候多樣性）：固定 intent 天天產出同一句。
+        # intent 織入今天的日期（2026-07-17 問候多樣性）與近期新聞（2026-07-20）：
+        # 固定 intent 天天產出同一句。
         _push_to_elder(
-            elder_id, greeting_intent(clock()), REMINDER_KIND_PROACTIVE_GREETING, ledger=True
+            elder_id,
+            greeting_intent(clock(), recent_news=_recent_news()),
+            REMINDER_KIND_PROACTIVE_GREETING,
+            ledger=True,
         )
 
     def care_one(elder_id: str) -> None:
@@ -306,6 +325,29 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
                 name="inbound-audio-cleanup",
             )
         )
+    # 話題新聞（spec 2026-07-20）：衛福部來源免金鑰、一律註冊；News API 需要
+    # NEWS_API_KEY，留空＝優雅降級（少一個新聞來源，衛福部照常爬）。跑在夜間批次
+    # 同一個鐘點、錯開分鐘，讓早上問候時已有當天的新聞可用。
+    news_fetchers: list[NewsFetcher] = [MohwNewsFetcher(clock=clock)]
+    if settings.news_api_key:
+        news_fetchers.append(NewsApiFetcher(api_key=settings.news_api_key, clock=clock))
+    jobs.append(
+        build_news_crawl_job(
+            fetchers=news_fetchers,
+            store=news,
+            hour=settings.longterm_consolidation_hour,
+            minute=15,
+        )
+    )
+    jobs.append(
+        build_news_cleanup_job(
+            purge=lambda: news.purge_older_than(
+                clock().timestamp() - settings.news_retention_days * 86400
+            ),
+            hour=settings.longterm_consolidation_hour,
+            minute=50,
+        )
+    )
     return jobs
 
 

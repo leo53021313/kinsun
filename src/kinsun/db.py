@@ -255,6 +255,17 @@ WEB_SEARCH_LOOKUPS_DDL = (
     "ON web_search_lookups (created_at);"
 )
 
+# 話題新聞（spec 2026-07-20）：爬來的新聞暫存，供 proactive 問候當開場話題，
+# 過期由排程清除（見 news/jobs.py）。news_item_id 為決定性 id（source_id＋url 雜湊，
+# 見 news/fetchers/_ids.py），同一篇文章重複爬到會 upsert 而非重複插入。
+NEWS_ITEMS_DDL = (
+    "CREATE TABLE IF NOT EXISTS news_items ("
+    "news_item_id TEXT PRIMARY KEY, source_id TEXT NOT NULL, title TEXT NOT NULL, "
+    "url TEXT NOT NULL, publisher TEXT NOT NULL, content TEXT NOT NULL, "
+    "published_at DOUBLE PRECISION, retrieved_at DOUBLE PRECISION NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS idx_news_items_retrieved ON news_items (retrieved_at);"
+)
+
 # 觀測五表以 external_id＋channel 記來源（✅ 庚-07／A-8）：欄位承載任一通道的外部
 # 識別碼（非僅 LINE），故正名為 external_id 並加 channel 標明來源通道。
 #
@@ -403,6 +414,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(WEB_SEARCH_LOOKUPS_DDL)
         conn.execute(MEMORY_CONSOLIDATIONS_DDL)
         conn.execute(CONVERSATION_SUMMARIES_DDL)
+        conn.execute(NEWS_ITEMS_DDL)
         # 三段順序不可調換：建表（既有庫 no-op）→ 舊欄改名／補 channel → 建索引。
         # 索引引用 external_id，既有庫要先改完名才建得起來。
         conn.execute(OBSERVABILITY_TABLES_DDL)

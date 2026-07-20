@@ -113,6 +113,8 @@ class Settings:
     proactive_greeting_latest_hour: int
     proactive_greeting_max_shift_minutes: int
     proactive_greeting_lag_tolerance_minutes: int
+    news_retention_days: int
+    news_api_key: str
 
 
 # 讀成 False 的值。`off` 與空值（含純空白）必須在列：布林旗標裡有緊急關閉開關
@@ -349,4 +351,8 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         # 600 ＝ 七天 × 每天約 85 輪：涵蓋絕大多數長輩的整個回顧窗，token 成本仍可控
         # （約 3～6 萬 token）。超量時丟的是最舊的輪次，並記 warning。
         reflection_max_turns=_require_positive_int(env, "REFLECTION_MAX_TURNS", "600"),
+        # 話題新聞保留天數（spec 2026-07-20），逾期由排程清除；模式與 ADMIN_RETENTION_DAYS 相同。
+        news_retention_days=_require_positive_int(env, "NEWS_RETENTION_DAYS", "14"),
+        # News API（newsapi.org）金鑰；留空＝不註冊該新聞來源（優雅降級，僅剩衛福部來源）。
+        news_api_key=env.get("NEWS_API_KEY", ""),
     )
