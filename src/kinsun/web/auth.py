@@ -5,7 +5,7 @@ from __future__ import annotations
 import urllib.parse
 from typing import NamedTuple, Protocol
 
-from kinsun.transport import Transport, TransportError, UrllibTransport, read_json
+from kinsun.transport import HttpxTransport, Transport, TransportError, read_json
 
 _VERIFY_URL = "https://api.line.me/oauth2/v2.1/verify"
 
@@ -34,7 +34,7 @@ class LineIdTokenVerifier:
     ) -> None:
         self._channel_id = channel_id
         self._timeout = timeout
-        self._transport = transport or UrllibTransport()
+        self._transport = transport or HttpxTransport()
 
     def verify(self, id_token: str) -> LineIdentity:
         data = urllib.parse.urlencode(

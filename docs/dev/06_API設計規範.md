@@ -1,6 +1,6 @@
 # API 設計規範 - 金孫 KinSun
 
-> **版本:** v1.2 | **更新:** 2026-07-17 | **狀態:** ✅ 定稿（契約已拍板 D-23～D-29；/v1 已全面落地）
+> **版本:** v1.3 | **更新:** 2026-07-20 | **狀態:** ✅ 定稿（契約已拍板 D-23～D-29；/v1 已全面落地；`traces/{trace_id}` 回應加 `opik_url` 深連結）
 > **基準:** as-is（現行 22 端點實證）＋ to-be（/v1 契約）。命名規則以 AGENTS.md 為準。
 > DGX 服務認證與速率限制 → 13_安全循環；`admin api disabled` 503 措辭一併列 13。
 
@@ -149,7 +149,7 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 
 | as-is | to-be | 說明 |
 | :--- | :--- | :--- |
-| `GET /api/admin/overview`／`elders`／`messages`／`elders/{elder_id}/timeline`／`traces/{trace_id}` | 同路徑掛 `/api/v1/admin/` | messages 加 `before` 回翻（D-29） |
+| `GET /api/admin/overview`／`elders`／`messages`／`elders/{elder_id}/timeline`／`traces/{trace_id}` | 同路徑掛 `/api/v1/admin/` | messages 加 `before` 回翻（D-29）；`traces/{trace_id}` 回應加 `opik_url`（工程觀測開啟且捕捉到 Opik trace id 時＝直達 Opik 的深連結，否則空字串，前端據此隱藏連結）|
 | —（新增） | `GET /api/v1/admin/elders/{elder_id}/reminders`／`memory`／`account`／`risk-notifications`、`GET /api/v1/admin/jobs` | 內測基礎建設（spec 2026-07-12）：長輩詳情四分頁＋排程狀態，唯讀、`X-Admin-Key` 守門 |
 | —（新增） | `POST /api/v1/admin/jobs/{job_name}/run`、`POST /api/v1/admin/elders/{elder_id}/reminders/dispatch` | 內測手動觸發（spec 2026-07-12）：需 `X-Admin-Key`＋`INTERNAL_TESTING_ENABLED=true`（否則 403 `internal_testing_disabled`）；RPC 動作式路徑為 admin 內部工具刻意例外；不寫 `scheduler_state` |
 | —（新增） | `GET /api/v1/meta` | 公開端點（無認證）：回 `{internal_testing: bool}` 供 App／admin 前端決定內測功能顯示（spec 2026-07-12） |

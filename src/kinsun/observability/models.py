@@ -89,6 +89,8 @@ class Reply:
     round_trip_ms: int | None
     audio_url: str
     created_at: float
+    # 對應的 Opik trace id（工程觀測開啟時填；供後台深連結直達 Opik）。空＝未啟用/未捕捉。
+    opik_trace_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -113,6 +115,8 @@ class Trace:
     reply: Reply | None
     risk_events: list[TraceRiskEvent]
     elder_name: str = ""  # 經 channel_bindings 解析的長輩姓名；查無時空字串
+    # 對應的 Opik trace id（由 reply 帶出）；供後台深連結直達 Opik，空＝無。
+    opik_trace_id: str = ""
 
 
 @dataclass(frozen=True)

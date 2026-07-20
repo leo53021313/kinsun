@@ -41,10 +41,12 @@ class FakeReflector:
         self.reply = reply
         self.system_prompt = ""
         self.messages: list[Message] = []
+        self.response_schema = None
 
-    def generate(self, *, system_prompt: str, messages: list[Message]) -> str:
+    def generate(self, *, system_prompt: str, messages: list[Message], response_schema=None) -> str:
         self.system_prompt = system_prompt
         self.messages = messages
+        self.response_schema = response_schema
         return self.reply
 
 
@@ -115,6 +117,32 @@ def test_a_valid_candidate_is_adopted_straight_away():
     strategies, _ = _run(_one_candidate())
     rows = strategies.list_for_elder("e1", status=STRATEGY_STATUS_ADOPTED)
     assert [(r.content, r.observed_days) for r in rows] == [("早上七點半再問候", 3)]
+
+
+def test_reflection_writes_accepted_strategies_to_span_io(monkeypatch):
+    """過濾後採納的守則攤在 span output，供 Opik 檢視反思成品。"""
+    from kinsun import tracing
+
+    calls: list[dict] = []
+    monkeypatch.setattr(tracing, "set_current_span_io", lambda **kw: calls.append(kw))
+    _run(_one_candidate())
+    assert calls == [
+        {
+            "span_output": {
+                "strategies": [
+                    {"category": STRATEGY_CATEGORY_ROUTINE, "content": "早上七點半再問候"}
+                ]
+            }
+        }
+    ]
+
+
+def test_reflection_requests_structured_output():
+    """反思走受控生成（response_schema），減少格式故障導致整批丟棄的空轉夜。"""
+    from kinsun.strategies.reflection import _REFLECTION_SCHEMA
+
+    _, reflector = _run(_one_candidate())
+    assert reflector.response_schema == _REFLECTION_SCHEMA
 
 
 def test_malformed_json_writes_nothing():

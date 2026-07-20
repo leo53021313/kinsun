@@ -80,6 +80,16 @@ def test_proactive_composes_with_memory_and_writes_back():
     ]
 
 
+def test_proactive_writes_reply_to_trace_output(monkeypatch):
+    """主動問候把回覆寫進 trace output，Opik Threads 才顯示這則主動訊息（不寫 input）。"""
+    from kinsun import tracing
+
+    calls: list[dict] = []
+    monkeypatch.setattr(tracing, "set_current_trace_io", lambda **kw: calls.append(kw))
+    reply = CareAgent(SpyLLM(), SpySession()).proactive("u1", "早安問候")
+    assert calls == [{"assistant_output": reply}]
+
+
 def test_proactive_recalls_with_given_query_instead_of_intent():
     """檢索關鍵字改用昨天摘要（spec 2026-07-17-主動問候接續昨天話題）。
 

@@ -200,6 +200,8 @@ def _record_reply(
     latency_ms = int((ended - started) * 1000)
     # 往返延遲（✅ D-05 戊-2）：通道收件 → 回覆送達的端到端耗時；起點未知記 NULL。
     round_trip_ms = int((ended - msg.received_at) * 1000) if msg.received_at else None
+    # 在 care_conversation trace context 內抓 Opik trace id 存下，供後台深連結（停用回空字串）。
+    opik_trace_id = tracing.current_opik_trace_id()
     safe_record(
         lambda: traces.record_reply(
             trace_id=msg.trace_id,
@@ -210,5 +212,6 @@ def _record_reply(
             latency_ms=latency_ms,
             round_trip_ms=round_trip_ms,
             audio_url=outcome.audio_url,
+            opik_trace_id=opik_trace_id,
         )
     )
