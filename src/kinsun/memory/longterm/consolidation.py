@@ -29,8 +29,9 @@ from kinsun.memory.shortterm import MemoryStore
 _DAY_SECONDS = 86400.0  # 台灣無日光節約時間，一天固定 86400 秒。
 
 
+# capture_output=True：回傳的整理筆數（int）是乾淨值；input 仍關（參數含 store/client）。
 @tracing.track(
-    name="memory_consolidation", type="general", capture_input=False, capture_output=False
+    name="memory_consolidation", type="general", capture_input=False, capture_output=True
 )
 def run_consolidation(
     elder_id: str,

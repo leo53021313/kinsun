@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from typing import Protocol
 
-from kinsun.transport import Transport, TransportError, UrllibTransport, header_value
+from kinsun.transport import HttpxTransport, Transport, TransportError, header_value
 
 
 class TTSError(Exception):
@@ -46,7 +46,7 @@ class DgxTtsClient:
         self._endpoint = endpoint
         self._timeout = timeout
         self._api_key = api_key
-        self._transport = transport or UrllibTransport()
+        self._transport = transport or HttpxTransport()
 
     def synthesize(self, text: str) -> TtsResult:
         body = json.dumps({"text": text}, ensure_ascii=False).encode("utf-8")

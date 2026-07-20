@@ -186,6 +186,7 @@ def test_get_trace_with_only_reply_still_bundles(store, ns):
         latency_ms=10,
         round_trip_ms=None,
         audio_url="",
+        opik_trace_id="opik-xyz",
     )
     trace = store.get_trace(trace_id)
     assert trace is not None
@@ -197,3 +198,6 @@ def test_get_trace_with_only_reply_still_bundles(store, ns):
     assert trace.tts_call is None
     assert trace.reply is not None
     assert trace.reply.kind == "text"
+    # Opik trace id 隨 reply 落庫、由 get_trace 帶到 Trace 頂層（後台深連結用）。
+    assert trace.reply.opik_trace_id == "opik-xyz"
+    assert trace.opik_trace_id == "opik-xyz"

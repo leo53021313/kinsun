@@ -18,6 +18,8 @@ from datetime import date, datetime
 from html import unescape
 from html.parser import HTMLParser
 
+from tenacity import RetryError, Retrying, stop_after_attempt, wait_fixed
+
 from kinsun.rag.schemas import Source
 from kinsun.rag.text_cleaner import clean_text
 
@@ -288,28 +290,34 @@ class HealthEducationCrawler:
         return CrawlResult(source.source_id, tuple(pages), tuple(skipped), tuple(failed))
 
     def _fetch(self, url: str) -> FetchedPage:
-        last_error: Exception | None = None
-        for _ in range(self._config.retries + 1):
-            try:
-                request = urllib.request.Request(
-                    url,
-                    headers={"User-Agent": self._config.user_agent},
-                    method="GET",
+        def _once() -> FetchedPage:
+            request = urllib.request.Request(
+                url,
+                headers={"User-Agent": self._config.user_agent},
+                method="GET",
+            )
+            with urllib.request.urlopen(  # noqa: S310 - URL 已由 source allowlist 限制
+                request,
+                timeout=self._config.timeout_seconds,
+            ) as response:
+                return FetchedPage(
+                    url=response.geturl(),
+                    content_type=response.headers.get("Content-Type", ""),
+                    body=response.read(),
+                    fetched_at=datetime.now(),
                 )
-                with urllib.request.urlopen(  # noqa: S310 - URL 已由 source allowlist 限制
-                    request,
-                    timeout=self._config.timeout_seconds,
-                ) as response:
-                    return FetchedPage(
-                        url=response.geturl(),
-                        content_type=response.headers.get("Content-Type", ""),
-                        body=response.read(),
-                        fetched_at=datetime.now(),
-                    )
-            except Exception as exc:  # noqa: BLE001 - 重試後統一拋出
-                last_error = exc
-                self._sleep(self._config.delay_seconds)
-        raise RuntimeError(last_error or "fetch failed")
+
+        # 固定間隔重試 retries+1 次；重試間睡 delay_seconds（走注入的 self._sleep 供測試斷言）。
+        # 耗盡後把最後一個錯誤統一翻成 RuntimeError，維持單頁失敗不中斷整批的既有語意。
+        try:
+            return Retrying(
+                stop=stop_after_attempt(self._config.retries + 1),
+                wait=wait_fixed(self._config.delay_seconds),
+                sleep=self._sleep,
+                reraise=False,
+            )(_once)
+        except RetryError as exc:
+            raise RuntimeError(exc.last_attempt.exception() or "fetch failed") from exc
 
 
 def _clean_inline(text: str) -> str:

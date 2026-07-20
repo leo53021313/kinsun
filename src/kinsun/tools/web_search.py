@@ -21,7 +21,7 @@ from kinsun.tools.lookups import (
     WebSearchLookupStore,
     safe_record,
 )
-from kinsun.transport import Transport, TransportError, UrllibTransport, read_json
+from kinsun.transport import HttpxTransport, Transport, TransportError, read_json
 
 logger = logging.getLogger("kinsun.tools.web_search")
 
@@ -110,7 +110,7 @@ def build_web_search_handler(
     lookups: WebSearchLookupStore | None = None,
     transport: Transport | None = None,
 ) -> Callable[[dict], str]:
-    http = transport or UrllibTransport()
+    http = transport or HttpxTransport()
 
     def handler(args: dict) -> str:
         query = (args.get("query") or "").strip()

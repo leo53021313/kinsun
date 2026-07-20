@@ -100,6 +100,8 @@ class Mem0LongTermStore:
         metadata = {"provenance": provenance}
         if occurred_on:
             metadata["occurred_on"] = occurred_on
+        # 寫入的對話與出處攤在本層 span（span I/O，非 capture——首參 self 是 mem0 client）。
+        tracing.set_current_span_io(span_input={"messages": payload, "metadata": metadata})
         self._memory.add(payload, user_id=elder_id, metadata=metadata)
 
     def _search_raw(self, query: str, elder_id: str, top_k: int) -> list[dict]:

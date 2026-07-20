@@ -8,7 +8,11 @@ from __future__ import annotations
 
 from kinsun.tracing.client import configure, is_enabled
 from kinsun.tracing.decorators import (
+    current_opik_trace_id,
     log_feedback_score,
+    opik_trace_url,
+    set_current_span_io,
+    set_current_trace_io,
     tag_current_trace,
     track,
     update_trace_metadata,
@@ -17,8 +21,12 @@ from kinsun.tracing.genai import wrap_genai
 
 __all__ = [
     "configure",
+    "current_opik_trace_id",
     "is_enabled",
     "log_feedback_score",
+    "opik_trace_url",
+    "set_current_span_io",
+    "set_current_trace_io",
     "tag_current_trace",
     "track",
     "update_trace_metadata",
