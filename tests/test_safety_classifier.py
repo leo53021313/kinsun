@@ -42,6 +42,19 @@ class _BoomLLM:
         raise LLMError("boom")
 
 
+def test_classify_attaches_safety_prompt(monkeypatch):
+    """危急分級把 CLASSIFY_SYSTEM_PROMPT 註冊/連結到 trace（方案 A：程式碼為真相）。"""
+    from kinsun import tracing
+    from kinsun.safety.classifier import CLASSIFY_SYSTEM_PROMPT
+
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        tracing, "attach_prompt", lambda name, content: calls.append((name, content))
+    )
+    LlmRiskClassifier(_BoomLLM()).classify("我不太舒服")
+    assert ("safety_classify", CLASSIFY_SYSTEM_PROMPT) in calls
+
+
 def test_classifier_failsafe_on_llm_error():
     a = LlmRiskClassifier(_BoomLLM()).classify("救命")
     assert a.tier == RiskTier.L0

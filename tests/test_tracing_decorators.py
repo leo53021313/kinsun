@@ -155,3 +155,50 @@ def test_opik_trace_url_builds_redirect_link():
     assert url.startswith("http://localhost:5273/api")
     assert "redirect/projects" in url
     assert "trace_id=trace-abc" in url
+
+
+def _spy_prompt(monkeypatch) -> tuple[list, list]:
+    """啟用工程觀測、攔截 opik.Prompt 建構與 attach_prompt_to_current_trace（hermetic）。"""
+    import opik
+
+    from kinsun.tracing import decorators
+
+    decorators._prompt_cache.clear()
+    constructed: list[dict] = []
+    attached: list = []
+    monkeypatch.setattr(tracing_client, "_ENABLED", True)
+    monkeypatch.setattr(opik, "Prompt", lambda **kw: constructed.append(kw) or f"P:{kw['name']}")
+    monkeypatch.setattr(
+        opik.opik_context, "attach_prompt_to_current_trace", lambda p: attached.append(p)
+    )
+    return constructed, attached
+
+
+def test_attach_prompt_noop_when_disabled():
+    tracing_client.reset_for_test()
+    assert tracing.attach_prompt("care_system", "你好") is None
+
+
+def test_attach_prompt_registers_and_links_when_enabled(monkeypatch):
+    constructed, attached = _spy_prompt(monkeypatch)
+    tracing.attach_prompt("care_system", "你是金孫")
+    assert constructed == [
+        {"name": "care_system", "prompt": "你是金孫", "validate_placeholders": False}
+    ]
+    assert attached == ["P:care_system"]
+
+
+def test_attach_prompt_caches_unchanged_content_but_relinks_each_call(monkeypatch):
+    """同名同內容不重覆建版（省後端往返），但每輪仍連結到當前 trace。"""
+    constructed, attached = _spy_prompt(monkeypatch)
+    tracing.attach_prompt("care_system", "同一段 prompt")
+    tracing.attach_prompt("care_system", "同一段 prompt")
+    assert len(constructed) == 1
+    assert len(attached) == 2
+
+
+def test_attach_prompt_new_version_when_content_changes(monkeypatch):
+    constructed, _ = _spy_prompt(monkeypatch)
+    tracing.attach_prompt("care_system", "第一版")
+    tracing.attach_prompt("care_system", "第二版")
+    assert [c["prompt"] for c in constructed] == ["第一版", "第二版"]

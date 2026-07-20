@@ -66,6 +66,24 @@ def test_rag_service_returns_grounded_answer_with_citation():
     assert "規律量血壓" in answer.answer
 
 
+def test_rag_service_attaches_grounding_prompt(monkeypatch):
+    """RAG grounded 改寫把 _GROUNDING_PROMPT 註冊/連結到 trace（方案 A）。"""
+    from kinsun import tracing
+    from kinsun.rag.service import _GROUNDING_PROMPT
+
+    class _Llm:
+        def generate(self, *, system_prompt, messages):
+            return "改寫後的衛教回答"
+
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(tracing, "attach_prompt", lambda n, c: calls.append((n, c)))
+    service = HealthEducationRagService(
+        _FakeRetriever((_result("高血壓照護包含規律量血壓。"),)), llm=_Llm(), top_k=3
+    )
+    service.answer("高血壓要注意什麼？")
+    assert ("rag_grounding", _GROUNDING_PROMPT) in calls
+
+
 def test_rag_tool_returns_json_payload():
     service = HealthEducationRagService(
         _FakeRetriever((_result("高血壓照護包含規律量血壓。"),)),
