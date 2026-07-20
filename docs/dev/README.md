@@ -14,7 +14,7 @@
 | 02 | [專案簡報與PRD](02_專案簡報與PRD.md) | ✅ v1.3（KPI 數值⏸實測後定；US-B3 問候自適應註記） | 2026-07-17 |
 | 03 | [BDD情境](03_BDD情境.md) | ✅ 定稿（D-72 三級制已落地） | 2026-07-09 |
 | 04 | [ADR（04_adr/）](04_adr/README.md) | ✅ 定稿（11 筆；ADR-003 補述 庚-54） | 2026-07-13 |
-| 05 | [架構與設計](05_架構與設計.md) | ✅ v1.26（§12 工程觀測 Opik：排程/後台 root＋對話 trace I/O＋記憶/摘要/反思 span I/O＋業務↔工程深連結（replies.opik_trace_id→後台 opik_url 直達）；capture 不開 input 護 api_key/self；併入 RAG 版本發布等；tools 加入交通工具 transport） | 2026-07-20 |
+| 05 | [架構與設計](05_架構與設計.md) | ✅ v1.27（§12 工程觀測 Opik：排程/後台 root＋對話 trace I/O＋記憶/摘要/反思 span I/O＋深連結（opik_url 直達）＋Prompt 版本追蹤（attach_prompt 七個 LLM prompt，方案 A 程式碼為真相）；capture 不開 input 護 api_key/self；併入 RAG 版本發布等；tools 加入交通工具 transport） | 2026-07-20 |
 | 06 | [API設計規範](06_API設計規範.md) | ✅ v1.3（`traces/{trace_id}` 回應加 `opik_url` 深連結；稱謂欄位：POST /elders 收 nickname、PUT /elders/{elder_id}/profile） | 2026-07-20 |
 | 07 | [模組規格與測試](07_模組規格與測試.md) | ✅ v1.15（LLM 結構化輸出改用原生 response_schema；自建輪子換 OSS：httpx／tenacity／pydantic-settings，總測試 1427） | 2026-07-20 |
 | 08 | [專案結構指南](08_專案結構指南.md) | ✅ v1.5（補 RAG 模組；tools 補交通 transport，transport_agent 原型 ruff 排除） | 2026-07-20 |
