@@ -135,3 +135,38 @@ def set_current_span_io(*, span_input=None, span_output=None) -> None:
             opik_context.update_current_span(**payload)
     except Exception:  # noqa: BLE001 - 觀測失敗絕不中斷對話
         logger.warning("Opik span I/O 寫入失敗")
+
+
+def current_opik_trace_id() -> str:
+    """取當前 Opik trace 的 id，供 observability 存下、後台組深連結。
+
+    停用／不在 trace context／失敗一律回空字串（呼叫端據此判斷是否有連結可掛）。
+    必須在 @track 函式內呼叫才取得到——與 tag_current_trace 同一時機（對話進行中）。
+    """
+    if not is_enabled():
+        return ""
+    try:
+        from opik import opik_context
+
+        data = opik_context.get_current_trace_data()
+        return data.id if data is not None else ""
+    except Exception:  # noqa: BLE001 - 觀測失敗絕不中斷對話
+        logger.warning("取當前 Opik trace id 失敗")
+        return ""
+
+
+def opik_trace_url(opik_trace_id: str, url_override: str) -> str:
+    """由 Opik trace id 組出 UI 直達網址（後台 observability → Opik 深連結用）。
+
+    用 opik 官方的 redirect 端點（跨版本穩定），把 opik 相依鎖在本套件內。
+    id 或 url_override 為空即回空字串。
+    """
+    if not opik_trace_id or not url_override:
+        return ""
+    try:
+        from opik.url_helpers import get_project_url_by_trace_id
+
+        return get_project_url_by_trace_id(trace_id=opik_trace_id, url_override=url_override)
+    except Exception:  # noqa: BLE001 - 組網址失敗不可影響後台
+        logger.warning("組 Opik trace 網址失敗")
+        return ""

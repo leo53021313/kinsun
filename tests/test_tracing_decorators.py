@@ -118,3 +118,40 @@ def test_set_current_span_io_noop_on_both_none(monkeypatch):
     calls = _spy_update_current_span(monkeypatch)
     tracing.set_current_span_io()
     assert calls == []
+
+
+def test_current_opik_trace_id_empty_when_disabled():
+    tracing_client.reset_for_test()
+    assert tracing.current_opik_trace_id() == ""
+
+
+def test_current_opik_trace_id_returns_id_when_enabled(monkeypatch):
+    from types import SimpleNamespace
+
+    import opik
+
+    monkeypatch.setattr(tracing_client, "_ENABLED", True)
+    monkeypatch.setattr(
+        opik.opik_context, "get_current_trace_data", lambda: SimpleNamespace(id="opik-trace-123")
+    )
+    assert tracing.current_opik_trace_id() == "opik-trace-123"
+
+
+def test_current_opik_trace_id_empty_when_no_current_trace(monkeypatch):
+    import opik
+
+    monkeypatch.setattr(tracing_client, "_ENABLED", True)
+    monkeypatch.setattr(opik.opik_context, "get_current_trace_data", lambda: None)
+    assert tracing.current_opik_trace_id() == ""
+
+
+def test_opik_trace_url_empty_for_missing_inputs():
+    assert tracing.opik_trace_url("", "http://localhost:5273/api") == ""
+    assert tracing.opik_trace_url("abc", "") == ""
+
+
+def test_opik_trace_url_builds_redirect_link():
+    url = tracing.opik_trace_url("trace-abc", "http://localhost:5273/api")
+    assert url.startswith("http://localhost:5273/api")
+    assert "redirect/projects" in url
+    assert "trace_id=trace-abc" in url

@@ -149,6 +149,8 @@ export type TraceDetail = {
   tts_call: TraceTtsCall | null;
   reply: TraceReply | null;
   risk_events: TraceRiskEvent[];
+  // 直達對應 Opik trace 的深連結；工程觀測開啟且捕捉到 id 時才有，否則空字串（前端隱藏連結）。
+  opik_url: string;
 };
 
 // --- 觀測後台：長輩詳情分頁（spec 2026-07-12） ---
