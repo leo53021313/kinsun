@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from kinsun.config import Settings
-from kinsun.transport import Transport, TransportError, UrllibTransport, read_json
+from kinsun.transport import HttpxTransport, Transport, TransportError, read_json
 
 
 class ASRError(Exception):
@@ -40,7 +40,7 @@ class DgxAsrClient:
         self._endpoint = endpoint
         self._timeout = timeout
         self._api_key = api_key
-        self._transport = transport or UrllibTransport()
+        self._transport = transport or HttpxTransport()
 
     def transcribe(self, audio: bytes, *, content_type: str) -> str:
         headers = {"Content-Type": content_type}
