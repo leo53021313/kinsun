@@ -184,6 +184,7 @@ def summarize_day(
         return
     tracing.update_trace_metadata(elder_id=elder_id, flow="daily_summary")
     system_prompt = SUMMARY_PROMPT
+    tracing.attach_prompt("daily_summary", SUMMARY_PROMPT)
     signals = _l1_signals_for_day(risk_events, elder_id, clock()) if risk_events else []
     if signals:
         # L1 小訊號進每日摘要（✅ D-10 己-5）：不即時通知、改讓家人在摘要看到。
