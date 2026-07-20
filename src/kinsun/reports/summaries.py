@@ -208,5 +208,7 @@ def summarize_day(
     if not content:
         # 冒到 fanout 的 per-item 接手（跳過該長輩、留 log），與重試前的失敗語意一致。
         raise last_error or LLMError("摘要生成不合格（空白或接話），重試後仍失敗")
+    # 摘要文字攤在本層 span（raw LLM I/O 已在 wrap_genai 子 span，這裡放後處理的成品）。
+    tracing.set_current_span_io(span_output={"summary": content})
     day = (clock().date() - timedelta(days=1)).isoformat()
     summaries.save(elder_id, day, content)
