@@ -137,6 +137,17 @@ def test_reflection_writes_accepted_strategies_to_span_io(monkeypatch):
     ]
 
 
+def test_reflection_attaches_prompt(monkeypatch):
+    """每晚反思把 REFLECTION_PROMPT 註冊/連結到 trace（方案 A）。"""
+    from kinsun import tracing
+    from kinsun.strategies.reflection import REFLECTION_PROMPT
+
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(tracing, "attach_prompt", lambda n, c: calls.append((n, c)))
+    _run(_one_candidate())
+    assert ("nightly_reflection", REFLECTION_PROMPT) in calls
+
+
 def test_reflection_requests_structured_output():
     """反思走受控生成（response_schema），減少格式故障導致整批丟棄的空轉夜。"""
     from kinsun.strategies.reflection import _REFLECTION_SCHEMA

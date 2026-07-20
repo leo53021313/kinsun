@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Protocol
 
+from kinsun import tracing
 from kinsun.llm import LLMClient, LLMError, Message
 from kinsun.safety.tiers import RiskAssessment, RiskTier
 
@@ -63,6 +64,7 @@ class LlmRiskClassifier:
         self._llm = llm
 
     def classify(self, text: str) -> RiskAssessment:
+        tracing.attach_prompt("safety_classify", CLASSIFY_SYSTEM_PROMPT)
         try:
             raw = self._llm.generate(
                 system_prompt=CLASSIFY_SYSTEM_PROMPT,
