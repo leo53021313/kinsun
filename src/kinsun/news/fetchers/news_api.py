@@ -9,7 +9,7 @@ from datetime import datetime
 
 from kinsun.news.fetchers._ids import make_news_item_id
 from kinsun.news.models import NewsItem
-from kinsun.transport import Transport, TransportError, UrllibTransport, get_json
+from kinsun.transport import HttpxTransport, Transport, TransportError, get_json
 
 logger = logging.getLogger("kinsun.news.news_api")
 
@@ -43,7 +43,7 @@ class NewsApiFetcher:
     ) -> None:
         self._api_key = api_key
         self._clock = clock
-        self._transport = transport or UrllibTransport()
+        self._transport = transport or HttpxTransport()
         self._query = query
         self._language = language
         self._timeout = timeout_seconds

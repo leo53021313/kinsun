@@ -16,7 +16,7 @@ from html.parser import HTMLParser
 from kinsun.news.fetchers._ids import make_news_item_id
 from kinsun.news.models import NewsItem
 from kinsun.rag.crawler import HtmlTextExtractor
-from kinsun.transport import Transport, TransportError, UrllibTransport
+from kinsun.transport import HttpxTransport, Transport, TransportError
 
 logger = logging.getLogger("kinsun.news.mohw")
 
@@ -89,7 +89,7 @@ class MohwNewsFetcher:
         timeout_seconds: float = 20.0,
     ) -> None:
         self._clock = clock
-        self._transport = transport or UrllibTransport()
+        self._transport = transport or HttpxTransport()
         self._max_pages = max_pages
         self._timeout = timeout_seconds
 
