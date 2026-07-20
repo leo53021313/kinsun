@@ -102,6 +102,8 @@ class Mem0LongTermStore:
             metadata["occurred_on"] = occurred_on
         # 寫入的對話與出處攤在本層 span（span I/O，非 capture——首參 self 是 mem0 client）。
         tracing.set_current_span_io(span_input={"messages": payload, "metadata": metadata})
+        # mem0 內部抽取事實用的 prompt（config 層設定）也註冊/連結，供版本追蹤。
+        tracing.attach_prompt("mem0_fact_extraction", prov.CUSTOM_FACT_EXTRACTION_PROMPT)
         self._memory.add(payload, user_id=elder_id, metadata=metadata)
 
     def _search_raw(self, query: str, elder_id: str, top_k: int) -> list[dict]:

@@ -163,6 +163,7 @@ class CareAgent:
         trace_id: str = "",
         has_risk_signal: bool = False,
     ) -> str:
+        tracing.attach_prompt("care_system", SYSTEM_PROMPT)
         system_prompt, history = self._envelope(elder_id, user_text)
         user_msg = Message("user", user_text)
         base = [*history, user_msg]
@@ -231,6 +232,7 @@ class CareAgent:
         """
         # 主動問候也是對話的一部分：掛進該長輩的 thread，與其他回合串起來（E1）。
         tracing.tag_current_trace(elder_id=elder_id, channel="proactive")
+        tracing.attach_prompt("care_system", SYSTEM_PROMPT)
         system_prompt, history = self._envelope(elder_id, recall.content if recall else intent)
         if recall:
             # 重用既有的事實段排版，不另立 prompt 拼裝路徑。
