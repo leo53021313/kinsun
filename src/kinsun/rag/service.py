@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from kinsun import tracing
 from kinsun.llm import LLMClient, Message
 from kinsun.rag.answer_policy import AnswerPolicy
 from kinsun.rag.citation import assemble_citations
@@ -67,6 +68,7 @@ class HealthEducationRagService:
             f"Evidence：\n{evidence_text}\n\n"
             "請用 2 到 4 句回答，最後不要自行編來源，citation 由系統附上。"
         )
+        tracing.attach_prompt("rag_grounding", _GROUNDING_PROMPT)
         try:
             return self._llm.generate(
                 system_prompt=_GROUNDING_PROMPT,

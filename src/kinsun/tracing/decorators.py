@@ -155,6 +155,36 @@ def current_opik_trace_id() -> str:
         return ""
 
 
+_prompt_cache: dict[str, tuple[str, object]] = {}
+
+
+def attach_prompt(name: str, content: str) -> None:
+    """把程式碼裡的 prompt 註冊進 Opik Prompt library（版本化）並連結到當前 trace。
+
+    程式碼為真相（方案 A）：`content` 由呼叫端傳入的程式常數；Opik 只反映與關聯，
+    不回頭影響執行——同名同內容不出新版，內容變才建新版，於是可跟線上評測分數對照
+    「哪一版 prompt 品質較好」。停用／失敗一律 no-op，絕不中斷對話。
+
+    首次（或內容變更）才碰後端建版，之後以行程內快取重用、每輪只做輕量的 trace 連結。
+    `validate_placeholders=False`：本專案 prompt 用 Python `{var}`／純文字、非 mustache，
+    且格式化在程式碼端做，不走 Opik 的 `.format()`。
+    """
+    if not is_enabled():
+        return
+    try:
+        from opik import Prompt, opik_context
+
+        cached = _prompt_cache.get(name)
+        if cached is None or cached[0] != content:
+            prompt = Prompt(name=name, prompt=content, validate_placeholders=False)
+            _prompt_cache[name] = (content, prompt)
+        else:
+            prompt = cached[1]
+        opik_context.attach_prompt_to_current_trace(prompt)
+    except Exception:  # noqa: BLE001 - 觀測失敗絕不中斷對話
+        logger.warning("Opik prompt 註冊/連結失敗 name=%s", name)
+
+
 def opik_trace_url(opik_trace_id: str, url_override: str) -> str:
     """由 Opik trace id 組出 UI 直達網址（後台 observability → Opik 深連結用）。
 

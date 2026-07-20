@@ -179,6 +179,7 @@ def reflect_days(
     logs = reminder_logs.list_for_range(elder_id, start=start, end=end)
     adopted = strategies.list_for_elder(elder_id, status=STRATEGY_STATUS_ADOPTED)
     system_prompt = _build_prompt(logs, adopted, lookback_days, min_observed_days, max_strategies)
+    tracing.attach_prompt("nightly_reflection", REFLECTION_PROMPT)
     reply = reflector.generate(
         system_prompt=system_prompt, messages=turns, response_schema=_REFLECTION_SCHEMA
     )
