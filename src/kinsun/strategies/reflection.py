@@ -62,6 +62,25 @@ _SECONDS_PER_DAY = 86400.0  # 台灣無日光節約，一天固定 86400 秒。
 
 _REQUIRED_FIELDS = ("content", "category", "evidence", "observed_days")
 
+# 受控生成 schema：把回傳約束成合法的守則陣列，減少「格式故障→整批丟棄」的空轉夜。
+# schema 只管結構，語意（四類守則、禁醫療詞、跨多天證據等）仍靠 REFLECTION_PROMPT。
+# supersedes 設 nullable optional：模型輸出整數 id 會被 _to_candidate 判型別錯而整批丟棄，
+# 約束成 string|null 可避免這個失效；observed_days 約束成整數，evidence 約束成字串。
+_REFLECTION_SCHEMA = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "content": {"type": "string"},
+            "category": {"type": "string"},
+            "evidence": {"type": "string"},
+            "observed_days": {"type": "integer"},
+            "supersedes": {"type": ["string", "null"]},
+        },
+        "required": ["content", "category", "evidence", "observed_days"],
+    },
+}
+
 # 反思的系統提示。第 3、5 條是對濾網的「事前緩解」而非重複防護：
 # 濾網（policy.py）會擋掉含醫療字眼與過長／多行的守則，但它只能丟棄、無法改寫，
 # 合法的話題類守則（「不要聊她過世老伴生病的那段」）因此會被誤殺。與其放寬詞表，
@@ -115,7 +134,13 @@ REFLECTION_PROMPT = (
 class Reflector(Protocol):
     """反思用的 LLM 呼叫端；形狀同 `summarize_day` 的 summarizer（見 llm.LLMClient）。"""
 
-    def generate(self, *, system_prompt: str, messages: list[Message]) -> str: ...
+    def generate(
+        self,
+        *,
+        system_prompt: str,
+        messages: list[Message],
+        response_schema: dict | None = None,
+    ) -> str: ...
 
 
 @tracing.track(name="nightly_reflection", type="general", capture_input=False, capture_output=False)
@@ -154,7 +179,9 @@ def reflect_days(
     logs = reminder_logs.list_for_range(elder_id, start=start, end=end)
     adopted = strategies.list_for_elder(elder_id, status=STRATEGY_STATUS_ADOPTED)
     system_prompt = _build_prompt(logs, adopted, lookback_days, min_observed_days, max_strategies)
-    reply = reflector.generate(system_prompt=system_prompt, messages=turns)
+    reply = reflector.generate(
+        system_prompt=system_prompt, messages=turns, response_schema=_REFLECTION_SCHEMA
+    )
 
     candidates = _parse(reply)
     if candidates is None:
@@ -379,7 +406,11 @@ def _to_observed_days(value: object) -> int | None:
 
 
 def _strip_code_fence(reply: str) -> str:
-    """去掉模型偶爾加上的 markdown code fence（```json ... ```）。"""
+    """去掉模型偶爾加上的 markdown code fence（```json ... ```）。
+
+    縱深防禦：response_schema 已約束輸出為乾淨 JSON，正常不會有 fence；此撈殼刻意
+    保留，讓受控生成偶爾失常時仍能救回，而非整批丟棄一整晚的反思。
+    """
     text = reply.strip()
     if not text.startswith("```"):
         return text

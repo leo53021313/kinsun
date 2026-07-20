@@ -16,7 +16,7 @@
 | 04 | [ADR（04_adr/）](04_adr/README.md) | ✅ 定稿（11 筆；ADR-003 補述 庚-54） | 2026-07-13 |
 | 05 | [架構與設計](05_架構與設計.md) | ✅ v1.24（§12 工程觀測 Opik：排程 job 於 fanout 收斂為 root＋後台手動觸發 root；併入 RAG 版本發布等；tools 加入交通工具 transport） | 2026-07-20 |
 | 06 | [API設計規範](06_API設計規範.md) | ✅ v1.2（稱謂欄位：POST /elders 收 nickname、新增 PUT /elders/{elder_id}/profile） | 2026-07-17 |
-| 07 | [模組規格與測試](07_模組規格與測試.md) | ✅ v1.14（自建輪子換 OSS：傳輸層→httpx、RAG 重試→tenacity、設定→pydantic-settings，行為零改變，總測試 1423） | 2026-07-20 |
+| 07 | [模組規格與測試](07_模組規格與測試.md) | ✅ v1.15（LLM 結構化輸出改用原生 response_schema；自建輪子換 OSS：httpx／tenacity／pydantic-settings，總測試 1427） | 2026-07-20 |
 | 08 | [專案結構指南](08_專案結構指南.md) | ✅ v1.5（補 RAG 模組；tools 補交通 transport，transport_agent 原型 ruff 排除） | 2026-07-20 |
 | 09 | [模組依賴關係](09_模組依賴關係.md) | ✅ v1.5（httpx 升 runtime＋新增 tenacity／pydantic-settings 直接依賴） | 2026-07-20 |
 | 10 | [類別關係](10_類別關係.md) | ✅ v1.13（傳輸層 `UrllibTransport`→`HttpxTransport`，改用 httpx） | 2026-07-20 |
