@@ -14,12 +14,12 @@
 | 02 | [專案簡報與PRD](02_專案簡報與PRD.md) | ✅ v1.3（KPI 數值⏸實測後定；US-B3 問候自適應註記） | 2026-07-17 |
 | 03 | [BDD情境](03_BDD情境.md) | ✅ 定稿（D-72 三級制已落地） | 2026-07-09 |
 | 04 | [ADR（04_adr/）](04_adr/README.md) | ✅ 定稿（11 筆；ADR-003 補述 庚-54） | 2026-07-13 |
-| 05 | [架構與設計](05_架構與設計.md) | ✅ v1.23（§12 工程觀測 Opik；併入 RAG 版本發布等；tools 加入交通工具 transport） | 2026-07-20 |
-| 06 | [API設計規範](06_API設計規範.md) | ✅ v1.2（稱謂欄位：POST /elders 收 nickname、新增 PUT /elders/{elder_id}/profile） | 2026-07-17 |
-| 07 | [模組規格與測試](07_模組規格與測試.md) | ✅ v1.13（併入 RAG 契約與測試；新增交通四工具 transport，總測試 1417） | 2026-07-20 |
+| 05 | [架構與設計](05_架構與設計.md) | ✅ v1.26（§12 工程觀測 Opik：排程/後台 root＋對話 trace I/O＋記憶/摘要/反思 span I/O＋業務↔工程深連結（replies.opik_trace_id→後台 opik_url 直達）；capture 不開 input 護 api_key/self；併入 RAG 版本發布等；tools 加入交通工具 transport） | 2026-07-20 |
+| 06 | [API設計規範](06_API設計規範.md) | ✅ v1.3（`traces/{trace_id}` 回應加 `opik_url` 深連結；稱謂欄位：POST /elders 收 nickname、PUT /elders/{elder_id}/profile） | 2026-07-20 |
+| 07 | [模組規格與測試](07_模組規格與測試.md) | ✅ v1.15（LLM 結構化輸出改用原生 response_schema；自建輪子換 OSS：httpx／tenacity／pydantic-settings，總測試 1427） | 2026-07-20 |
 | 08 | [專案結構指南](08_專案結構指南.md) | ✅ v1.5（補 RAG 模組；tools 補交通 transport，transport_agent 原型 ruff 排除） | 2026-07-20 |
-| 09 | [模組依賴關係](09_模組依賴關係.md) | ✅ v1.4（Protocol 42；locations／strategies 入圖；Expo 54 依賴對齊） | 2026-07-17 |
-| 10 | [類別關係](10_類別關係.md) | ✅ v1.12（RAG release／write store、Gemini 批次嵌入與檢索關係） | 2026-07-18 |
+| 09 | [模組依賴關係](09_模組依賴關係.md) | ✅ v1.5（httpx 升 runtime＋新增 tenacity／pydantic-settings 直接依賴） | 2026-07-20 |
+| 10 | [類別關係](10_類別關係.md) | ✅ v1.13（傳輸層 `UrllibTransport`→`HttpxTransport`，改用 httpx） | 2026-07-20 |
 | 11 | [審查與重構指南](11_審查與重構指南.md) | ✅ v1.1（CI 已落地；docs/dev 同步鐵律入自查） | 2026-07-17 |
 | 12 | [前端架構規範](12_前端架構規範.md) | ✅ v1.5（JS lint／測試基建落地；F-2／F-8～F-15 全結案） | 2026-07-17 |
 | 13 | [安全與就緒檢查](13_安全與就緒檢查.md) | ✅ v1.4（位置隱私列；依賴掃描與 healthz 結案） | 2026-07-17 |

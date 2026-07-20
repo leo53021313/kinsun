@@ -124,6 +124,7 @@ export const strings = {
     notFound: "找不到這一輪的鏈路資料。",
     statusOk: "成功",
     statusFail: "失敗",
+    openInOpik: "在 Opik 開啟",
     steps: {
       webhook: "1. Webhook 收到",
       asr: "2. ASR 辨識",

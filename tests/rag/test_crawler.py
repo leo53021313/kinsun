@@ -1,5 +1,7 @@
 from datetime import datetime
 
+import pytest
+
 from kinsun.rag.crawler import (
     CrawlerConfig,
     DomainParserRegistry,
@@ -129,3 +131,69 @@ def test_text_pdf_is_parsed_and_scanned_pdf_is_skipped(monkeypatch):
     result = crawler.crawl_urls(source, (page.url,))
     assert result.pages == ()
     assert result.skipped_urls == (page.url,)
+
+
+class _FakeUrlopenResponse:
+    """模擬 urllib.request.urlopen 的 context-manager 回應。"""
+
+    def __init__(self, *, url: str, body: bytes, content_type: str = "text/html") -> None:
+        self._url = url
+        self._body = body
+        self.headers = {"Content-Type": content_type}
+
+    def __enter__(self) -> "_FakeUrlopenResponse":
+        return self
+
+    def __exit__(self, *_exc) -> bool:
+        return False
+
+    def geturl(self) -> str:
+        return self._url
+
+    def read(self) -> bytes:
+        return self._body
+
+
+def test_fetch_retries_transient_failure_then_succeeds(monkeypatch):
+    """_fetch 對可暫時性失敗會重試，成功前每次失敗睡一次 delay_seconds。"""
+    attempts = {"n": 0}
+
+    def fake_urlopen(request, timeout):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise OSError("暫時性連線失敗")
+        return _FakeUrlopenResponse(url="https://www.hpa.gov.tw/a", body=b"<html>ok</html>")
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    sleeps: list[float] = []
+    crawler = HealthEducationCrawler(
+        config=CrawlerConfig(retries=2, delay_seconds=0.5),
+        sleeper=sleeps.append,
+    )
+
+    page = crawler._fetch("https://www.hpa.gov.tw/a")
+
+    assert page.body == b"<html>ok</html>"
+    assert attempts["n"] == 2
+    # 三次嘗試上限內、第二次成功：兩次嘗試之間睡一次。
+    assert sleeps == [0.5]
+
+
+def test_fetch_raises_runtime_error_after_exhausting_retries(monkeypatch):
+    """_fetch 重試耗盡後翻成 RuntimeError（保留最後一個錯誤訊息）。"""
+
+    def always_fail(request, timeout):
+        raise OSError("boom")
+
+    monkeypatch.setattr("urllib.request.urlopen", always_fail)
+    sleeps: list[float] = []
+    crawler = HealthEducationCrawler(
+        config=CrawlerConfig(retries=2, delay_seconds=0.5),
+        sleeper=sleeps.append,
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        crawler._fetch("https://www.hpa.gov.tw/x")
+
+    # retries+1=3 次嘗試、之間睡兩次；最後一次失敗後不再多睡（tenacity 語意）。
+    assert sleeps == [0.5, 0.5]

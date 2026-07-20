@@ -41,6 +41,12 @@ export function TraceDetailPage() {
       <button type="button" onClick={load}>
         {strings.common.refresh}
       </button>
+      {/* 工程觀測開啟且捕捉到 Opik trace id 時才有網址；否則後端回空字串，這裡不渲染。 */}
+      {trace.opik_url && (
+        <a className="opik-link" href={trace.opik_url} target="_blank" rel="noreferrer">
+          {strings.trace.openInOpik}
+        </a>
+      )}
 
       <div className={`trace-step${trace.webhook_event ? "" : " error"}`}>
         <h3>{strings.trace.steps.webhook}</h3>

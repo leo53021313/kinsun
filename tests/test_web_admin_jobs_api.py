@@ -171,3 +171,45 @@ def test_dispatch_unknown_elder_404():
         headers=_auth(),
     )
     assert res.status_code == 404
+
+
+def _enable_hermetic_tracing(monkeypatch):
+    """啟用工程觀測但不連 Opik：假 track＝identity、update_current_trace＝no-op。"""
+    import opik
+
+    from kinsun.tracing import client as tracing_client
+
+    monkeypatch.setattr(tracing_client, "_ENABLED", True)
+    monkeypatch.setattr(opik, "track", lambda **kw: lambda f: f)
+    monkeypatch.setattr(opik.opik_context, "update_current_trace", lambda **kw: None)
+
+
+def test_run_job_transparent_when_tracing_enabled(monkeypatch):
+    """啟用 Opik 時，admin_run_job 的 root @track 仍須確實執行底層 job。"""
+    _enable_hermetic_tracing(monkeypatch)
+    ran: list[str] = []
+    jobs = [Job(name="daily-x", cron="0 3 * * *", run=lambda: ran.append("x"))]
+    res = _client(jobs=jobs).post("/api/v1/admin/jobs/daily-x/run", headers=_auth())
+    assert res.status_code == 200
+    assert ran == ["x"]
+
+
+def test_dispatch_reminder_transparent_when_tracing_enabled(monkeypatch):
+    """啟用 Opik 時，admin_dispatch_reminder 的 root @track 仍須送出提醒並落帳。"""
+    _enable_hermetic_tracing(monkeypatch)
+    accounts = FakeAccountStore()
+    accounts.save_elder(Elder("e1", "阿公"))
+    meds = FakeMedicationStore()
+    meds.save(Medication("m1", "e1", "降血壓藥", (MedicationSlot.MORNING,)))
+    router = _FakeRouter()
+    logs = FakeReminderLogStore()
+    res = _client(
+        accounts=accounts, med_store=meds, channel_router=router, reminder_logs=logs
+    ).post(
+        "/api/v1/admin/elders/e1/reminders/dispatch",
+        json={"kind": "medication", "slot": "morning"},
+        headers=_auth(),
+    )
+    assert res.status_code == 200
+    assert "降血壓藥" in router.sent[0][2]
+    assert logs.recorded[0][1] == "medication"

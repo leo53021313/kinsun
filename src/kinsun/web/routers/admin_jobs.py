@@ -15,6 +15,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from kinsun import tracing
 from kinsun.accounts.service import AccountService
 from kinsun.appointments.jobs import build_appointment_reminder_job
 from kinsun.appointments.store import AppointmentStore
@@ -32,6 +33,23 @@ from kinsun.web.routers.admin import build_require_admin
 class DispatchReminderBody(BaseModel):
     kind: Literal["medication", "appointment"]
     slot: str | None = None
+
+
+# 手動觸發的 Opik root trace（工程觀測，OPIK_ENABLED 才生效）。FastAPI handler 因
+# 依賴注入需保留原 signature，不能直接貼 @track，故把實際執行抽到這兩個 helper：
+# worker 排程走 fanout 各自成 root，後台觸發則統一掛在此 root 下、標記為 admin 通道。
+@tracing.track(name="admin_run_job", type="general", capture_input=False, capture_output=False)
+def _run_job_traced(job: Job) -> None:
+    tracing.tag_current_trace(channel="admin", job=job.name)
+    job.run()
+
+
+@tracing.track(
+    name="admin_dispatch_reminder", type="general", capture_input=False, capture_output=False
+)
+def _dispatch_reminder_traced(job: Job, *, elder_id: str, kind: str) -> None:
+    tracing.tag_current_trace(elder_id=elder_id, channel="admin", kind=kind)
+    job.run()
 
 
 def create_admin_jobs_router(
@@ -76,7 +94,7 @@ def create_admin_jobs_router(
         job = next((j for j in jobs if j.name == job_name), None)
         if job is None:
             raise HTTPException(status_code=404, detail=ErrorCode.JOB_NOT_FOUND)
-        job.run()  # 同步執行；內測工具，接受長任務佔用一個 worker thread
+        _run_job_traced(job)  # 同步執行；內測工具，接受長任務佔用一個 worker thread
         return ok({"job_name": job.name, "ran_at": clock().timestamp()})
 
     @router.post(
@@ -92,7 +110,7 @@ def create_admin_jobs_router(
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=ErrorCode.INVALID_SLOT) from exc
             meds = [m for m in med_store.list_for_elder(elder_id) if slot in m.slots]
-            build_medication_slot_job(
+            job = build_medication_slot_job(
                 slot=slot,
                 meds_at_slot=lambda: meds,
                 lookup_elder=accounts.get_elder,
@@ -100,7 +118,8 @@ def create_admin_jobs_router(
                 hour=0,
                 name=f"manual-medication-{slot.value}",
                 record=record_reminder,
-            ).run()
+            )
+            _dispatch_reminder_traced(job, elder_id=elder_id, kind="medication")
             return ok({"kind": "medication", "count": len(meds)})
         today = clock().date().isoformat()
         tomorrow = (clock().date() + timedelta(days=1)).isoformat()
@@ -108,7 +127,7 @@ def create_admin_jobs_router(
             d: [a for a in appt_store.list_for_date(d) if a.elder_id == elder_id]
             for d in (today, tomorrow)
         }
-        build_appointment_reminder_job(
+        job = build_appointment_reminder_job(
             appts_on=lambda d: appts.get(d, []),
             today=lambda: today,
             tomorrow=lambda: tomorrow,
@@ -118,7 +137,8 @@ def create_admin_jobs_router(
             hour=0,
             name="manual-appointment",
             record=record_reminder,
-        ).run()
+        )
+        _dispatch_reminder_traced(job, elder_id=elder_id, kind="appointment")
         return ok({"kind": "appointment", "count": len(appts[today]) + len(appts[tomorrow])})
 
     return router

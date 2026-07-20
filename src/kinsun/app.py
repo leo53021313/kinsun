@@ -193,6 +193,7 @@ def build_app() -> FastAPI:
             deliveries=deliveries,
             rag_releases=PgRagReleaseStore(db),
             rag_content_policy=settings.rag_content_policy,
+            opik_url_override=settings.opik_url_override,
         ),
         prefix="/api/v1/admin",
     )
