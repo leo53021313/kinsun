@@ -667,16 +667,17 @@ def test_importing_config_does_not_pull_in_the_database_driver():
     )
 
 
-def test_opik_settings_default_disabled():
+def test_opik_settings_default_enabled():
     settings = load_settings(BASE_ENV)
-    assert settings.opik_enabled is False
+    assert settings.opik_enabled is True
     assert settings.opik_url_override == "http://localhost:5273/api"
     assert settings.opik_workspace == "default"
     assert settings.opik_project_name == "kinsun"
+    assert settings.opik_ping_timeout_seconds == 2.0
 
 
-def test_opik_enabled_parses_truthy():
-    env = {**BASE_ENV, "OPIK_ENABLED": "true", "OPIK_PROJECT_NAME": "kinsun-dev"}
+def test_opik_enabled_parses_falsy():
+    env = {**BASE_ENV, "OPIK_ENABLED": "false", "OPIK_PROJECT_NAME": "kinsun-dev"}
     settings = load_settings(env)
-    assert settings.opik_enabled is True
+    assert settings.opik_enabled is False
     assert settings.opik_project_name == "kinsun-dev"
