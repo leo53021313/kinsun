@@ -14,7 +14,7 @@
 | 02 | [專案簡報與PRD](02_專案簡報與PRD.md) | ✅ v1.3（KPI 數值⏸實測後定；US-B3 問候自適應註記） | 2026-07-17 |
 | 03 | [BDD情境](03_BDD情境.md) | ✅ 定稿（D-72 三級制已落地） | 2026-07-09 |
 | 04 | [ADR（04_adr/）](04_adr/README.md) | ✅ 定稿（11 筆；ADR-003 補述 庚-54） | 2026-07-13 |
-| 05 | [架構與設計](05_架構與設計.md) | ✅ v1.27（§12 工程觀測 Opik：排程/後台 root＋對話 trace I/O＋記憶/摘要/反思 span I/O＋深連結（opik_url 直達）＋Prompt 版本追蹤（attach_prompt 七個 LLM prompt，方案 A 程式碼為真相）；capture 不開 input 護 api_key/self；併入 RAG 版本發布等；tools 加入交通工具 transport） | 2026-07-20 |
+| 05 | [架構與設計](05_架構與設計.md) | ✅ v1.28（§12 工程觀測 Opik：OPIK_ENABLED 預設 true＋連線探測降級；evals 擴指標 Moderation／ContextPrecision／ContextRecall／AnswerRelevance（rag_grounding 實跑真實 retriever）；排程/後台 root＋對話 trace I/O＋深連結＋Prompt 版本追蹤；tools 加入交通工具 transport） | 2026-07-22 |
 | 06 | [API設計規範](06_API設計規範.md) | ✅ v1.3（`traces/{trace_id}` 回應加 `opik_url` 深連結；稱謂欄位：POST /elders 收 nickname、PUT /elders/{elder_id}/profile） | 2026-07-20 |
 | 07 | [模組規格與測試](07_模組規格與測試.md) | ✅ v1.15（LLM 結構化輸出改用原生 response_schema；自建輪子換 OSS：httpx／tenacity／pydantic-settings，總測試 1427） | 2026-07-20 |
 | 08 | [專案結構指南](08_專案結構指南.md) | ✅ v1.5（補 RAG 模組；tools 補交通 transport，transport_agent 原型 ruff 排除） | 2026-07-20 |
@@ -23,7 +23,7 @@
 | 11 | [審查與重構指南](11_審查與重構指南.md) | ✅ v1.1（CI 已落地；docs/dev 同步鐵律入自查） | 2026-07-17 |
 | 12 | [前端架構規範](12_前端架構規範.md) | ✅ v1.5（JS lint／測試基建落地；F-2／F-8～F-15 全結案） | 2026-07-17 |
 | 13 | [安全與就緒檢查](13_安全與就緒檢查.md) | ✅ v1.4（位置隱私列；依賴掃描與 healthz 結案） | 2026-07-17 |
-| 14 | [部署與運維](14_部署與運維.md) | ✅ v1.7（Opik 公開隧道遠端檢視 kinsun.sh start/stop opik；併入 RAG 原地備份遷移、獨立 Worker、發布與續跑手冊） | 2026-07-19 |
+| 14 | [部署與運維](14_部署與運維.md) | ✅ v1.8（OPIK_ENABLED 預設 true＋OPIK_PING_TIMEOUT_SECONDS 連線探測降級＋公開隧道安全警語更新；Opik 公開隧道遠端檢視 kinsun.sh start/stop opik；併入 RAG 原地備份遷移、獨立 Worker、發布與續跑手冊） | 2026-07-22 |
 | 15 | [文檔與維護指南](15_文檔與維護指南.md) | ✅ v1.1（同步鐵律＋前端／WBS 兩列） | 2026-07-17 |
 | 16 | [WBS開發計畫](16_WBS開發計畫.md) | ✅ v1.12（RAG 個人庫 active 發布、Agent/Admin citation 與週更 Worker 已驗收；甲～庚結案＋辛批 9 項；⚠ 庚-09 待 Leo 確認） | 2026-07-18 |
 | 17 | [前端資訊架構](17_前端資訊架構.md) | ✅ v1.9（對講機改圓形麥克風鍵＋回覆可捲動＋位置線索；iOS 錄音修復＋內測權限列） | 2026-07-18 |
