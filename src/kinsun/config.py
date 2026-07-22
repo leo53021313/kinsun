@@ -310,11 +310,14 @@ class Settings(_BaseEnvSettings):
     reflection_max_turns: Annotated[int, BeforeValidator(_at_least_one("REFLECTION_MAX_TURNS"))] = (
         600
     )
-    # 工程觀測 Opik（OPIK_ 前綴）：預設關閉＝全模組 no-op；開啟才送 trace。
-    opik_enabled: Bool = False
+    # 工程觀測 Opik（OPIK_ 前綴）：預設開啟；連不到 Opik 服務時會安靜降級為 no-op。
+    opik_enabled: Bool = True
     opik_url_override: str = "http://localhost:5273/api"
     opik_workspace: str = "default"
     opik_project_name: str = "kinsun"
+    # 啟用時的連線探測逾時（秒）：configure() 在此秒數內判定 Opik 是否可達；連不到就
+    # 安靜降級（no-op），避免 Windows/macOS 開發機或 CI 無 Opik 服務時噴連線錯誤。
+    opik_ping_timeout_seconds: float = 2.0
 
     @model_validator(mode="before")
     @classmethod
