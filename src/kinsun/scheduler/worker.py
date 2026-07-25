@@ -46,7 +46,6 @@ from kinsun.scheduler.jobs import build_audio_cleanup_job, build_consolidation_j
 from kinsun.scheduler.scheduler import Job, Scheduler
 from kinsun.scheduler.state import PgScheduleStateStore
 from kinsun.schedules.jobs import build_schedule_dispatch_job
-from kinsun.schedules.legacy_bridge import build_legacy_reconcile_job
 from kinsun.strategies.reflection import reflect_days
 
 logger = logging.getLogger("kinsun.scheduler.worker")
@@ -282,21 +281,6 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
             clock=clock,
             window_seconds=settings.schedule_dispatch_window_seconds,
             record=reminder_logs.record,
-        )
-    )
-    # ⚠ 過渡期橋接（D-76 P2→P3）：家屬的寫入端仍在寫舊表，少了對帳，新增的藥不會
-    # 提醒、刪掉的藥還會繼續提醒。P3 換掉寫入端當天連同 legacy_bridge 一起刪。
-    jobs.append(
-        build_legacy_reconcile_job(
-            db=db,
-            slot_hours={
-                "morning": settings.medication_morning_hour,
-                "noon": settings.medication_noon_hour,
-                "evening": settings.medication_evening_hour,
-                "bedtime": settings.medication_bedtime_hour,
-            },
-            appointment_hour=settings.appointment_reminder_hour,
-            clock=clock,
         )
     )
     # 音檔清理僅在 AUDIO_RETENTION_DAYS>0 時註冊（0＝音檔本體不刪，2026-07-09 修訂）。

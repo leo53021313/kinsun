@@ -40,10 +40,9 @@ _BASE_JOB_NAMES = [
     "daily-consolidation",
     "daily-greeting",
     "inactivity-care",
-    # D-76 P2：四個用藥 job ＋ 一個回診 job 併成一個每分鐘的派送 job；
-    # 對帳 job 是過渡期橋接，P3 換掉家屬寫入端當天移除。
+    # D-76 P2：四個用藥 job ＋ 一個回診 job 併成一個每分鐘的派送 job。
+    # P3 換掉家屬寫入端後，過渡期的對帳 job 已移除。
     "schedule-dispatch",
-    "schedule-legacy-reconcile",
     "observability-cleanup",
     "news-crawl",
     "news-cleanup",
