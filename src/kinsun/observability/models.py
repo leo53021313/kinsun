@@ -45,6 +45,7 @@ class LlmCall:
     content: str
     error_message: str
     created_at: float
+    kind: str = ""  # 見 LLM_CALL_KIND_*；空字串＝加欄前的舊資料，不歸入任何一類
 
 
 @dataclass(frozen=True)
@@ -154,9 +155,26 @@ class ElderActivity:
     last_active_at: float | None
 
 
+# llm_calls.kind：一輪對話會產生多筆 LLM 呼叫，種類不同、快慢差一個量級
+# （審核與分級是短輸入的結構化判斷，回覆生成含工具迴圈）。不分種類就做 p50／p95
+# 等於把三種東西平均在一起——2026-07-25 加入濫用審核後，多灌進來的快呼叫會把
+# llm 階段的 p50 **拉低**，讓「每輪其實變慢了」在後台顯示成「LLM 變快了」，
+# 方向相反的誤導。model_name 無法事後區分：GEMINI_MODEL 與 GEMINI_MODEL_SAFETY
+# 預設同值，三種呼叫在表裡長得一模一樣。
+LLM_CALL_KIND_AGENT = "agent"  # CareAgent 生成回覆（含工具迴圈）
+LLM_CALL_KIND_RISK_CLASSIFY = "risk_classify"  # 危急分級
+LLM_CALL_KIND_MODERATION = "moderation"  # 濫用審核
+# 統計輸出時的排列順序；空字串（舊資料）另歸 "llm:unknown"，僅在有資料時出現。
+LLM_CALL_KINDS = (
+    LLM_CALL_KIND_AGENT,
+    LLM_CALL_KIND_RISK_CLASSIFY,
+    LLM_CALL_KIND_MODERATION,
+)
+
+
 @dataclass(frozen=True)
 class StageStats:
-    stage: str  # "asr" | "llm" | "tts" | "round_trip"
+    stage: str  # "asr" | "llm:<kind>" | "tts" | "round_trip"
     call_count: int
     error_count: int
     avg_latency_ms: float

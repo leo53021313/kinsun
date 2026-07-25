@@ -8,6 +8,15 @@ L2）；標注為草案，實測期由團隊
 CLI（量測用，不進正式服務）：
 - 離線詞表模式：`PYTHONPATH=src uv run python -m kinsun.safety.evaluation --keyword-only`
 - 完整偵測器（需 GEMINI_API_KEY）：`PYTHONPATH=src uv run python -m kinsun.safety.evaluation`
+- 模型選型比較（2026-07-25）：同一份標注集換模型各跑一次，比對 P/R——
+
+      for m in gemini-3.5-flash-lite gemini-3.5-flash gemini-3.5-pro; do
+        PYTHONPATH=src uv run python -m kinsun.safety.evaluation --model "$m"
+      done
+
+  `GEMINI_MODEL_SAFETY` 自 D-16 設好就沒被驗證過，而危急分級**漏報是會出人命的**，
+  選型該有數字支撐而不是沿用預設值。看數字時以**召回率（漏報）優先**於精確率——
+  誤報只是多吵家屬一次，漏報是沒人去救。注意每跑一次都會消耗完整標注集的 API 額度。
 """
 
 from __future__ import annotations
@@ -198,8 +207,13 @@ def format_report(report: EvaluationReport) -> str:
     return "\n".join(lines)
 
 
-def _build_detector_assess() -> Callable[[str], RiskAssessment]:
-    """完整偵測器（LLM＋詞表＋門檻）：與 app.py 同一組裝，需 GEMINI_API_KEY。"""
+def _build_detector_assess(model: str = "") -> Callable[[str], RiskAssessment]:
+    """完整偵測器（LLM＋詞表＋門檻）：與 app.py 同一組裝，需 GEMINI_API_KEY。
+
+    model 留空＝用 `GEMINI_MODEL_SAFETY`（正式設定）。傳入模型名可跑同一份標注集比較
+    不同模型的 P/R——`GEMINI_MODEL_SAFETY` 自 D-16 設好就沒被驗證過，而危急分級漏報
+    是會出人命的，選型該有數字支撐而不是沿用預設值。
+    """
     import os
 
     from kinsun.config import load_dotenv, load_settings
@@ -213,7 +227,7 @@ def _build_detector_assess() -> Callable[[str], RiskAssessment]:
         LlmRiskClassifier(
             GeminiClient(
                 api_key=settings.gemini_api_key,
-                model=settings.gemini_model_safety,
+                model=model or settings.gemini_model_safety,
                 timeout=settings.gemini_timeout_seconds,
             )
         ),
@@ -232,10 +246,17 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="只量詞表（離線、不需 GEMINI_API_KEY）",
     )
+    parser.add_argument(
+        "--model",
+        default="",
+        help="覆寫分級模型（留空＝用 GEMINI_MODEL_SAFETY）。同一份標注集換模型跑，即可比較 P/R",
+    )
     args = parser.parse_args(argv)
     examples = load_labeled_utterances(args.dataset)
-    assess = keyword_only_assess if args.keyword_only else _build_detector_assess()
+    assess = keyword_only_assess if args.keyword_only else _build_detector_assess(args.model)
     mode = "詞表模式" if args.keyword_only else "完整偵測器（LLM＋詞表）"
+    if args.model and not args.keyword_only:
+        mode += f"　模型：{args.model}"
     print(f"模式：{mode}　標注集：{args.dataset}")
     print(format_report(evaluate(assess, examples)))
     return 0

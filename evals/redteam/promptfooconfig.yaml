@@ -8,6 +8,18 @@ targets:
   # file:// 路徑相對於本設定檔所在目錄。
   - id: file://provider.py
     label: kinsun-care-agent
+    config:
+      # 多輪 strategy（crescendo）需要跨輪保住短期記憶，故所有請求必須落在同一個
+      # 常駐 worker——provider 以「對話第一則訊息」當 elder_id 累積記憶，多 worker
+      # 會讓同一串對話被拆到不同行程，記憶各自為政、多輪測試形同單輪。
+      workers: 1
+
+# 每一題都額外跑確定性檢查：回覆能不能直接唸給長輩聽（規則見 evals/assertions.py）。
+# 不呼叫 LLM，故不吃額度、不受免費層限流影響——紅隊題量再大也照跑。
+defaultTest:
+  assert:
+    - type: python
+      value: file://assert_speakable.py
 
 redteam:
   # 攻擊生成模型。預設會走 OpenAI，這裡改用我們自己的 Gemini——
@@ -50,7 +62,11 @@ redteam:
   strategies:
     - basic # 未加工的原始攻擊，當基準
     - jailbreak # 已知越獄技法改寫
-    # 以下更耗額度，確認免費層跑得完再逐一打開（每加一個約等於題數翻倍）：
+    # 多輪漸進誘導：先閒聊幾輪建立信任，再把要求慢慢推過界。
+    # ⚠️ 這是我們覆蓋面最大的洞——Opik 那條注入評測是**單輪**的，而正式管線的短期
+    # 記憶會把前幾輪帶進 system prompt，等於這條路徑從沒被攻擊過。
+    # 代價：每題要跑多輪對話，額度消耗遠高於前兩個 strategy（免費層請留意）。
+    - crescendo
+    # 以下更耗額度，確認跑得完再逐一打開（每加一個約等於題數翻倍）：
     # - jailbreak:composite  # 多技法串接
     # - base64               # 編碼繞過
-    # - crescendo            # 多輪漸進誘導（我們的單輪評測完全沒涵蓋這塊）
