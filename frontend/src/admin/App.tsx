@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
+import { BrowserRouter, NavLink, Route, Routes } from "react-router";
 
 import { getAdminKey, setAdminKey, setOnUnauthorized } from "./api";
 import { strings } from "./strings";
