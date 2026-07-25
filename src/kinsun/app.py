@@ -16,7 +16,6 @@ from fastapi.staticfiles import StaticFiles
 from linebot.v3 import WebhookParser
 
 from kinsun import tracing
-from kinsun.appointments.flow import AppointmentMenu
 from kinsun.audio.publisher import build_audio_publisher
 from kinsun.binding.flow import BindingFlow
 from kinsun.binding.gate import AllowAllGate, ConsentGate
@@ -27,7 +26,6 @@ from kinsun.channels.line.webhook import create_app
 from kinsun.composition import assemble_core, build_externals
 from kinsun.config import load_dotenv, load_settings
 from kinsun.llm import build_gemini_for
-from kinsun.medications.flow import MedicationMenu
 from kinsun.pipeline import VoicePipeline
 from kinsun.rag.releases import PgRagReleaseStore
 from kinsun.safety.classifier import LlmRiskClassifier
@@ -37,6 +35,7 @@ from kinsun.safety.moderation import AbuseModerator, LlmAbuseClassifier
 from kinsun.safety.notifier import GuardianNotifier
 from kinsun.scheduler.state import PgScheduleStateStore
 from kinsun.scheduler.worker import build_jobs
+from kinsun.schedules.flow import ScheduleMenu
 from kinsun.speech.asr import build_asr_client
 from kinsun.speech.tts import build_tts_client
 from kinsun.web.auth import LineIdTokenVerifier
@@ -122,9 +121,19 @@ def build_app() -> FastAPI:
         moderator=moderator,
     )
     binding_sessions = PgBindingSessionStore(db)
-    medication_menu = MedicationMenu(core.medications, core.accounts, binding_sessions, clock=clock)
-    appointment_menu = AppointmentMenu(
-        core.appointments, core.accounts, binding_sessions, clock=clock
+    schedule_menu = ScheduleMenu(
+        core.schedules,
+        core.accounts,
+        binding_sessions,
+        clock=clock,
+        # 四時段鐘點自此只是「家屬選 1～4 時的預設值」，不再是全系統派送鐘點。
+        slot_hours={
+            "morning": settings.medication_morning_hour,
+            "noon": settings.medication_noon_hour,
+            "evening": settings.medication_evening_hour,
+            "bedtime": settings.medication_bedtime_hour,
+        },
+        appointment_hour=settings.appointment_reminder_hour,
     )
 
     def _link_menu(line_user_id: str) -> None:
@@ -135,8 +144,7 @@ def build_app() -> FastAPI:
         core.accounts,
         binding_sessions,
         core.messenger,
-        medication_menu,
-        appointment_menu,
+        schedule_menu,
         clock=clock,
         session_ttl_seconds=settings.binding_session_ttl_minutes * 60,
         on_guardian_bound=on_guardian_bound,
@@ -182,8 +190,7 @@ def build_app() -> FastAPI:
         create_guardian_face_router(
             verifier=verifier,
             accounts=core.accounts,
-            medications=core.medications,
-            appointments=core.appointments,
+            schedules=core.schedules,
             clock=clock,
             risk_events=risk_events,
             reminder_logs=core.reminder_logs,
@@ -198,8 +205,7 @@ def build_app() -> FastAPI:
             clock=clock,
             risk_events=risk_events,
             account_store=core.account_store,
-            med_store=core.med_store,
-            appt_store=core.appt_store,
+            schedule_store=core.schedule_store,
             reminder_logs=core.reminder_logs,
             summaries=summaries,
             long_term=core.long_term,
@@ -219,8 +225,7 @@ def build_app() -> FastAPI:
             jobs=build_jobs(settings, core, clock=clock),
             schedule_state=PgScheduleStateStore(db, tz),
             accounts=core.accounts,
-            med_store=core.med_store,
-            appt_store=core.appt_store,
+            schedule_store=core.schedule_store,
             channel_router=core.router,
             record_reminder=core.reminder_logs.record,
             clock=clock,

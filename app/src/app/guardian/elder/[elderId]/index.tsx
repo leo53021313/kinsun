@@ -7,16 +7,14 @@ import {
   ApiError,
   createGuardianInvite,
   getHealthReport,
-  listAppointments,
   listDailySummaries,
-  listMedications,
+  listSchedules,
   setElderAccount,
-  type Appointment,
   type DailySummary,
   type HealthReport,
-  type Medication,
+  type ScheduleGroup,
 } from "@/lib/api";
-import { slotLabel } from "@/lib/medicationSlots";
+import { describeGroup } from "@/lib/schedules";
 import { useSession, useSignOutOnAuthError } from "@/lib/SessionProvider";
 import { formatTime } from "kinsun-shared/format";
 import { tierLabel } from "kinsun-shared/terms";
@@ -26,8 +24,7 @@ import { colors, spacing } from "@/lib/theme";
 /** 長輩詳情：用藥／回診／健康報告／家屬邀請碼，單頁分區塊。 */
 export default function ElderDetail() {
   const { elderId } = useLocalSearchParams<{ elderId: string }>();
-  const [medications, setMedications] = useState<Medication[]>([]);
-  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [schedules, setSchedules] = useState<ScheduleGroup[]>([]);
   const [report, setReport] = useState<HealthReport | null>(null);
   const [summaries, setSummaries] = useState<DailySummary[] | null>(null);
   const [inviteCode, setInviteCode] = useState("");
@@ -42,7 +39,7 @@ export default function ElderDetail() {
   const token = session?.token ?? "";
   const router = useRouter();
 
-  // useFocusEffect：從用藥／回診管理頁返回時重載，畫面才會反映剛做的編輯。
+  // useFocusEffect：從行程管理頁返回時重載，畫面才會反映剛做的編輯。
   useFocusEffect(
     useCallback(() => {
       if (!session || !elderId) {
@@ -51,15 +48,13 @@ export default function ElderDetail() {
       let alive = true;
       (async () => {
         try {
-          const [meds, appts, hr, daily] = await Promise.all([
-            listMedications(elderId, session.token),
-            listAppointments(elderId, session.token),
+          const [groups, hr, daily] = await Promise.all([
+            listSchedules(elderId, session.token),
             getHealthReport(elderId, session.token),
             listDailySummaries(elderId, session.token),
           ]);
           if (alive) {
-            setMedications(meds);
-            setAppointments(appts);
+            setSchedules(groups);
             setReport(hr);
             setSummaries(daily);
           }
@@ -149,37 +144,20 @@ export default function ElderDetail() {
         )}
       </Section>
 
-      <Section title={strings.elderDetail.medicationsSection}>
-        {medications.length === 0 ? (
-          <EmptyHint text={strings.elderDetail.noMedications} />
+      <Section title={strings.elderDetail.schedulesSection}>
+        {schedules.length === 0 ? (
+          <EmptyHint text={strings.elderDetail.noSchedules} />
         ) : (
-          medications.map((m) => (
-            <Text key={m.medication_id} style={styles.row}>
-              {m.name}（{m.slots.map(slotLabel).join("、")}）
+          schedules.map((g) => (
+            <Text key={g.group_id} style={styles.row}>
+              {describeGroup(g)}
             </Text>
           ))
         )}
         <Button
-          label={strings.elderDetail.manageMedications}
+          label={strings.elderDetail.manageSchedules}
           variant="outline"
-          onPress={() => router.push(`/guardian/elder/${elderId}/medications`)}
-        />
-      </Section>
-
-      <Section title={strings.elderDetail.upcomingAppointmentsSection}>
-        {appointments.length === 0 ? (
-          <EmptyHint text={strings.elderDetail.noAppointments} />
-        ) : (
-          appointments.map((a) => (
-            <Text key={a.appointment_id} style={styles.row}>
-              {a.date}｜{a.label}
-            </Text>
-          ))
-        )}
-        <Button
-          label={strings.elderDetail.manageAppointments}
-          variant="outline"
-          onPress={() => router.push(`/guardian/elder/${elderId}/appointments`)}
+          onPress={() => router.push(`/guardian/elder/${elderId}/schedules`)}
         />
       </Section>
 

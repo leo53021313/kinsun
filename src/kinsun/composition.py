@@ -21,9 +21,6 @@ from kinsun.accounts.models import Channel
 from kinsun.accounts.service import AccountService
 from kinsun.accounts.store import PgAccountStore
 from kinsun.agent import CareAgent
-from kinsun.appointments.facts import AppointmentFacts
-from kinsun.appointments.service import AppointmentService
-from kinsun.appointments.store import PgAppointmentStore
 from kinsun.channels.app.outbound import AppOutboundChannel
 from kinsun.channels.line.messenger import LineApiMessenger, LineOutboundChannel
 from kinsun.channels.router import ChannelRouter
@@ -33,9 +30,6 @@ from kinsun.db import Database, ensure_schema
 from kinsun.llm import GeminiClient, LLMClient
 from kinsun.locations.facts import LocationFacts
 from kinsun.locations.store import PgLocationStore
-from kinsun.medications.facts import MedicationFacts
-from kinsun.medications.service import MedicationService
-from kinsun.medications.store import PgMedicationStore
 from kinsun.memory.longterm.mem0_factory import build_mem0_memory
 from kinsun.memory.longterm.store import Mem0LongTermStore
 from kinsun.memory.recall import SessionMemory
@@ -52,6 +46,10 @@ from kinsun.rag.vector_store import PgVectorStore
 from kinsun.reports.reminders import PgReminderLogStore
 from kinsun.reports.summaries import PgConversationSummaryStore
 from kinsun.safety.events import PgRiskEventStore
+from kinsun.schedules.facts import ScheduleFacts
+from kinsun.schedules.models import ScheduleKind
+from kinsun.schedules.service import ScheduleService
+from kinsun.schedules.store import PgScheduleStore
 from kinsun.strategies.facts import StrategyFacts
 from kinsun.strategies.store import PgStrategyStore
 from kinsun.tools.health_rag import HEALTH_RAG_SPEC, build_health_rag_handler
@@ -63,6 +61,14 @@ from kinsun.tools.news import (
     build_news_handler,
 )
 from kinsun.tools.registry import ToolRegistry
+from kinsun.tools.schedules import (
+    CANCEL_SPEC,
+    CREATE_SPEC,
+    LIST_SPEC,
+    build_cancel_handler,
+    build_create_handler,
+    build_list_handler,
+)
 from kinsun.tools.transport import (
     BUS_ARRIVAL_SPEC,
     MRT_LINE_SPEC,
@@ -99,10 +105,9 @@ class Core:
     router: ChannelRouter
     account_store: PgAccountStore
     accounts: AccountService
-    med_store: PgMedicationStore
-    appt_store: PgAppointmentStore
-    medications: MedicationService
-    appointments: AppointmentService
+    # 統一排程（D-76）：派送 job、對話注入、家屬 API 與長輩語音工具共用同一組。
+    schedule_store: PgScheduleStore
+    schedules: ScheduleService
     memory: PgMemoryStore
     traces: PgTraceStore
     reminder_logs: PgReminderLogStore
@@ -159,10 +164,17 @@ def build_tool_registry(
     news_mentions: NewsMentionStore | None = None,
     news_locations: PgLocationStore | None = None,
     news_blocked_keywords: str = "",
+    schedules: ScheduleService | None = None,
 ) -> ToolRegistry:
     """集中組工具：日後新增工具只改這裡，兩個組裝根自動都有。"""
     registry = ToolRegistry()
     registry.register(WEATHER_SPEC, build_weather_handler())
+    # 排程工具（D-76 P4）：有 service 才註冊；正式組裝一律有。全庫第一組會寫庫的
+    # 工具，對象只認 ToolInvocationContext（見 tools/schedules.py 的三條界線）。
+    if schedules is not None:
+        registry.register(CREATE_SPEC, build_create_handler(schedules, clock=clock))
+        registry.register(LIST_SPEC, build_list_handler(schedules, clock=clock))
+        registry.register(CANCEL_SPEC, build_cancel_handler(schedules))
     # 時間沒有工具（2026-07-25）：get_current_time 已改為每輪注入情境（clock.TimeFacts）。
     # 話題新聞消費端（D-74 後續）：有 store 才註冊；正式組裝一律有。
     # mentions 供不重複給料、locations 供在地化加權、blocked 供負面過濾——
@@ -223,10 +235,14 @@ def assemble_core(
         ttl_hours=settings.invite_ttl_hours,
         max_attempts=settings.invite_max_attempts,
     )
-    med_store = PgMedicationStore(db)
-    appt_store = PgAppointmentStore(db)
-    medications = MedicationService(med_store)
-    appointments = AppointmentService(appt_store)
+    schedule_store = PgScheduleStore(db)
+    schedules = ScheduleService(
+        schedule_store,
+        clock=clock,
+        new_id=new_id,
+        max_active_per_elder=settings.schedule_max_active_per_elder,
+        max_days_ahead=settings.schedule_max_days_ahead,
+    )
     strategies = PgStrategyStore(db, clock=clock, new_id=new_id)
     locations = PgLocationStore(db)
     session = SessionMemory(
@@ -240,8 +256,12 @@ def assemble_core(
             # 稱呼緊接其後（2026-07-17）：沒有它，模型每輪亂猜「阿公／阿嬤」，
             # 真實使用一半機率叫錯；稱呼是所有段落裡最先要對的事。
             ElderProfileFacts(account_store),
-            MedicationFacts(medications),
-            AppointmentFacts(appointments, clock=clock),
+            # 統一排程取代舊的用藥／回診兩段（D-76 P2）：三種 kind 各成一段，段落
+            # 標題逐字沿用舊 facts（見 schedules/facts.py），prompt 因此零變動；
+            # 第三段是全新的——長輩自己交代要提醒的事，金孫先前完全看不到。
+            ScheduleFacts(schedule_store, kind=ScheduleKind.MEDICATION, clock=clock),
+            ScheduleFacts(schedule_store, kind=ScheduleKind.APPOINTMENT, clock=clock),
+            ScheduleFacts(schedule_store, kind=ScheduleKind.CUSTOM, clock=clock),
             # 閉環的最後一哩：反思學到的守則由此進入下一輪對話的 system prompt。
             StrategyFacts(strategies, max_strategies=settings.reflection_max_strategies),
             # 地點注入（spec 2026-07-17）：位置是線索不是答案，措辭見 locations/facts.py。
@@ -285,6 +305,7 @@ def assemble_core(
             news_mentions=news_mentions,
             news_locations=locations,
             news_blocked_keywords=settings.news_blocked_keywords,
+            schedules=schedules,
         ),
     )
     notifications = PgAppNotificationStore(db, clock=clock, new_id=new_id)
@@ -306,10 +327,8 @@ def assemble_core(
         ),
         account_store=account_store,
         accounts=accounts,
-        med_store=med_store,
-        appt_store=appt_store,
-        medications=medications,
-        appointments=appointments,
+        schedule_store=schedule_store,
+        schedules=schedules,
         memory=memory,
         risk_events=risk_events,
         summaries=summaries,

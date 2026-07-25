@@ -23,28 +23,35 @@ export const strings = {
     inviteFailed: "產生邀請碼失敗，請稍後再試",
     elderCodeNotice: "長輩綁定碼（請交給長輩在 LINE 貼上，24 小時內有效）：",
     guardianCodeNotice: "家屬邀請碼（請交給其他家屬在 LINE 貼上，24 小時內有效）：",
-    linkMedications: "用藥",
-    linkAppointments: "回診",
+    linkSchedules: "行程",
     linkHealthReport: "健康報告",
     inviteGuardian: "邀請家屬",
     addHeading: "新增長輩",
     namePlaceholder: "長輩稱呼（例：阿公、王媽媽）",
     createButton: "建立",
   },
-  medications: {
-    title: "用藥管理",
-    slotRequired: "請填藥名並至少選一個時段",
-    editHeading: "編輯用藥",
-    addHeading: "新增用藥",
-    namePlaceholder: "藥名",
-  },
-  appointments: {
-    title: "回診管理",
-    fieldsRequired: "請填日期與內容",
-    editHeading: "編輯回診",
-    addHeading: "新增回診",
-    timeTitle: "看診時間（選填，提醒會帶上）",
-    labelPlaceholder: "例：心臟科回診 林口長庚",
+  schedules: {
+    title: "行程管理",
+    empty: "還沒有任何提醒，從下方新增第一筆。",
+    titleRequired: "請填寫提醒內容",
+    whenRequired: "請填寫提醒時間，格式請照欄位裡的範例",
+    editHint: "修改後請重新填一次提醒時間",
+    editHeading: "編輯提醒",
+    addHeading: "新增提醒",
+    kindLabel: "提醒類型",
+    titleLabel: "提醒內容",
+    titlePlaceholder: (kind: string) =>
+      kind === "medication"
+        ? "例：降血壓藥"
+        : kind === "appointment"
+          ? "例：心臟科回診 林口長庚"
+          : "例：去公園散步",
+    slotsLabel: "提醒時段（可複選）",
+    customTimeLabel: "或直接指定時刻（選填，會蓋過上面的時段）",
+    whenLabel: (kind: string) => (kind === "appointment" ? "回診日期" : "提醒時間"),
+    whenPlaceholder: (kind: string) =>
+      kind === "appointment" ? "2026-07-30 10:30（時間可省略）" : "每天 17:00／每週三 15:00",
+    byElder: "（長輩自己交代的）",
   },
   healthReport: {
     title: "健康報告（近 30 天）",

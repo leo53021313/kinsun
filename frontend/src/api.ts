@@ -8,17 +8,17 @@ import liff from "@line/liff";
 import { createApiClient } from "kinsun-shared/client";
 import { ApiError } from "kinsun-shared/envelope";
 import type {
-  Appointment,
   CreatedElder,
   Elder,
   HealthReport,
-  Medication,
   ReminderItem,
   RiskEventItem,
+  ScheduleGroup,
+  ScheduleInput,
 } from "kinsun-shared/types";
 
 export { ApiError };
-export type { Appointment, Elder, Medication, ReminderItem, RiskEventItem };
+export type { Elder, ReminderItem, RiskEventItem, ScheduleGroup, ScheduleInput };
 
 // 共同流程住共用包（✅ 庚-30）；LIFF 差異只有「認證頭＝LINE ID token」。
 const client = createApiClient({
@@ -38,68 +38,32 @@ export function listElders(): Promise<Elder[]> {
   return apiFetch("/api/v1/elders");
 }
 
-export function listMedications(elderId: string): Promise<Medication[]> {
-  return apiFetch(`/api/v1/elders/${elderId}/medications`);
+/** 統一排程（D-76 P3）：用藥、回診與長輩自訂共用一支資源，操作單位是 group。 */
+export function listSchedules(elderId: string, kind?: ScheduleGroup["kind"]): Promise<ScheduleGroup[]> {
+  const query = kind ? `?kind=${kind}` : "";
+  return apiFetch(`/api/v1/elders/${elderId}/schedules${query}`);
 }
 
-export async function addMedication(
-  elderId: string,
-  name: string,
-  slots: string[],
-): Promise<void> {
-  await apiFetch(`/api/v1/elders/${elderId}/medications`, {
+export async function addSchedule(elderId: string, body: ScheduleInput): Promise<void> {
+  await apiFetch(`/api/v1/elders/${elderId}/schedules`, {
     method: "POST",
-    body: JSON.stringify({ name, slots }),
+    body: JSON.stringify(body),
   });
 }
 
-export async function updateMedication(
+export async function updateSchedule(
   elderId: string,
-  medicationId: string,
-  name: string,
-  slots: string[],
+  groupId: string,
+  body: ScheduleInput,
 ): Promise<void> {
-  await apiFetch(`/api/v1/elders/${elderId}/medications/${medicationId}`, {
+  await apiFetch(`/api/v1/elders/${elderId}/schedules/${groupId}`, {
     method: "PUT",
-    body: JSON.stringify({ name, slots }),
+    body: JSON.stringify(body),
   });
 }
 
-export async function deleteMedication(elderId: string, medicationId: string): Promise<void> {
-  await apiFetch(`/api/v1/elders/${elderId}/medications/${medicationId}`, { method: "DELETE" });
-}
-
-export function listAppointments(elderId: string): Promise<Appointment[]> {
-  return apiFetch(`/api/v1/elders/${elderId}/appointments`);
-}
-
-export async function addAppointment(
-  elderId: string,
-  date: string,
-  label: string,
-  time: string,
-): Promise<void> {
-  await apiFetch(`/api/v1/elders/${elderId}/appointments`, {
-    method: "POST",
-    body: JSON.stringify({ date, label, time }),
-  });
-}
-
-export async function updateAppointment(
-  elderId: string,
-  appointmentId: string,
-  date: string,
-  label: string,
-  time: string,
-): Promise<void> {
-  await apiFetch(`/api/v1/elders/${elderId}/appointments/${appointmentId}`, {
-    method: "PUT",
-    body: JSON.stringify({ date, label, time }),
-  });
-}
-
-export async function deleteAppointment(elderId: string, appointmentId: string): Promise<void> {
-  await apiFetch(`/api/v1/elders/${elderId}/appointments/${appointmentId}`, { method: "DELETE" });
+export async function deleteSchedule(elderId: string, groupId: string): Promise<void> {
+  await apiFetch(`/api/v1/elders/${elderId}/schedules/${groupId}`, { method: "DELETE" });
 }
 
 export function createElder(elderName: string): Promise<CreatedElder> {
