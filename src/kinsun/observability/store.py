@@ -15,6 +15,7 @@ from psycopg.types.json import Json
 
 from kinsun.db import Database, _Errors
 from kinsun.observability.models import (
+    LLM_CALL_KINDS,
     AsrCall,
     ElderActivity,
     FeedItem,
@@ -44,6 +45,29 @@ def safe_record(action: Callable[[], None]) -> None:
         action()
     except Exception:  # noqa: BLE001 - 觀測失敗不可影響主流程
         logger.warning("觀測記錄落庫失敗", exc_info=True)
+
+
+def _llm_stage_stats(
+    by_kind: dict[str, tuple[int, int, float, float, float]],
+) -> list[StageStats]:
+    """把 llm_calls 的逐 kind 統計排成穩定順序，Pg 與 Fake 共用同一套規則。
+
+    已知種類一律出現（即使今日 0 筆）——後台欄位忽有忽無會讓人以為壞了；未知種類
+    （空 kind＝2026-07-25 加欄前的舊資料）只在真的有資料時才列，不憑空多一列。
+    """
+    stats = [
+        StageStats(f"llm:{kind}", *_as_stage_row(by_kind.get(kind, (0, 0, 0.0, 0.0, 0.0))))
+        for kind in LLM_CALL_KINDS
+    ]
+    unknown = by_kind.get("")
+    if unknown and unknown[0]:
+        stats.append(StageStats("llm:unknown", *_as_stage_row(unknown)))
+    return stats
+
+
+def _as_stage_row(row) -> tuple[int, int, float, float, float]:
+    """統一型別：Pg 的 AVG／percentile_cont 回 Decimal，直接塞進 dataclass 會混型。"""
+    return (int(row[0]), int(row[1]), float(row[2]), float(row[3]), float(row[4]))
 
 
 class TraceStore(Protocol):
@@ -82,6 +106,7 @@ class TraceStore(Protocol):
         output_tokens: int | None,
         content: str,
         error_message: str,
+        kind: str = "",
     ) -> None: ...
     def record_rag(
         self,
@@ -258,11 +283,13 @@ class PgTraceStore:
         output_tokens: int | None,
         content: str,
         error_message: str,
+        kind: str = "",
     ) -> None:
         self._db.execute(
             "INSERT INTO llm_calls (llm_call_id, trace_id, external_id, channel, status, "
             "latency_ms, model_name, input_tokens, output_tokens, content, "
-            "error_message, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "error_message, created_at, kind) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 self._new_id(),
                 trace_id,
@@ -276,6 +303,7 @@ class PgTraceStore:
                 content,
                 error_message,
                 self._now(),
+                kind,
             ),
         )
 
@@ -354,7 +382,7 @@ class PgTraceStore:
         )
         llm_rows = self._db.query(
             "SELECT llm_call_id, trace_id, external_id, channel, status, latency_ms, model_name, "
-            "input_tokens, output_tokens, content, error_message, created_at "
+            "input_tokens, output_tokens, content, error_message, created_at, kind "
             "FROM llm_calls WHERE trace_id = %s ORDER BY created_at",
             (trace_id,),
         )
@@ -529,7 +557,7 @@ class PgTraceStore:
             (today_start,),
         )
         stages = []
-        for stage, table in (("asr", "asr_calls"), ("llm", "llm_calls"), ("tts", "tts_calls")):
+        for stage, table in (("asr", "asr_calls"), ("tts", "tts_calls")):
             # 表名為固定白名單、非外部輸入，f-string 無注入風險。
             row = self._db.query_one(
                 f"SELECT COUNT(*), COUNT(*) FILTER (WHERE status <> 'ok'), "
@@ -542,6 +570,17 @@ class PgTraceStore:
             stages.append(
                 StageStats(stage, row[0], row[1], float(row[2]), float(row[3]), float(row[4]))
             )
+        # LLM 逐種類分列（2026-07-25）：不可再對整張表做 p50／p95——回覆生成含工具迴圈，
+        # 與短輸入的分級／審核差一個量級，混在一起的百分位數沒有意義（見 models.py）。
+        llm_rows = self._db.query(
+            "SELECT kind, COUNT(*), COUNT(*) FILTER (WHERE status <> 'ok'), "
+            "COALESCE(AVG(latency_ms), 0), "
+            "COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms), 0), "
+            "COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms), 0) "
+            "FROM llm_calls WHERE created_at >= %s GROUP BY kind",
+            (today_start,),
+        )
+        stages.extend(_llm_stage_stats({r[0]: tuple(r[1:]) for r in llm_rows}))
         # 端到端往返（✅ D-05 戊-2）：round_trip_ms 為 NULL（未量測）者不計。
         row = self._db.query_one(
             "SELECT COUNT(*), COUNT(*) FILTER (WHERE status <> 'ok'), "
@@ -709,6 +748,7 @@ class FakeTraceStore:
         output_tokens: int | None,
         content: str,
         error_message: str,
+        kind: str = "",
     ) -> None:
         self.llm_calls.append(
             LlmCall(
@@ -724,6 +764,7 @@ class FakeTraceStore:
                 content,
                 error_message,
                 self.now,
+                kind,
             )
         )
 
@@ -967,15 +1008,30 @@ class FakeTraceStore:
             )
 
         stages = []
-        for stage, calls in (
-            ("asr", self.asr_calls),
-            ("llm", self.llm_calls),
-            ("tts", self.tts_calls),
-        ):
+        for stage, calls in (("asr", self.asr_calls), ("tts", self.tts_calls)):
             recent = [c for c in calls if c.created_at >= today_start]
             stages.append(
                 _stage_stats(stage, [c.status for c in recent], [c.latency_ms for c in recent])
             )
+        # LLM 逐種類分列，與 Pg 同規則（見 _llm_stage_stats 與 models.LLM_CALL_KIND_*）。
+        grouped: dict[str, list[LlmCall]] = {}
+        for call in self.llm_calls:
+            if call.created_at >= today_start:
+                grouped.setdefault(call.kind, []).append(call)
+        stages.extend(
+            _llm_stage_stats(
+                {
+                    kind: (
+                        len(calls),
+                        sum(1 for c in calls if c.status != "ok"),
+                        sum(c.latency_ms for c in calls) / len(calls),
+                        _nearest_rank(sorted(c.latency_ms for c in calls), 50),
+                        _nearest_rank(sorted(c.latency_ms for c in calls), 95),
+                    )
+                    for kind, calls in grouped.items()
+                }
+            )
+        )
         # 端到端往返（✅ D-05 戊-2）：round_trip_ms 為 None（未量測）者不計。
         measured = [
             r for r in self.replies if r.created_at >= today_start and r.round_trip_ms is not None
