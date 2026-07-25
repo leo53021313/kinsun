@@ -242,6 +242,20 @@ class Settings(_BaseEnvSettings):
     medication_evening_hour: int = 18
     medication_bedtime_hour: int = 21
     appointment_reminder_hour: int = 8
+    # 統一排程（spec 2026-07-25）：每位長輩的有效排程上限，防模型連續誤判灌爆行程表。
+    schedule_max_active_per_elder: Annotated[
+        int, BeforeValidator(_positive("SCHEDULE_MAX_ACTIVE_PER_ELDER"))
+    ] = 20
+    # 到期判定窗（秒）。⚠ 不是補發窗：決策為「過期就不發」，此窗只吸收「每分鐘掃描」
+    # 本身的抖動——scheduled_at 是秒級、掃描是分鐘級，沒有容許量的話每一則提醒都會
+    # 晚到最多一分鐘、甚至因 tick 漂移整筆漏掉。停機超過此窗即作廢，不補。
+    schedule_dispatch_window_seconds: Annotated[
+        int, BeforeValidator(_positive("SCHEDULE_DISPATCH_WINDOW_SECONDS"))
+    ] = 90
+    # 允許排到多久以後（天）：擋模型把「下週三」算成明年的荒謬時刻。
+    schedule_max_days_ahead: Annotated[
+        int, BeforeValidator(_positive("SCHEDULE_MAX_DAYS_AHEAD"))
+    ] = 365
     rag_top_k: int = 5
     # 位置超過幾小時就不再採信、不注入 prompt（spec 2026-07-17）。只影響主動問候路徑。
     location_stale_after_hours: Annotated[
