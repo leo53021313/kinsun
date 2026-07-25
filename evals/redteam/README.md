@@ -78,5 +78,18 @@ promptfoo 的預設評分邏輯假設「拒絕談有害話題＝好」。**對�
 ## 檔案
 
 - `provider.py`——promptfoo 的自訂 Python provider，經 `evals/subject.py` 驅動真 CareAgent。
+  含**多輪對話解析**（`parse_turn`）：crescendo 這類 strategy 傳來的是 JSON 對話陣列，
+  必須讓整串對話共用同一個 `elder_id`，短期記憶才累積得起來。⚠️ 這件事沒做對，多輪
+  測試會**靜默**退化成單輪（每輪換一位長輩）——測起來全綠，但整條攻擊面根本沒碰到。
+  由 `tests/test_evals_redteam_provider.py` 守住，且設定中的 `workers: 1` 不可拿掉。
+- `assert_speakable.py`——確定性 assertion（回覆能不能唸給長輩聽），規則本體在
+  `evals/assertions.py`，與 Opik 評測共用。不呼叫 LLM，不吃額度。
 - `promptfooconfig.yaml`——攻擊生成設定（模型／語言／purpose／plugins／strategies）。
 - `redteam.yaml`、`output.json`——執行後產生的**結果檔，不進版控**（見 `.gitignore`）。
+
+## 多輪綁架（crescendo）
+
+`crescendo` 已預設開啟：先閒聊幾輪建立信任，再把要求慢慢推過界。這是我們覆蓋面最大的
+洞——Opik 那條注入評測是**單輪**的，而正式管線的短期記憶會把前幾輪帶進 system prompt，
+等於這條路徑從沒被攻擊過。代價是每題要跑多輪對話，額度消耗遠高於 `basic`／`jailbreak`，
+免費層請留意失敗題數。
