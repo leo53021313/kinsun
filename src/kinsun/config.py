@@ -272,6 +272,9 @@ class Settings(_BaseEnvSettings):
         "%20OR%20%E7%BE%8E%E9%A3%9F%20OR%20%E7%AF%80%E6%85%B6%20OR%20%E9%95%B7%E8%80%85"
         "&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
     )
+    # 負面新聞排除關鍵字（逗號分隔）：標題或內文命中整則不給料（get_news／detail 皆過濾）——
+    # 兇殺、事故類話題不適合金孫拿來與長輩開場；留空＝不過濾。
+    news_blocked_keywords: str = "兇殺,命案,殺人,分屍,性侵,虐童,自殺,輕生"
     rag_content_policy: Annotated[str, BeforeValidator(_content_policy)] = "allowed_only"
     rag_embedding_model: Annotated[str, BeforeValidator(_embedding_model)] = "gemini-embedding-001"
     rag_refresh_enabled: Bool = False

@@ -18,6 +18,7 @@ import logging
 import random
 from collections.abc import Callable
 from datetime import datetime
+from typing import Protocol
 
 from kinsun.llm import ToolSpec
 from kinsun.news.mentions import NewsMentionStore
@@ -113,20 +114,60 @@ def _record_mentions(
         logger.warning("提及紀錄寫入失敗，不影響本次回覆")
 
 
+def _parse_blocked(blocked_keywords: str) -> list[str]:
+    return [kw.strip() for kw in blocked_keywords.split(",") if kw.strip()]
+
+
+def _drop_blocked(items: list[NewsItem], blocked: list[str]) -> list[NewsItem]:
+    """負面新聞過濾（Leo 2026-07-25）：標題或內文含排除關鍵字整則不給——
+    兇殺、事故類話題不適合金孫拿來開場。"""
+    if not blocked:
+        return items
+    return [i for i in items if not any(kw in i.title or kw in i.content for kw in blocked)]
+
+
+def _region_token(locations: LocationStoreLike | None, elder_id: str) -> str:
+    """長輩所在縣市的比對詞（取地名前兩字，如「台南市東區」→「台南」）。
+
+    位置是錦上添花：沒有 store、沒有 elder、沒有位置列、或讀取失敗，一律回空字串
+    （不加權，行為同無在地化）。
+    """
+    if locations is None or not elder_id:
+        return ""
+    try:
+        row = locations.get_for_elder(elder_id)
+    except Exception:  # noqa: BLE001 - 位置讀取失敗不可擋新聞工具
+        logger.warning("讀取長輩位置失敗，本次不做在地化加權")
+        return ""
+    if row is None or len(row.place) < 2:
+        return ""
+    return row.place[:2]
+
+
+class LocationStoreLike(Protocol):
+    def get_for_elder(self, elder_id: str) -> object | None: ...
+
+
 def build_news_handler(
     store: NewsStore,
     *,
     clock: Callable[[], datetime],
     mentions: NewsMentionStore | None = None,
+    locations: LocationStoreLike | None = None,
     rng: random.Random | None = None,
+    blocked_keywords: str = "",
     window_days: int = 3,
     limit: int = 5,
     pool_size: int = 10,
+    local_slots: int = 2,
 ) -> Callable[[dict, ToolInvocationContext | None], str]:
+    blocked = _parse_blocked(blocked_keywords)
+
     def handler(arguments: dict, context: ToolInvocationContext | None = None) -> str:
         items = _load_recent(store, clock=clock, window_days=window_days)
         if items is None:
             return _FAILURE_REPLY
+        items = _drop_blocked(items, blocked)
         topic = (arguments.get("topic") or "").strip()
         if topic:
             items = [i for i in items if topic in i.title or topic in i.content]
@@ -136,12 +177,18 @@ def build_news_handler(
         candidates = sorted(fresh or items, key=_freshness, reverse=True)
         if not candidates:
             return _EMPTY_REPLY
-        pool = candidates[:pool_size]
-        if len(pool) > limit:
-            chosen = (rng or random).sample(pool, limit)
-            chosen.sort(key=_freshness, reverse=True)
+        # 在地化（Leo 2026-07-25）：標題含長輩所在縣市的新聞保證入選（最多
+        # local_slots 則）——在地新聞稀少，從全部候選找、不受前 pool_size 池限制。
+        region = _region_token(locations, elder_id)
+        local_hits = [i for i in candidates if region in i.title][:local_slots] if region else []
+        rest = [i for i in candidates if i not in local_hits]
+        pool = rest[:pool_size]
+        remaining_slots = limit - len(local_hits)
+        if len(pool) > remaining_slots:
+            picked = (rng or random).sample(pool, max(remaining_slots, 0))
         else:
-            chosen = pool
+            picked = pool
+        chosen = sorted(local_hits + picked, key=_freshness, reverse=True)
         _record_mentions(mentions, elder_id, chosen, clock=clock)
         lines = [f"（{_sanitize(i.publisher, 30)}）{_sanitize(i.title, 100)}" for i in chosen]
         return "最近的新聞有：" + "；".join(lines) + "。"
@@ -154,9 +201,12 @@ def build_news_detail_handler(
     *,
     clock: Callable[[], datetime],
     mentions: NewsMentionStore | None = None,
+    blocked_keywords: str = "",
     window_days: int = 3,
     max_chars: int = 800,
 ) -> Callable[[dict, ToolInvocationContext | None], str]:
+    blocked = _parse_blocked(blocked_keywords)
+
     def handler(arguments: dict, context: ToolInvocationContext | None = None) -> str:
         query = (arguments.get("title") or "").strip()
         if not query:
@@ -164,6 +214,7 @@ def build_news_detail_handler(
         items = _load_recent(store, clock=clock, window_days=window_days)
         if items is None:
             return _FAILURE_REPLY
+        items = _drop_blocked(items, blocked)
         match = next((i for i in items if query in i.title or i.title in query), None)
         if match is None:
             shown = _sanitize(query, 50)
