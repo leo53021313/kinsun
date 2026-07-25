@@ -39,6 +39,8 @@ from kinsun.memory.longterm.mem0_factory import build_mem0_memory
 from kinsun.memory.longterm.store import Mem0LongTermStore
 from kinsun.memory.recall import SessionMemory
 from kinsun.memory.shortterm import PgMemoryStore
+from kinsun.news.mentions import NewsMentionStore, PgNewsMentionStore
+from kinsun.news.store import NewsStore, PgNewsStore
 from kinsun.notifications.store import PgAppNotificationStore
 from kinsun.observability.store import PgTraceStore
 from kinsun.proactive.preferences import PgGreetingPreferenceStore
@@ -54,6 +56,12 @@ from kinsun.strategies.store import PgStrategyStore
 from kinsun.tools.clock import CURRENT_TIME_SPEC, build_current_time_handler
 from kinsun.tools.health_rag import HEALTH_RAG_SPEC, build_health_rag_handler
 from kinsun.tools.lookups import PgWebSearchLookupStore, WebSearchLookupStore
+from kinsun.tools.news import (
+    NEWS_DETAIL_SPEC,
+    NEWS_SPEC,
+    build_news_detail_handler,
+    build_news_handler,
+)
 from kinsun.tools.registry import ToolRegistry
 from kinsun.tools.transport import (
     BUS_ARRIVAL_SPEC,
@@ -110,6 +118,10 @@ class Core:
     locations: PgLocationStore
     # 夜間批次寫、問候 job 讀（spec 2026-07-16），同一根內兩處共用，故收進 Core。
     greeting_prefs: PgGreetingPreferenceStore
+    # 話題新聞（spec 2026-07-20）：worker 爬取／清除寫、問候 job 讀，同一根內兩處共用。
+    news: PgNewsStore
+    # 新聞提及紀錄（D-74 消費端）：get_news 工具寫、worker 清理 job 清，兩處共用。
+    news_mentions: PgNewsMentionStore
     agent: CareAgent
 
 
@@ -143,11 +155,38 @@ def build_tool_registry(
     tdx_client_secret: str = "",
     lookups: WebSearchLookupStore | None = None,
     traces: PgTraceStore | None = None,
+    news: NewsStore | None = None,
+    news_mentions: NewsMentionStore | None = None,
+    news_locations: PgLocationStore | None = None,
+    news_blocked_keywords: str = "",
 ) -> ToolRegistry:
     """集中組工具：日後新增工具只改這裡，兩個組裝根自動都有。"""
     registry = ToolRegistry()
     registry.register(WEATHER_SPEC, build_weather_handler())
     registry.register(CURRENT_TIME_SPEC, build_current_time_handler(clock))
+    # 話題新聞消費端（D-74 後續）：有 store 才註冊；正式組裝一律有。
+    # mentions 供不重複給料、locations 供在地化加權、blocked 供負面過濾——
+    # 三者皆選配，未提供時工具照常運作。
+    if news is not None:
+        registry.register(
+            NEWS_SPEC,
+            build_news_handler(
+                news,
+                clock=clock,
+                mentions=news_mentions,
+                locations=news_locations,
+                blocked_keywords=news_blocked_keywords,
+            ),
+        )
+        registry.register(
+            NEWS_DETAIL_SPEC,
+            build_news_detail_handler(
+                news,
+                clock=clock,
+                mentions=news_mentions,
+                blocked_keywords=news_blocked_keywords,
+            ),
+        )
     registry.register(
         HEALTH_RAG_SPEC,
         build_health_rag_handler(rag_service, traces=traces),
@@ -224,6 +263,9 @@ def assemble_core(
     )
     traces = PgTraceStore(db, clock=clock, new_id=new_id)
     web_search_lookups = PgWebSearchLookupStore(db, clock=clock, new_id=new_id)
+    # 話題新聞 store：worker 爬取寫、問候與 get_news 工具讀——提前建立、兩處共用。
+    news = PgNewsStore(db)
+    news_mentions = PgNewsMentionStore(db)
     agent = CareAgent(
         externals.gemini,
         session,
@@ -235,6 +277,10 @@ def assemble_core(
             tdx_client_secret=settings.tdx_client_secret,
             lookups=web_search_lookups,
             traces=traces,
+            news=news,
+            news_mentions=news_mentions,
+            news_locations=locations,
+            news_blocked_keywords=settings.news_blocked_keywords,
         ),
     )
     notifications = PgAppNotificationStore(db, clock=clock, new_id=new_id)
@@ -269,5 +315,7 @@ def assemble_core(
         strategies=strategies,
         locations=locations,
         greeting_prefs=PgGreetingPreferenceStore(db),
+        news=news,
+        news_mentions=news_mentions,
         agent=agent,
     )

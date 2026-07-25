@@ -26,6 +26,11 @@ from kinsun.medications.jobs import build_medication_slot_job
 from kinsun.medications.models import MedicationSlot
 from kinsun.memory.longterm.consolidation import run_consolidation
 from kinsun.memory.longterm.consolidation_log import PgConsolidationLogStore
+from kinsun.news.fetchers.mohw import MohwNewsFetcher
+from kinsun.news.fetchers.news_api import NewsApiFetcher
+from kinsun.news.fetchers.protocol import NewsFetcher
+from kinsun.news.fetchers.rss import RssNewsFetcher
+from kinsun.news.jobs import build_news_cleanup_job, build_news_crawl_job
 from kinsun.observability.jobs import build_observability_cleanup_job
 from kinsun.proactive.greeting_time import update_greeting_time
 from kinsun.proactive.jobs import (
@@ -75,6 +80,8 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
     strategies = core.strategies
     # 問候偏好：夜間批次（run_one 第四步）寫、問候 job 讀，同一個 store。
     greeting_prefs = core.greeting_prefs
+    # 話題新聞（spec 2026-07-20）：爬取／清除 job 寫、問候 job 讀，同一個 store。
+    news = core.news
     # 整理進度標記（✅ 庚-06／庚-13）：逐日補齊＋冪等，避免停機漏天與重覆寫入。
     consolidation_log = PgConsolidationLogStore(db, clock=clock)
 
@@ -195,11 +202,29 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
         # 主動推播補記 reminder_logs（純觀測，失敗不影響推播）。
         safe_record(reminder_logs.record, elder_id, kind, content)
 
+    def _elder_interests(elder_id: str) -> tuple[str, ...]:
+        """問候前從長期記憶檢索她的興趣線索（Leo 2026-07-25 興趣驅動挑題）。
+
+        興趣是錦上添花：Mem0 是外部服務、掛掉很寫實，檢索失敗一律降級成
+        沒有興趣提示，不可擋下問候（與摘要／新聞讀取失敗同向）。
+        """
+        try:
+            hits = core.long_term.search(elder_id, "興趣 嗜好 平常喜歡做的事", top_k=3)
+        except Exception:  # noqa: BLE001 - 興趣提示是加分項，不可擋下問候
+            logger.warning("興趣檢索失敗，改用無興趣提示問候 elder=%s", elder_id)
+            return ()
+        return tuple(hit.text for hit in hits if hit.text)[:3]
+
     def greet_one(elder_id: str) -> None:
         # ledger=True：問候的冪等靠 greeted_today 讀這張表，記帳因此是安全關鍵。
-        # intent 織入今天的日期（2026-07-17 問候多樣性）：固定 intent 天天產出同一句。
+        # intent 織入今天的日期（2026-07-17 問候多樣性）＋長期記憶的興趣線索
+        # （2026-07-25，供模型當 get_news 的 topic）；話題新聞本體由模型在
+        # 工具迴圈中自行以 get_news 拉取（D-74 消費端），worker 不再直讀。
         _push_to_elder(
-            elder_id, greeting_intent(clock()), REMINDER_KIND_PROACTIVE_GREETING, ledger=True
+            elder_id,
+            greeting_intent(clock(), interests=_elder_interests(elder_id)),
+            REMINDER_KIND_PROACTIVE_GREETING,
+            ledger=True,
         )
 
     def care_one(elder_id: str) -> None:
@@ -309,6 +334,45 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
                 name="inbound-audio-cleanup",
             )
         )
+    # 話題新聞（spec 2026-07-20）：衛福部與 RSS 免金鑰、一律註冊（RSS feed 清單
+    # 留空＝不用）；News API 需要 NEWS_API_KEY，留空＝優雅降級。單一來源失敗不擋
+    # 其他來源（news/jobs.py）。跑在夜間批次同一個鐘點、錯開分鐘，讓早上問候時
+    # 已有當天的新聞可用。
+    news_fetchers: list[NewsFetcher] = [MohwNewsFetcher(clock=clock)]
+    for feed_url in settings.news_rss_feeds.split(","):
+        if feed_url.strip():
+            news_fetchers.append(RssNewsFetcher(feed_url=feed_url.strip(), clock=clock))
+    if settings.news_api_key:
+        news_fetchers.append(
+            NewsApiFetcher(
+                api_key=settings.news_api_key,
+                clock=clock,
+                query=settings.news_api_query,
+                domains=settings.news_api_domains,
+            )
+        )
+    jobs.append(
+        build_news_crawl_job(
+            fetchers=news_fetchers,
+            store=news,
+            hour=settings.longterm_consolidation_hour,
+            minute=15,
+        )
+    )
+
+    def _purge_expired_news() -> None:
+        # 新聞與提及紀錄同一把保留天數：新聞被清掉後，提及紀錄留著也指不到東西。
+        cutoff = clock().timestamp() - settings.news_retention_days * 86400
+        news.purge_older_than(cutoff)
+        core.news_mentions.purge_older_than(cutoff)
+
+    jobs.append(
+        build_news_cleanup_job(
+            purge=_purge_expired_news,
+            hour=settings.longterm_consolidation_hour,
+            minute=50,
+        )
+    )
     return jobs
 
 

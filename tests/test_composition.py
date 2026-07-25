@@ -16,9 +16,11 @@ from kinsun.composition import Externals, assemble_core, build_tool_registry
 from kinsun.config import load_settings
 from kinsun.locations.facts import LocationFacts
 from kinsun.medications.facts import MedicationFacts
+from kinsun.news.store import FakeNewsStore
 from kinsun.strategies.facts import StrategyFacts
 from kinsun.tools.clock import CURRENT_TIME_SPEC
 from kinsun.tools.health_rag import HEALTH_RAG_SPEC
+from kinsun.tools.news import NEWS_DETAIL_SPEC, NEWS_SPEC
 from kinsun.tools.transport import (
     BUS_ARRIVAL_SPEC,
     MRT_LINE_SPEC,
@@ -50,7 +52,8 @@ def _core():
 
 
 def test_assemble_core_agent_has_baseline_tools():
-    # 無金鑰的預設環境：天氣、時間、衛教 RAG、路線（route 走免金鑰 OSRM，一律註冊）。
+    # 無金鑰的預設環境：天氣、時間、衛教 RAG、路線（route 走免金鑰 OSRM，一律註冊）、
+    # 最近新聞（get_news 讀自家 news_items 表，免金鑰一律註冊——D-74 後續）。
     # web_search（Tavily）與 TDX 三工具需金鑰，預設環境未設，故不在內。
     core = _core()
     names = {spec.name for spec in core.agent._tools.specs()}
@@ -59,6 +62,8 @@ def test_assemble_core_agent_has_baseline_tools():
         CURRENT_TIME_SPEC.name,
         HEALTH_RAG_SPEC.name,
         ROUTE_SPEC.name,
+        NEWS_SPEC.name,
+        NEWS_DETAIL_SPEC.name,
     }
 
 
@@ -86,6 +91,13 @@ def test_build_tool_registry_registers_baseline_tools():
         HEALTH_RAG_SPEC.name,
         ROUTE_SPEC.name,
     }
+
+
+def test_build_tool_registry_registers_news_tools_when_store_present():
+    # 有給 news store 才註冊 get_news＋get_news_detail；baseline（未給）維持原工具集。
+    registry = build_tool_registry(clock=_clock, rag_service=object(), news=FakeNewsStore())
+    names = {spec.name for spec in registry.specs()}
+    assert {NEWS_SPEC.name, NEWS_DETAIL_SPEC.name} <= names
 
 
 def test_build_tool_registry_registers_tdx_tools_when_creds_present():

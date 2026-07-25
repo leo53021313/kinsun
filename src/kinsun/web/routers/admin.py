@@ -14,6 +14,7 @@ from kinsun.accounts.store import AccountStore
 from kinsun.appointments.store import AppointmentStore
 from kinsun.medications.store import MedicationStore
 from kinsun.memory.longterm.store import LongTermStore
+from kinsun.news.store import NewsStore
 from kinsun.observability.models import (
     ElderActivity,
     FeedItem,
@@ -69,6 +70,7 @@ def create_admin_router(
     rag_releases: PgRagReleaseStore | None = None,
     rag_content_policy: str = "allowed_only",
     opik_url_override: str = "",
+    news: NewsStore | None = None,
 ) -> APIRouter:
     router = APIRouter(tags=["admin"])
     require_admin = build_require_admin(admin_api_key)
@@ -206,6 +208,31 @@ def create_admin_router(
                 "content_policy": displayed_policy,
                 "warnings": warnings,
             }
+        )
+
+    @router.get("/news", dependencies=[Depends(require_admin)])
+    def list_news(days: int = Query(default=3, ge=1, le=30)) -> dict:
+        """話題新聞檢視（D-74 消費端）：爬蟲近況——爬了什麼、來源、發布時間。
+
+        content 刻意不回：列表要輕，原文點 url 看即可。
+        """
+        if news is None:
+            return ok([], meta={"days": days, "count": 0})
+        items = news.list_recent(since=clock().timestamp() - days * 86400)
+        return ok(
+            [
+                {
+                    "news_item_id": i.news_item_id,
+                    "source_id": i.source_id,
+                    "title": i.title,
+                    "url": i.url,
+                    "publisher": i.publisher,
+                    "published_at": i.published_at,
+                    "retrieved_at": i.retrieved_at,
+                }
+                for i in items
+            ],
+            meta={"days": days, "count": len(items)},
         )
 
     # --- 長輩詳情分頁（spec 2026-07-12 §3.3）：以 elder_id 主鍵直查，與時間軸的

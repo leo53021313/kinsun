@@ -60,5 +60,9 @@
     "moduleNameMapper": {
       "^@/(.*)$": "<rootDir>/src/$1"
     }
+  },
+  "overrides": {
+    "minimatch": "^10.0.3",
+    "postcss": "^8.5.23"
   }
 }

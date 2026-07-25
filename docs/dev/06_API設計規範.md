@@ -1,6 +1,6 @@
 # API 設計規範 - 金孫 KinSun
 
-> **版本:** v1.3 | **更新:** 2026-07-20 | **狀態:** ✅ 定稿（契約已拍板 D-23～D-29；/v1 已全面落地；`traces/{trace_id}` 回應加 `opik_url` 深連結）
+> **版本:** v1.4 | **更新:** 2026-07-25 | **狀態:** ✅ 定稿（契約已拍板 D-23～D-29；/v1 已全面落地；`traces/{trace_id}` 回應加 `opik_url` 深連結）
 > **基準:** as-is（現行 22 端點實證）＋ to-be（/v1 契約）。命名規則以 AGENTS.md 為準。
 > DGX 服務認證與速率限制 → 13_安全循環；`admin api disabled` 503 措辭一併列 13。
 
@@ -153,6 +153,7 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | —（新增） | `GET /api/v1/admin/elders/{elder_id}/reminders`／`memory`／`account`／`risk-notifications`、`GET /api/v1/admin/jobs` | 內測基礎建設（spec 2026-07-12）：長輩詳情四分頁＋排程狀態，唯讀、`X-Admin-Key` 守門 |
 | —（新增） | `POST /api/v1/admin/jobs/{job_name}/run`、`POST /api/v1/admin/elders/{elder_id}/reminders/dispatch` | 內測手動觸發（spec 2026-07-12）：需 `X-Admin-Key`＋`INTERNAL_TESTING_ENABLED=true`（否則 403 `internal_testing_disabled`）；RPC 動作式路徑為 admin 內部工具刻意例外；不寫 `scheduler_state` |
 | —（新增） | `GET /api/v1/meta` | 公開端點（無認證）：回 `{internal_testing: bool}` 供 App／admin 前端決定內測功能顯示（spec 2026-07-12） |
+| —（新增） | `GET /api/v1/admin/news?days=3`（1–30） | 話題新聞檢視（D-74 消費端，2026-07-25）：回近 N 天爬到的新聞（news_item_id／source_id／title／url／publisher／published_at／retrieved_at，`meta` 帶 days＋count；content 刻意不回——列表要輕，原文點 url），唯讀、`X-Admin-Key` 守門 |
 | —（新增） | `GET /api/v1/admin/strategies?status=adopted`、`PATCH /api/v1/admin/strategies/{strategy_id}` | 守則檢視與撤銷（每晚反思）：守則自動生效、無待審佇列，故 PATCH 只收 `{"action": "revoke"}`（其餘 400 `invalid_action`），**不提供採用**；`status` 須為 `adopted`／`revoked`／`superseded`（否則 400 `invalid_status`）；撤不到生效中的守則回 404 `strategy_not_found`。列表回傳含 `evidence`／`observed_days`（僅後台可見，不進 system prompt） |
 
 ### 平台契約（不入信封、不入 v1）
@@ -194,3 +195,4 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | v1.0 | 2026-07-08 | 初版：D-23～D-29 契約定稿 |
 | v1.1 | 2026-07-17 | turns 補位置三參數（location／latitude／longitude 模糊座標，三者齊備才寫入）；追認 7/12–7/14 已回填而未升版的內容（sessions/all、内測端點、守則端點、錯誤碼中央註冊等） |
 | v1.2 | 2026-07-17 | 稱謂欄位（elders.nickname）：POST /elders 收選填 nickname、GET /elders 回傳 nickname、新增 PUT /elders/{elder_id}/profile 補設稱謂 |
+| v1.4 | 2026-07-25 | 新增 `GET /api/v1/admin/news`（話題新聞檢視，D-74 消費端）。 |
