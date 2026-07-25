@@ -157,18 +157,35 @@ def build_tool_registry(
     traces: PgTraceStore | None = None,
     news: NewsStore | None = None,
     news_mentions: NewsMentionStore | None = None,
+    news_locations: PgLocationStore | None = None,
+    news_blocked_keywords: str = "",
 ) -> ToolRegistry:
     """集中組工具：日後新增工具只改這裡，兩個組裝根自動都有。"""
     registry = ToolRegistry()
     registry.register(WEATHER_SPEC, build_weather_handler())
     registry.register(CURRENT_TIME_SPEC, build_current_time_handler(clock))
     # 話題新聞消費端（D-74 後續）：有 store 才註冊；正式組裝一律有。
-    # mentions 供「同一位長輩不重複給料」，未提供時工具照常運作（只是不去重）。
+    # mentions 供不重複給料、locations 供在地化加權、blocked 供負面過濾——
+    # 三者皆選配，未提供時工具照常運作。
     if news is not None:
-        registry.register(NEWS_SPEC, build_news_handler(news, clock=clock, mentions=news_mentions))
+        registry.register(
+            NEWS_SPEC,
+            build_news_handler(
+                news,
+                clock=clock,
+                mentions=news_mentions,
+                locations=news_locations,
+                blocked_keywords=news_blocked_keywords,
+            ),
+        )
         registry.register(
             NEWS_DETAIL_SPEC,
-            build_news_detail_handler(news, clock=clock, mentions=news_mentions),
+            build_news_detail_handler(
+                news,
+                clock=clock,
+                mentions=news_mentions,
+                blocked_keywords=news_blocked_keywords,
+            ),
         )
     registry.register(
         HEALTH_RAG_SPEC,
@@ -262,6 +279,8 @@ def assemble_core(
             traces=traces,
             news=news,
             news_mentions=news_mentions,
+            news_locations=locations,
+            news_blocked_keywords=settings.news_blocked_keywords,
         ),
     )
     notifications = PgAppNotificationStore(db, clock=clock, new_id=new_id)

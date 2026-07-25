@@ -219,3 +219,73 @@ def test_detail_records_mention_for_elder():
     handler = build_news_detail_handler(store, clock=_clock, mentions=mentions)
     handler({"title": "有興趣的新聞"}, _ctx("e1"))
     assert mentions.list_for_elder("e1") == {"n1"}
+
+
+# --- 選題調校（Leo 2026-07-25 核可：負面過濾＋在地化）---
+
+
+class _FakeLocations:
+    def __init__(self, place: str | None) -> None:
+        self._place = place
+
+    def get_for_elder(self, elder_id: str):
+        from kinsun.locations.store import ElderLocation
+
+        if self._place is None:
+            return None
+        return ElderLocation(elder_id=elder_id, place=self._place, recorded_at=0.0)
+
+
+def test_handler_excludes_items_with_blocked_keywords():
+    store = FakeNewsStore()
+    store.save(_item("n1", title="公園健走活動"))
+    store.save(_item("n2", title="市區驚傳兇殺案"))
+    handler = build_news_handler(store, clock=_clock, blocked_keywords="兇殺,命案")
+    reply = handler({}, None)
+    assert "公園健走活動" in reply
+    assert "兇殺" not in reply
+
+
+def test_handler_blocked_keywords_blank_keeps_everything():
+    store = FakeNewsStore()
+    store.save(_item("n1", title="市區驚傳兇殺案"))
+    handler = build_news_handler(store, clock=_clock, blocked_keywords="")
+    assert "兇殺" in handler({}, None)
+
+
+def test_detail_refuses_blocked_item():
+    store = FakeNewsStore()
+    store.save(_item("n1", title="市區驚傳兇殺案", content="細節"))
+    handler = build_news_detail_handler(store, clock=_clock, blocked_keywords="兇殺")
+    assert "找不到" in handler({"title": "兇殺案"}, None)
+
+
+def test_handler_guarantees_local_news_for_elder_location():
+    store = FakeNewsStore()
+    base = _NOW.timestamp()
+    # 十多則非在地新聞把池子塞滿；在地那則發布最早、照理擠不進前 10 池。
+    for i in range(12):
+        store.save(_item(f"n{i}", title=f"全國新聞{i}", published_at=base - i * 60))
+    store.save(_item("local", title="台南美食節登場", published_at=base - 86400))
+    handler = build_news_handler(
+        store, clock=_clock, locations=_FakeLocations("台南市東區"), rng=random.Random(0)
+    )
+    assert "台南美食節登場" in handler({}, _ctx("e1"))
+
+
+def test_handler_without_location_row_behaves_normally():
+    store = FakeNewsStore()
+    store.save(_item("n1", title="全國新聞"))
+    handler = build_news_handler(store, clock=_clock, locations=_FakeLocations(None))
+    assert "全國新聞" in handler({}, _ctx("e1"))
+
+
+def test_handler_location_store_failure_degrades():
+    class _Exploding:
+        def get_for_elder(self, elder_id):
+            raise RuntimeError("elder_locations 表掛了")
+
+    store = FakeNewsStore()
+    store.save(_item("n1", title="照常給料的新聞"))
+    handler = build_news_handler(store, clock=_clock, locations=_Exploding())
+    assert "照常給料的新聞" in handler({}, _ctx("e1"))
