@@ -21,7 +21,6 @@ from kinsun.accounts.models import Channel
 from kinsun.accounts.service import AccountService
 from kinsun.accounts.store import PgAccountStore
 from kinsun.agent import CareAgent
-from kinsun.appointments.facts import AppointmentFacts
 from kinsun.appointments.service import AppointmentService
 from kinsun.appointments.store import PgAppointmentStore
 from kinsun.channels.app.outbound import AppOutboundChannel
@@ -33,7 +32,6 @@ from kinsun.db import Database, ensure_schema
 from kinsun.llm import GeminiClient, LLMClient
 from kinsun.locations.facts import LocationFacts
 from kinsun.locations.store import PgLocationStore
-from kinsun.medications.facts import MedicationFacts
 from kinsun.medications.service import MedicationService
 from kinsun.medications.store import PgMedicationStore
 from kinsun.memory.longterm.mem0_factory import build_mem0_memory
@@ -52,6 +50,10 @@ from kinsun.rag.vector_store import PgVectorStore
 from kinsun.reports.reminders import PgReminderLogStore
 from kinsun.reports.summaries import PgConversationSummaryStore
 from kinsun.safety.events import PgRiskEventStore
+from kinsun.schedules.facts import ScheduleFacts
+from kinsun.schedules.models import ScheduleKind
+from kinsun.schedules.service import ScheduleService
+from kinsun.schedules.store import PgScheduleStore
 from kinsun.strategies.facts import StrategyFacts
 from kinsun.strategies.store import PgStrategyStore
 from kinsun.tools.health_rag import HEALTH_RAG_SPEC, build_health_rag_handler
@@ -103,6 +105,10 @@ class Core:
     appt_store: PgAppointmentStore
     medications: MedicationService
     appointments: AppointmentService
+    # 統一排程（D-76 P2）：派送 job、對話注入與日後的語音工具／API 共用同一組。
+    # ⚠ 過渡期舊表仍是家屬寫入端的真相，med_store／appt_store 因此還留著（P3 才換）。
+    schedule_store: PgScheduleStore
+    schedules: ScheduleService
     memory: PgMemoryStore
     traces: PgTraceStore
     reminder_logs: PgReminderLogStore
@@ -227,6 +233,14 @@ def assemble_core(
     appt_store = PgAppointmentStore(db)
     medications = MedicationService(med_store)
     appointments = AppointmentService(appt_store)
+    schedule_store = PgScheduleStore(db)
+    schedules = ScheduleService(
+        schedule_store,
+        clock=clock,
+        new_id=new_id,
+        max_active_per_elder=settings.schedule_max_active_per_elder,
+        max_days_ahead=settings.schedule_max_days_ahead,
+    )
     strategies = PgStrategyStore(db, clock=clock, new_id=new_id)
     locations = PgLocationStore(db)
     session = SessionMemory(
@@ -240,8 +254,12 @@ def assemble_core(
             # 稱呼緊接其後（2026-07-17）：沒有它，模型每輪亂猜「阿公／阿嬤」，
             # 真實使用一半機率叫錯；稱呼是所有段落裡最先要對的事。
             ElderProfileFacts(account_store),
-            MedicationFacts(medications),
-            AppointmentFacts(appointments, clock=clock),
+            # 統一排程取代舊的用藥／回診兩段（D-76 P2）：三種 kind 各成一段，段落
+            # 標題逐字沿用舊 facts（見 schedules/facts.py），prompt 因此零變動；
+            # 第三段是全新的——長輩自己交代要提醒的事，金孫先前完全看不到。
+            ScheduleFacts(schedule_store, kind=ScheduleKind.MEDICATION, clock=clock),
+            ScheduleFacts(schedule_store, kind=ScheduleKind.APPOINTMENT, clock=clock),
+            ScheduleFacts(schedule_store, kind=ScheduleKind.CUSTOM, clock=clock),
             # 閉環的最後一哩：反思學到的守則由此進入下一輪對話的 system prompt。
             StrategyFacts(strategies, max_strategies=settings.reflection_max_strategies),
             # 地點注入（spec 2026-07-17）：位置是線索不是答案，措辭見 locations/facts.py。
@@ -310,6 +328,8 @@ def assemble_core(
         appt_store=appt_store,
         medications=medications,
         appointments=appointments,
+        schedule_store=schedule_store,
+        schedules=schedules,
         memory=memory,
         risk_events=risk_events,
         summaries=summaries,
