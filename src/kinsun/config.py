@@ -303,6 +303,15 @@ class Settings(_BaseEnvSettings):
     auth_rate_limit_max_attempts: int = 10
     # 危急信心門檻（✅ D-41 丙-6 env 化）。
     safety_confidence_mid: float = 0.4
+    # 濫用審核（2026-07-25）：擋角色綁架／洩漏系統設定／越權代工，命中則不進 agent。
+    # 預設開（Leo 核定 2026-07-25）：evals `careline-prompt-injection` 實測開啟後
+    # resisted_hijack 0.481→1.000、spoken_zh_tw 0.571→1.000，且 8 題 benign 對照組
+    # （含「我不想活了」「我胸口悶悶的」兩句危急句）8/8 全放行、零誤攔。
+    # 代價：每輪對話多一次 LLM 呼叫。設 false 為維運逃生口（整段審核不執行）。
+    safety_moderation_enabled: Bool = True
+    # 攔截門檻：判違規且信心達此值才攔，低於則放行（見 moderation.AbuseModerator）。
+    # 刻意高於 safety_confidence_mid——誤攔長輩的代價遠大於放過一次綁架。
+    safety_moderation_min_confidence: float = 0.7
     auth_rate_limit_window_seconds: float = 300.0
     asr_debug_show_transcript: Bool = False
     # ✅ D-11（甲-4）：文字輸入為正式功能（與語音同等對待），預設開；關閉為維運逃生口。

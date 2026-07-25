@@ -69,6 +69,10 @@ def test_load_settings_reads_required_and_defaults():
     assert settings.audio_upload_timeout_seconds == 10
     assert settings.audio_max_upload_bytes == 10 * 1024 * 1024
     assert settings.safety_confidence_mid == 0.4
+    # 濫用審核預設開（Leo 核定 2026-07-25）：這是會攔掉長輩發話、且每輪多一次 LLM
+    # 呼叫的路徑，預設值的任何更動都必須是刻意的，故在此釘死。
+    assert settings.safety_moderation_enabled is True
+    assert settings.safety_moderation_min_confidence == 0.7
     assert settings.asr_api_key == ""
     assert settings.tts_api_key == ""
     assert settings.asr_debug_show_transcript is False

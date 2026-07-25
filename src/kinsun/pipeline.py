@@ -15,6 +15,7 @@ from kinsun.observability.store import TraceStore, safe_record
 from kinsun.reports.reminders import ReminderLogStore
 from kinsun.safety.detector import RiskDetector
 from kinsun.safety.events import RiskEventStore
+from kinsun.safety.moderation import AbuseModerator, ModerationResult, reply_for
 from kinsun.safety.notifier import Notifier
 from kinsun.safety.tiers import RiskAssessment, RiskTier
 from kinsun.speech.asr import ASRClient
@@ -48,6 +49,7 @@ class VoicePipeline:
         timer: Callable[[], float] = time.monotonic,
         reminder_logs: ReminderLogStore | None = None,
         response_window_seconds: int = 3600,
+        moderator: AbuseModerator | None = None,
     ) -> None:
         self._asr = asr
         self._agent = agent
@@ -62,6 +64,8 @@ class VoicePipeline:
         # 選填（預設 None＝不標記）：既有呼叫端與測試不受影響。
         self._reminder_logs = reminder_logs
         self._response_window_seconds = response_window_seconds
+        # 選填（預設 None＝不審核，等同 SAFETY_MODERATION_ENABLED=false）。
+        self._moderator = moderator
 
     @tracing.track(
         name="care_turn_voice", type="general", capture_input=False, capture_output=False
@@ -143,6 +147,25 @@ class VoicePipeline:
         # _mark_reminder_responded 的 docstring）。語音（process）與文字（process_text）
         # 都流經此處，故標記一次即涵蓋兩條路徑。
         self._mark_reminder_responded(elder_id)
+        # 濫用審核（2026-07-25）：⚠️ 位置有意義，請勿上移——必須排在危急落庫與家屬
+        # 通報之後。攔截會整段跳過 agent，若排在前面，一句被誤判的「我不想活了」就會
+        # 讓 risk_events 不落庫、家屬永遠收不到 L2 通知（那些詞全在
+        # ABSOLUTE_DANGER_WORDS 裡）。順序由 test_pipeline 的
+        # test_moderation_runs_after_family_notification 守住。
+        # 被攔的這一輪刻意不寫進記憶（記憶只由 agent.handle 寫）：綁架企圖不該變成
+        # 明天的對話脈絡，也不該進長期記憶。
+        if self._moderator is not None:
+            moderation = self._moderate(
+                user_text, external_id=external_id, channel=channel, trace_id=trace_id
+            )
+            if moderation.is_blocked:
+                tracing.update_trace_metadata(moderation=moderation.category.value)
+                blocked_reply = reply_for(moderation.category)
+                tracing.set_current_trace_io(user_input=user_text, assistant_output=blocked_reply)
+                result = self._synthesize(
+                    blocked_reply, external_id=external_id, channel=channel, trace_id=trace_id
+                )
+                return replace(result, transcript=user_text)
         reply_text = self._generate(
             elder_id,
             user_text,
@@ -222,6 +245,43 @@ class VoicePipeline:
                 )
             )
         return assessment
+
+    @tracing.track(name="abuse_moderate", type="general", capture_input=False, capture_output=False)
+    def _moderate(
+        self, user_text: str, *, external_id: str, channel: str, trace_id: str
+    ) -> ModerationResult:
+        """濫用審核也納入觀測（比照 _assess）：token 進收集器、每輪補一筆 llm_call。
+
+        moderator.moderate 從不拋例外（fail-open），故錯誤以 llm:error 訊號辨識，
+        不能沿用 _span 的例外偵測。模型名沿用 safety_model_name——審核與危急分級
+        共用同一顆 safety 模型（見 app.py 的 safety_llm）。
+
+        前置條件：`self._moderator` 不為 None，由唯一呼叫端 `_process_transcribed`
+        守門——審核未啟用時整段不進來，才不會平白產生一個空 span。
+        """
+        usage = LLMUsage()
+        started = self._timer()
+        with collect_llm_usage(usage):
+            moderation = self._moderator.moderate(user_text)
+        if self._traces is not None:
+            traces = self._traces
+            latency_ms = self._latency_ms(started)
+            is_error = "llm:error" in moderation.signals
+            safe_record(
+                lambda: traces.record_llm_call(
+                    trace_id=trace_id,
+                    external_id=external_id,
+                    channel=channel,
+                    status="error" if is_error else "ok",
+                    latency_ms=latency_ms,
+                    model_name=self._safety_model_name,
+                    input_tokens=usage.input_tokens or None,
+                    output_tokens=usage.output_tokens or None,
+                    content=f"濫用審核 {moderation.category.value}：{moderation.reason}",
+                    error_message="審核器故障（fail-open 放行）" if is_error else "",
+                )
+            )
+        return moderation
 
     @contextmanager
     def _span(self, record: Callable[[TraceStore, str, int, str], object]) -> Iterator[None]:
