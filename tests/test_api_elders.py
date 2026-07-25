@@ -5,15 +5,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from kinsun.accounts.service import AccountService
-from kinsun.appointments.service import AppointmentService
-from kinsun.medications.service import MedicationService
+from kinsun.schedules.service import ScheduleService
+from kinsun.schedules.store import FakeScheduleStore
 from kinsun.web.auth import AuthError, LineIdentity
 from kinsun.web.routers import create_guardian_face_router
 from tests.fakes import (
     FakeAccountStore,
-    FakeAppointmentStore,
     FakeConversationSummaryStore,
-    FakeMedicationStore,
     FakeReminderLogStore,
     FakeRiskEventStore,
 )
@@ -47,8 +45,7 @@ def _client(verifier, accounts):
         create_guardian_face_router(
             verifier=verifier,
             accounts=accounts,
-            medications=MedicationService(FakeMedicationStore()),
-            appointments=AppointmentService(FakeAppointmentStore()),
+            schedules=ScheduleService(FakeScheduleStore(), clock=lambda: NOW),
             clock=lambda: NOW,
             risk_events=FakeRiskEventStore(),
             reminder_logs=FakeReminderLogStore(),

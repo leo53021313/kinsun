@@ -25,8 +25,7 @@ export const strings = {
     guardianRegister: "家屬註冊",
     guardianHome: "我的長輩",
     elderDetail: "長輩詳情",
-    medications: "用藥管理",
-    appointments: "回診管理",
+    schedules: "行程管理",
     notifications: "通知",
     elderBind: "輸入綁定碼",
     elderLogin: "長輩登入",
@@ -121,12 +120,9 @@ export const strings = {
     remindersCount: (count: number) => `近 30 天提醒 ${count} 則`,
     dailySummarySection: "每日摘要",
     noSummaries: "還沒有摘要——長輩與金孫聊過天後，隔天早上就會出現。",
-    medicationsSection: "固定用藥",
-    noMedications: "還沒有用藥，點下方「管理用藥」新增。",
-    manageMedications: "管理用藥",
-    upcomingAppointmentsSection: "即將回診",
-    noAppointments: "沒有排定的回診。",
-    manageAppointments: "管理回診",
+    schedulesSection: "全部行程",
+    noSchedules: "還沒有任何提醒，點下方「管理行程」新增。",
+    manageSchedules: "管理行程",
     accountSection: "長輩登入帳密（代辦）",
     // 多行 JSX 文字節點：換行處由 JSX 收斂成單一空白，這裡以字串串接保留同樣的間隔。
     accountHelp:
@@ -138,30 +134,29 @@ export const strings = {
     inviteSection: "邀請其他家屬",
     makeInvite: "產生家屬邀請碼",
   },
-  medications: {
-    deleteTitle: "刪除用藥",
-    confirmDelete: (name: string) => `確定要刪除「${name}」嗎？`,
-    listSection: "固定用藥",
-    empty: "還沒有用藥，從下方新增第一筆。",
-    editSection: "編輯用藥",
-    addSection: "新增用藥",
-    nameLabel: "藥名",
-    namePlaceholder: "例：降血壓藥",
+  schedules: {
+    deleteTitle: "刪除提醒",
+    confirmDelete: (title: string) => `確定要刪除「${title}」嗎？`,
+    listSection: "全部行程",
+    empty: "還沒有任何提醒，從下方新增第一筆。",
+    editSection: "編輯提醒",
+    addSection: "新增提醒",
+    kindLabel: "提醒類型",
+    titleLabel: "提醒內容",
+    titlePlaceholder: (kind: string) =>
+      kind === "medication"
+        ? "例：降血壓藥"
+        : kind === "appointment"
+          ? "例：心臟科回診 林口長庚"
+          : "例：去公園散步",
     slotsLabel: "提醒時段（可複選）",
-  },
-  appointments: {
-    deleteTitle: "刪除回診",
-    confirmDelete: (shown: string, label: string) => `確定要刪除「${shown}｜${label}」嗎？`,
-    listSection: "已排定回診",
-    empty: "沒有排定的回診，從下方新增第一筆。",
-    editSection: "編輯回診",
-    addSection: "新增回診",
-    dateLabel: "回診日期",
-    datePlaceholder: "點這裡選日期",
-    timeLabel: "看診時間（選填）",
-    timePlaceholder: "點這裡選時間（提醒會帶上）",
-    contentLabel: "回診內容",
-    contentPlaceholder: "例：心臟科回診 林口長庚",
+    customTimeLabel: "或直接指定時刻（選填，會蓋過上面的時段）",
+    whenLabel: (kind: string) => (kind === "appointment" ? "回診日期" : "提醒時間"),
+    whenPlaceholder: (kind: string) =>
+      kind === "appointment" ? "2026-07-30 10:30（時間可省略）" : "每天 17:00／每週三 15:00",
+    whenRequired: "請填寫提醒時間，格式請照欄位下方的範例。",
+    editHint: "修改後請重新填一次提醒時間。",
+    byElder: "（長輩自己交代的）",
   },
   notifications: {
     empty: "目前沒有通知。金孫有事會第一時間放在這裡。",

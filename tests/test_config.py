@@ -685,3 +685,29 @@ def test_opik_enabled_parses_falsy():
     settings = load_settings(env)
     assert settings.opik_enabled is False
     assert settings.opik_project_name == "kinsun-dev"
+
+
+def test_schedule_settings_defaults():
+    settings = load_settings(BASE_ENV)
+    assert settings.schedule_max_active_per_elder == 20
+    assert settings.schedule_dispatch_window_seconds == 90
+    assert settings.schedule_max_days_ahead == 365
+
+
+def test_schedule_settings_overridable():
+    settings = load_settings(
+        {
+            **BASE_ENV,
+            "SCHEDULE_MAX_ACTIVE_PER_ELDER": "5",
+            "SCHEDULE_DISPATCH_WINDOW_SECONDS": "120",
+            "SCHEDULE_MAX_DAYS_AHEAD": "30",
+        }
+    )
+    assert settings.schedule_max_active_per_elder == 5
+    assert settings.schedule_dispatch_window_seconds == 120
+    assert settings.schedule_max_days_ahead == 30
+
+
+def test_schedule_dispatch_window_rejects_zero():
+    with pytest.raises(ConfigError, match="SCHEDULE_DISPATCH_WINDOW_SECONDS"):
+        load_settings({**BASE_ENV, "SCHEDULE_DISPATCH_WINDOW_SECONDS": "0"})
