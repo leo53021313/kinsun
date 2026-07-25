@@ -257,6 +257,11 @@ class Settings(_BaseEnvSettings):
     news_retention_days: int = 14
     # News API（newsapi.org）金鑰；留空＝不註冊該新聞來源（優雅降級，僅剩衛福部來源）。
     news_api_key: str = ""
+    # News API 查詢關鍵字（支援 OR／AND）：偏長輩聊得來的生活話題（2026-07-25 Leo 指示調校）。
+    news_api_query: str = "健康 OR 天氣 OR 颱風 OR 美食 OR 旅遊 OR 節慶 OR 民生 OR 長者"
+    # News API 媒體白名單（逗號分隔 domains）：只收台灣媒體、排除大陸來源（白名單優於黑名單，
+    # zh 不分繁簡、黑名單抓不完）；留空＝不限媒體。
+    news_api_domains: str = "cna.com.tw,udn.com,ltn.com.tw,ettoday.net,tvbs.com.tw,setn.com"
     rag_content_policy: Annotated[str, BeforeValidator(_content_policy)] = "allowed_only"
     rag_embedding_model: Annotated[str, BeforeValidator(_embedding_model)] = "gemini-embedding-001"
     rag_refresh_enabled: Bool = False
