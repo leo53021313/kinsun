@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router";
 
 import { type ReminderItem, type RiskEventItem, getHealthReport } from "../api";
 import { formatTime, kindLabel, tierLabel } from "../report";
