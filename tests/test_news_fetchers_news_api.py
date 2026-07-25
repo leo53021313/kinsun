@@ -35,8 +35,10 @@ def test_fetch_maps_articles_to_news_items():
     assert item.url == "https://example.com/a1"
     assert item.content == "摘要內容"
     assert item.source_id == "news_api"
-    # apiKey 有帶進請求 URL
-    assert "apiKey=key123" in transport.calls[0][1]
+    # 金鑰走 X-Api-Key header、不進 URL（D-74 後續③：URL 會進 TransportError 訊息與 log）
+    method, url, _data, headers, _timeout = transport.calls[0]
+    assert headers.get("X-Api-Key") == "key123"
+    assert "key123" not in url
 
 
 def test_fetch_skips_articles_without_url():

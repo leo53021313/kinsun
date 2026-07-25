@@ -106,6 +106,11 @@ class MohwNewsFetcher:
             if not parser.entries:
                 break
             for title, href, date_text in parser.entries:
+                if not title.strip():
+                    # 標題只認 <a title> 屬性；網站改版拿掉時整筆跳過，
+                    # 空標題流進問候／工具會織出空的「」（D-74 後續④）。
+                    logger.warning("衛福部列表項缺 title 屬性，跳過：%s", href)
+                    continue
                 url = href if href.startswith("http") else urllib.parse.urljoin(list_url, href)
                 items.append(
                     NewsItem(
