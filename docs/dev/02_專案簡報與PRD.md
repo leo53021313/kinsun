@@ -65,8 +65,9 @@
 
 | ID | 描述 | 允收標準 | as-is | BDD 連結 |
 | :--- | :--- | :--- | :--- | :--- |
-| US-C1 | As a 家屬, I want to 幫長輩設定用藥, so that 金孫按時提醒。 | 1. 四時段提醒 2. 提醒不查長輩同意（✅ D-30，己-1 移除既有檢查） | ✅（`medications/jobs.py:18`）；App 端僅可讀（編輯待補） | `reminders.feature` |
-| US-C2 | As a 家屬, I want to 幫長輩登記回診, so that 前一天與當天都有提醒。 | 1. 今／明兩窗提醒 2. 長輩＋家屬都收到 | ✅（`appointments/jobs.py:18`） | `reminders.feature` |
+| US-C1 | As a 家屬, I want to 幫長輩設定用藥, so that 金孫按時提醒。 | 1. 時刻可自訂、四時段為預設（D-76 決策 11） 2. 同時刻多顆藥合併成一則 3. 提醒不查長輩同意（✅ D-30，己-1 移除既有檢查） | ✅（`schedules/jobs.py`）；LINE 選單、App、LIFF 三端皆可增刪改（D-76 P3） | `reminders.feature` |
+| US-C2 | As a 家屬, I want to 幫長輩登記回診, so that 前一天與當天都有提醒。 | 1. 今／明兩窗提醒 2. 長輩＋家屬都收到 | ✅（`schedules/jobs.py`，展開成同 group 的兩個鬧鐘） | `reminders.feature` |
+| US-C3 | As a 長輩, I want to 用說的就能請金孫記下要做的事, so that 我不用麻煩家人也不會忘記。 | 1. 講得出具體時間才反問（沒時間就不問） 2. 一句「好」就建立並複誦 3. 可用說的查詢與取消自己設的 4. 不能用說的取消家人設的用藥與回診 | ✅（`tools/schedules.py` 三工具＋SYSTEM_PROMPT 反問規則，D-76 P4） | `reminders.feature` |
 
 ### Epic D：家屬管理
 

@@ -19,10 +19,6 @@ from kinsun.accounts.models import (
     Role,
 )
 from kinsun.accounts.store import FakeAccountStore
-from kinsun.appointments.models import Appointment
-from kinsun.appointments.store import FakeAppointmentStore
-from kinsun.medications.models import Medication, MedicationSlot
-from kinsun.medications.store import FakeMedicationStore
 from kinsun.memory.models import MemoryItem
 from kinsun.news.models import NewsItem
 from kinsun.news.store import FakeNewsStore
@@ -32,6 +28,8 @@ from kinsun.reports.reminders import FakeReminderLogStore
 from kinsun.reports.summaries import FakeConversationSummaryStore
 from kinsun.safety.deliveries import FakeRiskNotificationLogStore
 from kinsun.safety.tiers import RiskTier
+from kinsun.schedules.models import CreatedBy, RepeatKind, Schedule, ScheduleKind
+from kinsun.schedules.store import FakeScheduleStore
 from kinsun.web.routers import create_admin_router
 from tests.fakes import FakeTraceStore
 
@@ -91,8 +89,7 @@ def _client(
     admin_api_key="secret",
     risk_events=None,
     account_store=None,
-    med_store=None,
-    appt_store=None,
+    schedule_store=None,
     reminder_logs=None,
     summaries=None,
     long_term=None,
@@ -110,8 +107,7 @@ def _client(
             clock=lambda: NOW,
             risk_events=risk_events,
             account_store=account_store or FakeAccountStore(),
-            med_store=med_store or FakeMedicationStore(),
-            appt_store=appt_store or FakeAppointmentStore(),
+            schedule_store=schedule_store or FakeScheduleStore(),
             reminder_logs=reminder_logs or FakeReminderLogStore(),
             summaries=summaries or FakeConversationSummaryStore(),
             long_term=long_term or _FakeLongTerm(),
@@ -402,24 +398,34 @@ def test_rag_status_warns_for_active_classroom_demo_release():
 
 
 def test_elder_reminders_shape():
-    """spec 2026-07-12 §3.3：提醒設定分頁——用藥主檔＋回診＋近期發送紀錄。"""
+    """spec 2026-07-12 §3.3：提醒設定分頁——統一排程清單＋近期發送紀錄（D-76 P5）。"""
     accounts = FakeAccountStore()
     accounts.save_elder(Elder("e1", "阿公"))
-    meds = FakeMedicationStore()
-    meds.save(Medication("m1", "e1", "降血壓藥", (MedicationSlot.MORNING,)))
-    appts = FakeAppointmentStore()
-    appts.save(Appointment("a1", "e1", "2026-07-20", "心臟科回診"))
+    store = FakeScheduleStore()
+    store.save(
+        Schedule(
+            schedule_id="m1",
+            group_id="m1",
+            elder_id="e1",
+            kind=ScheduleKind.MEDICATION,
+            title="降血壓藥",
+            repeat_kind=RepeatKind.DAILY,
+            repeat_time="08:00",
+            created_by=CreatedBy.GUARDIAN,
+            created_at=1.0,
+        )
+    )
     logs = FakeReminderLogStore()
     logs.record("e1", "medication", "早上用藥：降血壓藥")
-    res = _client(account_store=accounts, med_store=meds, appt_store=appts, reminder_logs=logs).get(
+    res = _client(account_store=accounts, schedule_store=store, reminder_logs=logs).get(
         "/api/v1/admin/elders/e1/reminders", headers=_auth()
     )
     assert res.status_code == 200
     body = res.json()["data"]
-    assert body["medications"] == [
-        {"medication_id": "m1", "name": "降血壓藥", "slots": ["morning"]}
-    ]
-    assert body["appointments"][0]["label"] == "心臟科回診"
+    # D-76 P5：三類合成一份 schedules 清單，kind 欄位保留分類。
+    assert body["schedules"][0]["title"] == "降血壓藥"
+    assert body["schedules"][0]["kind"] == "medication"
+    assert body["schedules"][0]["created_by"] == "guardian"
     assert body["reminder_logs"][0]["kind"] == "medication"
 
 

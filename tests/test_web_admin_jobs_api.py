@@ -6,13 +6,17 @@ from fastapi.testclient import TestClient
 from kinsun.accounts.models import Elder, ElderGuardian, Guardian, Role
 from kinsun.accounts.service import AccountService
 from kinsun.accounts.store import FakeAccountStore
-from kinsun.appointments.models import Appointment
-from kinsun.appointments.store import FakeAppointmentStore
-from kinsun.medications.models import Medication, MedicationSlot
-from kinsun.medications.store import FakeMedicationStore
 from kinsun.reports.reminders import FakeReminderLogStore
 from kinsun.scheduler.scheduler import Job
 from kinsun.scheduler.state import FakeScheduleStateStore
+from kinsun.schedules.models import (
+    Audience,
+    CreatedBy,
+    RepeatKind,
+    Schedule,
+    ScheduleKind,
+)
+from kinsun.schedules.store import FakeScheduleStore
 from kinsun.web.envelope import install_error_envelope
 from kinsun.web.routers import create_admin_jobs_router
 
@@ -36,8 +40,7 @@ def _client(
     internal_testing_enabled: bool = True,
     jobs: list[Job] | None = None,
     accounts: FakeAccountStore | None = None,
-    med_store: FakeMedicationStore | None = None,
-    appt_store: FakeAppointmentStore | None = None,
+    schedule_store: FakeScheduleStore | None = None,
     channel_router: _FakeRouter | None = None,
     reminder_logs: FakeReminderLogStore | None = None,
     schedule_state: FakeScheduleStateStore | None = None,
@@ -53,8 +56,7 @@ def _client(
             jobs=jobs or [],
             schedule_state=schedule_state or FakeScheduleStateStore(),
             accounts=AccountService(store, clock=lambda: NOW, ttl_hours=24, max_attempts=5),
-            med_store=med_store or FakeMedicationStore(),
-            appt_store=appt_store or FakeAppointmentStore(),
+            schedule_store=schedule_store or FakeScheduleStore(),
             channel_router=channel_router or _FakeRouter(),
             record_reminder=logs.record,
             clock=lambda: NOW,
@@ -112,18 +114,32 @@ def test_run_job_blocked_when_testing_disabled():
     assert res.json()["error"]["code"] == "internal_testing_disabled"
 
 
+def _daily(schedule_id, elder_id, title, kind=ScheduleKind.MEDICATION):
+    return Schedule(
+        schedule_id=schedule_id,
+        group_id=schedule_id,
+        elder_id=elder_id,
+        kind=kind,
+        title=title,
+        repeat_kind=RepeatKind.DAILY,
+        repeat_time="08:00",
+        created_by=CreatedBy.GUARDIAN,
+        created_at=1.0,
+    )
+
+
 def test_dispatch_medication_sends_and_records():
     accounts = FakeAccountStore()
     accounts.save_elder(Elder("e1", "阿公"))
-    meds = FakeMedicationStore()
-    meds.save(Medication("m1", "e1", "降血壓藥", (MedicationSlot.MORNING,)))
+    store = FakeScheduleStore()
+    store.save(_daily("m1", "e1", "降血壓藥"))
     router = _FakeRouter()
     logs = FakeReminderLogStore()
     res = _client(
-        accounts=accounts, med_store=meds, channel_router=router, reminder_logs=logs
+        accounts=accounts, schedule_store=store, channel_router=router, reminder_logs=logs
     ).post(
         "/api/v1/admin/elders/e1/reminders/dispatch",
-        json={"kind": "medication", "slot": "morning"},
+        json={"kind": "medication"},
         headers=_auth(),
     )
     assert res.status_code == 200
@@ -132,28 +148,60 @@ def test_dispatch_medication_sends_and_records():
     assert logs.recorded[0][1] == "medication"
 
 
-def test_dispatch_medication_invalid_slot_400():
+def test_manual_dispatch_does_not_consume_the_real_reminder():
+    """⚠ 手動觸發不可寫 fired_at——否則長輩當天真正該收到的那一則就不會發了。
+
+    這是內測工具，測試動作不可以吃掉正式提醒。
+    """
+    accounts = FakeAccountStore()
+    accounts.save_elder(Elder("e1", "阿公"))
+    store = FakeScheduleStore()
+    store.save(_daily("m1", "e1", "降血壓藥"))
+    _client(accounts=accounts, schedule_store=store, channel_router=_FakeRouter()).post(
+        "/api/v1/admin/elders/e1/reminders/dispatch",
+        json={"kind": "medication"},
+        headers=_auth(),
+    )
+    assert store.get("m1").fired_at is None
+
+
+def test_dispatch_unknown_kind_422():
     accounts = FakeAccountStore()
     accounts.save_elder(Elder("e1", "阿公"))
     res = _client(accounts=accounts).post(
         "/api/v1/admin/elders/e1/reminders/dispatch",
-        json={"kind": "medication", "slot": "midnight"},
+        json={"kind": "exercise"},
         headers=_auth(),
     )
-    assert res.status_code == 400
-    assert res.json()["error"]["code"] == "invalid_slot"
+    assert res.status_code == 422
 
 
-def test_dispatch_appointment_today_and_tomorrow_only_this_elder():
+def test_dispatch_appointment_only_this_elder():
     accounts = FakeAccountStore()
     accounts.save_elder(Elder("e1", "阿公"))
     accounts.save_guardian(Guardian("g1", "小明"))
     accounts.save_elder_guardian(ElderGuardian("e1", "g1", Role.PRIMARY, 1))
-    appts = FakeAppointmentStore()
-    appts.save(Appointment("a1", "e1", NOW.date().isoformat(), "心臟科"))
-    appts.save(Appointment("a2", "e2", NOW.date().isoformat(), "別人的"))
+    store = FakeScheduleStore()
+    mine = _daily("a1", "e1", "心臟科", ScheduleKind.APPOINTMENT)
+    store.save(
+        Schedule(
+            schedule_id="a1",
+            group_id="a1",
+            elder_id="e1",
+            kind=ScheduleKind.APPOINTMENT,
+            title="心臟科",
+            repeat_kind=RepeatKind.ONCE,
+            scheduled_at=NOW.timestamp(),
+            event_at=NOW.timestamp(),
+            audience=Audience.ELDER_AND_GUARDIAN,
+            created_by=CreatedBy.GUARDIAN,
+            created_at=1.0,
+        )
+    )
+    store.save(_daily("a2", "e2", "別人的", ScheduleKind.APPOINTMENT))
+    assert mine.title == "心臟科"
     router = _FakeRouter()
-    res = _client(accounts=accounts, appt_store=appts, channel_router=router).post(
+    res = _client(accounts=accounts, schedule_store=store, channel_router=router).post(
         "/api/v1/admin/elders/e1/reminders/dispatch",
         json={"kind": "appointment"},
         headers=_auth(),
@@ -167,7 +215,7 @@ def test_dispatch_appointment_today_and_tomorrow_only_this_elder():
 def test_dispatch_unknown_elder_404():
     res = _client().post(
         "/api/v1/admin/elders/nope/reminders/dispatch",
-        json={"kind": "medication", "slot": "morning"},
+        json={"kind": "medication"},
         headers=_auth(),
     )
     assert res.status_code == 404
@@ -199,15 +247,15 @@ def test_dispatch_reminder_transparent_when_tracing_enabled(monkeypatch):
     _enable_hermetic_tracing(monkeypatch)
     accounts = FakeAccountStore()
     accounts.save_elder(Elder("e1", "阿公"))
-    meds = FakeMedicationStore()
-    meds.save(Medication("m1", "e1", "降血壓藥", (MedicationSlot.MORNING,)))
+    store = FakeScheduleStore()
+    store.save(_daily("m1", "e1", "降血壓藥"))
     router = _FakeRouter()
     logs = FakeReminderLogStore()
     res = _client(
-        accounts=accounts, med_store=meds, channel_router=router, reminder_logs=logs
+        accounts=accounts, schedule_store=store, channel_router=router, reminder_logs=logs
     ).post(
         "/api/v1/admin/elders/e1/reminders/dispatch",
-        json={"kind": "medication", "slot": "morning"},
+        json={"kind": "medication"},
         headers=_auth(),
     )
     assert res.status_code == 200

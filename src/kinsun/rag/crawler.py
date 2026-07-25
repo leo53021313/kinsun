@@ -27,6 +27,8 @@ logger = logging.getLogger("kinsun.rag.crawler")
 
 _INLINE_SPACE_RE = re.compile(r"[ \t\r\f\v]+")
 _DATE_RE = re.compile(r"(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})")
+# 只跳過表單「控制元件」而非 <form> 容器：ASP.NET WebForms（如 hpa.gov.tw）
+# 會把整頁內容包在單一 <form> 內，跳過容器等於丟掉全部內文。
 _SKIP_TAGS = {
     "script",
     "style",
@@ -37,7 +39,12 @@ _SKIP_TAGS = {
     "footer",
     "header",
     "aside",
-    "form",
+    "button",
+    "select",
+    "option",
+    "textarea",
+    "label",
+    "datalist",
 }
 _PRIMARY_TAGS = {"main", "article"}
 
