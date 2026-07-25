@@ -21,8 +21,6 @@ from kinsun.accounts.models import Channel
 from kinsun.accounts.service import AccountService
 from kinsun.accounts.store import PgAccountStore
 from kinsun.agent import CareAgent
-from kinsun.appointments.service import AppointmentService
-from kinsun.appointments.store import PgAppointmentStore
 from kinsun.channels.app.outbound import AppOutboundChannel
 from kinsun.channels.line.messenger import LineApiMessenger, LineOutboundChannel
 from kinsun.channels.router import ChannelRouter
@@ -32,8 +30,6 @@ from kinsun.db import Database, ensure_schema
 from kinsun.llm import GeminiClient, LLMClient
 from kinsun.locations.facts import LocationFacts
 from kinsun.locations.store import PgLocationStore
-from kinsun.medications.service import MedicationService
-from kinsun.medications.store import PgMedicationStore
 from kinsun.memory.longterm.mem0_factory import build_mem0_memory
 from kinsun.memory.longterm.store import Mem0LongTermStore
 from kinsun.memory.recall import SessionMemory
@@ -109,12 +105,7 @@ class Core:
     router: ChannelRouter
     account_store: PgAccountStore
     accounts: AccountService
-    med_store: PgMedicationStore
-    appt_store: PgAppointmentStore
-    medications: MedicationService
-    appointments: AppointmentService
-    # 統一排程（D-76 P2）：派送 job、對話注入與日後的語音工具／API 共用同一組。
-    # ⚠ 過渡期舊表仍是家屬寫入端的真相，med_store／appt_store 因此還留著（P3 才換）。
+    # 統一排程（D-76）：派送 job、對話注入、家屬 API 與長輩語音工具共用同一組。
     schedule_store: PgScheduleStore
     schedules: ScheduleService
     memory: PgMemoryStore
@@ -244,10 +235,6 @@ def assemble_core(
         ttl_hours=settings.invite_ttl_hours,
         max_attempts=settings.invite_max_attempts,
     )
-    med_store = PgMedicationStore(db)
-    appt_store = PgAppointmentStore(db)
-    medications = MedicationService(med_store)
-    appointments = AppointmentService(appt_store)
     schedule_store = PgScheduleStore(db)
     schedules = ScheduleService(
         schedule_store,
@@ -340,10 +327,6 @@ def assemble_core(
         ),
         account_store=account_store,
         accounts=accounts,
-        med_store=med_store,
-        appt_store=appt_store,
-        medications=medications,
-        appointments=appointments,
         schedule_store=schedule_store,
         schedules=schedules,
         memory=memory,

@@ -176,12 +176,22 @@ export type TraceDetail = {
 };
 
 // --- 觀測後台：長輩詳情分頁（spec 2026-07-12） ---
-export type AdminMedication = { medication_id: string; name: string; slots: string[] };
-export type AdminAppointment = { appointment_id: string; date: string; label: string; time: string };
+/** 後台提醒分頁的單筆鬧鐘（D-76 P5：三類合成一份清單，kind 保留分類）。 */
+export type AdminSchedule = {
+  schedule_id: string;
+  group_id: string;
+  kind: ScheduleKind;
+  title: string;
+  repeat: RepeatKind;
+  time: string;
+  weekday: number | null;
+  scheduled_at: number | null;
+  event_at: number | null;
+  created_by: "elder" | "guardian";
+};
 export type AdminReminderLog = { kind: string; content: string; created_at: number };
 export type AdminElderReminders = {
-  medications: AdminMedication[];
-  appointments: AdminAppointment[];
+  schedules: AdminSchedule[];
   reminder_logs: AdminReminderLog[];
 };
 export type AdminMemoryItem = { text: string; provenance: string; date: string };

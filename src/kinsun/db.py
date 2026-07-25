@@ -80,45 +80,13 @@ RATE_LIMIT_DDL = (
     "ON rate_limit_hits (key, hit_at);"
 )
 
-MEDICATIONS_DDL = (
-    "CREATE TABLE IF NOT EXISTS medications ("
-    "medication_id TEXT PRIMARY KEY, elder_id TEXT NOT NULL, "
-    "name TEXT NOT NULL, slots TEXT NOT NULL);"
+# 舊的用藥與回診表（D-76 P5 退役）：資料已遷入 schedules，全庫無人讀寫。
+# 用 DROP 而非留著不管——留著會讓下一個人以為那還是真相來源，而它的內容自 P3
+# 家屬入口切換後就再也不會更新了。既有庫執行一次即清乾淨，新庫是 no-op。
+LEGACY_REMINDER_TABLES_RETIRE_DDL = (
+    "DROP TABLE IF EXISTS medications;DROP TABLE IF EXISTS appointments;"
 )
 
-# time＝看診時刻 ISO "HH:MM"（✅ 庚-15，選填；空＝未指定）。
-APPOINTMENTS_DDL = (
-    "CREATE TABLE IF NOT EXISTS appointments ("
-    "appointment_id TEXT PRIMARY KEY, elder_id TEXT NOT NULL, "
-    "date TEXT NOT NULL, label TEXT NOT NULL, time TEXT NOT NULL DEFAULT '');"
-)
-
-# 早期個人庫使用 appt_id／appt_date；先無損改名再建新索引，避免既有表在 CREATE INDEX
-# 階段因 date 尚不存在而讓整筆 schema 交易失敗。
-APPOINTMENTS_NAMING_MIGRATION_DDL = (
-    "DO $$ BEGIN "
-    "IF EXISTS (SELECT 1 FROM information_schema.columns "
-    "WHERE table_schema='public' AND table_name='appointments' AND column_name='appt_id') "
-    "AND NOT EXISTS (SELECT 1 FROM information_schema.columns "
-    "WHERE table_schema='public' AND table_name='appointments' AND column_name='appointment_id') "
-    "THEN ALTER TABLE appointments RENAME COLUMN appt_id TO appointment_id; END IF; "
-    "IF EXISTS (SELECT 1 FROM information_schema.columns "
-    "WHERE table_schema='public' AND table_name='appointments' AND column_name='appt_date') "
-    "AND NOT EXISTS (SELECT 1 FROM information_schema.columns "
-    "WHERE table_schema='public' AND table_name='appointments' AND column_name='date') "
-    "THEN ALTER TABLE appointments RENAME COLUMN appt_date TO date; END IF; "
-    "IF to_regclass('public.idx_appt_date') IS NOT NULL "
-    "AND to_regclass('public.idx_appointments_date') IS NULL "
-    "THEN ALTER INDEX idx_appt_date RENAME TO idx_appointments_date; END IF; "
-    "END $$;"
-    "ALTER TABLE appointments ADD COLUMN IF NOT EXISTS time TEXT NOT NULL DEFAULT '';"
-    "CREATE INDEX IF NOT EXISTS idx_appointments_date ON appointments (date);"
-)
-
-# 統一排程（spec 2026-07-25-統一排程系統）：一列＝一個鬧鐘，group_id 串起同一件事。
-# 全新表、無舊欄位要遷移，故建表與建索引可同批（既有庫首次跑時一起建起來）。
-# 三個部分索引都帶 WHERE cancelled_at IS NULL：派送每分鐘掃一次，只有未取消的列
-# 有意義，讓索引跟著縮小而不是隨歷史資料無限長大。
 SCHEDULES_DDL = (
     "CREATE TABLE IF NOT EXISTS schedules ("
     "schedule_id TEXT PRIMARY KEY, group_id TEXT NOT NULL, elder_id TEXT NOT NULL, "
@@ -491,9 +459,6 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(BINDING_DDL)
         conn.execute(SCHEDULER_DDL)
         conn.execute(RATE_LIMIT_DDL)
-        conn.execute(MEDICATIONS_DDL)
-        conn.execute(APPOINTMENTS_DDL)
-        conn.execute(APPOINTMENTS_NAMING_MIGRATION_DDL)
         conn.execute(SCHEDULES_DDL)
         conn.execute(RAG_DDL)
         conn.execute(RISK_EVENTS_DDL)
@@ -520,6 +485,8 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(SESSION_KEY_MIGRATION_DDL)
         conn.execute(ACCOUNTS_LINE_COLUMNS_RETIRE_DDL)
         conn.execute(ELDER_GUARDIANS_TRANSCRIPT_COLUMN_RETIRE_DDL)
+        # ⚠ 必須排在 SCHEDULES_DDL 之後：先確定新表在，再丟掉舊表。
+        conn.execute(LEGACY_REMINDER_TABLES_RETIRE_DDL)
         conn.commit()
 
 

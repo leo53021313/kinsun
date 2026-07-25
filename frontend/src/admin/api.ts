@@ -166,7 +166,7 @@ export async function runJob(jobName: string): Promise<void> {
 /** 內測限定：立即發送某長輩的用藥／回診提醒。 */
 export async function dispatchReminder(
   elderId: string,
-  body: { kind: "medication" | "appointment"; slot?: string },
+  body: { kind: "medication" | "appointment" | "custom" },
 ): Promise<void> {
   await apiFetch(`/api/v1/admin/elders/${elderId}/reminders/dispatch`, {
     method: "POST",

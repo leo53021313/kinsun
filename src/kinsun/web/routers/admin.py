@@ -11,8 +11,6 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from kinsun import tracing
 from kinsun.accounts.models import PrincipalType
 from kinsun.accounts.store import AccountStore
-from kinsun.appointments.store import AppointmentStore
-from kinsun.medications.store import MedicationStore
 from kinsun.memory.longterm.store import LongTermStore
 from kinsun.news.store import NewsStore
 from kinsun.observability.models import (
@@ -28,6 +26,7 @@ from kinsun.reports.reminders import ReminderLogStore
 from kinsun.reports.summaries import ConversationSummaryStore
 from kinsun.safety.deliveries import RiskNotificationLogStore
 from kinsun.safety.events import RiskEventStore
+from kinsun.schedules.store import ScheduleStore
 from kinsun.web.envelope import ok
 from kinsun.web.errors import ErrorCode
 
@@ -61,8 +60,7 @@ def create_admin_router(
     clock: Callable[[], datetime],
     risk_events: RiskEventStore | None = None,
     account_store: AccountStore,
-    med_store: MedicationStore,
-    appt_store: AppointmentStore,
+    schedule_store: ScheduleStore,
     reminder_logs: ReminderLogStore,
     summaries: ConversationSummaryStore,
     long_term: LongTermStore,
@@ -247,22 +245,21 @@ def create_admin_router(
         _require_elder(elder_id)
         return ok(
             {
-                "medications": [
+                # 統一排程（D-76 P5）：三類合成一份清單，kind 欄位保留分類。
+                "schedules": [
                     {
-                        "medication_id": m.medication_id,
-                        "name": m.name,
-                        "slots": [s.value for s in m.slots],
+                        "schedule_id": s.schedule_id,
+                        "group_id": s.group_id,
+                        "kind": s.kind.value,
+                        "title": s.title,
+                        "repeat": s.repeat_kind.value,
+                        "time": s.repeat_time,
+                        "weekday": s.repeat_weekday,
+                        "scheduled_at": s.scheduled_at,
+                        "event_at": s.event_at,
+                        "created_by": s.created_by.value,
                     }
-                    for m in med_store.list_for_elder(elder_id)
-                ],
-                "appointments": [
-                    {
-                        "appointment_id": a.appointment_id,
-                        "date": a.date,
-                        "label": a.label,
-                        "time": a.time,
-                    }
-                    for a in appt_store.list_for_elder(elder_id)
+                    for s in schedule_store.list_for_elder(elder_id)
                 ],
                 "reminder_logs": [
                     {"kind": log.kind, "content": log.content, "created_at": log.created_at}
