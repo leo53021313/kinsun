@@ -218,3 +218,14 @@ export type RagStatus = {
 
 // --- 公開 meta（spec 2026-07-12 內測基礎建設） ---
 export type Meta = { internal_testing: boolean };
+
+// --- 話題新聞檢視（D-74 消費端，admin 觀測） ---
+export type AdminNewsItem = {
+  news_item_id: string;
+  source_id: string;
+  title: string;
+  url: string;
+  publisher: string;
+  published_at: number | null;
+  retrieved_at: number;
+};

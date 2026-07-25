@@ -11,6 +11,7 @@ import type {
   AdminElderMemory,
   AdminElderReminders,
   AdminJob,
+  AdminNewsItem,
   AdminRiskNotification,
   FeedMessage,
   HourlyCount,
@@ -31,6 +32,7 @@ export type {
   AdminElderMemory,
   AdminElderReminders,
   AdminJob,
+  AdminNewsItem,
   AdminRiskNotification,
   FeedMessage,
   HourlyCount,
@@ -149,6 +151,11 @@ export async function listJobs(): Promise<AdminJob[]> {
 
 export async function getRagStatus(): Promise<RagStatus> {
   return (await apiFetch<RagStatus>("/api/v1/admin/rag/status")).data;
+}
+
+/** 話題新聞檢視（D-74 消費端）：看爬蟲近況。 */
+export async function listNews(days = 3): Promise<AdminNewsItem[]> {
+  return (await apiFetch<AdminNewsItem[]>(`/api/v1/admin/news?days=${days}`)).data;
 }
 
 /** 內測限定：立即執行排程任務。 */
