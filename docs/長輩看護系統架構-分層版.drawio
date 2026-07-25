@@ -76,7 +76,7 @@
         <mxCell id="n-guard" parent="1" style="ellipse;shape=doubleEllipse;whiteSpace=wrap;html=1;aspect=fixed;" value="&lt;b&gt;安全邊界&lt;/b&gt;&lt;div&gt;金孫人設＋照顧守則&lt;/div&gt;&lt;div&gt;不做醫療診斷&lt;/div&gt;" vertex="1">
           <mxGeometry height="130" width="130" x="680" y="660" as="geometry" />
         </mxCell>
-        <mxCell id="n-llm" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;LLM（llm.py）&lt;/b&gt;&lt;div&gt;Gemini API（gemini-3.1-flash-lite）&lt;/div&gt;&lt;div&gt;對話/分級/摘要可各配模型·回覆一律繁中&lt;/div&gt;" vertex="1">
+        <mxCell id="n-llm" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;LLM（llm.py）&lt;/b&gt;&lt;div&gt;Gemini API（gemini-3.5-flash-lite）&lt;/div&gt;&lt;div&gt;對話/分級/摘要可各配模型·回覆一律繁中&lt;/div&gt;" vertex="1">
           <mxGeometry height="90" width="250" x="850" y="680" as="geometry" />
         </mxCell>
         <mxCell id="n-risk" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;b&gt;危急偵測（safety/）&lt;/b&gt;&lt;div&gt;每句話分級：一般 L0／小訊號 L1／警訊 L2&lt;/div&gt;&lt;div&gt;危急詞直接判定＋LLM 判讀&lt;/div&gt;&lt;div&gt;L2 立即通知家屬·L1 寫進每日摘要&lt;/div&gt;" vertex="1">

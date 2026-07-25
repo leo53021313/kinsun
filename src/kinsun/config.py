@@ -189,10 +189,10 @@ class Settings(_BaseEnvSettings):
     line_channel_secret: str = ""
     line_channel_access_token: str = ""
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-3.1-flash-lite"
+    gemini_model: str = "gemini-3.5-flash-lite"
     # 按用途配模型（✅ D-16 丁-5）：未設＝沿用 GEMINI_MODEL（見 _resolve_model_fallbacks）。
-    gemini_model_safety: str = "gemini-3.1-flash-lite"
-    gemini_model_summary: str = "gemini-3.1-flash-lite"
+    gemini_model_safety: str = "gemini-3.5-flash-lite"
+    gemini_model_summary: str = "gemini-3.5-flash-lite"
     asr_backend: str = "mock"
     asr_endpoint: str = ""
     asr_api_key: str = ""
@@ -325,7 +325,7 @@ class Settings(_BaseEnvSettings):
         # safety／summary 未設（或空）＝沿用主模型（其自身亦回退預設）。
         if not isinstance(values, dict):
             return values
-        model = values.get("gemini_model") or "gemini-3.1-flash-lite"
+        model = values.get("gemini_model") or "gemini-3.5-flash-lite"
         if not values.get("gemini_model_safety"):
             values["gemini_model_safety"] = model
         if not values.get("gemini_model_summary"):
