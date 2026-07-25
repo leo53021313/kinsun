@@ -66,7 +66,9 @@ class NewsApiFetcher:
         params = {
             "q": self._query,
             "language": self._language,
-            "sortBy": "publishedAt",
+            # relevancy 而非 publishedAt：最新優先會被高頻科技站洗版（實測前 100 則
+            # 0 台灣 Yahoo；relevancy 18/100）；新舊排序交給 get_news 端做。
+            "sortBy": "relevancy",
         }
         url = f"{_ENDPOINT}?{urllib.parse.urlencode(params)}"
         try:
