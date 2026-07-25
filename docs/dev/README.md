@@ -9,21 +9,21 @@
 
 | # | 文件 | 狀態 | 最後更新 |
 | :---: | :--- | :--- | :--- |
-| 00 | [決策清單](00_決策清單.md) | ✅ D-01～D-73 全回填（D-38 掛起、4 項擱置；D-71 細節已定、D-25 修訂）；D-16 現況刷新為 gemini-3.5-flash-lite | 2026-07-25 |
+| 00 | [決策清單](00_決策清單.md) | ✅ D-01～D-74 全回填（D-38 掛起、4 項擱置；D-74 話題新聞 2026-07-25 新增） | 2026-07-25 |
 | — | [2026-07-08 會議決策議程](2026-07-08_會議決策議程.md) | ✅ 決議已回填（會議紀錄） | 2026-07-09 |
 | 02 | [專案簡報與PRD](02_專案簡報與PRD.md) | ✅ v1.3（KPI 數值⏸實測後定；US-B3 問候自適應註記） | 2026-07-17 |
 | 03 | [BDD情境](03_BDD情境.md) | ✅ 定稿（D-72 三級制已落地） | 2026-07-09 |
 | 04 | [ADR（04_adr/）](04_adr/README.md) | ✅ 定稿（11 筆；ADR-003 補述 庚-54） | 2026-07-13 |
-| 05 | [架構與設計](05_架構與設計.md) | ✅ v1.29（§12 工程觀測 Opik：OPIK_ENABLED 預設 true＋連線探測降級；evals 擴指標 Moderation／ContextPrecision／ContextRecall／AnswerRelevance＋對話串級 conversation_quality（evaluate_threads 評真實 thread）；排程/後台 root＋對話 trace I/O＋深連結＋Prompt 版本追蹤；tools 加入交通工具 transport） | 2026-07-22 |
+| 05 | [架構與設計](05_架構與設計.md) | ✅ v1.30（話題新聞 D-74：Worker jobs＋ER＋資料分類；§12 工程觀測 Opik；evals 對話串級 conversation_quality；tools 交通工具 transport） | 2026-07-25 |
 | 06 | [API設計規範](06_API設計規範.md) | ✅ v1.3（`traces/{trace_id}` 回應加 `opik_url` 深連結；稱謂欄位：POST /elders 收 nickname、PUT /elders/{elder_id}/profile） | 2026-07-20 |
-| 07 | [模組規格與測試](07_模組規格與測試.md) | ✅ v1.15（LLM 結構化輸出改用原生 response_schema；自建輪子換 OSS：httpx／tenacity／pydantic-settings，總測試 1427） | 2026-07-20 |
-| 08 | [專案結構指南](08_專案結構指南.md) | ✅ v1.5（補 RAG 模組；tools 補交通 transport，transport_agent 原型 ruff 排除） | 2026-07-20 |
-| 09 | [模組依賴關係](09_模組依賴關係.md) | ✅ v1.5（httpx 升 runtime＋新增 tenacity／pydantic-settings 直接依賴） | 2026-07-20 |
-| 10 | [類別關係](10_類別關係.md) | ✅ v1.13（傳輸層 `UrllibTransport`→`HttpxTransport`，改用 httpx） | 2026-07-20 |
+| 07 | [模組規格與測試](07_模組規格與測試.md) | ✅ v1.16（話題新聞 news 列＋合約 18 組，總測試 1485；LLM 結構化輸出 response_schema；自建輪子換 OSS） | 2026-07-25 |
+| 08 | [專案結構指南](08_專案結構指南.md) | ✅ v1.6（後端樹補 news/；tools 交通 transport） | 2026-07-25 |
+| 09 | [模組依賴關係](09_模組依賴關係.md) | ✅ v1.6（領域層補 news；前端依賴對齊 audit 修復：React 19.2.8＋react-router 8.3＋overrides） | 2026-07-25 |
+| 10 | [類別關係](10_類別關係.md) | ✅ v1.14（Protocol 42→44：NewsStore／NewsFetcher；worker 13 job） | 2026-07-25 |
 | 11 | [審查與重構指南](11_審查與重構指南.md) | ✅ v1.1（CI 已落地；docs/dev 同步鐵律入自查） | 2026-07-17 |
-| 12 | [前端架構規範](12_前端架構規範.md) | ✅ v1.5（JS lint／測試基建落地；F-2／F-8～F-15 全結案） | 2026-07-17 |
+| 12 | [前端架構規範](12_前端架構規範.md) | ✅ v1.6（web 端 React 19.2.8＋react-router 8.3，audit 修復連動升級 PR #78） | 2026-07-25 |
 | 13 | [安全與就緒檢查](13_安全與就緒檢查.md) | ✅ v1.4（位置隱私列；依賴掃描與 healthz 結案） | 2026-07-17 |
-| 14 | [部署與運維](14_部署與運維.md) | ✅ v1.8（OPIK_ENABLED 預設 true＋OPIK_PING_TIMEOUT_SECONDS 連線探測降級＋公開隧道安全警語更新；Opik 公開隧道遠端檢視 kinsun.sh start/stop opik；併入 RAG 原地備份遷移、獨立 Worker、發布與續跑手冊） | 2026-07-22 |
+| 14 | [部署與運維](14_部署與運維.md) | ✅ v1.9（話題新聞 14 天清理＋NEWS_API_KEY 降級語意；Opik 服務與公開隧道；RAG Runbook） | 2026-07-25 |
 | 15 | [文檔與維護指南](15_文檔與維護指南.md) | ✅ v1.1（同步鐵律＋前端／WBS 兩列） | 2026-07-17 |
 | 16 | [WBS開發計畫](16_WBS開發計畫.md) | ✅ v1.12（RAG 個人庫 active 發布、Agent/Admin citation 與週更 Worker 已驗收；甲～庚結案＋辛批 9 項；⚠ 庚-09 待 Leo 確認） | 2026-07-18 |
 | 17 | [前端資訊架構](17_前端資訊架構.md) | ✅ v1.9（對講機改圓形麥克風鍵＋回覆可捲動＋位置線索；iOS 錄音修復＋內測權限列） | 2026-07-18 |
