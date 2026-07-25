@@ -21,6 +21,7 @@ from kinsun.schedules.models import ScheduleKind
 from kinsun.strategies.facts import StrategyFacts
 from kinsun.tools.health_rag import HEALTH_RAG_SPEC
 from kinsun.tools.news import NEWS_DETAIL_SPEC, NEWS_SPEC
+from kinsun.tools.schedules import CANCEL_SPEC, CREATE_SPEC, LIST_SPEC
 from kinsun.tools.transport import (
     BUS_ARRIVAL_SPEC,
     MRT_LINE_SPEC,
@@ -64,6 +65,10 @@ def test_assemble_core_agent_has_baseline_tools():
         ROUTE_SPEC.name,
         NEWS_SPEC.name,
         NEWS_DETAIL_SPEC.name,
+        # 排程三工具（D-76 P4）：長輩用說的建立、查詢與取消提醒。
+        CREATE_SPEC.name,
+        LIST_SPEC.name,
+        CANCEL_SPEC.name,
     }
 
 
