@@ -143,3 +143,47 @@ def test_shipped_dataset_loads_and_covers_all_tiers():
     assert len(examples) >= 50
     tiers = {e.expected for e in examples}
     assert tiers == {RiskTier.L0, RiskTier.L1, RiskTier.L2}
+
+
+def test_detector_builder_honours_model_override(monkeypatch):
+    """`--model` 須真的傳到 GeminiClient——否則比較三個模型會全部跑到同一顆。
+
+    這種錯誤不會報錯、只會讓三次結果長得一樣，很容易被當成「模型沒差」而下錯結論。
+    """
+    from kinsun.safety import evaluation
+
+    captured: dict[str, str] = {}
+
+    class _SpyGeminiClient:
+        def __init__(self, *, api_key, model, timeout):
+            captured["model"] = model
+
+        def generate(self, **kwargs):  # pragma: no cover - 本測試不呼叫
+            return ""
+
+    monkeypatch.setattr("kinsun.llm.GeminiClient", _SpyGeminiClient)
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+
+    evaluation._build_detector_assess("gemini-3.5-pro")
+    assert captured["model"] == "gemini-3.5-pro"
+
+
+def test_detector_builder_defaults_to_configured_safety_model(monkeypatch):
+    """留空＝沿用 GEMINI_MODEL_SAFETY（正式設定），不可變成硬編碼。"""
+    from kinsun.safety import evaluation
+
+    captured: dict[str, str] = {}
+
+    class _SpyGeminiClient:
+        def __init__(self, *, api_key, model, timeout):
+            captured["model"] = model
+
+        def generate(self, **kwargs):  # pragma: no cover
+            return ""
+
+    monkeypatch.setattr("kinsun.llm.GeminiClient", _SpyGeminiClient)
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setenv("GEMINI_MODEL_SAFETY", "gemini-from-env")
+
+    evaluation._build_detector_assess()
+    assert captured["model"] == "gemini-from-env"

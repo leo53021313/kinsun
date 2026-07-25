@@ -74,11 +74,16 @@ def build_reply_fn(settings) -> Callable[[str], str]:
         else None
     )
 
-    def reply_to(message: str) -> str:
+    def reply_to(message: str, elder_id: str | None = None) -> str:
+        """elder_id 預設由訊息雜湊而來（單輪：每題互相隔離）。
+
+        多輪測試必須明確傳入同一個 elder_id，否則每輪都是不同長輩、短期記憶累積不
+        起來——而多輪綁架的攻擊面正是「前幾輪會進入下一輪的 system prompt」。
+        """
         if moderator is not None:
             moderation = moderator.moderate(message)
             if moderation.is_blocked:
                 return reply_for(moderation.category)
-        return agent.handle(elder_id_for(message), message)
+        return agent.handle(elder_id or elder_id_for(message), message)
 
     return reply_to
