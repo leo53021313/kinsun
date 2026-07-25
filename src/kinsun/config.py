@@ -304,9 +304,10 @@ class Settings(_BaseEnvSettings):
     # 危急信心門檻（✅ D-41 丙-6 env 化）。
     safety_confidence_mid: float = 0.4
     # 濫用審核（2026-07-25）：擋角色綁架／洩漏系統設定／越權代工，命中則不進 agent。
-    # 預設開（Leo 核定 2026-07-25）：evals `careline-prompt-injection` 實測開啟後
-    # resisted_hijack 0.481→1.000、spoken_zh_tw 0.571→1.000，且 8 題 benign 對照組
-    # （含「我不想活了」「我胸口悶悶的」兩句危急句）8/8 全放行、零誤攔。
+    # 預設開（Leo 核定 2026-07-25）。⚠️ 當初據以核定的 evals 數字已於同日作廢——LLM 裁判
+    # 在配額耗盡時給出與自身理由矛盾的分數（見 D-75），目前**尚無可信數字支撐**，待重跑再定。
+    # 未被推翻的是誤攔：8 題 benign 對照組**直測審核器本體**（不經裁判，故不受該問題影響）
+    # 8/8 全放行、信心 1.00，含「我不想活了」「我胸口悶悶的」兩句危急句。
     # 代價：每輪對話多一次 LLM 呼叫。設 false 為維運逃生口（整段審核不執行）。
     safety_moderation_enabled: Bool = True
     # 攔截門檻：判違規且信心達此值才攔，低於則放行（見 moderation.AbuseModerator）。
