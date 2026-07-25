@@ -250,3 +250,55 @@ def test_greeting_intent_differs_by_day():
     a = greeting_intent(datetime(2026, 7, 17, 8, 0, tzinfo=TPE))
     b = greeting_intent(datetime(2026, 7, 18, 8, 0, tzinfo=TPE))
     assert a != b
+
+
+# --- 問候 intent 的話題新聞改為工具引導（D-74 消費端，2026-07-25：push→pull）---
+
+
+def test_greeting_intent_guides_model_to_use_get_news_tool():
+    from kinsun.proactive.jobs import GREETING_INTENT, greeting_intent
+
+    intent = greeting_intent(datetime(2026, 7, 17, 8, 0, tzinfo=TPE))
+    assert intent.startswith(GREETING_INTENT)
+    assert "get_news" in intent
+    assert "topic" in intent
+
+
+def test_greeting_intent_no_longer_weaves_headlines_directly():
+    # push→pull：intent 不再直接夾帶標題（「最近的新聞有 …」句型走入歷史），
+    # 素材改由模型在工具迴圈中自行拉取。
+    from kinsun.proactive.jobs import greeting_intent
+
+    intent = greeting_intent(datetime(2026, 7, 17, 8, 0, tzinfo=TPE))
+    assert "最近的新聞有" not in intent
+
+
+# --- 問候 intent 織入興趣提示（Leo 2026-07-25 核可：興趣驅動挑題）---
+
+
+def test_greeting_intent_weaves_interest_hints():
+    from kinsun.proactive.jobs import greeting_intent
+
+    intent = greeting_intent(
+        datetime(2026, 7, 17, 8, 0, tzinfo=TPE), interests=("喜歡園藝", "常去公園健走")
+    )
+    assert "喜歡園藝" in intent
+    assert "常去公園健走" in intent
+    assert "topic" in intent  # 指示模型拿興趣當 get_news 的 topic
+
+
+def test_greeting_intent_without_interests_has_no_interest_section():
+    from kinsun.proactive.jobs import greeting_intent
+
+    intent = greeting_intent(datetime(2026, 7, 17, 8, 0, tzinfo=TPE))
+    assert "興趣可能包含" not in intent
+
+
+def test_greeting_intent_caps_interests_at_three():
+    from kinsun.proactive.jobs import greeting_intent
+
+    intent = greeting_intent(
+        datetime(2026, 7, 17, 8, 0, tzinfo=TPE),
+        interests=("一", "二", "三", "第四筆不該出現"),
+    )
+    assert "第四筆不該出現" not in intent

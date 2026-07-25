@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 
 import { type Elder, createElder, generateGuardianInvite, listElders } from "../api";
 import { strings } from "../strings";
