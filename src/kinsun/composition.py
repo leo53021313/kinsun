@@ -27,6 +27,7 @@ from kinsun.appointments.store import PgAppointmentStore
 from kinsun.channels.app.outbound import AppOutboundChannel
 from kinsun.channels.line.messenger import LineApiMessenger, LineOutboundChannel
 from kinsun.channels.router import ChannelRouter
+from kinsun.clock import TimeFacts
 from kinsun.config import Settings
 from kinsun.db import Database, ensure_schema
 from kinsun.llm import GeminiClient, LLMClient
@@ -53,7 +54,6 @@ from kinsun.reports.summaries import PgConversationSummaryStore
 from kinsun.safety.events import PgRiskEventStore
 from kinsun.strategies.facts import StrategyFacts
 from kinsun.strategies.store import PgStrategyStore
-from kinsun.tools.clock import CURRENT_TIME_SPEC, build_current_time_handler
 from kinsun.tools.health_rag import HEALTH_RAG_SPEC, build_health_rag_handler
 from kinsun.tools.lookups import PgWebSearchLookupStore, WebSearchLookupStore
 from kinsun.tools.news import (
@@ -163,7 +163,7 @@ def build_tool_registry(
     """集中組工具：日後新增工具只改這裡，兩個組裝根自動都有。"""
     registry = ToolRegistry()
     registry.register(WEATHER_SPEC, build_weather_handler())
-    registry.register(CURRENT_TIME_SPEC, build_current_time_handler(clock))
+    # 時間沒有工具（2026-07-25）：get_current_time 已改為每輪注入情境（clock.TimeFacts）。
     # 話題新聞消費端（D-74 後續）：有 store 才註冊；正式組裝一律有。
     # mentions 供不重複給料、locations 供在地化加權、blocked 供負面過濾——
     # 三者皆選配，未提供時工具照常運作。
@@ -233,7 +233,11 @@ def assemble_core(
         memory,
         externals.long_term,
         facts=[
-            # 稱呼排最前（2026-07-17）：沒有它，模型每輪亂猜「阿公／阿嬤」，
+            # 時間排最前（2026-07-25）：它是其他事實的座標系——回診那行印的是絕對日期
+            # 「2026-07-30」，模型不知道今天幾號就算不出剩幾天。原為 get_current_time
+            # 工具，但工具是「模型想到才呼叫」，時間卻是每輪都用得到的東西。
+            TimeFacts(clock=clock),
+            # 稱呼緊接其後（2026-07-17）：沒有它，模型每輪亂猜「阿公／阿嬤」，
             # 真實使用一半機率叫錯；稱呼是所有段落裡最先要對的事。
             ElderProfileFacts(account_store),
             MedicationFacts(medications),
