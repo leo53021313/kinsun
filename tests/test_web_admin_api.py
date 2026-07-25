@@ -24,6 +24,8 @@ from kinsun.appointments.store import FakeAppointmentStore
 from kinsun.medications.models import Medication, MedicationSlot
 from kinsun.medications.store import FakeMedicationStore
 from kinsun.memory.models import MemoryItem
+from kinsun.news.models import NewsItem
+from kinsun.news.store import FakeNewsStore
 from kinsun.rag.releases import RagIndexRelease, ReleaseStatus
 from kinsun.rag.schemas import ContentPolicy
 from kinsun.reports.reminders import FakeReminderLogStore
@@ -98,6 +100,7 @@ def _client(
     rag_releases=None,
     rag_content_policy="allowed_only",
     opik_url_override="",
+    news=None,
 ):
     app = FastAPI()
     app.include_router(
@@ -116,6 +119,7 @@ def _client(
             rag_releases=rag_releases,
             rag_content_policy=rag_content_policy,
             opik_url_override=opik_url_override,
+            news=news or FakeNewsStore(),
         ),
         prefix="/api/v1/admin",
     )
@@ -485,3 +489,49 @@ def test_elder_risk_notifications_with_guardian_name():
     assert item["guardian_name"] == "小明"
     assert item["tier"] == 2
     assert item["delivered"] is True
+
+
+# --- 話題新聞檢視（D-74 消費端，2026-07-25）---
+
+
+def _news_item(news_item_id: str, *, title: str, retrieved_at: float) -> NewsItem:
+    return NewsItem(
+        news_item_id=news_item_id,
+        source_id="mohw",
+        title=title,
+        url=f"https://example.com/{news_item_id}",
+        publisher="衛生福利部",
+        content="內文",
+        published_at=retrieved_at,
+        retrieved_at=retrieved_at,
+    )
+
+
+def test_list_news_returns_recent_items_with_meta():
+    news = FakeNewsStore()
+    news.save(_news_item("n1", title="防跌新措施", retrieved_at=NOW.timestamp() - 3600))
+    client = _client(news=news)
+    res = client.get("/api/v1/admin/news", headers=_auth())
+    assert res.status_code == 200
+    body = res.json()
+    assert [i["title"] for i in body["data"]] == ["防跌新措施"]
+    row = body["data"][0]
+    assert row["source_id"] == "mohw"
+    assert row["publisher"] == "衛生福利部"
+    assert row["url"] == "https://example.com/n1"
+    assert body["meta"]["count"] == 1
+    assert body["meta"]["days"] == 3
+
+
+def test_list_news_days_query_widens_window():
+    news = FakeNewsStore()
+    news.save(_news_item("old", title="十天前的新聞", retrieved_at=NOW.timestamp() - 10 * 86400))
+    client = _client(news=news)
+    default_res = client.get("/api/v1/admin/news", headers=_auth())
+    assert default_res.json()["data"] == []  # 預設 3 天視窗看不到
+    wide_res = client.get("/api/v1/admin/news?days=14", headers=_auth())
+    assert [i["news_item_id"] for i in wide_res.json()["data"]] == ["old"]
+
+
+def test_list_news_requires_admin_key():
+    assert _client().get("/api/v1/admin/news").status_code == 401

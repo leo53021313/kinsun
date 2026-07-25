@@ -6,6 +6,7 @@ import { strings } from "./strings";
 import { ElderDetailPage } from "./pages/ElderDetailPage";
 import { EldersPage } from "./pages/EldersPage";
 import { MessagesPage } from "./pages/MessagesPage";
+import { NewsPage } from "./pages/NewsPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { SystemPage } from "./pages/SystemPage";
 import { TraceDetailPage } from "./pages/TraceDetailPage";
@@ -51,6 +52,7 @@ export function App() {
         </NavLink>
         <NavLink to="/messages">{strings.app.nav.messages}</NavLink>
         <NavLink to="/elders">{strings.app.nav.elders}</NavLink>
+        <NavLink to="/news">{strings.app.nav.news}</NavLink>
         <NavLink to="/system">{strings.app.nav.system}</NavLink>
       </nav>
       <main className="admin-main">
@@ -59,6 +61,7 @@ export function App() {
           <Route path="/messages" element={<MessagesPage />} />
           <Route path="/elders" element={<EldersPage />} />
           <Route path="/elders/:elderId" element={<ElderDetailPage />} />
+          <Route path="/news" element={<NewsPage />} />
           <Route path="/system" element={<SystemPage />} />
           <Route path="/traces/:traceId" element={<TraceDetailPage />} />
         </Routes>
