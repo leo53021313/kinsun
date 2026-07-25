@@ -90,3 +90,22 @@ class Schedule:
     cancelled_at: float | None = None
     settled_at: float | None = None
     fired_at: float | None = None
+
+
+@dataclass(frozen=True)
+class ScheduleGroup:
+    """家屬與長輩看到的「一件事」：同一個 group_id 的全部鬧鐘。
+
+    UI 與工具一律以此為單位——他們心裡想的是「這個藥」「這次回診」，不是四個鬧鐘。
+    """
+
+    group_id: str
+    elder_id: str
+    kind: ScheduleKind
+    title: str
+    created_by: CreatedBy
+    schedules: tuple[Schedule, ...]
+
+    @property
+    def event_at(self) -> float | None:
+        return self.schedules[0].event_at

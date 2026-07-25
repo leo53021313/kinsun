@@ -291,3 +291,125 @@ def test_list_for_elder_delegates_to_store():
         occurrences=(Occurrence(RepeatKind.DAILY, repeat_time="17:00"),),
     )
     assert [s.title for s in service.list_for_elder("e1")] == ["散步"]
+
+
+# ── group 層操作（P3 家屬入口用）──
+
+
+def test_groups_for_elder_collapses_alarms_into_things():
+    # 家屬看到的是「一件事」，不是「四個鬧鐘」。
+    store = FakeScheduleStore()
+    service = _service(store=store)
+    service.create(
+        elder_id="e1",
+        kind=ScheduleKind.MEDICATION,
+        title="血壓藥",
+        created_by=CreatedBy.GUARDIAN,
+        occurrences=(
+            Occurrence(RepeatKind.DAILY, repeat_time="08:00"),
+            Occurrence(RepeatKind.DAILY, repeat_time="21:00"),
+        ),
+    )
+    service.create(
+        elder_id="e1",
+        kind=ScheduleKind.CUSTOM,
+        title="散步",
+        created_by=CreatedBy.ELDER,
+        occurrences=(Occurrence(RepeatKind.DAILY, repeat_time="17:00"),),
+    )
+    groups = service.groups_for_elder("e1")
+    assert [g.title for g in groups] == ["血壓藥", "散步"]
+    assert [len(g.schedules) for g in groups] == [2, 1]
+    assert groups[0].kind == ScheduleKind.MEDICATION
+    assert groups[1].created_by == CreatedBy.ELDER
+
+
+def test_groups_for_elder_can_filter_by_kind():
+    store = FakeScheduleStore()
+    service = _service(store=store)
+    for kind, title in ((ScheduleKind.MEDICATION, "藥"), (ScheduleKind.CUSTOM, "散步")):
+        service.create(
+            elder_id="e1",
+            kind=kind,
+            title=title,
+            created_by=CreatedBy.GUARDIAN,
+            occurrences=(Occurrence(RepeatKind.DAILY, repeat_time="08:00"),),
+        )
+    assert [g.title for g in service.groups_for_elder("e1", kind=ScheduleKind.CUSTOM)] == ["散步"]
+
+
+def test_replace_group_swaps_the_alarms_and_keeps_the_group_id():
+    store = FakeScheduleStore()
+    service = _service(store=store)
+    rows = service.create(
+        elder_id="e1",
+        kind=ScheduleKind.MEDICATION,
+        title="血壓藥",
+        created_by=CreatedBy.GUARDIAN,
+        occurrences=(Occurrence(RepeatKind.DAILY, repeat_time="08:00"),),
+    )
+    group_id = rows[0].group_id
+    service.replace_group(
+        group_id,
+        title="血壓藥（新）",
+        occurrences=(
+            Occurrence(RepeatKind.DAILY, repeat_time="07:30"),
+            Occurrence(RepeatKind.DAILY, repeat_time="21:00"),
+        ),
+    )
+    active = [s for s in store.list_for_elder("e1")]
+    assert {s.group_id for s in active} == {group_id}
+    assert {s.title for s in active} == {"血壓藥（新）"}
+    assert {s.repeat_time for s in active} == {"07:30", "21:00"}
+
+
+def test_replace_group_keeps_kind_elder_and_author():
+    store = FakeScheduleStore()
+    service = _service(store=store)
+    rows = service.create(
+        elder_id="e1",
+        kind=ScheduleKind.APPOINTMENT,
+        title="回診",
+        created_by=CreatedBy.ELDER,
+        occurrences=(Occurrence(RepeatKind.ONCE, scheduled_at=_at(9, 0, day=30)),),
+    )
+    service.replace_group(
+        rows[0].group_id,
+        title="回診（改）",
+        occurrences=(Occurrence(RepeatKind.ONCE, scheduled_at=_at(9, 0, day=31)),),
+        event_at=_at(10, 30, day=31),
+    )
+    changed = store.list_for_elder("e1")[0]
+    assert changed.kind == ScheduleKind.APPOINTMENT
+    assert changed.created_by == CreatedBy.ELDER
+    assert changed.elder_id == "e1"
+    assert changed.audience.value == "elder_and_guardian"
+
+
+def test_replace_group_validates_like_create():
+    store = FakeScheduleStore()
+    service = _service(store=store)
+    rows = service.create(
+        elder_id="e1",
+        kind=ScheduleKind.CUSTOM,
+        title="散步",
+        created_by=CreatedBy.GUARDIAN,
+        occurrences=(Occurrence(RepeatKind.DAILY, repeat_time="17:00"),),
+    )
+    with pytest.raises(ScheduleValidationError, match="時刻"):
+        service.replace_group(
+            rows[0].group_id,
+            title="散步",
+            occurrences=(Occurrence(RepeatKind.DAILY, repeat_time="99:99"),),
+        )
+    # 驗證失敗時原本那組必須原封不動——半套的修改比不修改更糟。
+    assert [s.repeat_time for s in store.list_for_elder("e1")] == ["17:00"]
+
+
+def test_replace_unknown_group_raises():
+    with pytest.raises(ScheduleValidationError, match="找不到"):
+        _service().replace_group(
+            "nope",
+            title="散步",
+            occurrences=(Occurrence(RepeatKind.DAILY, repeat_time="17:00"),),
+        )

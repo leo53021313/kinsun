@@ -17,6 +17,7 @@ from kinsun.schedules.models import (
     Occurrence,
     RepeatKind,
     Schedule,
+    ScheduleGroup,
     ScheduleKind,
     audience_for,
 )
@@ -100,6 +101,80 @@ class ScheduleService:
 
     def list_for_elder(self, elder_id: str) -> list[Schedule]:
         return self._store.list_for_elder(elder_id)
+
+    def groups_for_elder(
+        self, elder_id: str, *, kind: ScheduleKind | None = None
+    ) -> list[ScheduleGroup]:
+        """把鬧鐘收斂成「一件事」。家屬與長輩看到的一律是這個單位。"""
+        grouped: dict[str, list[Schedule]] = {}
+        for row in self._store.list_for_elder(elder_id):
+            if kind is not None and row.kind != kind:
+                continue
+            grouped.setdefault(row.group_id, []).append(row)
+        return [
+            ScheduleGroup(
+                group_id=group_id,
+                elder_id=rows[0].elder_id,
+                kind=rows[0].kind,
+                title=rows[0].title,
+                created_by=rows[0].created_by,
+                schedules=tuple(rows),
+            )
+            for group_id, rows in grouped.items()
+        ]
+
+    def replace_group(
+        self,
+        group_id: str,
+        *,
+        title: str,
+        occurrences: tuple[Occurrence, ...],
+        event_at: float | None = None,
+    ) -> list[Schedule]:
+        """換掉一件事的內容與全部鬧鐘，group_id 不變。
+
+        kind／elder_id／created_by 一律沿用原本那組——改內容不該讓一筆家屬設的藥
+        變成長輩設的，也不該讓用藥變成回診。
+
+        先驗證再動手：驗證失敗時原本那組必須原封不動，半套的修改（新時刻建好了、
+        舊時刻還在響）比不修改更難察覺。
+        """
+        cleaned = title.strip()
+        if not cleaned:
+            raise ScheduleValidationError("要提醒的事情不能是空的。")
+        if not occurrences:
+            raise ScheduleValidationError("至少要有一個提醒時間。")
+        existing = self._store.list_for_group(group_id)
+        active = [s for s in existing if s.cancelled_at is None]
+        if not active:
+            raise ScheduleValidationError("找不到這筆提醒。")
+        now = self._clock().timestamp()
+        for occurrence in occurrences:
+            self._validate(occurrence, now=now)
+
+        template = active[0]
+        self._store.cancel_group(group_id, now=now)
+        rows = [
+            Schedule(
+                schedule_id=self._new_id(),
+                group_id=group_id,
+                elder_id=template.elder_id,
+                kind=template.kind,
+                title=cleaned,
+                repeat_kind=occurrence.repeat_kind,
+                scheduled_at=occurrence.scheduled_at,
+                repeat_time=occurrence.repeat_time,
+                repeat_weekday=occurrence.repeat_weekday,
+                event_at=event_at,
+                audience=audience_for(template.kind),
+                created_by=template.created_by,
+                created_at=now,
+            )
+            for occurrence in occurrences
+        ]
+        for row in rows:
+            self._store.save(row)
+        return rows
 
     def cancel_group(self, group_id: str, *, requested_by: CreatedBy) -> None:
         """取消一件事的全部鬧鐘。
