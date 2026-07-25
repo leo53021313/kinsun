@@ -202,12 +202,29 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
         # 主動推播補記 reminder_logs（純觀測，失敗不影響推播）。
         safe_record(reminder_logs.record, elder_id, kind, content)
 
+    def _elder_interests(elder_id: str) -> tuple[str, ...]:
+        """問候前從長期記憶檢索她的興趣線索（Leo 2026-07-25 興趣驅動挑題）。
+
+        興趣是錦上添花：Mem0 是外部服務、掛掉很寫實，檢索失敗一律降級成
+        沒有興趣提示，不可擋下問候（與摘要／新聞讀取失敗同向）。
+        """
+        try:
+            hits = core.long_term.search(elder_id, "興趣 嗜好 平常喜歡做的事", top_k=3)
+        except Exception:  # noqa: BLE001 - 興趣提示是加分項，不可擋下問候
+            logger.warning("興趣檢索失敗，改用無興趣提示問候 elder=%s", elder_id)
+            return ()
+        return tuple(hit.text for hit in hits if hit.text)[:3]
+
     def greet_one(elder_id: str) -> None:
         # ledger=True：問候的冪等靠 greeted_today 讀這張表，記帳因此是安全關鍵。
-        # intent 織入今天的日期（2026-07-17 問候多樣性）；話題新聞改由模型在
-        # 工具迴圈中自行以 get_news 拉取（D-74 消費端，2026-07-25），worker 不再直讀。
+        # intent 織入今天的日期（2026-07-17 問候多樣性）＋長期記憶的興趣線索
+        # （2026-07-25，供模型當 get_news 的 topic）；話題新聞本體由模型在
+        # 工具迴圈中自行以 get_news 拉取（D-74 消費端），worker 不再直讀。
         _push_to_elder(
-            elder_id, greeting_intent(clock()), REMINDER_KIND_PROACTIVE_GREETING, ledger=True
+            elder_id,
+            greeting_intent(clock(), interests=_elder_interests(elder_id)),
+            REMINDER_KIND_PROACTIVE_GREETING,
+            ledger=True,
         )
 
     def care_one(elder_id: str) -> None:
