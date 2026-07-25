@@ -18,6 +18,7 @@ import kinsun.scheduler.worker as worker
 from kinsun.accounts.models import PrincipalType
 from kinsun.agent import Recall
 from kinsun.config import load_settings
+from kinsun.news.store import FakeNewsStore
 from kinsun.proactive.greeting_time import update_greeting_time as _real_update_greeting_time
 from kinsun.proactive.preferences import FakeGreetingPreferenceStore, GreetingPreference
 from kinsun.reports.reminders import (
@@ -45,6 +46,8 @@ _BASE_JOB_NAMES = [
     "medication-bedtime",
     "appointment-reminder",
     "observability-cleanup",
+    "news-crawl",
+    "news-cleanup",
 ]
 
 
@@ -103,13 +106,19 @@ def _fake_core(
     reminder_logs: FakeReminderLogStore | None = None,
     last_active=None,
     greeting_prefs: FakeGreetingPreferenceStore | None = None,
+    news: FakeNewsStore | None = None,
+    news_mentions=None,
+    long_term=None,
 ):
+    from kinsun.news.mentions import FakeNewsMentionStore
+
     elders = elders if elders is not None else []
     return SimpleNamespace(
         settings=settings,
         db=_FakeDb(),
         gemini=_FakeLLM(),
-        long_term=object(),
+        # 預設無 search 方法（AttributeError）→ 興趣檢索走降級路徑，不影響問候。
+        long_term=long_term if long_term is not None else object(),
         messenger=object(),
         router=router or _SpyRouter(),
         accounts=SimpleNamespace(
@@ -132,6 +141,10 @@ def _fake_core(
         greeting_prefs=(
             greeting_prefs if greeting_prefs is not None else FakeGreetingPreferenceStore()
         ),
+        # 話題新聞（spec 2026-07-20）：爬取／清除 job 寫；D-74 消費端起問候不再直讀。
+        news=news if news is not None else FakeNewsStore(),
+        # 提及紀錄（D-74 消費端）：get_news 寫、清理 job 清。
+        news_mentions=news_mentions if news_mentions is not None else FakeNewsMentionStore(),
         # 兩根共用收進 Core（✅ 庚-44）。
         risk_events=SimpleNamespace(list_for_elder=lambda elder_id: []),
         # get_for_date：主動推播讀「她上次開口那天」的摘要當檢索關鍵字＋注入
@@ -500,6 +513,46 @@ def test_greeting_pushes_and_records_reminder_log(monkeypatch):
     assert reminder_logs.recorded == [("e1", "proactive-greeting", router.sent[0][2])]
 
 
+def test_greeting_intent_guides_get_news_instead_of_weaving(monkeypatch):
+    """問候改工具引導（D-74 消費端，2026-07-25）：intent 提示用 get_news、
+    不再由 worker 直讀新聞表織入標題——新聞故障面因此整個移出問候路徑。"""
+    router = _SpyRouter()
+    scheduler, _core = _build(monkeypatch, _settings(), elders=["e1"], router=router)
+    _job(scheduler, "daily-greeting").run()
+    intent = router.sent[0][2]
+    assert "get_news" in intent
+    assert "最近的新聞有" not in intent
+
+
+def test_news_cleanup_job_purges_items_and_mentions(monkeypatch):
+    """清理 job 同一把保留天數清 news_items 與 news_mentions（D-74 消費端）。"""
+    from kinsun.news.mentions import FakeNewsMentionStore
+    from kinsun.news.models import NewsItem
+
+    news = FakeNewsStore()
+    old_at = _clock().timestamp() - 15 * 86400  # 超過預設保留 14 天
+    news.save(
+        NewsItem(
+            news_item_id="n-old",
+            source_id="mohw",
+            title="過期新聞",
+            url="https://example.com/n-old",
+            publisher="衛生福利部",
+            content="內文",
+            published_at=old_at,
+            retrieved_at=old_at,
+        )
+    )
+    mentions = FakeNewsMentionStore()
+    mentions.record("e1", "n-old", mentioned_at=old_at)
+    scheduler, _core = _build(
+        monkeypatch, _settings(), elders=["e1"], news=news, news_mentions=mentions
+    )
+    _job(scheduler, "news-cleanup").run()
+    assert news.list_recent(since=0.0) == []
+    assert mentions.list_for_elder("e1") == set()
+
+
 def test_greeting_carries_summary_of_the_day_she_last_spoke(monkeypatch):
     """問候前先讀「她上次開口那天」的摘要餵給 agent（spec 2026-07-17）。
 
@@ -827,3 +880,38 @@ def test_main_builds_serves_and_closes_db(monkeypatch, capsys):
     assert served == [(scheduler, 60)] or served[0][0] is scheduler
     assert db.closed  # finally 一定關連線
     assert "排程器啟動" in capsys.readouterr().out
+
+
+def test_greeting_weaves_interests_from_long_term(monkeypatch):
+    """問候前從長期記憶檢索興趣線索織入 intent（Leo 2026-07-25 興趣驅動挑題）。"""
+    from kinsun.memory.models import MemoryItem
+
+    class _StubLongTerm:
+        def search(self, elder_id, query, *, top_k=None):
+            assert "興趣" in query  # 檢索詞明確以興趣為目標
+            return [MemoryItem(text="喜歡園藝，常照顧陽台盆栽")]
+
+    router = _SpyRouter()
+    scheduler, _core = _build(
+        monkeypatch, _settings(), elders=["e1"], router=router, long_term=_StubLongTerm()
+    )
+    _job(scheduler, "daily-greeting").run()
+    intent = router.sent[0][2]
+    assert "喜歡園藝" in intent
+
+
+def test_interest_lookup_failure_does_not_block_greeting(monkeypatch, caplog):
+    """興趣檢索失敗只能降級成沒有興趣提示，不可擋下問候（與摘要讀取失敗同向）。"""
+
+    class _ExplodingLongTerm:
+        def search(self, elder_id, query, *, top_k=None):
+            raise RuntimeError("mem0 掛了")
+
+    router = _SpyRouter()
+    scheduler, _core = _build(
+        monkeypatch, _settings(), elders=["e1"], router=router, long_term=_ExplodingLongTerm()
+    )
+    with caplog.at_level(logging.WARNING):
+        _job(scheduler, "daily-greeting").run()  # 不應拋出
+    assert [(pt, pid) for pt, pid, _ in router.sent] == [(PrincipalType.ELDER, "e1")]
+    assert "興趣可能包含" not in router.sent[0][2]
