@@ -26,9 +26,9 @@ def test_load_settings_reads_required_and_defaults():
     assert isinstance(settings, Settings)
     assert settings.line_channel_secret == "secret"
     assert settings.asr_backend == "mock"
-    assert settings.gemini_model == "gemini-3.1-flash-lite"
-    assert settings.gemini_model_safety == "gemini-3.1-flash-lite"  # 未設＝沿用主模型
-    assert settings.gemini_model_summary == "gemini-3.1-flash-lite"
+    assert settings.gemini_model == "gemini-3.5-flash-lite"
+    assert settings.gemini_model_safety == "gemini-3.5-flash-lite"  # 未設＝沿用主模型
+    assert settings.gemini_model_summary == "gemini-3.5-flash-lite"
     assert settings.memory_max_turns == 200
     assert settings.timezone == "Asia/Taipei"
     assert settings.longterm_embedding_model == "gemini-embedding-001"
@@ -236,7 +236,7 @@ def test_gemini_model_per_purpose_override():
     """✅ D-16（丁-5）：分級／摘要可各自換模型，未設沿用主模型。"""
     s = load_settings({**BASE_ENV, "GEMINI_MODEL_SAFETY": "gemini-3.1-pro"})
     assert s.gemini_model_safety == "gemini-3.1-pro"
-    assert s.gemini_model_summary == "gemini-3.1-flash-lite"
+    assert s.gemini_model_summary == "gemini-3.5-flash-lite"
 
 
 def test_internal_testing_enabled_defaults_false_and_parses():
