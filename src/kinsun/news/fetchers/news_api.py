@@ -16,6 +16,18 @@ logger = logging.getLogger("kinsun.news.news_api")
 _ENDPOINT = "https://newsapi.org/v2/everything"
 SOURCE_ID = "news_api"
 
+# News API 對 Yahoo 台灣的文章一律回「Yahoo Entertainment」（上游標籤錯誤，與內容
+# 分類無關）——按文章網域改掛正確招牌；不在表內的網域維持 API 給的名稱。
+_PUBLISHER_BY_HOST = {
+    "tw.news.yahoo.com": "Yahoo奇摩新聞",
+    "tw.sports.yahoo.com": "Yahoo奇摩運動",
+}
+
+
+def _publisher_for(article_url: str, api_name: str) -> str:
+    host = urllib.parse.urlparse(article_url).netloc
+    return _PUBLISHER_BY_HOST.get(host, api_name)
+
 
 def _parse_published_at(raw: str) -> float | None:
     if not raw:
@@ -91,7 +103,9 @@ class NewsApiFetcher:
                     source_id=SOURCE_ID,
                     title=article.get("title") or "",
                     url=article_url,
-                    publisher=(article.get("source") or {}).get("name") or "",
+                    publisher=_publisher_for(
+                        article_url, (article.get("source") or {}).get("name") or ""
+                    ),
                     content=article.get("description") or "",
                     published_at=_parse_published_at(article.get("publishedAt") or ""),
                     retrieved_at=now,

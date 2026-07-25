@@ -133,3 +133,35 @@ def test_fetch_sorts_by_relevancy_not_published_at():
     )
     fetcher.fetch()
     assert "sortBy=relevancy" in transport.calls[0][1]
+
+
+def test_fetch_rewrites_yahoo_taiwan_publisher_label():
+    # News API 對 Yahoo 台灣一律回「Yahoo Entertainment」（上游標籤錯誤，與內容
+    # 分類無關）——按文章網域改掛正確招牌，其他來源維持 API 給的名稱。
+    body = json.dumps(
+        {
+            "articles": [
+                {
+                    "title": "颱風新聞",
+                    "source": {"name": "Yahoo Entertainment"},
+                    "url": "https://tw.news.yahoo.com/a1",
+                    "publishedAt": "2026-07-19T14:15:00Z",
+                    "description": "摘要",
+                },
+                {
+                    "title": "其他媒體新聞",
+                    "source": {"name": "測試媒體"},
+                    "url": "https://tw.news.yahoo.com.example.com/a2",
+                    "publishedAt": "2026-07-19T14:00:00Z",
+                    "description": "摘要",
+                },
+            ]
+        }
+    ).encode("utf-8")
+    transport = FakeTransport(responses=[Response(200, {}, body)])
+    fetcher = NewsApiFetcher(
+        api_key="key123", clock=lambda: datetime(2026, 7, 20, tzinfo=UTC), transport=transport
+    )
+    items = fetcher.fetch()
+    assert items[0].publisher == "Yahoo奇摩新聞"
+    assert items[1].publisher == "測試媒體"  # 非白名單網域主機不改寫（且不受子字串誤判）
