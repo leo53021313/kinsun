@@ -48,11 +48,16 @@ logger = logging.getLogger("kinsun.reports.reminders")
 #   tests/test_scheduler_worker.py::test_a_care_message_still_goes_out_when_the_ledger_is_down
 REMINDER_KIND_MEDICATION = "medication"
 REMINDER_KIND_APPOINTMENT = "appointment"
+# 長輩用說的建的提醒（統一排程 D-76）。與 medication／appointment 同屬純觀測那一類，
+# 同樣遵守庚-14（`sent == 0` 不記）。三個字面值即 `ScheduleKind` 的三個值，派送 job
+# 直接拿 `schedule.kind` 寫進本表——兩邊漂移由 test_reports_reminders 守住。
+REMINDER_KIND_CUSTOM = "custom"
 REMINDER_KIND_PROACTIVE_GREETING = "proactive-greeting"
 REMINDER_KIND_PROACTIVE_CARE = "proactive-care"
 REMINDER_KINDS = (
     REMINDER_KIND_MEDICATION,
     REMINDER_KIND_APPOINTMENT,
+    REMINDER_KIND_CUSTOM,
     REMINDER_KIND_PROACTIVE_GREETING,
     REMINDER_KIND_PROACTIVE_CARE,
 )

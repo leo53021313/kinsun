@@ -9,14 +9,14 @@ import { ApiError } from "kinsun-shared/envelope";
 import type { ElderPlace } from "@/lib/location";
 import type {
   AppNotification,
-  Appointment,
   CreatedElder,
   DailySummary,
   Elder,
   ElderSession,
   GuardianSession,
   HealthReport,
-  Medication,
+  ScheduleGroup,
+  ScheduleInput,
   Meta,
   TurnReply,
 } from "kinsun-shared/types";
@@ -24,14 +24,14 @@ import type {
 export { ApiError };
 export type {
   AppNotification,
-  Appointment,
   CreatedElder,
   DailySummary,
   Elder,
   ElderSession,
   GuardianSession,
   HealthReport,
-  Medication,
+  ScheduleGroup,
+  ScheduleInput,
   Meta,
   TurnReply,
 };
@@ -156,12 +156,14 @@ export async function revokeElderDevice(elderId: string, token: string): Promise
   return body.invite_code;
 }
 
-export function listMedications(elderId: string, token: string): Promise<Medication[]> {
-  return request(`/api/v1/elders/${elderId}/medications`, { token });
-}
-
-export function listAppointments(elderId: string, token: string): Promise<Appointment[]> {
-  return request(`/api/v1/elders/${elderId}/appointments`, { token });
+/** 統一排程（D-76 P3）：用藥、回診、長輩自訂共用一支資源，操作單位是 group。 */
+export function listSchedules(
+  elderId: string,
+  token: string,
+  kind?: ScheduleGroup["kind"],
+): Promise<ScheduleGroup[]> {
+  const query = kind ? `?kind=${kind}` : "";
+  return request(`/api/v1/elders/${elderId}/schedules${query}`, { token });
 }
 
 export function getHealthReport(elderId: string, token: string): Promise<HealthReport> {
@@ -207,79 +209,37 @@ export function listDailySummaries(
 
 // --- 家屬端：用藥／回診管理（App 版編輯，對接既有 CRUD 端點） ---
 
-export function createMedication(
+export function createSchedule(
   elderId: string,
-  name: string,
-  slots: string[],
+  body: ScheduleInput,
   token: string,
-): Promise<Medication> {
-  return request(`/api/v1/elders/${elderId}/medications`, {
+): Promise<ScheduleGroup> {
+  return request(`/api/v1/elders/${elderId}/schedules`, {
     method: "POST",
-    body: JSON.stringify({ name, slots }),
+    body: JSON.stringify(body),
     token,
   });
 }
 
-export function updateMedication(
+export function updateSchedule(
   elderId: string,
-  medicationId: string,
-  name: string,
-  slots: string[],
+  groupId: string,
+  body: ScheduleInput,
   token: string,
-): Promise<Medication> {
-  return request(`/api/v1/elders/${elderId}/medications/${medicationId}`, {
+): Promise<ScheduleGroup> {
+  return request(`/api/v1/elders/${elderId}/schedules/${groupId}`, {
     method: "PUT",
-    body: JSON.stringify({ name, slots }),
+    body: JSON.stringify(body),
     token,
   });
 }
 
-export function deleteMedication(
+export function deleteSchedule(
   elderId: string,
-  medicationId: string,
+  groupId: string,
   token: string,
 ): Promise<void> {
-  return request(`/api/v1/elders/${elderId}/medications/${medicationId}`, {
-    method: "DELETE",
-    token,
-  });
-}
-
-export function createAppointment(
-  elderId: string,
-  date: string,
-  label: string,
-  time: string,
-  token: string,
-): Promise<Appointment> {
-  return request(`/api/v1/elders/${elderId}/appointments`, {
-    method: "POST",
-    body: JSON.stringify({ date, label, time }),
-    token,
-  });
-}
-
-export function updateAppointment(
-  elderId: string,
-  appointmentId: string,
-  date: string,
-  label: string,
-  time: string,
-  token: string,
-): Promise<Appointment> {
-  return request(`/api/v1/elders/${elderId}/appointments/${appointmentId}`, {
-    method: "PUT",
-    body: JSON.stringify({ date, label, time }),
-    token,
-  });
-}
-
-export function deleteAppointment(
-  elderId: string,
-  appointmentId: string,
-  token: string,
-): Promise<void> {
-  return request(`/api/v1/elders/${elderId}/appointments/${appointmentId}`, {
+  return request(`/api/v1/elders/${elderId}/schedules/${groupId}`, {
     method: "DELETE",
     token,
   });

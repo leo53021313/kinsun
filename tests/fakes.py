@@ -10,11 +10,9 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from kinsun.accounts.store import FakeAccountStore as FakeAccountStore
-from kinsun.appointments.store import FakeAppointmentStore as FakeAppointmentStore
 from kinsun.binding.session import FakeBindingSessionStore as FakeBindingSessionStore
 from kinsun.llm import Message
 from kinsun.locations.store import FakeLocationStore as FakeLocationStore
-from kinsun.medications.store import FakeMedicationStore as FakeMedicationStore
 from kinsun.memory.models import MemoryItem
 from kinsun.memory.shortterm import FakeMemoryStore as FakeMemoryStore
 from kinsun.observability.store import FakeTraceStore as FakeTraceStore
@@ -25,6 +23,7 @@ from kinsun.reports.reminders import FakeReminderLogStore as FakeReminderLogStor
 from kinsun.reports.summaries import FakeConversationSummaryStore as FakeConversationSummaryStore
 from kinsun.safety.events import FakeRiskEventStore as FakeRiskEventStore
 from kinsun.scheduler.state import FakeScheduleStateStore as FakeScheduleStateStore
+from kinsun.schedules.store import FakeScheduleStore as FakeScheduleStore
 from kinsun.strategies.store import FakeStrategyStore as FakeStrategyStore
 
 

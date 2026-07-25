@@ -33,8 +33,7 @@ function RootStack() {
         options={{ title: strings.nav.guardianHome, headerBackVisible: false }}
       />
       <Stack.Screen name="guardian/elder/[elderId]/index" options={{ title: strings.nav.elderDetail }} />
-      <Stack.Screen name="guardian/elder/[elderId]/medications" options={{ title: strings.nav.medications }} />
-      <Stack.Screen name="guardian/elder/[elderId]/appointments" options={{ title: strings.nav.appointments }} />
+      <Stack.Screen name="guardian/elder/[elderId]/schedules" options={{ title: strings.nav.schedules }} />
       <Stack.Screen name="guardian/notifications" options={{ title: strings.nav.notifications }} />
       <Stack.Screen name="elder/bind" options={{ title: strings.nav.elderBind }} />
       <Stack.Screen name="elder/login" options={{ title: strings.nav.elderLogin }} />

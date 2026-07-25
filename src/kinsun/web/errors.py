@@ -27,6 +27,7 @@ class ErrorCode(StrEnum):
     MEDICATION_NOT_FOUND = "medication_not_found"
     APPOINTMENT_NOT_FOUND = "appointment_not_found"
     TRACE_NOT_FOUND = "trace_not_found"
+    SCHEDULE_NOT_FOUND = "schedule_not_found"
     JOB_NOT_FOUND = "job_not_found"
     STRATEGY_NOT_FOUND = "strategy_not_found"
 
@@ -49,6 +50,8 @@ class ErrorCode(StrEnum):
     LABEL_REQUIRED = "label_required"
     SLOTS_REQUIRED = "slots_required"
     INVALID_SLOT = "invalid_slot"
+    INVALID_KIND = "invalid_kind"
+    OCCURRENCES_REQUIRED = "occurrences_required"
     INVALID_DATE = "invalid_date"
     INVALID_TIME = "invalid_time"
     DATE_IN_PAST = "date_in_past"

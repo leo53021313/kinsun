@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -17,22 +17,42 @@ from pydantic import BaseModel
 
 from kinsun import tracing
 from kinsun.accounts.service import AccountService
-from kinsun.appointments.jobs import build_appointment_reminder_job
-from kinsun.appointments.store import AppointmentStore
 from kinsun.channels.router import ChannelRouter
-from kinsun.medications.jobs import build_medication_slot_job
-from kinsun.medications.models import MedicationSlot
-from kinsun.medications.store import MedicationStore
 from kinsun.scheduler.scheduler import Job
 from kinsun.scheduler.state import ScheduleStateStore
+from kinsun.schedules.jobs import build_schedule_dispatch_job
+from kinsun.schedules.models import RepeatKind, Schedule, ScheduleKind
+from kinsun.schedules.store import ScheduleStore
 from kinsun.web.envelope import ok
 from kinsun.web.errors import ErrorCode
 from kinsun.web.routers.admin import build_require_admin
 
 
 class DispatchReminderBody(BaseModel):
-    kind: Literal["medication", "appointment"]
-    slot: str | None = None
+    kind: Literal["medication", "appointment", "custom"]
+
+
+class _ForcedDueStore:
+    """讓派送 job 把某位長輩某一類的排程「當成現在到期」，供後台手動觸發。
+
+    ⚠ mark_fired／mark_settled 刻意 **no-op**：手動觸發是內測工具，若讓它寫進真正的
+    狀態欄，長輩當天真正該收到的那一則就不會發了——測試動作不可以吃掉正式提醒。
+    """
+
+    def __init__(self, inner: ScheduleStore, *, elder_id: str, kind: ScheduleKind) -> None:
+        self._rows = [s for s in inner.list_for_elder(elder_id) if s.kind == kind]
+
+    def list_due_once(self, *, until: float) -> list[Schedule]:
+        return [s for s in self._rows if s.repeat_kind == RepeatKind.ONCE]
+
+    def list_due_repeating(self, **kwargs) -> list[Schedule]:
+        return [s for s in self._rows if s.repeat_kind != RepeatKind.ONCE]
+
+    def mark_fired(self, schedule_id: str, *, now: float) -> None:
+        return None
+
+    def mark_settled(self, schedule_id: str, *, now: float) -> None:
+        return None
 
 
 # 手動觸發的 Opik root trace（工程觀測，OPIK_ENABLED 才生效）。FastAPI handler 因
@@ -59,8 +79,7 @@ def create_admin_jobs_router(
     jobs: list[Job],
     schedule_state: ScheduleStateStore,
     accounts: AccountService,
-    med_store: MedicationStore,
-    appt_store: AppointmentStore,
+    schedule_store: ScheduleStore,
     channel_router: ChannelRouter,
     record_reminder: Callable[[str, str, str], None],
     clock: Callable[[], datetime],
@@ -104,41 +123,19 @@ def create_admin_jobs_router(
     def dispatch_reminder(elder_id: str, body: DispatchReminderBody) -> dict:
         if accounts.get_elder(elder_id) is None:
             raise HTTPException(status_code=404, detail=ErrorCode.ELDER_NOT_FOUND)
-        if body.kind == "medication":
-            try:
-                slot = MedicationSlot(body.slot or "")
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=ErrorCode.INVALID_SLOT) from exc
-            meds = [m for m in med_store.list_for_elder(elder_id) if slot in m.slots]
-            job = build_medication_slot_job(
-                slot=slot,
-                meds_at_slot=lambda: meds,
-                lookup_elder=accounts.get_elder,
-                router=channel_router,
-                hour=0,
-                name=f"manual-medication-{slot.value}",
-                record=record_reminder,
-            )
-            _dispatch_reminder_traced(job, elder_id=elder_id, kind="medication")
-            return ok({"kind": "medication", "count": len(meds)})
-        today = clock().date().isoformat()
-        tomorrow = (clock().date() + timedelta(days=1)).isoformat()
-        appts = {
-            d: [a for a in appt_store.list_for_date(d) if a.elder_id == elder_id]
-            for d in (today, tomorrow)
-        }
-        job = build_appointment_reminder_job(
-            appts_on=lambda d: appts.get(d, []),
-            today=lambda: today,
-            tomorrow=lambda: tomorrow,
+        kind = ScheduleKind(body.kind)
+        forced = _ForcedDueStore(schedule_store, elder_id=elder_id, kind=kind)
+        job = build_schedule_dispatch_job(
+            store=forced,
             lookup_elder=accounts.get_elder,
             guardians_of=accounts.guardians_of,
             router=channel_router,
-            hour=0,
-            name="manual-appointment",
+            clock=clock,
             record=record_reminder,
+            name=f"manual-{body.kind}",
         )
-        _dispatch_reminder_traced(job, elder_id=elder_id, kind="appointment")
-        return ok({"kind": "appointment", "count": len(appts[today]) + len(appts[tomorrow])})
+        _dispatch_reminder_traced(job, elder_id=elder_id, kind=body.kind)
+        count = len(forced.list_due_once(until=0)) + len(forced.list_due_repeating())
+        return ok({"kind": body.kind, "count": count})
 
     return router

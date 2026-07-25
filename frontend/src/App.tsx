@@ -2,10 +2,9 @@ import liff from "@line/liff";
 import { useEffect, useState } from "react";
 import { BrowserRouter, Route, Routes } from "react-router";
 
-import { AppointmentsPage } from "./pages/AppointmentsPage";
 import { EldersPage } from "./pages/EldersPage";
+import { SchedulesPage } from "./pages/SchedulesPage";
 import { HealthReportPage } from "./pages/HealthReportPage";
-import { MedicationsPage } from "./pages/MedicationsPage";
 import { strings } from "./strings";
 
 export function App() {
@@ -33,8 +32,7 @@ export function App() {
     <BrowserRouter basename="/liff">
       <Routes>
         <Route path="/" element={<EldersPage />} />
-        <Route path="/elders/:elderId/medications" element={<MedicationsPage />} />
-        <Route path="/elders/:elderId/appointments" element={<AppointmentsPage />} />
+        <Route path="/elders/:elderId/schedules" element={<SchedulesPage />} />
         <Route path="/elders/:elderId/health-report" element={<HealthReportPage />} />
       </Routes>
     </BrowserRouter>

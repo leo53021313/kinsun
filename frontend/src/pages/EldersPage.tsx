@@ -64,9 +64,8 @@ export function EldersPage() {
         {elders.map((e) => (
           <li key={e.elder_id}>
             {e.name}：
-            <Link to={`/elders/${e.elder_id}/medications`}>{strings.elders.linkMedications}</Link>
+            <Link to={`/elders/${e.elder_id}/schedules`}>{strings.elders.linkSchedules}</Link>
             {" / "}
-            <Link to={`/elders/${e.elder_id}/appointments`}>{strings.elders.linkAppointments}</Link>
             {" / "}
             <Link to={`/elders/${e.elder_id}/health-report`}>{strings.elders.linkHealthReport}</Link>
             {" / "}

@@ -9,17 +9,17 @@
 
 | # | 文件 | 狀態 | 最後更新 |
 | :---: | :--- | :--- | :--- |
-| 00 | [決策清單](00_決策清單.md) | ✅ D-01～D-75 全回填（D-38 掛起、4 項擱置；D-74 消費端完成；D-75 濫用審核採納並重寫接法；旗標預設開但支撐數字同日作廢待重跑） | 2026-07-25 |
+| 00 | [決策清單](00_決策清單.md) | ✅ D-01～D-76 全回填（D-76 統一排程十二項核定、**五刀全完成**；D-38 掛起、4 項擱置；D-74 消費端完成；D-75 濫用審核採納並重寫接法；旗標預設開但支撐數字同日作廢待重跑） | 2026-07-25 |
 | — | [2026-07-08 會議決策議程](2026-07-08_會議決策議程.md) | ✅ 決議已回填（會議紀錄） | 2026-07-09 |
-| 02 | [專案簡報與PRD](02_專案簡報與PRD.md) | ✅ v1.3（KPI 數值⏸實測後定；US-B3 問候自適應註記） | 2026-07-17 |
+| 02 | [專案簡報與PRD](02_專案簡報與PRD.md) | ✅ v1.4（US-C1／C2 改寫為統一排程、新增 US-C3 長輩用說的建立提醒；KPI 數值⏸實測後定；US-B3 問候自適應註記） | 2026-07-17 |
 | 03 | [BDD情境](03_BDD情境.md) | ✅ 定稿（D-72 三級制已落地） | 2026-07-09 |
 | 04 | [ADR（04_adr/）](04_adr/README.md) | ✅ 定稿（11 筆；ADR-003 補述 庚-54） | 2026-07-13 |
-| 05 | [架構與設計](05_架構與設計.md) | ✅ v1.36（時間改每輪注入情境、get_current_time 移除；§8.5 補濫用審核：三類越權／位置在家屬通報之後為安全屬性／誤攔防線三層；§12 離線評測四實驗；D-74 消費端） | 2026-07-25 |
-| 06 | [API設計規範](06_API設計規範.md) | ✅ v1.4（新增 `GET /api/v1/admin/news` 話題新聞檢視，D-74） | 2026-07-25 |
-| 07 | [模組規格與測試](07_模組規格與測試.md) | ✅ v1.27（新增 clock.py 列＋test_clock；safety 列補 AbuseModerator，6→7 檔；總測試 1607、合約 19 組；D-74 消費端完成式） | 2026-07-25 |
-| 08 | [專案結構指南](08_專案結構指南.md) | ✅ v1.11（頂層新增 clock.py、tools/clock.py 移除；news/fetchers 補 rss.py；admin 八頁 NewsPage） | 2026-07-25 |
+| 05 | [架構與設計](05_架構與設計.md) | ✅ v1.39（統一排程 D-76 五刀全完成：schedules 取代 medications／appointments、提醒管線改寫為單一每分鐘派送；時間改每輪注入情境、get_current_time 移除；§8.5 補濫用審核：三類越權／位置在家屬通報之後為安全屬性／誤攔防線三層；§12 離線評測四實驗；D-74 消費端） | 2026-07-25 |
+| 06 | [API設計規範](06_API設計規範.md) | ✅ v1.5（統一排程 /schedules 取代 /medications 與 /appointments；新增 `GET /api/v1/admin/news` 話題新聞檢視，D-74） | 2026-07-25 |
+| 07 | [模組規格與測試](07_模組規格與測試.md) | ✅ v1.30（統一排程五刀全完成、舊模組退役、合約 18 組、總測試 1726；新增 clock.py 列＋test_clock；safety 列補 AbuseModerator，6→7 檔；總測試 1607、合約 19 組；D-74 消費端完成式） | 2026-07-25 |
+| 08 | [專案結構指南](08_專案結構指南.md) | ✅ v1.14（schedules/ 八檔全配、medications/ 與 appointments/ 退役；頂層新增 clock.py、tools/clock.py 移除；news/fetchers 補 rss.py；admin 八頁 NewsPage） | 2026-07-25 |
 | 09 | [模組依賴關係](09_模組依賴關係.md) | ✅ v1.8（Protocol 47 重掃／合約 19；濫用審核走 LLMClient seam 不新增對外依賴） | 2026-07-25 |
-| 10 | [類別關係](10_類別關係.md) | ✅ v1.17（FactProvider 六段、TimeFacts 排首位；群 4 補 AbuseModerator／AbuseClassifier／ModerationResult，VoicePipeline 補選配 moderator；Protocol 47） | 2026-07-25 |
+| 10 | [類別關係](10_類別關係.md) | ✅ v1.20（統一排程五刀全完成、舊模組類別移除；FactProvider 六段、TimeFacts 排首位；群 4 補 AbuseModerator／AbuseClassifier／ModerationResult，VoicePipeline 補選配 moderator；Protocol 47） | 2026-07-25 |
 | 11 | [審查與重構指南](11_審查與重構指南.md) | ✅ v1.1（CI 已落地；docs/dev 同步鐵律入自查） | 2026-07-17 |
 | 12 | [前端架構規範](12_前端架構規範.md) | ✅ v1.7（admin 話題新聞頁 D-74；web 端 React 19.2.8＋react-router 8.3） | 2026-07-25 |
 | 13 | [安全與就緒檢查](13_安全與就緒檢查.md) | ✅ v1.4（位置隱私列；依賴掃描與 healthz 結案） | 2026-07-17 |

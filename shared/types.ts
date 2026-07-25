@@ -3,13 +3,35 @@
 // --- 家屬面資源 ---
 export type Elder = { elder_id: string; name: string };
 export type CreatedElder = Elder & { invite_code: string };
-export type Medication = { medication_id: string; name: string; slots: string[] };
-export type Appointment = {
-  appointment_id: string;
-  date: string;
-  label: string;
-  /** 看診時刻 HH:MM（選填；空＝未指定，提醒不帶時間）。 */
+/** 統一排程（D-76 P3）：用藥、回診與長輩自訂提醒共用同一個資源。 */
+export type ScheduleKind = "medication" | "appointment" | "custom";
+export type RepeatKind = "once" | "daily" | "weekly";
+/** 一個鬧鐘。重複型帶 time（＋weekly 的 weekday）；一次性帶 scheduled_at。 */
+export type ScheduleOccurrence = {
+  schedule_id: string;
+  repeat: RepeatKind;
   time: string;
+  weekday: number | null;
+  scheduled_at: number | null;
+};
+/** 一件事：同一個 group 的全部鬧鐘。UI 一律以此為單位。 */
+export type ScheduleGroup = {
+  group_id: string;
+  kind: ScheduleKind;
+  title: string;
+  /** elder＝長輩自己用說的建的；guardian＝家屬設的。 */
+  created_by: "elder" | "guardian";
+  /** 事件本身的時刻（回診看診時間）；null＝與提醒時刻相同。 */
+  event_at: number | null;
+  occurrences: ScheduleOccurrence[];
+};
+/** 建立／修改排程的請求內容。 */
+export type ScheduleInput = {
+  kind: ScheduleKind;
+  title: string;
+  occurrences: { repeat: RepeatKind; time?: string; date?: string; weekday?: number | null }[];
+  event_date?: string;
+  event_time?: string;
 };
 export type RiskEventItem = { tier: number; reason: string; created_at: number };
 export type ReminderItem = { kind: string; content: string; created_at: number };
@@ -154,12 +176,22 @@ export type TraceDetail = {
 };
 
 // --- 觀測後台：長輩詳情分頁（spec 2026-07-12） ---
-export type AdminMedication = { medication_id: string; name: string; slots: string[] };
-export type AdminAppointment = { appointment_id: string; date: string; label: string; time: string };
+/** 後台提醒分頁的單筆鬧鐘（D-76 P5：三類合成一份清單，kind 保留分類）。 */
+export type AdminSchedule = {
+  schedule_id: string;
+  group_id: string;
+  kind: ScheduleKind;
+  title: string;
+  repeat: RepeatKind;
+  time: string;
+  weekday: number | null;
+  scheduled_at: number | null;
+  event_at: number | null;
+  created_by: "elder" | "guardian";
+};
 export type AdminReminderLog = { kind: string; content: string; created_at: number };
 export type AdminElderReminders = {
-  medications: AdminMedication[];
-  appointments: AdminAppointment[];
+  schedules: AdminSchedule[];
   reminder_logs: AdminReminderLog[];
 };
 export type AdminMemoryItem = { text: string; provenance: string; date: string };

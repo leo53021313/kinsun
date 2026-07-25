@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router";
+import type { AdminSchedule } from "kinsun-shared/types";
 
 import { dispatchReminder, getElderReminders, getMeta } from "../../api";
 import { formatTime } from "../../format";
 import { strings } from "../../strings";
 import { useLoadable } from "../../useLoadable";
 
-/** 提醒設定分頁：用藥／回診主檔＋近期發送紀錄；內測模式可立即發送。 */
+/** 提醒設定分頁：統一排程清單＋近期發送紀錄（D-76 P5）；內測模式可立即發送。 */
 export function RemindersTab() {
   const reminders = strings.elderTabs.reminders;
   const { elderId } = useParams<{ elderId: string }>();
@@ -26,11 +27,11 @@ export function RemindersTab() {
     );
   }, []);
 
-  async function send(kind: "medication" | "appointment", slot?: string) {
+  async function send(kind: "medication" | "appointment" | "custom") {
     if (!elderId) return;
     setNotice("");
     try {
-      await dispatchReminder(elderId, { kind, slot });
+      await dispatchReminder(elderId, { kind });
       setNotice(reminders.dispatchTriggered);
       load();
     } catch {
@@ -43,36 +44,22 @@ export function RemindersTab() {
   return (
     <div>
       {notice && <p className="card">{notice}</p>}
-      <h3>{reminders.medicationHeading}</h3>
-      {data.medications.length === 0 && <p>{reminders.noMedications}</p>}
-      {data.medications.map((m) => (
-        <div className="card" key={m.medication_id}>
-          <strong>{m.name}</strong>　{reminders.slotsPrefix}
-          {m.slots.map((s) => reminders.slotLabels[s] ?? s).join("、")}
-          {testing &&
-            m.slots.map((s) => (
-              <button key={s} type="button" onClick={() => send("medication", s)}>
-                {reminders.sendSlotButton(reminders.slotLabels[s] ?? s)}
-              </button>
-            ))}
+      <h3>{reminders.scheduleHeading}</h3>
+      {data.schedules.length === 0 && <p>{reminders.noSchedules}</p>}
+      {data.schedules.map((s) => (
+        <div className="card" key={s.schedule_id}>
+          <span className="badge badge-reminder">{reminders.kindLabels[s.kind] ?? s.kind}</span>
+          <strong>{s.title}</strong>　{describeAlarm(s)}
+          {/* 長輩自己用說的建的也在這裡，標出來才知道那不是家屬設的。 */}
+          {s.created_by === "elder" && <span>（{reminders.byElder}）</span>}
         </div>
       ))}
-      <h3>{reminders.appointmentHeading}</h3>
-      {data.appointments.length === 0 && <p>{reminders.noAppointments}</p>}
-      {data.appointments.map((a) => (
-        <div className="card" key={a.appointment_id}>
-          <strong>
-            {a.date}
-            {a.time ? ` ${a.time}` : ""}
-          </strong>
-          　{a.label}
-        </div>
-      ))}
-      {testing && data.appointments.length > 0 && (
-        <button type="button" onClick={() => send("appointment")}>
-          {reminders.sendAppointmentButton}
-        </button>
-      )}
+      {testing &&
+        ["medication", "appointment", "custom"].map((kind) => (
+          <button key={kind} type="button" onClick={() => send(kind as "medication")}>
+            {reminders.sendKindButton(reminders.kindLabels[kind] ?? kind)}
+          </button>
+        ))}
       <h3>{reminders.logsHeading}</h3>
       {data.reminder_logs.length === 0 && <p>{reminders.noLogs}</p>}
       {data.reminder_logs.map((l, i) => (
@@ -84,4 +71,14 @@ export function RemindersTab() {
       ))}
     </div>
   );
+}
+
+/** 一個鬧鐘的時間講法。後台是給值班的人看的，直接印絕對值不做白話包裝。 */
+function describeAlarm(schedule: AdminSchedule): string {
+  if (schedule.repeat === "daily") return `每天 ${schedule.time}`;
+  if (schedule.repeat === "weekly") {
+    const weekday = schedule.weekday === null ? "?" : "一二三四五六日"[schedule.weekday];
+    return `每週${weekday} ${schedule.time}`;
+  }
+  return schedule.scheduled_at === null ? "—" : formatTime(schedule.scheduled_at);
 }

@@ -85,6 +85,27 @@ def test_html_parser_prefers_main_and_preserves_paragraph_boundaries():
     assert "外層廣告" not in parsed.text
 
 
+def test_html_parser_extracts_content_inside_webforms_form_wrapper():
+    """ASP.NET WebForms（如 hpa.gov.tw）整頁包在 <form> 內，內文不可因此被跳過。"""
+    source = SourceRegistry().get("hpa_elder_health")
+    page = _page(
+        source.url,
+        "<html><head><title>國健署</title></head><body>"
+        '<form name="aspnetForm" method="post">'
+        "<nav>選單</nav>"
+        "<div><p>長者高血壓照護重點。</p></div>"
+        "<select><option>年份</option></select>"
+        "<button>查詢</button>"
+        "</form></body></html>",
+    )
+
+    parsed = DomainParserRegistry().parse(page, source)
+
+    assert "長者高血壓照護重點" in parsed.text
+    assert "年份" not in parsed.text
+    assert "查詢" not in parsed.text
+
+
 def test_json_and_rss_are_parsed_as_discovery_records():
     source = SourceRegistry().get("hpa_news_api")
     parser = DomainParserRegistry()

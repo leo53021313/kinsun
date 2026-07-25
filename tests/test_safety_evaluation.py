@@ -145,6 +145,21 @@ def test_shipped_dataset_loads_and_covers_all_tiers():
     assert tiers == {RiskTier.L0, RiskTier.L1, RiskTier.L2}
 
 
+def _set_required_env(monkeypatch) -> None:
+    """`_build_detector_assess` 會跑 `load_settings`，缺任何一個必要鍵就拋 ConfigError。
+
+    只設 GEMINI_API_KEY 的話，測試在有 .env 的開發機上會過、在 CI 上會紅——這種對
+    開發者環境的隱性依賴正是 CI 要抓的東西，測試自己必須把需要的鍵備齊。
+    """
+    for key, value in (
+        ("GEMINI_API_KEY", "k"),
+        ("LINE_CHANNEL_SECRET", "s"),
+        ("LINE_CHANNEL_ACCESS_TOKEN", "t"),
+        ("DATABASE_URL", "postgresql://u:p@h:5432/db"),
+    ):
+        monkeypatch.setenv(key, value)
+
+
 def test_detector_builder_honours_model_override(monkeypatch):
     """`--model` 須真的傳到 GeminiClient——否則比較三個模型會全部跑到同一顆。
 
@@ -162,7 +177,7 @@ def test_detector_builder_honours_model_override(monkeypatch):
             return ""
 
     monkeypatch.setattr("kinsun.llm.GeminiClient", _SpyGeminiClient)
-    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    _set_required_env(monkeypatch)
 
     evaluation._build_detector_assess("gemini-3.5-pro")
     assert captured["model"] == "gemini-3.5-pro"
@@ -182,7 +197,7 @@ def test_detector_builder_defaults_to_configured_safety_model(monkeypatch):
             return ""
 
     monkeypatch.setattr("kinsun.llm.GeminiClient", _SpyGeminiClient)
-    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    _set_required_env(monkeypatch)
     monkeypatch.setenv("GEMINI_MODEL_SAFETY", "gemini-from-env")
 
     evaluation._build_detector_assess()
