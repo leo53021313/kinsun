@@ -21,6 +21,7 @@ export const strings = {
       overview: "總覽",
       messages: "訊息流",
       elders: "長輩",
+      news: "新聞",
       system: "系統",
     },
   },
@@ -79,6 +80,23 @@ export const strings = {
     notBound: "尚未綁定",
     lastActive: (time: string) => `最後活動 ${time}`,
     noConversation: "尚無對話",
+  },
+
+  // 話題新聞（D-74 消費端）
+  news: {
+    title: "話題新聞",
+    daysLabel: "顯示範圍",
+    daysOption: (days: number) => `近 ${days} 天`,
+    empty: "這段期間沒有爬到新聞。爬蟲排程在每天凌晨；也可到「系統」頁手動執行 news-crawl。",
+    note: "新聞由每日排程爬取（衛福部；News API 需金鑰），供金孫問候與聊天當話題素材；逾期自動清除。",
+    columns: {
+      retrievedAt: "抓取時間",
+      source: "來源",
+      publisher: "媒體",
+      title: "標題",
+      publishedAt: "發布時間",
+    },
+    unknownPublishedAt: "未提供",
   },
 
   // 系統排程
