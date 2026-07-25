@@ -1,6 +1,6 @@
 # WBS 開發計畫（一次性重構）- 金孫 KinSun
 
-> **版本:** v1.12 | **更新:** 2026-07-18 | **狀態:** 第 5 層 RAG 正式化、版本發布、單庫原地遷移與個人 Supabase 驗收均已完成；active release、獨立週更 Worker、Agent 查詢與 Admin citation trace 已實測。甲～庚批、內測基礎建設（D-73）與辛批 9 項其餘狀態維持原表。
+> **版本:** v1.14 | **更新:** 2026-07-25 | **狀態:** 第 5 層 RAG 正式化、版本發布、單庫原地遷移與個人 Supabase 驗收均已完成；active release、獨立週更 Worker、Agent 查詢與 Admin citation trace 已實測。甲～庚批、內測基礎建設（D-73）與辛批 10 項其餘狀態維持原表。
 > **總工期**：2026-07-09 ～ 2026-08-20（6 週，✅ D-04 硬里程碑倒排）
 > **施工順序**：甲→乙→丙→丁→戊→己（✅ Leo 核准 2026-07-08）；**分工：全批由 Leo 一人施工**（✅ 會-16，2026-07-09）。
 > 每個工項出處文件都有細節；規模：S＝半天內、M＝1–3 天、L＝3 天以上。
@@ -212,6 +212,8 @@
 | 辛-8 | ✅ 完成（2026-07-17，PR #57）：JS 端測試基建——frontend vitest 4（jsdom）＋app jest-expo；4 測試檔（useLoadable／usePolling／MemoryTab／location 四條靜默降級）；新增 `useLoadable` 收斂 admin 七頁載入邏輯；JS 測試納入 CI | Leo 指示（spec：superpowers/specs/2026-07-17-js端測試基建-design.md） | M |
 | 辛-9 | ✅ 完成（2026-07-17）：主動問候接續上次話題——`ConversationSummaryStore.get_for_date` 三件套＋`CareAgent.proactive(recall=Recall)` 一物三用（檢索關鍵字＋注入情境＋任務條件式加碼追問）＋`worker._recall` 以 `last_active` 定位「她上次開口那天」＋真 Gemini 探針 `scripts/recall_probe.py`（三處設計皆由它逼出：定位日不可用「今天減一天」、`days_ago` 非帶不可、情境段不足以驅動行為）；早安與失聯關心同時受惠；一併修 Mem0 記憶日期晚一天（`occurred_on` 進 metadata＋排序改以對話日為主鍵） | Leo 指示（spec：superpowers/specs/2026-07-17-主動問候接續昨天話題-design.md） | S |
 
+| 辛-10 | ✅ 完成（2026-07-25）：濫用審核（D-75）——`safety/moderation.py`（`AbuseModerator`＋`AbuseClassifier` Protocol＋`LlmAbuseClassifier`＋`FakeAbuseClassifier`＋類別對應口語回絕話術）只擋 role_hijack／system_disclosure／code_generation 三類，全路徑 fail-open＋信心門檻 0.7；管線接在**家屬通報之後**（`test_moderation_runs_after_family_notification`＋`test_blocked_turn_still_records_and_notifies_the_crisis` 雙重守住）；`SAFETY_MODERATION_ENABLED`／`_MIN_CONFIDENCE` 兩鍵，依實測**預設開**（Leo 2026-07-25 核定）。同時新增 evals `careline-prompt-injection`（32 題五類含 benign 對照組＋四項自訂 GEval，跑真 CareAgent 不需 DB），旗標開關切換即產出可比對的 `-moderated` 實驗。⏳ 待付費金鑰重跑以消除未評分題 | Leo 核定（組員 Godzilla-z 研究產出 `DecisionEngine.py` 評估後重寫接法，見 D-75） | M |
+
 ## 持續追蹤（非本 repo 施工）
 
 - 台語 TTS 微調（另專案：語料清洗中→CosyVoice 3 vs VoxCPM2 對比，✅ D-01）——8 月初需對比結論以趕上發表。
@@ -250,3 +252,5 @@
 | v1.10 | 2026-07-18 | 己-7 補單庫 `--in-place` 遷移、寫入前 gzip＋SHA-256 備份與版本化個人庫驗收流程。 |
 | v1.11 | 2026-07-18 | 己-7 實測回填：DISCOVERY 無回答向量、Gemini 批次 timeout／failed release 復用、舊 appointments schema 升級；個人庫 active 發布因 free-tier 每日 1,000 次 embedding 額度維持待驗收。 |
 | v1.12 | 2026-07-18 | 己-7 結案：提高額度後完成 790 文件／2,808 chunks 的 active 發布、golden set 與結構閘門、Agent/Admin citation E2E、最小設定 RAG Worker 啟動驗收。 |
+| v1.13 | 2026-07-25 | 新增辛-10 濫用審核（D-75）：三類越權攔截＋fail-open＋管線位置在家屬通報之後；evals 新增 careline-prompt-injection（32 題五類＋四項 GEval）。 |
+| v1.14 | 2026-07-25 | 辛-10 依實測開啟旗標：`SAFETY_MODERATION_ENABLED` 預設 true（Leo 核定），預設值由 `test_config` 釘死；並接入 promptfoo 紅隊（`evals/redteam/`，走 npx 不進專案依賴）。 |
