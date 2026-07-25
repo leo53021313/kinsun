@@ -131,3 +131,92 @@ def test_cancel_group_keeps_the_first_cancellation_time(store, ns):
     store.cancel_group(f"{ns}g1", now=99.0)
     store.cancel_group(f"{ns}g1", now=500.0)
     assert store.list_for_group(f"{ns}g1")[0].cancelled_at == 99.0
+
+
+def test_list_due_once_returns_only_reached_alarms(store, ns):
+    store.save(_once(f"{ns}s1", f"{ns}g1", f"{ns}e1", at=1000.0))
+    store.save(_once(f"{ns}s2", f"{ns}g2", f"{ns}e1", at=3000.0))
+    ids = {s.schedule_id for s in store.list_due_once(until=2000.0)}
+    assert f"{ns}s1" in ids
+    assert f"{ns}s2" not in ids
+
+
+def test_list_due_once_excludes_settled_and_cancelled(store, ns):
+    store.save(_once(f"{ns}s1", f"{ns}g1", f"{ns}e1", at=1000.0, settled_at=1500.0))
+    store.save(_once(f"{ns}s2", f"{ns}g2", f"{ns}e1", at=1000.0, cancelled_at=1500.0))
+    ids = {s.schedule_id for s in store.list_due_once(until=2000.0)}
+    assert f"{ns}s1" not in ids
+    assert f"{ns}s2" not in ids
+
+
+def test_list_due_once_ignores_repeating_rows(store, ns):
+    store.save(_daily(f"{ns}s1", f"{ns}g1", f"{ns}e1", "08:00"))
+    assert f"{ns}s1" not in {s.schedule_id for s in store.list_due_once(until=9e9)}
+
+
+def test_list_due_repeating_matches_any_minute_in_window(store, ns):
+    # 判定窗可能橫跨兩個分鐘值（掃描抖動），故傳入的是一組 HH:MM。
+    store.save(_daily(f"{ns}s1", f"{ns}g1", f"{ns}e1", "08:00"))
+    store.save(_daily(f"{ns}s2", f"{ns}g2", f"{ns}e1", "08:01"))
+    store.save(_daily(f"{ns}s3", f"{ns}g3", f"{ns}e1", "09:00"))
+    due = store.list_due_repeating(times=("08:00", "08:01"), weekday=2, not_fired_since=0.0)
+    ids = {s.schedule_id for s in due}
+    assert f"{ns}s1" in ids
+    assert f"{ns}s2" in ids
+    assert f"{ns}s3" not in ids
+
+
+def test_list_due_repeating_respects_weekday_for_weekly(store, ns):
+    store.save(
+        Schedule(
+            schedule_id=f"{ns}s1",
+            group_id=f"{ns}g1",
+            elder_id=f"{ns}e1",
+            kind=ScheduleKind.CUSTOM,
+            title="上課",
+            repeat_kind=RepeatKind.WEEKLY,
+            repeat_time="15:00",
+            repeat_weekday=2,
+            created_at=1.0,
+        )
+    )
+    matched = store.list_due_repeating(times=("15:00",), weekday=2, not_fired_since=0.0)
+    missed = store.list_due_repeating(times=("15:00",), weekday=3, not_fired_since=0.0)
+    assert f"{ns}s1" in {s.schedule_id for s in matched}
+    assert f"{ns}s1" not in {s.schedule_id for s in missed}
+
+
+def test_list_due_repeating_skips_already_fired_today(store, ns):
+    # 當日冪等：今天送過的重複型排程不再出現在到期清單。
+    store.save(_daily(f"{ns}s1", f"{ns}g1", f"{ns}e1", "08:00", fired_at=5000.0))
+    store.save(_daily(f"{ns}s2", f"{ns}g2", f"{ns}e1", "08:00", fired_at=100.0))
+    due = store.list_due_repeating(times=("08:00",), weekday=2, not_fired_since=1000.0)
+    ids = {s.schedule_id for s in due}
+    assert f"{ns}s1" not in ids
+    assert f"{ns}s2" in ids
+
+
+def test_list_due_repeating_excludes_cancelled(store, ns):
+    store.save(_daily(f"{ns}s1", f"{ns}g1", f"{ns}e1", "08:00", cancelled_at=10.0))
+    due = store.list_due_repeating(times=("08:00",), weekday=2, not_fired_since=0.0)
+    assert f"{ns}s1" not in {s.schedule_id for s in due}
+
+
+def test_mark_fired_records_send_time_without_settling(store, ns):
+    store.save(_daily(f"{ns}s1", f"{ns}g1", f"{ns}e1", "08:00"))
+    store.mark_fired(f"{ns}s1", now=777.0)
+    got = store.get(f"{ns}s1")
+    assert got is not None
+    assert got.fired_at == 777.0
+    assert got.settled_at is None  # 重複型永遠不結案
+
+
+def test_mark_settled_closes_a_once_alarm_without_claiming_it_was_sent(store, ns):
+    # 過期作廢的路徑：結案但沒送出，fired_at 必須維持 None，否則「最後送出時刻」說謊。
+    store.save(_once(f"{ns}s1", f"{ns}g1", f"{ns}e1", at=1000.0))
+    store.mark_settled(f"{ns}s1", now=888.0)
+    got = store.get(f"{ns}s1")
+    assert got is not None
+    assert got.settled_at == 888.0
+    assert got.fired_at is None
+    assert f"{ns}s1" not in {s.schedule_id for s in store.list_due_once(until=9e9)}

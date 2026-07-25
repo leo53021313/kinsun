@@ -40,6 +40,12 @@ class ScheduleStore(Protocol):
     def list_for_elder(self, elder_id: str) -> list[Schedule]: ...
     def list_for_group(self, group_id: str) -> list[Schedule]: ...
     def cancel_group(self, group_id: str, *, now: float) -> None: ...
+    def list_due_once(self, *, until: float) -> list[Schedule]: ...
+    def list_due_repeating(
+        self, *, times: tuple[str, ...], weekday: int, not_fired_since: float
+    ) -> list[Schedule]: ...
+    def mark_fired(self, schedule_id: str, *, now: float) -> None: ...
+    def mark_settled(self, schedule_id: str, *, now: float) -> None: ...
 
 
 def _to_schedule(row: tuple) -> Schedule:
@@ -144,6 +150,46 @@ class PgScheduleStore:
             (now, group_id),
         )
 
+    def list_due_once(self, *, until: float) -> list[Schedule]:
+        rows = self._db.query(
+            f"SELECT {_COLUMNS} FROM schedules "
+            f"WHERE repeat_kind = %s AND {_ACTIVE} AND scheduled_at <= %s "
+            "ORDER BY scheduled_at",
+            (RepeatKind.ONCE.value, until),
+        )
+        return [_to_schedule(r) for r in rows]
+
+    def list_due_repeating(
+        self, *, times: tuple[str, ...], weekday: int, not_fired_since: float
+    ) -> list[Schedule]:
+        # weekly 比對星期、daily 不限；當日冪等由呼叫端傳入的 not_fired_since（今日
+        # 零時）判定——store 沒有時區也不該有，時間語意一律由注入的 clock 決定。
+        rows = self._db.query(
+            f"SELECT {_COLUMNS} FROM schedules "
+            "WHERE cancelled_at IS NULL AND repeat_time = ANY(%s) "
+            "AND (repeat_kind = %s OR (repeat_kind = %s AND repeat_weekday = %s)) "
+            "AND (fired_at IS NULL OR fired_at < %s) "
+            "ORDER BY repeat_time, title",
+            (
+                list(times),
+                RepeatKind.DAILY.value,
+                RepeatKind.WEEKLY.value,
+                weekday,
+                not_fired_since,
+            ),
+        )
+        return [_to_schedule(r) for r in rows]
+
+    def mark_fired(self, schedule_id: str, *, now: float) -> None:
+        self._db.execute(
+            "UPDATE schedules SET fired_at = %s WHERE schedule_id = %s", (now, schedule_id)
+        )
+
+    def mark_settled(self, schedule_id: str, *, now: float) -> None:
+        self._db.execute(
+            "UPDATE schedules SET settled_at = %s WHERE schedule_id = %s", (now, schedule_id)
+        )
+
 
 class FakeScheduleStore:
     """ScheduleStore 的記憶體替身（測試用，不碰 DB）。"""
@@ -168,3 +214,40 @@ class FakeScheduleStore:
         for schedule_id, schedule in list(self._rows.items()):
             if schedule.group_id == group_id and schedule.cancelled_at is None:
                 self._rows[schedule_id] = replace(schedule, cancelled_at=now)
+
+    def list_due_once(self, *, until: float) -> list[Schedule]:
+        rows = [
+            s
+            for s in self._rows.values()
+            if s.repeat_kind == RepeatKind.ONCE
+            and _is_active(s)
+            and s.scheduled_at is not None
+            and s.scheduled_at <= until
+        ]
+        return sorted(rows, key=_sort_key)
+
+    def list_due_repeating(
+        self, *, times: tuple[str, ...], weekday: int, not_fired_since: float
+    ) -> list[Schedule]:
+        rows = [
+            s
+            for s in self._rows.values()
+            if s.cancelled_at is None
+            and s.repeat_time in times
+            and (
+                s.repeat_kind == RepeatKind.DAILY
+                or (s.repeat_kind == RepeatKind.WEEKLY and s.repeat_weekday == weekday)
+            )
+            and (s.fired_at is None or s.fired_at < not_fired_since)
+        ]
+        return sorted(rows, key=_sort_key)
+
+    def mark_fired(self, schedule_id: str, *, now: float) -> None:
+        schedule = self._rows.get(schedule_id)
+        if schedule is not None:
+            self._rows[schedule_id] = replace(schedule, fired_at=now)
+
+    def mark_settled(self, schedule_id: str, *, now: float) -> None:
+        schedule = self._rows.get(schedule_id)
+        if schedule is not None:
+            self._rows[schedule_id] = replace(schedule, settled_at=now)
