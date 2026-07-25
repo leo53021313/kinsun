@@ -38,7 +38,12 @@ export const strings = {
       `⚠ 危急分級器最近 ${windowMinutes} 分鐘故障 ${count} 次——AI 分級可能失效、只剩關鍵詞守門，請排查 Gemini 連線（失敗句已保守記 L1 留痕）。`,
     stageLabel: {
       asr: "ASR",
-      llm: "LLM",
+      // LLM 逐種類分列（2026-07-25）：一輪多筆呼叫且快慢差一個量級，混在一起的
+      // 百分位數沒有意義，故不再有單一「LLM」列。
+      "llm:agent": "LLM｜回覆生成",
+      "llm:risk_classify": "LLM｜危急分級",
+      "llm:moderation": "LLM｜濫用審核",
+      "llm:unknown": "LLM｜未分類（舊資料）",
       tts: "TTS",
       round_trip: "往返（端到端）",
     } as Record<string, string>,

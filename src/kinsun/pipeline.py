@@ -11,6 +11,11 @@ from dataclasses import replace
 from kinsun import tracing
 from kinsun.agent import FALLBACK_REPLY, CareAgent
 from kinsun.llm import LLMUsage, collect_llm_usage
+from kinsun.observability.models import (
+    LLM_CALL_KIND_AGENT,
+    LLM_CALL_KIND_MODERATION,
+    LLM_CALL_KIND_RISK_CLASSIFY,
+)
 from kinsun.observability.store import TraceStore, safe_record
 from kinsun.reports.reminders import ReminderLogStore
 from kinsun.safety.detector import RiskDetector
@@ -242,6 +247,7 @@ class VoicePipeline:
                     output_tokens=usage.output_tokens or None,
                     content=f"風險分級 {assessment.tier.name}：{assessment.reason}",
                     error_message="分級器故障（fail-safe 留痕）" if is_error else "",
+                    kind=LLM_CALL_KIND_RISK_CLASSIFY,
                 )
             )
         return assessment
@@ -279,6 +285,7 @@ class VoicePipeline:
                     output_tokens=usage.output_tokens or None,
                     content=f"濫用審核 {moderation.category.value}：{moderation.reason}",
                     error_message="審核器故障（fail-open 放行）" if is_error else "",
+                    kind=LLM_CALL_KIND_MODERATION,
                 )
             )
         return moderation
@@ -360,6 +367,7 @@ class VoicePipeline:
                 output_tokens=usage.output_tokens or None,
                 content=reply,
                 error_message=error_message,
+                kind=LLM_CALL_KIND_AGENT,
             )
         ):
             with collect_llm_usage(usage):

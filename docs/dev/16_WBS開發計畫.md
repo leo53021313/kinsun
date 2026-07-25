@@ -1,6 +1,6 @@
 # WBS 開發計畫（一次性重構）- 金孫 KinSun
 
-> **版本:** v1.14 | **更新:** 2026-07-25 | **狀態:** 第 5 層 RAG 正式化、版本發布、單庫原地遷移與個人 Supabase 驗收均已完成；active release、獨立週更 Worker、Agent 查詢與 Admin citation trace 已實測。甲～庚批、內測基礎建設（D-73）與辛批 10 項其餘狀態維持原表。
+> **版本:** v1.15 | **更新:** 2026-07-25 | **狀態:** 第 5 層 RAG 正式化、版本發布、單庫原地遷移與個人 Supabase 驗收均已完成；active release、獨立週更 Worker、Agent 查詢與 Admin citation trace 已實測。甲～庚批、內測基礎建設（D-73）與辛批 12 項其餘狀態維持原表。
 > **總工期**：2026-07-09 ～ 2026-08-20（6 週，✅ D-04 硬里程碑倒排）
 > **施工順序**：甲→乙→丙→丁→戊→己（✅ Leo 核准 2026-07-08）；**分工：全批由 Leo 一人施工**（✅ 會-16，2026-07-09）。
 > 每個工項出處文件都有細節；規模：S＝半天內、M＝1–3 天、L＝3 天以上。
@@ -212,7 +212,11 @@
 | 辛-8 | ✅ 完成（2026-07-17，PR #57）：JS 端測試基建——frontend vitest 4（jsdom）＋app jest-expo；4 測試檔（useLoadable／usePolling／MemoryTab／location 四條靜默降級）；新增 `useLoadable` 收斂 admin 七頁載入邏輯；JS 測試納入 CI | Leo 指示（spec：superpowers/specs/2026-07-17-js端測試基建-design.md） | M |
 | 辛-9 | ✅ 完成（2026-07-17）：主動問候接續上次話題——`ConversationSummaryStore.get_for_date` 三件套＋`CareAgent.proactive(recall=Recall)` 一物三用（檢索關鍵字＋注入情境＋任務條件式加碼追問）＋`worker._recall` 以 `last_active` 定位「她上次開口那天」＋真 Gemini 探針 `scripts/recall_probe.py`（三處設計皆由它逼出：定位日不可用「今天減一天」、`days_ago` 非帶不可、情境段不足以驅動行為）；早安與失聯關心同時受惠；一併修 Mem0 記憶日期晚一天（`occurred_on` 進 metadata＋排序改以對話日為主鍵） | Leo 指示（spec：superpowers/specs/2026-07-17-主動問候接續昨天話題-design.md） | S |
 
-| 辛-10 | ✅ 完成（2026-07-25）：濫用審核（D-75）——`safety/moderation.py`（`AbuseModerator`＋`AbuseClassifier` Protocol＋`LlmAbuseClassifier`＋`FakeAbuseClassifier`＋類別對應口語回絕話術）只擋 role_hijack／system_disclosure／code_generation 三類，全路徑 fail-open＋信心門檻 0.7；管線接在**家屬通報之後**（`test_moderation_runs_after_family_notification`＋`test_blocked_turn_still_records_and_notifies_the_crisis` 雙重守住）；`SAFETY_MODERATION_ENABLED`／`_MIN_CONFIDENCE` 兩鍵，依實測**預設開**（Leo 2026-07-25 核定）。同時新增 evals `careline-prompt-injection`（32 題五類含 benign 對照組＋四項自訂 GEval，跑真 CareAgent 不需 DB），旗標開關切換即產出可比對的 `-moderated` 實驗。⏳ 待付費金鑰重跑以消除未評分題 | Leo 核定（組員 Godzilla-z 研究產出 `DecisionEngine.py` 評估後重寫接法，見 D-75） | M |
+| 辛-10 | ✅ 完成（2026-07-25）：濫用審核（D-75）——`safety/moderation.py`（`AbuseModerator`＋`AbuseClassifier` Protocol＋`LlmAbuseClassifier`＋`FakeAbuseClassifier`＋類別對應口語回絕話術）只擋 role_hijack／system_disclosure／code_generation 三類，全路徑 fail-open＋信心門檻 0.7；管線接在**家屬通報之後**（`test_moderation_runs_after_family_notification`＋`test_blocked_turn_still_records_and_notifies_the_crisis` 雙重守住）；`SAFETY_MODERATION_ENABLED`／`_MIN_CONFIDENCE` 兩鍵，**預設開**（Leo 2026-07-25 核定；⚠️ 據以核定的數字已同日作廢，見 D-75）。同時新增 evals `careline-prompt-injection`（32 題五類含 benign 對照組＋四項自訂 GEval，跑真 CareAgent 不需 DB），旗標開關切換即產出可比對的 `-moderated` 實驗。⏳ 待配額重置後以可信裁判重跑（辛-11 的三項防呆先做） | Leo 核定（組員 Godzilla-z 研究產出 `DecisionEngine.py` 評估後重寫接法，見 D-75） | M |
+
+| 辛-11 | ✅ 完成（2026-07-25）：觀測與評測強化五項——①`llm_calls.kind` 區分三種 LLM 呼叫（agent／risk_classify／moderation），後台延遲改逐種類分列（加入審核後，短呼叫會把整表 p50 拉低，讓「每輪變慢」顯示成「LLM 變快」）＋既有庫升級測試（實連測試庫，並確認拿掉遷移會紅）；②`speakable` 改為確定性檢查（`evals/assertions.py`，Opik 自訂指標＋promptfoo assertion 共用），免額度、免限流、可進 CI；③以 flash-lite 重跑基準線；④promptfoo 開啟 `crescendo` 多輪 strategy＋provider 補多輪對話解析（`parse_turn`＋`workers: 1`，否則多輪會靜默退化成單輪）；⑤`safety.evaluation` 加 `--model` 旗標，可同一份標注集比較模型 P/R（`GEMINI_MODEL_SAFETY` 自 D-16 未經驗證） | Leo 指示（五項推薦全採納） | M |
+
+| 辛-12 | ⏳ **未施工**：評測可信度防呆三項（2026-07-25 發現 LLM 裁判會安靜給出假數字後開立）——①`no_system_leak` 改為確定性檢查（比對回覆是否含 `SYSTEM_PROMPT` 的長 n-gram／模型名／金鑰形狀，我們手上就有 prompt 全文，比 LLM 裁判準且免費）；②**指標變異數為零即報錯**（當日 32 題含攻擊與純閒聊全給 0.5，這條規則會當場擋下）；③**配額耗盡要大聲失敗**（現況是照樣「跑完」並產出看似正常的報告）。做完前，任何 LLM 裁判數字都不得用於決策——含 D-75 旗標預設值的定奪 | 2026-07-25 評測事故（見 D-75） | S |
 
 ## 持續追蹤（非本 repo 施工）
 
@@ -253,4 +257,5 @@
 | v1.11 | 2026-07-18 | 己-7 實測回填：DISCOVERY 無回答向量、Gemini 批次 timeout／failed release 復用、舊 appointments schema 升級；個人庫 active 發布因 free-tier 每日 1,000 次 embedding 額度維持待驗收。 |
 | v1.12 | 2026-07-18 | 己-7 結案：提高額度後完成 790 文件／2,808 chunks 的 active 發布、golden set 與結構閘門、Agent/Admin citation E2E、最小設定 RAG Worker 啟動驗收。 |
 | v1.13 | 2026-07-25 | 新增辛-10 濫用審核（D-75）：三類越權攔截＋fail-open＋管線位置在家屬通報之後；evals 新增 careline-prompt-injection（32 題五類＋四項 GEval）。 |
-| v1.14 | 2026-07-25 | 辛-10 依實測開啟旗標：`SAFETY_MODERATION_ENABLED` 預設 true（Leo 核定），預設值由 `test_config` 釘死；並接入 promptfoo 紅隊（`evals/redteam/`，走 npx 不進專案依賴）。 |
+| v1.14 | 2026-07-25 | 辛-10 開啟旗標：`SAFETY_MODERATION_ENABLED` 預設 true（Leo 核定），預設值由 `test_config` 釘死；並接入 promptfoo 紅隊（`evals/redteam/`，走 npx 不進專案依賴）。 |
+| v1.15 | 2026-07-25 | 新增辛-11（觀測與評測強化五項，已完成）與辛-12（評測可信度防呆三項，未施工）；D-75 的實測數字全數作廢——LLM 裁判在配額耗盡時給出與自身理由矛盾的分數，旗標預設值待重跑後再定。 |
