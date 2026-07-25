@@ -349,6 +349,10 @@ OBSERVABILITY_TABLES_DDL = (
     "status TEXT NOT NULL, latency_ms INTEGER NOT NULL, model_name TEXT NOT NULL, "
     "input_tokens INTEGER, output_tokens INTEGER, content TEXT NOT NULL, "
     "error_message TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+    # 呼叫種類（2026-07-25）：一輪多筆 LLM 呼叫且快慢差一個量級，不分種類做 p50／p95
+    # 會把三種東西平均在一起（見 observability/models.py 的 LLM_CALL_KIND_*）。
+    # 既有列補 ''＝加欄前的舊資料，統計時另歸 llm:unknown，不混入任何一類。
+    "ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT '';"
     "CREATE TABLE IF NOT EXISTS tts_calls ("
     "tts_call_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, external_id TEXT NOT NULL, "
     "channel TEXT NOT NULL DEFAULT '', "

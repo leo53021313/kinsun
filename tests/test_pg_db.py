@@ -266,6 +266,40 @@ def test_ensure_schema_upgrades_legacy_line_user_id_observability_tables(pg_url)
     ensure_schema(pg_url)  # 冪等：升級後再跑一次仍須成功
 
 
+def test_ensure_schema_adds_llm_call_kind_to_legacy_table(pg_url):
+    """既有庫升級（2026-07-25 濫用審核）：llm_calls 須就地補上 kind 欄。
+
+    空庫路徑一樣測不到——新庫的 ALTER 緊接在 CREATE TABLE 之後、必定成功。只有帶著
+    舊表與舊資料的既有庫，才驗得到「補欄不炸、舊列拿到預設值、既存資料不掉」。
+    舊列的 kind 必須是空字串（＝未標記），不可被塞進任何一個真實種類——否則後台的
+    逐種類統計會把加欄前的資料算進去，數字失真。
+    """
+    from kinsun.db import connect, ensure_schema
+
+    with connect(pg_url) as conn:
+        conn.execute(f"DROP TABLE IF EXISTS {', '.join(_OBSERVABILITY_TABLE_NAMES)} CASCADE;")
+        conn.execute(_LEGACY_OBSERVABILITY_DDL)  # 這份舊 schema 的 llm_calls 沒有 kind
+        conn.execute(
+            "INSERT INTO llm_calls (llm_call_id, trace_id, line_user_id, status, latency_ms, "
+            "model_name, input_tokens, output_tokens, content, error_message, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            ("legacy-llm-1", "trace-1", "U-legacy", "ok", 800, "gemini", 10, 20, "嗨", "", 1000.0),
+        )
+        conn.commit()
+
+    ensure_schema(pg_url)
+
+    with connect(pg_url) as conn:
+        assert "kind" in _columns_of(conn, "llm_calls"), "llm_calls 未補上 kind"
+        row = conn.execute(
+            "SELECT kind, content, input_tokens FROM llm_calls WHERE llm_call_id = %s",
+            ("legacy-llm-1",),
+        ).fetchone()
+        assert row == ("", "嗨", 10), "舊列的 kind 應為空字串且原資料不得遺失"
+
+    ensure_schema(pg_url)  # 冪等
+
+
 def test_transaction_lets_domain_exceptions_pass_through(pg_database, ns):
     """✅ 庚-19 修訂：交易本體拋出的業務例外須原樣穿透（不得被誤包成 StoreError）——
     否則 redeem 在交易內拋的 InviteError 會被 _Errors 再翻成 AccountError，

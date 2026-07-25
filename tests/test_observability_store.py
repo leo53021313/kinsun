@@ -213,6 +213,70 @@ def test_overview_stats_counts_and_stage_errors():
     assert sum(h.turn_count for h in stats.hourly_turns) == 3
 
 
+def _record_llm(store, *, kind, latency_ms, status="ok"):
+    store.record_llm_call(
+        trace_id="t1",
+        external_id="U1",
+        status=status,
+        latency_ms=latency_ms,
+        model_name="gemini-3.5-flash-lite",
+        input_tokens=None,
+        output_tokens=None,
+        content="",
+        error_message="",
+        kind=kind,
+    )
+
+
+def test_llm_stages_are_split_by_kind():
+    """一輪多筆 LLM 呼叫且快慢差一個量級，混在一起做百分位數沒有意義。
+
+    這正是 2026-07-25 加入濫用審核後浮現的問題：審核是短輸入的結構化判斷（快），
+    多灌進來會把整表的 p50 **拉低**，讓「每輪其實變慢了」在後台顯示成「LLM 變快了」。
+    """
+    store = FakeTraceStore()
+    store.now = 110.0
+    _record_llm(store, kind="agent", latency_ms=3000)
+    _record_llm(store, kind="agent", latency_ms=5000)
+    _record_llm(store, kind="risk_classify", latency_ms=200)
+    _record_llm(store, kind="moderation", latency_ms=100)
+    _record_llm(store, kind="moderation", latency_ms=300, status="error")
+
+    stats = store.get_overview_stats(today_start=50.0, hourly_start=50.0)
+    by_stage = {s.stage: s for s in stats.stages}
+
+    assert "llm" not in by_stage  # 混合的總表數字已移除，不可再出現
+    assert by_stage["llm:agent"].call_count == 2
+    assert by_stage["llm:agent"].avg_latency_ms == 4000.0
+    assert by_stage["llm:risk_classify"].call_count == 1
+    assert by_stage["llm:moderation"].call_count == 2
+    assert by_stage["llm:moderation"].error_count == 1
+    # 未標記種類的舊資料不存在時，不憑空多一列。
+    assert "llm:unknown" not in by_stage
+
+
+def test_known_llm_kinds_always_listed_even_with_no_calls():
+    """後台欄位忽有忽無會讓人以為壞了，故三個已知種類即使 0 筆也要出現。"""
+    stats = FakeTraceStore().get_overview_stats(today_start=50.0, hourly_start=50.0)
+    stages = {s.stage for s in stats.stages}
+    assert {"llm:agent", "llm:risk_classify", "llm:moderation"} <= stages
+
+
+def test_llm_calls_without_kind_are_reported_separately():
+    """加欄前的舊資料 kind 為空——歸 llm:unknown，絕不可混進任何一個真實種類的統計。"""
+    store = FakeTraceStore()
+    store.now = 110.0
+    _record_llm(store, kind="", latency_ms=9999)  # 舊資料
+    _record_llm(store, kind="agent", latency_ms=1000)
+
+    by_stage = {
+        s.stage: s for s in store.get_overview_stats(today_start=50.0, hourly_start=50.0).stages
+    }
+    assert by_stage["llm:unknown"].call_count == 1
+    assert by_stage["llm:agent"].call_count == 1
+    assert by_stage["llm:agent"].avg_latency_ms == 1000.0  # 舊資料沒被平均進來
+
+
 def test_overview_stats_round_trip_stage_p50_p95():
     """✅ D-05（戊-2）：語音往返延遲 P50／P95——round_trip_ms 為 NULL（未量測）不計。"""
     store = FakeTraceStore()

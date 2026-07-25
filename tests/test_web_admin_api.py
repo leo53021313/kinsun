@@ -152,7 +152,17 @@ def test_overview_shape():
     body = res.json()["data"]
     assert body["turn_count"] == 1
     assert body["active_elder_count"] == 1
-    assert {s["stage"] for s in body["stages"]} == {"asr", "llm", "tts", "round_trip"}
+    # LLM 逐種類分列（2026-07-25）：整張 llm_calls 的 p50／p95 已無意義——回覆生成
+    # 含工具迴圈，與短輸入的分級／審核差一個量級。三個已知種類一律出現（即使 0 筆），
+    # 後台欄位不會忽有忽無；llm:unknown（加欄前的舊資料）只在真有資料時才多一列。
+    assert {s["stage"] for s in body["stages"]} == {
+        "asr",
+        "llm:agent",
+        "llm:risk_classify",
+        "llm:moderation",
+        "tts",
+        "round_trip",
+    }
     assert all("p50_latency_ms" in s and "p95_latency_ms" in s for s in body["stages"])
     assert isinstance(body["hourly_turns"], list)
     assert isinstance(body["generated_at"], float)
