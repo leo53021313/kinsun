@@ -16,18 +16,16 @@ from datetime import datetime
 from fastapi import APIRouter
 
 from kinsun.accounts.service import AccountService
-from kinsun.appointments.service import AppointmentService
-from kinsun.medications.service import MedicationService
 from kinsun.notifications.store import AppNotificationStore
 from kinsun.reports.reminders import ReminderLogStore
 from kinsun.reports.summaries import ConversationSummaryStore
 from kinsun.safety.events import RiskEventStore
+from kinsun.schedules.service import ScheduleService
 from kinsun.web.auth import LiffVerifier
 from kinsun.web.ratelimit import RateLimiter, SlidingWindowRateLimiter
 from kinsun.web.routers.admin import create_admin_router
 from kinsun.web.routers.admin_jobs import create_admin_jobs_router
 from kinsun.web.routers.admin_strategies import create_admin_strategies_router
-from kinsun.web.routers.appointments import create_appointments_router
 from kinsun.web.routers.deps import (
     GuardianScope,
     build_current_app_guardian,
@@ -36,10 +34,10 @@ from kinsun.web.routers.deps import (
 from kinsun.web.routers.device_bindings import create_device_bindings_router
 from kinsun.web.routers.elders import create_elders_router
 from kinsun.web.routers.guardians import create_guardians_router
-from kinsun.web.routers.medications import create_medications_router
 from kinsun.web.routers.meta import create_meta_router
 from kinsun.web.routers.notifications import create_notifications_router
 from kinsun.web.routers.reports import create_reports_router
+from kinsun.web.routers.schedules import create_schedules_router
 from kinsun.web.routers.sessions import create_sessions_router
 
 __all__ = [
@@ -56,14 +54,16 @@ def create_guardian_face_router(
     *,
     verifier: LiffVerifier,
     accounts: AccountService,
-    medications: MedicationService,
-    appointments: AppointmentService,
+    schedules: ScheduleService,
     clock: Callable[[], datetime],
     risk_events: RiskEventStore,
     reminder_logs: ReminderLogStore,
     summaries: ConversationSummaryStore,
 ) -> APIRouter:
-    """家屬面聚合：長輩／用藥／回診／健康報告／每日摘要，共用雙認證與可及範圍守門。"""
+    """家屬面聚合：長輩／排程／健康報告／每日摘要，共用雙認證與可及範圍守門。
+
+    用藥與回診自 D-76 P3 起併入 schedules 單一資源，不再各有一支 router。
+    """
     current_guardian = build_current_guardian(verifier, accounts)
     scope = GuardianScope(accounts)
     router = APIRouter()
@@ -71,13 +71,11 @@ def create_guardian_face_router(
         create_elders_router(accounts=accounts, current_guardian=current_guardian, scope=scope)
     )
     router.include_router(
-        create_medications_router(
-            medications=medications, current_guardian=current_guardian, scope=scope
-        )
-    )
-    router.include_router(
-        create_appointments_router(
-            appointments=appointments, clock=clock, current_guardian=current_guardian, scope=scope
+        create_schedules_router(
+            schedules=schedules,
+            current_guardian=current_guardian,
+            scope=scope,
+            clock=clock,
         )
     )
     router.include_router(

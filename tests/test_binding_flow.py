@@ -3,17 +3,11 @@ from itertools import count
 
 from kinsun.accounts.models import Channel, ConsentBy, InviteRole
 from kinsun.accounts.service import AccountService
-from kinsun.appointments.flow import AppointmentMenu
-from kinsun.appointments.service import AppointmentService
 from kinsun.binding.flow import BindingFlow
-from kinsun.medications.flow import MedicationMenu
-from kinsun.medications.service import MedicationService
-from tests.fakes import (
-    FakeAccountStore,
-    FakeAppointmentStore,
-    FakeBindingSessionStore,
-    FakeMedicationStore,
-)
+from kinsun.schedules.flow import ScheduleMenu
+from kinsun.schedules.service import ScheduleService
+from kinsun.schedules.store import FakeScheduleStore
+from tests.fakes import FakeAccountStore, FakeBindingSessionStore
 
 TPE = timezone(timedelta(hours=8))
 NOW = datetime(2026, 6, 29, 10, 0, tzinfo=TPE)
@@ -28,18 +22,21 @@ class _FakeProfiles:
 
 
 def _build_flow(accounts, sessions, profiles, *, clock, on_guardian_bound=None):
-    med_ids = (f"m{i}" for i in count(1))
-    medications = MedicationService(FakeMedicationStore(), new_id=lambda: next(med_ids))
-    menu = MedicationMenu(medications, accounts, sessions, clock=clock)
-    appt_ids = (f"a{i}" for i in count(1))
-    appointments = AppointmentService(FakeAppointmentStore(), new_id=lambda: next(appt_ids))
-    appt_menu = AppointmentMenu(appointments, accounts, sessions, clock=clock)
+    ids = (f"s{i}" for i in count(1))
+    schedules = ScheduleService(FakeScheduleStore(), clock=clock, new_id=lambda: next(ids))
+    menu = ScheduleMenu(
+        schedules,
+        accounts,
+        sessions,
+        clock=clock,
+        slot_hours={"morning": 8, "noon": 12, "evening": 18, "bedtime": 21},
+        appointment_hour=8,
+    )
     return BindingFlow(
         accounts,
         sessions,
         profiles,
         menu,
-        appt_menu,
         clock=clock,
         session_ttl_seconds=600,
         on_guardian_bound=on_guardian_bound,
@@ -154,16 +151,18 @@ def test_cancel_resets_to_idle():
     assert flow.handle("U-1", "隨便") is None
 
 
-def test_menu_shows_medication_and_delegates():
+def test_menu_shows_schedules_and_delegates():
+    # D-76 P3：用藥與回診兩個入口併成一個「提醒設定」，選單只剩四項。
     flow, _, _ = _flow()
-    assert "用藥提醒" in flow.handle("U-1", "設定")
-    assert "新增用藥" in flow.handle("U-1", "4")
+    assert "提醒設定" in flow.handle("U-1", "設定")
+    assert "新增提醒" in flow.handle("U-1", "4")
 
 
-def test_menu_shows_appointment_and_delegates():
+def test_menu_rejects_the_retired_fifth_option():
+    # 舊選單有第 5 項（回診提醒）。合併後回覆 5 必須被擋下，不能靜默無反應。
     flow, _, _ = _flow()
-    assert "回診提醒" in flow.handle("U-1", "設定")
-    assert "新增回診" in flow.handle("U-1", "5")
+    flow.handle("U-1", "設定")
+    assert "請回覆 1、2、3 或 4。" == flow.handle("U-1", "5")
 
 
 def test_create_elder_links_menu():

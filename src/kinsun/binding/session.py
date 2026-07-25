@@ -16,16 +16,13 @@ class BindingState(StrEnum):
     AWAIT_ELDER_PICK = "elder_pick"
     AWAIT_CODE = "code"
     AWAIT_CONFIRM = "confirm"
-    MED_MENU = "med_menu"
-    MED_PICK_ELDER = "med_pick_elder"
-    MED_ADD_NAME = "med_add_name"
-    MED_ADD_SLOTS = "med_add_slots"
-    MED_DEL_PICK = "med_del_pick"
-    APPT_MENU = "appt_menu"
-    APPT_PICK_ELDER = "appt_pick_elder"
-    APPT_ADD_LABEL = "appt_add_label"
-    APPT_ADD_DATE = "appt_add_date"
-    APPT_DEL_PICK = "appt_del_pick"
+    # 提醒設定（D-76 P3 入口合一）：用藥、回診與其他提醒共用同一組狀態。
+    SCHED_MENU = "sched_menu"
+    SCHED_PICK_ELDER = "sched_pick_elder"
+    SCHED_ADD_KIND = "sched_add_kind"
+    SCHED_ADD_TITLE = "sched_add_title"
+    SCHED_ADD_WHEN = "sched_add_when"
+    SCHED_DEL_PICK = "sched_del_pick"
 
 
 @dataclass(frozen=True)

@@ -31,8 +31,7 @@ _MENU = (
     "1️⃣ 建立長輩檔案\n"
     "2️⃣ 邀請其他家屬\n"
     "3️⃣ 綁定（貼上邀請碼）\n"
-    "4️⃣ 用藥提醒\n"
-    "5️⃣ 回診提醒\n"
+    "4️⃣ 提醒設定（吃藥／回診／其他）\n"
     "（隨時回覆「取消」可結束）"
 )
 _REASON_MSG = {
@@ -49,8 +48,7 @@ class BindingFlow:
         accounts: AccountService,
         sessions: BindingSessionStore,
         profiles: Profiles,
-        medication,
-        appointment,
+        schedules,
         *,
         clock: Callable[[], datetime],
         session_ttl_seconds: int = 600,
@@ -59,8 +57,7 @@ class BindingFlow:
         self._accounts = accounts
         self._sessions = sessions
         self._profiles = profiles
-        self._medication = medication
-        self._appointment = appointment
+        self._schedules = schedules
         self._clock = clock
         self._ttl = session_ttl_seconds
         self._on_guardian_bound = on_guardian_bound
@@ -110,10 +107,8 @@ class BindingFlow:
 
     def _step(self, session: BindingSession, text: str, line_user_id: str) -> str:
         state = session.state
-        if state.value.startswith("med_"):
-            return self._medication.step(session, text, line_user_id)
-        if state.value.startswith("appt_"):
-            return self._appointment.step(session, text, line_user_id)
+        if state.value.startswith("sched_"):
+            return self._schedules.step(session, text, line_user_id)
         if state == BindingState.MENU:
             return self._menu(text, line_user_id)
         if state == BindingState.AWAIT_ELDER_NAME:
@@ -146,10 +141,8 @@ class BindingFlow:
             self._save(line_user_id, BindingState.AWAIT_CODE, {})
             return "請貼上您收到的邀請碼。"
         if choice == "4":
-            return self._medication.open(line_user_id)
-        if choice == "5":
-            return self._appointment.open(line_user_id)
-        return "請回覆 1、2、3、4 或 5。"
+            return self._schedules.open(line_user_id)
+        return "請回覆 1、2、3 或 4。"
 
     def _create_elder(self, line_user_id: str, name: str) -> str:
         display = self._profiles.display_name(line_user_id)
