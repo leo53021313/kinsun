@@ -263,6 +263,15 @@ class Settings(_BaseEnvSettings):
     # 參數只認基底網域且未收錄台灣本土媒體）：只收台灣來源、排除大陸（白名單優於黑名單，
     # zh 不分繁簡、黑名單抓不完）；條目比對＝完全相符或其子網域；留空＝不過濾。
     news_api_domains: str = "tw.news.yahoo.com,tw.sports.yahoo.com"
+    # RSS feed 清單（逗號分隔網址，免金鑰）：預設 Google News 台灣焦點＋生活話題搜尋——
+    # News API 索引沒收台灣本土媒體，Google News RSS 每則自帶實際台媒名（東森／UDN／自由…），
+    # 是台媒覆蓋的主力來源；留空＝不啟用 RSS。
+    news_rss_feeds: str = (
+        "https://news.google.com/rss?hl=zh-TW&gl=TW&ceid=TW:zh-Hant,"
+        "https://news.google.com/rss/search?q=%E5%81%A5%E5%BA%B7%20OR%20%E5%A4%A9%E6%B0%A3"
+        "%20OR%20%E7%BE%8E%E9%A3%9F%20OR%20%E7%AF%80%E6%85%B6%20OR%20%E9%95%B7%E8%80%85"
+        "&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
+    )
     rag_content_policy: Annotated[str, BeforeValidator(_content_policy)] = "allowed_only"
     rag_embedding_model: Annotated[str, BeforeValidator(_embedding_model)] = "gemini-embedding-001"
     rag_refresh_enabled: Bool = False

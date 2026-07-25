@@ -29,6 +29,7 @@ from kinsun.memory.longterm.consolidation_log import PgConsolidationLogStore
 from kinsun.news.fetchers.mohw import MohwNewsFetcher
 from kinsun.news.fetchers.news_api import NewsApiFetcher
 from kinsun.news.fetchers.protocol import NewsFetcher
+from kinsun.news.fetchers.rss import RssNewsFetcher
 from kinsun.news.jobs import build_news_cleanup_job, build_news_crawl_job
 from kinsun.observability.jobs import build_observability_cleanup_job
 from kinsun.proactive.greeting_time import update_greeting_time
@@ -316,10 +317,14 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
                 name="inbound-audio-cleanup",
             )
         )
-    # 話題新聞（spec 2026-07-20）：衛福部來源免金鑰、一律註冊；News API 需要
-    # NEWS_API_KEY，留空＝優雅降級（少一個新聞來源，衛福部照常爬）。跑在夜間批次
-    # 同一個鐘點、錯開分鐘，讓早上問候時已有當天的新聞可用。
+    # 話題新聞（spec 2026-07-20）：衛福部與 RSS 免金鑰、一律註冊（RSS feed 清單
+    # 留空＝不用）；News API 需要 NEWS_API_KEY，留空＝優雅降級。單一來源失敗不擋
+    # 其他來源（news/jobs.py）。跑在夜間批次同一個鐘點、錯開分鐘，讓早上問候時
+    # 已有當天的新聞可用。
     news_fetchers: list[NewsFetcher] = [MohwNewsFetcher(clock=clock)]
+    for feed_url in settings.news_rss_feeds.split(","):
+        if feed_url.strip():
+            news_fetchers.append(RssNewsFetcher(feed_url=feed_url.strip(), clock=clock))
     if settings.news_api_key:
         news_fetchers.append(
             NewsApiFetcher(
