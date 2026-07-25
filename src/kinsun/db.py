@@ -115,6 +115,28 @@ APPOINTMENTS_NAMING_MIGRATION_DDL = (
     "CREATE INDEX IF NOT EXISTS idx_appointments_date ON appointments (date);"
 )
 
+# 統一排程（spec 2026-07-25-統一排程系統）：一列＝一個鬧鐘，group_id 串起同一件事。
+# 全新表、無舊欄位要遷移，故建表與建索引可同批（既有庫首次跑時一起建起來）。
+# 三個部分索引都帶 WHERE cancelled_at IS NULL：派送每分鐘掃一次，只有未取消的列
+# 有意義，讓索引跟著縮小而不是隨歷史資料無限長大。
+SCHEDULES_DDL = (
+    "CREATE TABLE IF NOT EXISTS schedules ("
+    "schedule_id TEXT PRIMARY KEY, group_id TEXT NOT NULL, elder_id TEXT NOT NULL, "
+    "kind TEXT NOT NULL, title TEXT NOT NULL, repeat_kind TEXT NOT NULL, "
+    "scheduled_at DOUBLE PRECISION, repeat_time TEXT NOT NULL DEFAULT '', "
+    "repeat_weekday INTEGER, event_at DOUBLE PRECISION, "
+    "audience TEXT NOT NULL DEFAULT 'elder', created_by TEXT NOT NULL, "
+    "created_at DOUBLE PRECISION NOT NULL, cancelled_at DOUBLE PRECISION, "
+    "settled_at DOUBLE PRECISION, fired_at DOUBLE PRECISION);"
+    "CREATE INDEX IF NOT EXISTS idx_schedules_elder_active "
+    "ON schedules (elder_id, cancelled_at);"
+    "CREATE INDEX IF NOT EXISTS idx_schedules_group ON schedules (group_id);"
+    "CREATE INDEX IF NOT EXISTS idx_schedules_repeat ON schedules (repeat_time) "
+    "WHERE cancelled_at IS NULL;"
+    "CREATE INDEX IF NOT EXISTS idx_schedules_due_once ON schedules (scheduled_at) "
+    "WHERE cancelled_at IS NULL AND settled_at IS NULL;"
+)
+
 RAG_DDL = (
     "CREATE EXTENSION IF NOT EXISTS vector;"
     "CREATE TABLE IF NOT EXISTS rag_sources ("
@@ -472,6 +494,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(MEDICATIONS_DDL)
         conn.execute(APPOINTMENTS_DDL)
         conn.execute(APPOINTMENTS_NAMING_MIGRATION_DDL)
+        conn.execute(SCHEDULES_DDL)
         conn.execute(RAG_DDL)
         conn.execute(RISK_EVENTS_DDL)
         conn.execute(REMINDER_LOGS_DDL)
