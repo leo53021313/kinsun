@@ -33,6 +33,7 @@ from kinsun.rag.releases import PgRagReleaseStore
 from kinsun.safety.classifier import LlmRiskClassifier
 from kinsun.safety.deliveries import PgRiskNotificationLogStore
 from kinsun.safety.detector import RiskDetector
+from kinsun.safety.moderation import AbuseModerator, LlmAbuseClassifier
 from kinsun.safety.notifier import GuardianNotifier
 from kinsun.scheduler.state import PgScheduleStateStore
 from kinsun.scheduler.worker import build_jobs
@@ -87,6 +88,17 @@ def build_app() -> FastAPI:
     )
     # 危急送達留痕：notifier 寫入、admin 觀測讀取，共用同一實例。
     deliveries = PgRiskNotificationLogStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex)
+    # 濫用審核（2026-07-25）：預設開；設 SAFETY_MODERATION_ENABLED=false 則傳 None，
+    # 管線整段不執行審核、不多花 LLM 呼叫（維運逃生口）。
+    # 與危急分級共用同一顆 safety 模型——兩者都是短輸入的結構化判斷。
+    moderator = (
+        AbuseModerator(
+            LlmAbuseClassifier(safety_llm),
+            min_confidence=settings.safety_moderation_min_confidence,
+        )
+        if settings.safety_moderation_enabled
+        else None
+    )
     pipeline = VoicePipeline(
         asr=build_asr_client(settings),
         agent=core.agent,
@@ -107,6 +119,7 @@ def build_app() -> FastAPI:
         # 長輩開口即標記時間窗內的提醒為已回應：反思的行為訊號來源（✅ Task 4）。
         reminder_logs=core.reminder_logs,
         response_window_seconds=settings.reflection_response_window_minutes * 60,
+        moderator=moderator,
     )
     binding_sessions = PgBindingSessionStore(db)
     medication_menu = MedicationMenu(core.medications, core.accounts, binding_sessions, clock=clock)

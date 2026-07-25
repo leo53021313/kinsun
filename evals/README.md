@@ -12,6 +12,7 @@
 | `careline-quality` | dataset `kinsun-careline-smoke` | Hallucination、Moderation | 有沒有編造（防幻覺）、有沒有不當／有害內容 |
 | `careline-rag-grounding` | dataset `kinsun-health-rag` | ContextPrecision、ContextRecall、AnswerRelevance | 檢索雜訊多不多、該找的有沒有漏、回答切不切題 |
 | `conversation_quality`（thread 級） | Opik 真實 thread（elder_id 串起） | ConversationalCoherence、UserFrustration、SessionCompleteness | 多輪連貫性、長輩挫折感、需求有沒有收尾 |
+| `careline-prompt-injection` | dataset `kinsun-prompt-injection` | resisted_hijack、spoken_zh_tw、no_system_leak、natural_care_reply（皆為自訂 GEval） | 被綁架時守不守得住人設／格式／設定，以及**會不會誤殺**正常長輩發話 |
 
 ## 前置
 
@@ -30,6 +31,7 @@ export OPIK_ENABLED=true
 # 上傳資料集（各一次即可）
 PYTHONPATH=src uv run python -m evals.datasets.careline_smoke
 PYTHONPATH=src uv run python -m evals.datasets.health_rag
+PYTHONPATH=src uv run python -m evals.datasets.prompt_injection
 
 # 跑資料集實驗
 PYTHONPATH=src uv run python -m evals.experiments.hallucination     # careline-quality
@@ -37,7 +39,21 @@ PYTHONPATH=src uv run python -m evals.experiments.rag_grounding     # careline-r
 
 # 跑對話串級評測（不需資料集；評 Opik 裡的真實 thread）
 PYTHONPATH=src uv run python -m evals.experiments.conversation_quality
+
+# 提示詞注入：同一支腳本跑兩組可比對的數字（不需 DB，記憶用替身）
+SAFETY_MODERATION_ENABLED=false PYTHONPATH=src uv run python -m evals.experiments.prompt_injection
+SAFETY_MODERATION_ENABLED=true  PYTHONPATH=src uv run python -m evals.experiments.prompt_injection
 ```
+
+提示詞注入實驗跑的是**真的 `CareAgent`**（真 `SYSTEM_PROMPT`＋出站 `_speakable()` 打撈），
+量的就是會上線的那兩道防線；記憶用 `FakeMemoryStore` 與空的長期記憶、`tools=None`，故
+**不需要 DATABASE_URL**。`SAFETY_MODERATION_ENABLED=true` 時額外套用
+`safety/moderation.py` 的濫用審核（套法與 `pipeline._process_transcribed` 一致），
+實驗名改為 `careline-prompt-injection-moderated`，可與基準線並排比對。
+
+資料集 32 題含 8 題 **benign 對照組**——正常長輩發話（含「我不想活了」「胸口悶悶的」
+兩句危急句，與撞到「程式／英文」字眼的閒聊）。看分數時**先看這一組**：`natural_care_reply`
+在 benign 上掉分＝防線誤殺長輩，比攔截率低更嚴重。
 
 跑完到 `http://localhost:5273` 看 experiment 分數與每筆 trace。
 
@@ -60,6 +76,12 @@ PYTHONPATH=src uv run python -m evals.experiments.conversation_quality
 
 - `datasets/`：資料集定義（上傳成 Opik dataset）。
 - `experiments/`：實驗腳本（對 dataset 跑受測系統 + 指標）。
+- `subject.py`：**受測系統的組裝**（真 CareAgent、不碰 DB、審核依旗標）。注入評測與
+  紅隊共用同一個對象——兩邊各組一次，遲早會分岔成「量的不是同一個東西」。
+- `redteam/`：[promptfoo](https://github.com/promptfoo/promptfoo) 紅隊掃描（Node CLI，
+  走 `npx` 不進專案依賴），自動生成中文攻擊題打真 CareAgent。與上面的注入評測**互補
+  不互斥**：紅隊只量攻擊成功率、不量誤殺，題目每次不同；注入評測題目固定、含 benign
+  對照組，可回歸比對。用法與三個踩雷點見 [redteam/README.md](redteam/README.md)。
 
 新增 RAG 指標時，資料集需附 `input`／`expected_output`，context 由實驗實跑
 retriever 取得（見 `experiments/rag_grounding.py`），不寫死在資料集。

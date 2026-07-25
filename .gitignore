@@ -252,3 +252,8 @@ data/backups/
 
 # mem0 稽核檔（本機 SQLite，D-65 固定路徑）
 data/mem0/
+
+# promptfoo 紅隊掃描的產出（每次執行都不同，且含攻擊題全文，不入庫）
+evals/redteam/redteam.yaml
+evals/redteam/output.json
+evals/redteam/.promptfoo/
