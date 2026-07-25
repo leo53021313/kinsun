@@ -40,11 +40,10 @@ _BASE_JOB_NAMES = [
     "daily-consolidation",
     "daily-greeting",
     "inactivity-care",
-    "medication-morning",
-    "medication-noon",
-    "medication-evening",
-    "medication-bedtime",
-    "appointment-reminder",
+    # D-76 P2：四個用藥 job ＋ 一個回診 job 併成一個每分鐘的派送 job；
+    # 對帳 job 是過渡期橋接，P3 換掉家屬寫入端當天移除。
+    "schedule-dispatch",
+    "schedule-legacy-reconcile",
     "observability-cleanup",
     "news-crawl",
     "news-cleanup",
@@ -125,8 +124,17 @@ def _fake_core(
             get_elder=lambda elder_id: None,
             guardians_of=lambda elder_id: [],
         ),
+        # 舊表（D-76 P2 之後只剩對帳橋接讀它們，P3 移除）。
         med_store=SimpleNamespace(list_for_slot=lambda slot: []),
         appt_store=SimpleNamespace(list_for_date=lambda date_str: []),
+        # 統一排程派送 job 的資料來源；本檔的斷言都在問候／失聯／夜間批次，
+        # 故一律回空，讓派送 job 每輪什麼都不做。
+        schedule_store=SimpleNamespace(
+            list_due_once=lambda **kw: [],
+            list_due_repeating=lambda **kw: [],
+            mark_fired=lambda *a, **k: None,
+            mark_settled=lambda *a, **k: None,
+        ),
         medications=object(),
         appointments=object(),
         memory=SimpleNamespace(

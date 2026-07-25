@@ -16,14 +16,11 @@ from zoneinfo import ZoneInfo
 from kinsun import tracing
 from kinsun.accounts.models import PrincipalType
 from kinsun.agent import Recall
-from kinsun.appointments.jobs import build_appointment_reminder_job
 from kinsun.audio.publisher import build_audio_publisher
 from kinsun.composition import Core, assemble_core, build_externals
 from kinsun.config import Settings, load_dotenv, load_settings
 from kinsun.db import Database
 from kinsun.llm import build_gemini_for
-from kinsun.medications.jobs import build_medication_slot_job
-from kinsun.medications.models import MedicationSlot
 from kinsun.memory.longterm.consolidation import run_consolidation
 from kinsun.memory.longterm.consolidation_log import PgConsolidationLogStore
 from kinsun.news.fetchers.mohw import MohwNewsFetcher
@@ -48,6 +45,8 @@ from kinsun.reports.summaries import summarize_day
 from kinsun.scheduler.jobs import build_audio_cleanup_job, build_consolidation_job
 from kinsun.scheduler.scheduler import Job, Scheduler
 from kinsun.scheduler.state import PgScheduleStateStore
+from kinsun.schedules.jobs import build_schedule_dispatch_job
+from kinsun.schedules.legacy_bridge import build_legacy_reconcile_job
 from kinsun.strategies.reflection import reflect_days
 
 logger = logging.getLogger("kinsun.scheduler.worker")
@@ -67,8 +66,6 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
         )
     )
     accounts = core.accounts
-    med_store = core.med_store
-    appt_store = core.appt_store
     reminder_logs = core.reminder_logs
     agent = core.agent
     router = core.router
@@ -274,34 +271,32 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
             hour=settings.proactive_inactivity_hour,
         ),
     ]
-    med_slots = [
-        (MedicationSlot.MORNING, settings.medication_morning_hour, "medication-morning"),
-        (MedicationSlot.NOON, settings.medication_noon_hour, "medication-noon"),
-        (MedicationSlot.EVENING, settings.medication_evening_hour, "medication-evening"),
-        (MedicationSlot.BEDTIME, settings.medication_bedtime_hour, "medication-bedtime"),
-    ]
-    for slot, hour, name in med_slots:
-        jobs.append(
-            build_medication_slot_job(
-                slot=slot,
-                meds_at_slot=lambda s=slot: med_store.list_for_slot(s),
-                lookup_elder=accounts.get_elder,
-                router=router,
-                hour=hour,
-                name=name,
-                record=reminder_logs.record,
-            )
-        )
+    # 統一排程派送（D-76 P2）：一個每分鐘的 job 取代原本四個用藥 job ＋ 一個回診 job。
+    # 頻率必須提高，因為時刻改成每位長輩、每筆排程各自設定，沒有共用鐘點可以掛 cron。
     jobs.append(
-        build_appointment_reminder_job(
-            appts_on=appt_store.list_for_date,
-            today=lambda: clock().date().isoformat(),
-            tomorrow=lambda: (clock().date() + timedelta(days=1)).isoformat(),
+        build_schedule_dispatch_job(
+            store=core.schedule_store,
             lookup_elder=accounts.get_elder,
             guardians_of=accounts.guardians_of,
             router=router,
-            hour=settings.appointment_reminder_hour,
+            clock=clock,
+            window_seconds=settings.schedule_dispatch_window_seconds,
             record=reminder_logs.record,
+        )
+    )
+    # ⚠ 過渡期橋接（D-76 P2→P3）：家屬的寫入端仍在寫舊表，少了對帳，新增的藥不會
+    # 提醒、刪掉的藥還會繼續提醒。P3 換掉寫入端當天連同 legacy_bridge 一起刪。
+    jobs.append(
+        build_legacy_reconcile_job(
+            db=db,
+            slot_hours={
+                "morning": settings.medication_morning_hour,
+                "noon": settings.medication_noon_hour,
+                "evening": settings.medication_evening_hour,
+                "bedtime": settings.medication_bedtime_hour,
+            },
+            appointment_hour=settings.appointment_reminder_hour,
+            clock=clock,
         )
     )
     # 音檔清理僅在 AUDIO_RETENTION_DAYS>0 時註冊（0＝音檔本體不刪，2026-07-09 修訂）。
@@ -411,7 +406,11 @@ def main() -> int:
         f"整理 {settings.longterm_consolidation_hour}:05、"
         f"{greeting}、"
         f"失聯關心 {settings.proactive_inactivity_hour}:00"
-        f"（{settings.proactive_inactivity_days} 天門檻）。"
+        f"（{settings.proactive_inactivity_days} 天門檻）；"
+        # 提醒不再是固定鐘點（D-76 P2）：每位長輩、每筆排程各有各的時刻，
+        # 這行印的是機制而非時間表。
+        f"排程提醒 每分鐘掃描（判定窗 {settings.schedule_dispatch_window_seconds}s）、"
+        "舊表對帳 每 5 分鐘。"
     )
     try:
         serve(scheduler, tick_seconds=settings.scheduler_tick_seconds)

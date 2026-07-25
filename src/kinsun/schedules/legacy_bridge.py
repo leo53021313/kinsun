@@ -32,9 +32,14 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 
 from kinsun.db import Database
+from kinsun.scheduler.scheduler import Job
 from kinsun.schedules.models import Audience, CreatedBy, RepeatKind, ScheduleKind
 
 logger = logging.getLogger("kinsun.schedules.legacy_bridge")
+
+# 每五分鐘對一次帳。不做成每分鐘：對帳是全庫掃描，而家屬在 LINE 上改設定之後
+# 最多等五分鐘才生效是可以接受的；派送 job 本身仍是每分鐘。
+_RECONCILE_CRON = "*/5 * * * *"
 
 _UPSERT = (
     "INSERT INTO schedules (schedule_id, group_id, elder_id, kind, title, repeat_kind, "
@@ -156,3 +161,31 @@ def reconcile_from_legacy(
             (created_at, orphans),
         )
     return len(desired), len(orphans)
+
+
+def build_legacy_reconcile_job(
+    *,
+    db: Database,
+    slot_hours: dict[str, int],
+    appointment_hour: int,
+    clock: Callable[[], datetime],
+    name: str = "schedule-legacy-reconcile",
+) -> Job:
+    """把對帳掛成排程 job。**P3 換掉寫入端當天連同本檔一起刪。**
+
+    不走 fanout_job：對帳沒有「母體逐筆」的語意，它是一次全庫比對；包成 fanout
+    只會讓 Opik 多出一個永遠只有一筆的假 root。失敗由 Scheduler 的逐 job 隔離接住
+    （記 exception 後其他 job 照跑），與「遷移失敗不阻斷」的定位一致。
+    """
+
+    def run() -> None:
+        written, cancelled = reconcile_from_legacy(
+            db,
+            slot_hours=slot_hours,
+            appointment_hour=appointment_hour,
+            clock=clock,
+        )
+        if cancelled:
+            logger.info("舊表對帳：寫入 %d 列、取消 %d 列", written, cancelled)
+
+    return Job(name=name, cron=_RECONCILE_CRON, run=run)
