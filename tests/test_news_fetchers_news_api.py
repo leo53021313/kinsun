@@ -122,3 +122,14 @@ def test_fetch_without_allowlist_keeps_everything():
         api_key="key123", clock=lambda: datetime(2026, 7, 20, tzinfo=UTC), transport=transport
     )
     assert len(fetcher.fetch()) == 3
+
+
+def test_fetch_sorts_by_relevancy_not_published_at():
+    # sortBy=publishedAt 會被高頻科技站洗版（實測前 100 則 0 台灣 Yahoo）；
+    # relevancy 才撈得到白名單來源（實測 18/100），新舊排序交給 get_news 端做。
+    transport = FakeTransport(responses=[Response(200, {}, _BODY)])
+    fetcher = NewsApiFetcher(
+        api_key="key123", clock=lambda: datetime(2026, 7, 20, tzinfo=UTC), transport=transport
+    )
+    fetcher.fetch()
+    assert "sortBy=relevancy" in transport.calls[0][1]
