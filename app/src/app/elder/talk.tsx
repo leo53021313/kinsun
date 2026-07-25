@@ -19,9 +19,14 @@ import { ApiError, logoutSession, postTurn } from "@/lib/api";
 import { type ElderPlace, currentPlace } from "@/lib/location";
 import { useSession } from "@/lib/SessionProvider";
 import { strings } from "@/lib/strings";
+import { createTalkGesture } from "@/lib/talkGesture";
 import { colors, elder, spacing } from "@/lib/theme";
 
-/** 對講機：按住說話 → 放開送出 → 金孫回覆（文字放大＋自動播放語音）。 */
+/**
+ * 對講機：兩種說話方式（2026-07-25）→ 金孫回覆（文字放大＋自動播放語音）。
+ * - 按住說話：按住聆聽、放開送出。
+ * - 短按切換：按一下開始聆聽、說完再按一下送出。
+ */
 export default function ElderTalk() {
   const router = useRouter();
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
@@ -38,6 +43,11 @@ export default function ElderTalk() {
   // 這輪的取位 promise：錄音開始時發動，送出時才 await（見 startRecording）。
   // 用 ref 而非 state：它的變動不該觸發重繪。
   const placeRef = useRef<Promise<ElderPlace | null> | null>(null);
+  // 手勢狀態機：判定「按住說話」與「短按切換」該開錄或停錄（見 lib/talkGesture.ts）。
+  // 不用 avatar state 判斷手勢——短按時 pressOut 比重繪先到，讀 state 會拿到過期值。
+  const gestureRef = useRef(createTalkGesture());
+  // 這一輪開錄流程的 promise：停止前先 await，消除「pressOut 跑在 record() 完成前」的競態。
+  const startPromiseRef = useRef<Promise<boolean>>(Promise.resolve(false));
 
   const { loading: sessionLoading, session, signOut, internalTesting } = useSession();
 
@@ -69,9 +79,10 @@ export default function ElderTalk() {
     };
   }, [router, sessionLoading, session]);
 
-  async function startRecording() {
+  /** 開始聆聽；回傳錄音是否真的開始（供 stopAndSend 與手勢復位判斷）。 */
+  async function startRecording(): Promise<boolean> {
     if (!micReady || avatar === "thinking") {
-      return;
+      return false;
     }
     try {
       // 觸覺回饋（✅ D-48 丁-2）：長輩按住有「開始了」的體感；失敗不影響錄音。
@@ -87,14 +98,19 @@ export default function ElderTalk() {
       placeRef.current = currentPlace();
       setAvatar("listening");
       setReplyText(strings.talk.listening);
+      return true;
     } catch {
       setReplyText(strings.talk.fallback);
       setAvatar("idle");
+      return false;
     }
   }
 
   async function stopAndSend() {
-    if (avatar !== "listening") {
+    // 等開錄流程完成再停：短按時 pressOut 常比 record() 先到，先前用 avatar state
+    // 守門會讀到過期值而漏掉停止，造成「聆聽中」殘留、二次按壓洗掉音檔（2026-07-25 修復）。
+    const started = await startPromiseRef.current;
+    if (!started) {
       return;
     }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
@@ -127,6 +143,37 @@ export default function ElderTalk() {
         setReplyText(strings.talk.fallback);
       }
       setAvatar("idle");
+    }
+  }
+
+  // 手勢接線：狀態機決定動作，這裡只負責執行對應的開錄／停錄。
+  function handlePressIn() {
+    const action = gestureRef.current.pressIn();
+    if (action === "start") {
+      startPromiseRef.current = startRecording().then((started) => {
+        if (!started) {
+          // 開錄失敗或被擋下：手勢復位，下一次按壓重新開始。
+          gestureRef.current.reset();
+        }
+        return started;
+      });
+    } else if (action === "stop") {
+      void stopAndSend();
+    }
+  }
+
+  function handlePressOut() {
+    const action = gestureRef.current.pressOut();
+    if (action === "stop") {
+      void stopAndSend();
+    } else if (action === "keep") {
+      // 短按切換模式：維持聆聽並提示「說完再按一下」。等開錄真的成功才顯示，
+      // 失敗時保留 startRecording 已顯示的錯誤訊息。
+      void startPromiseRef.current.then((started) => {
+        if (started) {
+          setReplyText(strings.talk.listeningTapHint);
+        }
+      });
     }
   }
 
@@ -186,8 +233,10 @@ export default function ElderTalk() {
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={strings.talk.pressToTalk}
-        onPressIn={startRecording}
-        onPressOut={stopAndSend}
+        onPressIn={handlePressIn}
+        // 長按門檻採 Pressable 預設 delayLongPress（500ms）：達標＝按住說話、放開送出。
+        onLongPress={() => gestureRef.current.longPress()}
+        onPressOut={handlePressOut}
         disabled={!micReady || avatar === "thinking"}
         style={({ pressed }) => [
           styles.talkButton,
