@@ -47,10 +47,19 @@ class NewsApiFetcher:
         self._transport = transport or HttpxTransport()
         self._query = query
         self._language = language
-        # 媒體白名單（逗號分隔 domains）：排除大陸來源用白名單而非黑名單——
-        # zh 不分繁簡、黑名單抓不完；留空＝不限媒體（News API 原始行為）。
-        self._domains = domains
+        # 來源白名單（逗號分隔網域）＝**抓回後按文章網址過濾**，不送給 API——
+        # 實測 News API 的 domains 參數只認基底網域（yahoo.com 全球一鍋），台灣本土
+        # 媒體（udn／cna／ettoday…）完全沒收錄，伺服器端無法只挑台灣版；排除大陸
+        # 來源仍用白名單而非黑名單（zh 不分繁簡、黑名單抓不完）。條目比對＝完全
+        # 相符或其子網域；留空＝不過濾。
+        self._allowed_hosts = [d.strip() for d in domains.split(",") if d.strip()]
         self._timeout = timeout_seconds
+
+    def _host_allowed(self, article_url: str) -> bool:
+        if not self._allowed_hosts:
+            return True
+        host = urllib.parse.urlparse(article_url).netloc
+        return any(host == entry or host.endswith("." + entry) for entry in self._allowed_hosts)
 
     def fetch(self) -> list[NewsItem]:
         now = self._clock().timestamp()
@@ -59,8 +68,6 @@ class NewsApiFetcher:
             "language": self._language,
             "sortBy": "publishedAt",
         }
-        if self._domains:
-            params["domains"] = self._domains
         url = f"{_ENDPOINT}?{urllib.parse.urlencode(params)}"
         try:
             # 金鑰走 X-Api-Key header 不放 URL：TransportError 訊息與 log 都會帶完整
@@ -74,7 +81,7 @@ class NewsApiFetcher:
         items: list[NewsItem] = []
         for article in data.get("articles", []):
             article_url = article.get("url") or ""
-            if not article_url:
+            if not article_url or not self._host_allowed(article_url):
                 continue
             items.append(
                 NewsItem(
