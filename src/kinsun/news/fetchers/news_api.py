@@ -53,12 +53,15 @@ class NewsApiFetcher:
         params = {
             "q": self._query,
             "language": self._language,
-            "apiKey": self._api_key,
             "sortBy": "publishedAt",
         }
         url = f"{_ENDPOINT}?{urllib.parse.urlencode(params)}"
         try:
-            data = get_json(self._transport, url, timeout=self._timeout)
+            # 金鑰走 X-Api-Key header 不放 URL：TransportError 訊息與 log 都會帶完整
+            # URL，query string 藏金鑰等於多一個外洩面（D-74 後續③）。
+            data = get_json(
+                self._transport, url, timeout=self._timeout, headers={"X-Api-Key": self._api_key}
+            )
         except TransportError:
             logger.warning("News API 查詢失敗：query=%s", self._query)
             return []
