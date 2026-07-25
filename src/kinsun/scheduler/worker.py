@@ -30,7 +30,6 @@ from kinsun.news.fetchers.mohw import MohwNewsFetcher
 from kinsun.news.fetchers.news_api import NewsApiFetcher
 from kinsun.news.fetchers.protocol import NewsFetcher
 from kinsun.news.jobs import build_news_cleanup_job, build_news_crawl_job
-from kinsun.news.models import NewsItem
 from kinsun.observability.jobs import build_observability_cleanup_job
 from kinsun.proactive.greeting_time import update_greeting_time
 from kinsun.proactive.jobs import (
@@ -202,23 +201,12 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
         # 主動推播補記 reminder_logs（純觀測，失敗不影響推播）。
         safe_record(reminder_logs.record, elder_id, kind, content)
 
-    def _recent_news() -> list[NewsItem]:
-        """近一天內爬到的新聞，當開場話題素材；讀取失敗降級為無新聞，不擋問候。"""
-        try:
-            return news.list_recent(since=clock().timestamp() - 86400)
-        except Exception:  # noqa: BLE001 - 新聞是錦上添花，不可擋下問候
-            logger.warning("話題新聞讀取失敗，改用無新聞問候")
-            return []
-
     def greet_one(elder_id: str) -> None:
         # ledger=True：問候的冪等靠 greeted_today 讀這張表，記帳因此是安全關鍵。
-        # intent 織入今天的日期（2026-07-17 問候多樣性）與近期新聞（2026-07-20）：
-        # 固定 intent 天天產出同一句。
+        # intent 織入今天的日期（2026-07-17 問候多樣性）；話題新聞改由模型在
+        # 工具迴圈中自行以 get_news 拉取（D-74 消費端，2026-07-25），worker 不再直讀。
         _push_to_elder(
-            elder_id,
-            greeting_intent(clock(), recent_news=_recent_news()),
-            REMINDER_KIND_PROACTIVE_GREETING,
-            ledger=True,
+            elder_id, greeting_intent(clock()), REMINDER_KIND_PROACTIVE_GREETING, ledger=True
         )
 
     def care_one(elder_id: str) -> None:
@@ -342,11 +330,16 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
             minute=15,
         )
     )
+
+    def _purge_expired_news() -> None:
+        # 新聞與提及紀錄同一把保留天數：新聞被清掉後，提及紀錄留著也指不到東西。
+        cutoff = clock().timestamp() - settings.news_retention_days * 86400
+        news.purge_older_than(cutoff)
+        core.news_mentions.purge_older_than(cutoff)
+
     jobs.append(
         build_news_cleanup_job(
-            purge=lambda: news.purge_older_than(
-                clock().timestamp() - settings.news_retention_days * 86400
-            ),
+            purge=_purge_expired_news,
             hour=settings.longterm_consolidation_hour,
             minute=50,
         )
