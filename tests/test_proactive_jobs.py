@@ -252,48 +252,22 @@ def test_greeting_intent_differs_by_day():
     assert a != b
 
 
-# --- 問候 intent 織入話題新聞（2026-07-20）---
+# --- 問候 intent 的話題新聞改為工具引導（D-74 消費端，2026-07-25：push→pull）---
 
 
-def _news_item(title: str):
-    from kinsun.news.models import NewsItem
-
-    return NewsItem(
-        news_item_id=title,
-        source_id="mohw",
-        title=title,
-        url=f"https://example.com/{title}",
-        publisher="衛生福利部",
-        content="內文",
-        published_at=0.0,
-        retrieved_at=0.0,
-    )
-
-
-def test_greeting_intent_weaves_in_recent_news_titles():
-    from kinsun.proactive.jobs import greeting_intent
-
-    intent = greeting_intent(
-        datetime(2026, 7, 17, 8, 0, tzinfo=TPE), recent_news=[_news_item("防疫新規定")]
-    )
-    assert "防疫新規定" in intent
-
-
-def test_greeting_intent_without_news_has_no_news_hint():
+def test_greeting_intent_guides_model_to_use_get_news_tool():
     from kinsun.proactive.jobs import GREETING_INTENT, greeting_intent
 
     intent = greeting_intent(datetime(2026, 7, 17, 8, 0, tzinfo=TPE))
-    assert "最近的新聞" not in intent
     assert intent.startswith(GREETING_INTENT)
+    assert "get_news" in intent
+    assert "topic" in intent
 
 
-def test_greeting_intent_only_uses_first_two_news_items():
+def test_greeting_intent_no_longer_weaves_headlines_directly():
+    # push→pull：intent 不再直接夾帶標題（「最近的新聞有 …」句型走入歷史），
+    # 素材改由模型在工具迴圈中自行拉取。
     from kinsun.proactive.jobs import greeting_intent
 
-    intent = greeting_intent(
-        datetime(2026, 7, 17, 8, 0, tzinfo=TPE),
-        recent_news=[_news_item("新聞一"), _news_item("新聞二"), _news_item("新聞三")],
-    )
-    assert "新聞一" in intent
-    assert "新聞二" in intent
-    assert "新聞三" not in intent
+    intent = greeting_intent(datetime(2026, 7, 17, 8, 0, tzinfo=TPE))
+    assert "最近的新聞有" not in intent

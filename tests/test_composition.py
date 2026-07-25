@@ -20,7 +20,7 @@ from kinsun.news.store import FakeNewsStore
 from kinsun.strategies.facts import StrategyFacts
 from kinsun.tools.clock import CURRENT_TIME_SPEC
 from kinsun.tools.health_rag import HEALTH_RAG_SPEC
-from kinsun.tools.news import NEWS_SPEC
+from kinsun.tools.news import NEWS_DETAIL_SPEC, NEWS_SPEC
 from kinsun.tools.transport import (
     BUS_ARRIVAL_SPEC,
     MRT_LINE_SPEC,
@@ -63,6 +63,7 @@ def test_assemble_core_agent_has_baseline_tools():
         HEALTH_RAG_SPEC.name,
         ROUTE_SPEC.name,
         NEWS_SPEC.name,
+        NEWS_DETAIL_SPEC.name,
     }
 
 
@@ -92,10 +93,11 @@ def test_build_tool_registry_registers_baseline_tools():
     }
 
 
-def test_build_tool_registry_registers_news_tool_when_store_present():
-    # 有給 news store 才註冊 get_news；baseline 測試（未給）維持原工具集不變。
+def test_build_tool_registry_registers_news_tools_when_store_present():
+    # 有給 news store 才註冊 get_news＋get_news_detail；baseline（未給）維持原工具集。
     registry = build_tool_registry(clock=_clock, rag_service=object(), news=FakeNewsStore())
-    assert NEWS_SPEC.name in {spec.name for spec in registry.specs()}
+    names = {spec.name for spec in registry.specs()}
+    assert {NEWS_SPEC.name, NEWS_DETAIL_SPEC.name} <= names
 
 
 def test_build_tool_registry_registers_tdx_tools_when_creds_present():

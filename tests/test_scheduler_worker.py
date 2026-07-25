@@ -107,7 +107,10 @@ def _fake_core(
     last_active=None,
     greeting_prefs: FakeGreetingPreferenceStore | None = None,
     news: FakeNewsStore | None = None,
+    news_mentions=None,
 ):
+    from kinsun.news.mentions import FakeNewsMentionStore
+
     elders = elders if elders is not None else []
     return SimpleNamespace(
         settings=settings,
@@ -136,8 +139,10 @@ def _fake_core(
         greeting_prefs=(
             greeting_prefs if greeting_prefs is not None else FakeGreetingPreferenceStore()
         ),
-        # 話題新聞（spec 2026-07-20）：爬取／清除 job 寫、問候 job 讀。
+        # 話題新聞（spec 2026-07-20）：爬取／清除 job 寫；D-74 消費端起問候不再直讀。
         news=news if news is not None else FakeNewsStore(),
+        # 提及紀錄（D-74 消費端）：get_news 寫、清理 job 清。
+        news_mentions=news_mentions if news_mentions is not None else FakeNewsMentionStore(),
         # 兩根共用收進 Core（✅ 庚-44）。
         risk_events=SimpleNamespace(list_for_elder=lambda elder_id: []),
         # get_for_date：主動推播讀「她上次開口那天」的摘要當檢索關鍵字＋注入
@@ -506,44 +511,44 @@ def test_greeting_pushes_and_records_reminder_log(monkeypatch):
     assert reminder_logs.recorded == [("e1", "proactive-greeting", router.sent[0][2])]
 
 
-def test_greeting_includes_recent_news_in_intent(monkeypatch):
-    """問候 intent 織入近一天內的話題新聞（spec 2026-07-20）。"""
+def test_greeting_intent_guides_get_news_instead_of_weaving(monkeypatch):
+    """問候改工具引導（D-74 消費端，2026-07-25）：intent 提示用 get_news、
+    不再由 worker 直讀新聞表織入標題——新聞故障面因此整個移出問候路徑。"""
+    router = _SpyRouter()
+    scheduler, _core = _build(monkeypatch, _settings(), elders=["e1"], router=router)
+    _job(scheduler, "daily-greeting").run()
+    intent = router.sent[0][2]
+    assert "get_news" in intent
+    assert "最近的新聞有" not in intent
+
+
+def test_news_cleanup_job_purges_items_and_mentions(monkeypatch):
+    """清理 job 同一把保留天數清 news_items 與 news_mentions（D-74 消費端）。"""
+    from kinsun.news.mentions import FakeNewsMentionStore
     from kinsun.news.models import NewsItem
 
-    router = _SpyRouter()
     news = FakeNewsStore()
+    old_at = _clock().timestamp() - 15 * 86400  # 超過預設保留 14 天
     news.save(
         NewsItem(
-            news_item_id="n1",
+            news_item_id="n-old",
             source_id="mohw",
-            title="長者防跌新措施",
-            url="https://example.com/n1",
+            title="過期新聞",
+            url="https://example.com/n-old",
             publisher="衛生福利部",
             content="內文",
-            published_at=_clock().timestamp(),
-            retrieved_at=_clock().timestamp(),
+            published_at=old_at,
+            retrieved_at=old_at,
         )
     )
-    scheduler, _core = _build(monkeypatch, _settings(), elders=["e1"], router=router, news=news)
-    _job(scheduler, "daily-greeting").run()
-    assert "長者防跌新措施" in router.sent[0][2]
-
-
-def test_news_read_failure_does_not_block_greeting(monkeypatch, caplog):
-    """新聞讀取失敗只能降級成沒有新聞，不可擋下問候（與摘要讀取失敗同向）。"""
-
-    class _ExplodingNewsStore(FakeNewsStore):
-        def list_recent(self, *, since):
-            raise RuntimeError("news_items 表掛了")
-
-    router = _SpyRouter()
+    mentions = FakeNewsMentionStore()
+    mentions.record("e1", "n-old", mentioned_at=old_at)
     scheduler, _core = _build(
-        monkeypatch, _settings(), elders=["e1"], router=router, news=_ExplodingNewsStore()
+        monkeypatch, _settings(), elders=["e1"], news=news, news_mentions=mentions
     )
-    with caplog.at_level(logging.WARNING):
-        _job(scheduler, "daily-greeting").run()  # 不應拋出
-    assert [(pt, pid) for pt, pid, _ in router.sent] == [(PrincipalType.ELDER, "e1")]
-    assert any("話題新聞讀取失敗" in r.getMessage() for r in caplog.records)
+    _job(scheduler, "news-cleanup").run()
+    assert news.list_recent(since=0.0) == []
+    assert mentions.list_for_elder("e1") == set()
 
 
 def test_greeting_carries_summary_of_the_day_she_last_spoke(monkeypatch):

@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from datetime import datetime
 
-from kinsun.news.models import NewsItem
 from kinsun.proactive.preferences import GreetingPreferenceStore
 from kinsun.scheduler.fanout import fanout_job
 from kinsun.scheduler.scheduler import Job
@@ -17,7 +16,7 @@ GREETING_INTENT = "早安問候，關心長者今天的狀況"
 INACTIVITY_INTENT = "長者已經一段時間沒有互動了，主動表達想念與關心"
 
 
-def greeting_intent(now: datetime, *, recent_news: Sequence[NewsItem] = ()) -> str:
+def greeting_intent(now: datetime) -> str:
     """早安問候的 intent 織入日期素材（2026-07-17 全功能測試）。
 
     固定 intent 天天餵，開場白也天天同一句——實測 4 次有 3 次逐字相同
@@ -25,19 +24,18 @@ def greeting_intent(now: datetime, *, recent_news: Sequence[NewsItem] = ()) -> s
     每天必然不同的素材，給了模型才換得動話題；問候路徑已可走工具迴圈
     （agent.proactive），情境有定位座標時可順道報當地天氣。
 
-    recent_news（spec 2026-07-20）：話題新聞當額外素材，同樣是為了不讓開場白
-    天天撞同一句；只給標題當提示、不強迫模型一定要提，模型自行判斷合不合適。
+    話題新聞改為工具引導（D-74 消費端，2026-07-25）：原本直接織入 2 則標題
+    （push），改成提示模型自己用 get_news 查（pull）——模型從近 3 天的池子
+    自行挑選、可依她的興趣帶 topic，且工具端已做「同一位長輩不重複給料」，
+    開場話題才真的天天不同。
     """
     weekday = "一二三四五六日"[now.weekday()]
-    news_hint = ""
-    if recent_news:
-        headlines = "、".join(f"「{item.title}」" for item in recent_news[:2])
-        news_hint = f"最近的新聞有 {headlines}，如果聊起來自然可以帶到，不必每次都提。"
     return (
         f"{GREETING_INTENT}。今天是 {now.month} 月 {now.day} 日、星期{weekday}，"
         "開場可以自然帶到今天的日子或這天的安排，不要每天都用同一句問候；"
         "情境若附上她目前的位置座標，可以先用天氣工具查當地天氣，順口提醒一句。"
-        f"{news_hint}"
+        "想聊時事可以用 get_news 工具查最近的新聞，挑一則自然帶入就好、不必每次都提；"
+        "若記得她的興趣，優先用 topic 參數挑她會有共鳴的主題。"
     )
 
 
