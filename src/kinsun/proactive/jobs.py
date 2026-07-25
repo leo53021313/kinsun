@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime
 
 from kinsun.proactive.preferences import GreetingPreferenceStore
@@ -16,7 +16,7 @@ GREETING_INTENT = "早安問候，關心長者今天的狀況"
 INACTIVITY_INTENT = "長者已經一段時間沒有互動了，主動表達想念與關心"
 
 
-def greeting_intent(now: datetime) -> str:
+def greeting_intent(now: datetime, *, interests: Sequence[str] = ()) -> str:
     """早安問候的 intent 織入日期素材（2026-07-17 全功能測試）。
 
     固定 intent 天天餵，開場白也天天同一句——實測 4 次有 3 次逐字相同
@@ -28,14 +28,26 @@ def greeting_intent(now: datetime) -> str:
     （push），改成提示模型自己用 get_news 查（pull）——模型從近 3 天的池子
     自行挑選、可依她的興趣帶 topic，且工具端已做「同一位長輩不重複給料」，
     開場話題才真的天天不同。
+
+    interests（Leo 2026-07-25 興趣驅動挑題）：worker 於問候前從長期記憶檢索出的
+    興趣線索（最多織入 3 條、各截 30 字），明示模型拿它當 get_news 的 topic——
+    只靠「若記得她的興趣」的籠統提示，實測模型多半不會主動翻記憶找興趣。
     """
     weekday = "一二三四五六日"[now.weekday()]
+    interest_hint = ""
+    if interests:
+        listed = "、".join(f"「{text[:30]}」" for text in list(interests)[:3])
+        interest_hint = (
+            f"記憶中她的興趣可能包含：{listed}——用 get_news 挑話題時，"
+            "可優先拿相關關鍵字當 topic 試試。"
+        )
     return (
         f"{GREETING_INTENT}。今天是 {now.month} 月 {now.day} 日、星期{weekday}，"
         "開場可以自然帶到今天的日子或這天的安排，不要每天都用同一句問候；"
         "情境若附上她目前的位置座標，可以先用天氣工具查當地天氣，順口提醒一句。"
         "想聊時事可以用 get_news 工具查最近的新聞，挑一則自然帶入就好、不必每次都提；"
         "若記得她的興趣，優先用 topic 參數挑她會有共鳴的主題。"
+        f"{interest_hint}"
     )
 
 

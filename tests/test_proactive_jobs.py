@@ -271,3 +271,34 @@ def test_greeting_intent_no_longer_weaves_headlines_directly():
 
     intent = greeting_intent(datetime(2026, 7, 17, 8, 0, tzinfo=TPE))
     assert "最近的新聞有" not in intent
+
+
+# --- 問候 intent 織入興趣提示（Leo 2026-07-25 核可：興趣驅動挑題）---
+
+
+def test_greeting_intent_weaves_interest_hints():
+    from kinsun.proactive.jobs import greeting_intent
+
+    intent = greeting_intent(
+        datetime(2026, 7, 17, 8, 0, tzinfo=TPE), interests=("喜歡園藝", "常去公園健走")
+    )
+    assert "喜歡園藝" in intent
+    assert "常去公園健走" in intent
+    assert "topic" in intent  # 指示模型拿興趣當 get_news 的 topic
+
+
+def test_greeting_intent_without_interests_has_no_interest_section():
+    from kinsun.proactive.jobs import greeting_intent
+
+    intent = greeting_intent(datetime(2026, 7, 17, 8, 0, tzinfo=TPE))
+    assert "興趣可能包含" not in intent
+
+
+def test_greeting_intent_caps_interests_at_three():
+    from kinsun.proactive.jobs import greeting_intent
+
+    intent = greeting_intent(
+        datetime(2026, 7, 17, 8, 0, tzinfo=TPE),
+        interests=("一", "二", "三", "第四筆不該出現"),
+    )
+    assert "第四筆不該出現" not in intent

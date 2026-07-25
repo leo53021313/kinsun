@@ -108,6 +108,7 @@ def _fake_core(
     greeting_prefs: FakeGreetingPreferenceStore | None = None,
     news: FakeNewsStore | None = None,
     news_mentions=None,
+    long_term=None,
 ):
     from kinsun.news.mentions import FakeNewsMentionStore
 
@@ -116,7 +117,8 @@ def _fake_core(
         settings=settings,
         db=_FakeDb(),
         gemini=_FakeLLM(),
-        long_term=object(),
+        # 預設無 search 方法（AttributeError）→ 興趣檢索走降級路徑，不影響問候。
+        long_term=long_term if long_term is not None else object(),
         messenger=object(),
         router=router or _SpyRouter(),
         accounts=SimpleNamespace(
@@ -878,3 +880,38 @@ def test_main_builds_serves_and_closes_db(monkeypatch, capsys):
     assert served == [(scheduler, 60)] or served[0][0] is scheduler
     assert db.closed  # finally 一定關連線
     assert "排程器啟動" in capsys.readouterr().out
+
+
+def test_greeting_weaves_interests_from_long_term(monkeypatch):
+    """問候前從長期記憶檢索興趣線索織入 intent（Leo 2026-07-25 興趣驅動挑題）。"""
+    from kinsun.memory.models import MemoryItem
+
+    class _StubLongTerm:
+        def search(self, elder_id, query, *, top_k=None):
+            assert "興趣" in query  # 檢索詞明確以興趣為目標
+            return [MemoryItem(text="喜歡園藝，常照顧陽台盆栽")]
+
+    router = _SpyRouter()
+    scheduler, _core = _build(
+        monkeypatch, _settings(), elders=["e1"], router=router, long_term=_StubLongTerm()
+    )
+    _job(scheduler, "daily-greeting").run()
+    intent = router.sent[0][2]
+    assert "喜歡園藝" in intent
+
+
+def test_interest_lookup_failure_does_not_block_greeting(monkeypatch, caplog):
+    """興趣檢索失敗只能降級成沒有興趣提示，不可擋下問候（與摘要讀取失敗同向）。"""
+
+    class _ExplodingLongTerm:
+        def search(self, elder_id, query, *, top_k=None):
+            raise RuntimeError("mem0 掛了")
+
+    router = _SpyRouter()
+    scheduler, _core = _build(
+        monkeypatch, _settings(), elders=["e1"], router=router, long_term=_ExplodingLongTerm()
+    )
+    with caplog.at_level(logging.WARNING):
+        _job(scheduler, "daily-greeting").run()  # 不應拋出
+    assert [(pt, pid) for pt, pid, _ in router.sent] == [(PrincipalType.ELDER, "e1")]
+    assert "興趣可能包含" not in router.sent[0][2]
