@@ -39,6 +39,7 @@ class NewsApiFetcher:
         transport: Transport | None = None,
         query: str = "台灣",
         language: str = "zh",
+        domains: str = "",
         timeout_seconds: float = 20.0,
     ) -> None:
         self._api_key = api_key
@@ -46,6 +47,9 @@ class NewsApiFetcher:
         self._transport = transport or HttpxTransport()
         self._query = query
         self._language = language
+        # 媒體白名單（逗號分隔 domains）：排除大陸來源用白名單而非黑名單——
+        # zh 不分繁簡、黑名單抓不完；留空＝不限媒體（News API 原始行為）。
+        self._domains = domains
         self._timeout = timeout_seconds
 
     def fetch(self) -> list[NewsItem]:
@@ -55,6 +59,8 @@ class NewsApiFetcher:
             "language": self._language,
             "sortBy": "publishedAt",
         }
+        if self._domains:
+            params["domains"] = self._domains
         url = f"{_ENDPOINT}?{urllib.parse.urlencode(params)}"
         try:
             # 金鑰走 X-Api-Key header 不放 URL：TransportError 訊息與 log 都會帶完整

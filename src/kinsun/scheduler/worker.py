@@ -321,7 +321,14 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
     # 同一個鐘點、錯開分鐘，讓早上問候時已有當天的新聞可用。
     news_fetchers: list[NewsFetcher] = [MohwNewsFetcher(clock=clock)]
     if settings.news_api_key:
-        news_fetchers.append(NewsApiFetcher(api_key=settings.news_api_key, clock=clock))
+        news_fetchers.append(
+            NewsApiFetcher(
+                api_key=settings.news_api_key,
+                clock=clock,
+                query=settings.news_api_query,
+                domains=settings.news_api_domains,
+            )
+        )
     jobs.append(
         build_news_crawl_job(
             fetchers=news_fetchers,

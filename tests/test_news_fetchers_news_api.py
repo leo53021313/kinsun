@@ -57,3 +57,27 @@ def test_fetch_returns_empty_list_on_transport_failure():
         api_key="key123", clock=lambda: datetime(2026, 7, 20, tzinfo=UTC), transport=transport
     )
     assert fetcher.fetch() == []
+
+
+def test_fetch_sends_domains_whitelist_in_query():
+    # 台灣媒體白名單（Leo 2026-07-25：不要大陸／中國來源）——黑名單抓不完，
+    # 改用 News API 的 domains 白名單，只收指定媒體。
+    transport = FakeTransport(responses=[Response(200, {}, _BODY)])
+    fetcher = NewsApiFetcher(
+        api_key="key123",
+        clock=lambda: datetime(2026, 7, 20, tzinfo=UTC),
+        transport=transport,
+        domains="cna.com.tw,udn.com",
+    )
+    fetcher.fetch()
+    url = transport.calls[0][1]
+    assert "domains=cna.com.tw%2Cudn.com" in url
+
+
+def test_fetch_omits_domains_param_when_blank():
+    transport = FakeTransport(responses=[Response(200, {}, _BODY)])
+    fetcher = NewsApiFetcher(
+        api_key="key123", clock=lambda: datetime(2026, 7, 20, tzinfo=UTC), transport=transport
+    )
+    fetcher.fetch()
+    assert "domains=" not in transport.calls[0][1]
