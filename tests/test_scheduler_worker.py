@@ -18,6 +18,7 @@ import kinsun.scheduler.worker as worker
 from kinsun.accounts.models import PrincipalType
 from kinsun.agent import Recall
 from kinsun.config import load_settings
+from kinsun.news.store import FakeNewsStore
 from kinsun.proactive.greeting_time import update_greeting_time as _real_update_greeting_time
 from kinsun.proactive.preferences import FakeGreetingPreferenceStore, GreetingPreference
 from kinsun.reports.reminders import (
@@ -45,6 +46,8 @@ _BASE_JOB_NAMES = [
     "medication-bedtime",
     "appointment-reminder",
     "observability-cleanup",
+    "news-crawl",
+    "news-cleanup",
 ]
 
 
@@ -103,6 +106,7 @@ def _fake_core(
     reminder_logs: FakeReminderLogStore | None = None,
     last_active=None,
     greeting_prefs: FakeGreetingPreferenceStore | None = None,
+    news: FakeNewsStore | None = None,
 ):
     elders = elders if elders is not None else []
     return SimpleNamespace(
@@ -132,6 +136,8 @@ def _fake_core(
         greeting_prefs=(
             greeting_prefs if greeting_prefs is not None else FakeGreetingPreferenceStore()
         ),
+        # 話題新聞（spec 2026-07-20）：爬取／清除 job 寫、問候 job 讀。
+        news=news if news is not None else FakeNewsStore(),
         # 兩根共用收進 Core（✅ 庚-44）。
         risk_events=SimpleNamespace(list_for_elder=lambda elder_id: []),
         # get_for_date：主動推播讀「她上次開口那天」的摘要當檢索關鍵字＋注入
@@ -498,6 +504,46 @@ def test_greeting_pushes_and_records_reminder_log(monkeypatch):
     assert GREETING_INTENT in router.sent[0][2]
     assert "星期" in router.sent[0][2]  # intent 織入日期素材（2026-07-17 問候多樣性）
     assert reminder_logs.recorded == [("e1", "proactive-greeting", router.sent[0][2])]
+
+
+def test_greeting_includes_recent_news_in_intent(monkeypatch):
+    """問候 intent 織入近一天內的話題新聞（spec 2026-07-20）。"""
+    from kinsun.news.models import NewsItem
+
+    router = _SpyRouter()
+    news = FakeNewsStore()
+    news.save(
+        NewsItem(
+            news_item_id="n1",
+            source_id="mohw",
+            title="長者防跌新措施",
+            url="https://example.com/n1",
+            publisher="衛生福利部",
+            content="內文",
+            published_at=_clock().timestamp(),
+            retrieved_at=_clock().timestamp(),
+        )
+    )
+    scheduler, _core = _build(monkeypatch, _settings(), elders=["e1"], router=router, news=news)
+    _job(scheduler, "daily-greeting").run()
+    assert "長者防跌新措施" in router.sent[0][2]
+
+
+def test_news_read_failure_does_not_block_greeting(monkeypatch, caplog):
+    """新聞讀取失敗只能降級成沒有新聞，不可擋下問候（與摘要讀取失敗同向）。"""
+
+    class _ExplodingNewsStore(FakeNewsStore):
+        def list_recent(self, *, since):
+            raise RuntimeError("news_items 表掛了")
+
+    router = _SpyRouter()
+    scheduler, _core = _build(
+        monkeypatch, _settings(), elders=["e1"], router=router, news=_ExplodingNewsStore()
+    )
+    with caplog.at_level(logging.WARNING):
+        _job(scheduler, "daily-greeting").run()  # 不應拋出
+    assert [(pt, pid) for pt, pid, _ in router.sent] == [(PrincipalType.ELDER, "e1")]
+    assert any("話題新聞讀取失敗" in r.getMessage() for r in caplog.records)
 
 
 def test_greeting_carries_summary_of_the_day_she_last_spoke(monkeypatch):

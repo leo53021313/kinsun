@@ -39,6 +39,7 @@ from kinsun.memory.longterm.mem0_factory import build_mem0_memory
 from kinsun.memory.longterm.store import Mem0LongTermStore
 from kinsun.memory.recall import SessionMemory
 from kinsun.memory.shortterm import PgMemoryStore
+from kinsun.news.store import PgNewsStore
 from kinsun.notifications.store import PgAppNotificationStore
 from kinsun.observability.store import PgTraceStore
 from kinsun.proactive.preferences import PgGreetingPreferenceStore
@@ -110,6 +111,8 @@ class Core:
     locations: PgLocationStore
     # 夜間批次寫、問候 job 讀（spec 2026-07-16），同一根內兩處共用，故收進 Core。
     greeting_prefs: PgGreetingPreferenceStore
+    # 話題新聞（spec 2026-07-20）：worker 爬取／清除寫、問候 job 讀，同一根內兩處共用。
+    news: PgNewsStore
     agent: CareAgent
 
 
@@ -269,5 +272,6 @@ def assemble_core(
         strategies=strategies,
         locations=locations,
         greeting_prefs=PgGreetingPreferenceStore(db),
+        news=PgNewsStore(db),
         agent=agent,
     )

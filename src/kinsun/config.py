@@ -253,6 +253,10 @@ class Settings(_BaseEnvSettings):
     # 路線工具走免金鑰的 OSRM，不受此影響、永遠可用。
     tdx_client_id: str = ""
     tdx_client_secret: str = ""
+    # 話題新聞保留天數（spec 2026-07-20），逾期由排程清除；模式與 admin_retention_days 相同。
+    news_retention_days: int = 14
+    # News API（newsapi.org）金鑰；留空＝不註冊該新聞來源（優雅降級，僅剩衛福部來源）。
+    news_api_key: str = ""
     rag_content_policy: Annotated[str, BeforeValidator(_content_policy)] = "allowed_only"
     rag_embedding_model: Annotated[str, BeforeValidator(_embedding_model)] = "gemini-embedding-001"
     rag_refresh_enabled: Bool = False
