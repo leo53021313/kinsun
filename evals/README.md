@@ -16,7 +16,15 @@
 
 ## 前置
 
-- 自架 Opik 在跑（DGX：`cd /home/leo29/opik && ./opik.sh`，UI `http://localhost:5273`）。
+- 自架 Opik 在跑。⚠️ **啟動必須釘埠**，不可跑裸 `./opik.sh`：
+  ```bash
+  cd /home/leo29/opik && NGINX_PORT=5273 SERVER_ADMIN_PORT=8091 PYTHON_BACKEND_PORT=8010 ./opik.sh
+  ```
+  Opik 的 nginx 預設算出 **5173**，正好是本專案前端開發伺服器的埠（`kinsun.sh` 的
+  `[frontend]=5173`），裸跑會把前端的埠佔走、且 UI 不在文件寫的 5273（2026-07-25 實際踩過）。
+  上面三個值與 `scripts/kinsun.sh` 的 `_opik_backend_start` 完全一致；平時用
+  `./scripts/kinsun.sh start opik` 即可，它已內含這些設定（但會一併開公開隧道）。
+  UI 在 `http://localhost:5273`。
 - `OPIK_ENABLED=true`、`GEMINI_API_KEY` 已設。
 - **RAG 實驗額外需**：`DATABASE_URL` 指向「含 active release 衛教向量庫」的資料庫
   （`rag_grounding` 會實跑真實 retriever；無資料時檢索回空，分數會偏低但仍可跑）。
