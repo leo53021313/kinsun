@@ -22,6 +22,7 @@ from kinsun.tools.lookups import (
     safe_record,
 )
 from kinsun.transport import HttpxTransport, Transport, TransportError, read_json
+from kinsun.turn_context import record_source
 
 logger = logging.getLogger("kinsun.tools.web_search")
 
@@ -136,6 +137,11 @@ def build_web_search_handler(
             status=STATUS_OK,
             sources=[{key: r[key] for key in ("title", "site", "url")} for r in results],
         )
+        # 本輪來源登記（2026-07-26 實測 S4）：這裡是真的拿到外部來源，金孫轉述時
+        # 講出來源名稱屬合法引用，出站的冒名防線據此放行。查不到（STATUS_EMPTY）
+        # 與失敗（STATUS_ERROR）刻意不登記——沒查到就是沒有來源。
+        for result in results:
+            record_source(result["site"])
         return json.dumps({"topic": topic, "results": results}, ensure_ascii=False)
 
     return handler

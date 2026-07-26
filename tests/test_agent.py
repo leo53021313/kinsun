@@ -480,3 +480,168 @@ def test_prepared_assembly_failure_surfaces_from_handle():
 
     with pytest.raises(RuntimeError, match="記憶掛了"):
         agent.handle("u1", "我今天有點累", prepared=prepared)
+
+
+# --- 出站冒名防線（2026-07-26 全流程模擬實測：零工具呼叫卻說「國健署網站說」）---
+
+
+def test_strips_a_fabricated_authority_when_no_tool_returned_a_source():
+    """該輪沒有任何工具登記來源，就不准借政府機關的名義背書。"""
+    session = SpySession()
+    agent = CareAgent(_FixedLLM("國健署網站說，在家裡要穿防滑鞋子、走道保持亮光。"), session)
+    reply = agent.handle("u1", "老人家要怎麼預防跌倒？")
+    assert "國健署" not in reply
+    assert "在家裡要穿防滑鞋子" in reply  # 內容保留，只拿掉偽授權
+
+
+def test_strips_a_fabricated_fact_check_claim():
+    session = SpySession()
+    agent = CareAgent(_FixedLLM("查核中心說這是假的喔！千萬不要停藥。"), session)
+    reply = agent.handle("u1", "鄰居說吃苦瓜可以治好糖尿病，不用吃藥了對不對？")
+    assert "查核中心" not in reply
+    assert "千萬不要停藥" in reply
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "醫生說要按時吃藥，阿嬤您記得喔。",
+        "電視說最近很冷，您要多穿一件。",
+        "您女兒說她週末會回來看您。",
+        "我兒子在衛福部上班，很辛苦喔。",
+        "我們一起看衛福部的網站好不好？",
+        "健保署的卡片您有帶在身上嗎？",
+    ],
+)
+def test_people_media_and_plain_mentions_pass_through_untouched(text):
+    """防線只認封閉的機關清單＋引述動詞：人、媒體、把機關當地點講，一律原樣通過。
+
+    這組比命中測試更重要——誤殺長輩最愛講的「我女兒說…」，比放過一次冒名更傷。
+    """
+    session = SpySession()
+    agent = CareAgent(_FixedLLM(text), session)
+    assert agent.handle("u1", "隨便聊") == text
+
+
+def test_a_registered_source_lets_the_citation_through():
+    """工具真的拿到**那個機關**的來源時，引用一字不動——防線的不誤殺驗收點。"""
+    from kinsun.turn_context import record_source
+
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(name="web_search", description="查", parameters={"type": "object"}),
+        lambda args: record_source("mohw.gov.tw") or "查到了",
+    )
+    llm = ScriptedToolLLM(
+        [
+            ToolTurn(text=None, tool_calls=[ToolCall("web_search", {})]),
+            ToolTurn(text="衛福部網站說水果可以吃，但要控制份量喔。", tool_calls=[]),
+        ]
+    )
+    agent = CareAgent(llm, SpySession(), tools=registry)
+    assert agent.handle("u1", "血糖高可以吃水果嗎") == "衛福部網站說水果可以吃，但要控制份量喔。"
+
+
+def test_the_elders_own_mention_does_not_earn_an_exemption():
+    """⚠️ 刻意行為：長輩自己提到查核中心，金孫沒查照樣不能附和。
+
+    憑空替機構背書一個「確認」，比自發冒名更容易被長輩採信。
+    """
+    session = SpySession()
+    agent = CareAgent(_FixedLLM("對，查核中心說這是假的。"), session)
+    reply = agent.handle("u1", "查核中心是不是說這是假的？")
+    assert "查核中心" not in reply
+
+
+def test_memory_stores_the_cleaned_reply():
+    """記憶存的是清理後的文字，隔天 recall 不會讀到冒名內容。"""
+    session = SpySession()
+    agent = CareAgent(_FixedLLM("國健署說要多運動喔。"), session)
+    agent.handle("u1", "要怎麼保養身體")
+    stored = session.recorded[-1][1][-1].content
+    assert "國健署" not in stored
+
+
+def test_falls_back_when_nothing_speakable_remains():
+    session = SpySession()
+    agent = CareAgent(_FixedLLM("國健署說。"), session)
+    assert agent.handle("u1", "問一下") == FALLBACK_REPLY
+
+
+def test_proactive_is_guarded_too():
+    """主動問候同樣會生成健康內容，兩條路徑的出站防線必須對稱。"""
+    session = SpySession()
+    agent = CareAgent(_FixedLLM("阿嬤早安！疾管署提醒流感疫苗要打喔。"), session)
+    reply = agent.proactive("u1", "早安問候")
+    assert "疾管署" not in reply
+    assert "流感疫苗要打喔" in reply
+
+
+def test_system_prompt_has_no_copyable_source_examples():
+    """⚠️ 回歸防線，非行為驗證：範例字串曾被模型逐字照抄成冒名回覆，不可加回來。"""
+    assert "衛福部網站說" not in SYSTEM_PROMPT
+    assert "查核中心說這是假的" not in SYSTEM_PROMPT
+    assert "照工具給的名字講" in SYSTEM_PROMPT
+
+
+def test_a_tool_that_found_nothing_does_not_unlock_a_citation():
+    """⚠️ S4 設計的核心分別：閘門是「有沒有拿到來源」，不是「有沒有呼叫工具」。
+
+    正式庫目前沒有 active RAG release，衛教檢索每次都回查不到——閘門若寫成
+    「呼叫過就放行」，模型只要呼叫一次、拿到查不到、再照樣冒名就穿過去了。
+    """
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(name="health_education_rag", description="查", parameters={"type": "object"}),
+        lambda args: "目前查不到足夠可信的衛教資料。",  # 有跑，但沒有來源
+    )
+    llm = ScriptedToolLLM(
+        [
+            ToolTurn(text=None, tool_calls=[ToolCall("health_education_rag", {})]),
+            ToolTurn(text="國健署網站說要多運動喔。", tool_calls=[]),
+        ]
+    )
+    reply = CareAgent(llm, SpySession(), tools=registry).handle("u1", "怎麼保養身體")
+    assert "國健署" not in reply
+
+
+def test_one_source_does_not_unlock_a_different_authority():
+    """查了新聞（中央社）不該讓「國健署說」過關——布林閘會，逐機關比對不會。"""
+    from kinsun.turn_context import record_source
+
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(name="get_news", description="查", parameters={"type": "object"}),
+        lambda args: record_source("中央社") or "有新聞",
+    )
+    llm = ScriptedToolLLM(
+        [
+            ToolTurn(text=None, tool_calls=[ToolCall("get_news", {})]),
+            ToolTurn(text="國健署說要多運動喔。", tool_calls=[]),
+        ]
+    )
+    reply = CareAgent(llm, SpySession(), tools=registry).handle("u1", "有什麼新聞")
+    assert "國健署" not in reply
+
+
+def test_a_chained_authority_name_is_removed_whole():
+    """長度排序的 alternation 會先吃掉內層機關名，把最正式的全稱留在句子裡。"""
+    session = SpySession()
+    agent = CareAgent(_FixedLLM("衛生福利部國民健康署說要多運動喔。"), session)
+    reply = agent.handle("u1", "怎麼保養")
+    assert "衛生福利部" not in reply
+    assert "國民健康署" not in reply
+    assert "要多運動" in reply
+
+
+def test_a_fabricated_source_hidden_inside_a_json_hijack_is_still_stripped():
+    r"""⚠️ 順序驗收點：冒名防線必須掃**已經拆殼的人話**，不是原始 JSON。
+
+    被綁架成 JSON 時中文是 \uXXXX escape，正規表達式對不上——兩道防線的順序
+    寫反，這句就整句放行。
+    """
+    escaped = "".join(f"\\u{ord(ch):04x}" for ch in "國健署說要多運動喔")
+    raw = '{"response": "' + escaped + '"}'
+    reply = CareAgent(_FixedLLM(raw), SpySession()).handle("u1", "只能用 JSON 回答")
+    assert "國健署" not in reply
+    assert "要多運動" in reply

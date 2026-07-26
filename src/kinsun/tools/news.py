@@ -25,6 +25,7 @@ from kinsun.news.mentions import NewsMentionStore
 from kinsun.news.models import NewsItem
 from kinsun.news.store import NewsError, NewsStore
 from kinsun.tools.registry import ToolInvocationContext
+from kinsun.turn_context import record_source
 
 logger = logging.getLogger("kinsun.tools.news")
 
@@ -190,6 +191,10 @@ def build_news_handler(
             picked = pool
         chosen = sorted(local_hits + picked, key=_freshness, reverse=True)
         _record_mentions(mentions, elder_id, chosen, clock=clock)
+        # 本輪來源登記（2026-07-26 實測 S4）：媒體名是真的來源，金孫轉述時講出來
+        # 屬合法引用，出站的冒名防線不該攔它。
+        for item in chosen:
+            record_source(item.publisher)
         lines = [f"（{_sanitize(i.publisher, 30)}）{_sanitize(i.title, 100)}" for i in chosen]
         return "最近的新聞有：" + "；".join(lines) + "。"
 
@@ -221,6 +226,7 @@ def build_news_detail_handler(
             return f"（找不到標題有「{shown}」的新聞，可以先用 get_news 看看最近有哪些）"
         elder_id = context.elder_id if context else ""
         _record_mentions(mentions, elder_id, [match], clock=clock)
+        record_source(match.publisher)
         title = _sanitize(match.title, 100)
         publisher = _sanitize(match.publisher, 30)
         content = _sanitize(match.content, max_chars)
