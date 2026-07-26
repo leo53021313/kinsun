@@ -24,3 +24,8 @@ def test_strips_leading_and_trailing_whitespace():
 
 def test_empty_input_stays_empty():
     assert clean_text("") == ""
+
+
+def test_strips_nul_bytes():
+    """Postgres text 欄位不接受 NUL（0x00），清理時一併移除。"""
+    assert clean_text("高血壓\x00衛教") == "高血壓衛教"

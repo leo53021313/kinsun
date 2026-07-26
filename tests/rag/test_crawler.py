@@ -106,6 +106,79 @@ def test_html_parser_extracts_content_inside_webforms_form_wrapper():
     assert "查詢" not in parsed.text
 
 
+def test_json_response_with_html_content_type_is_parsed_as_json():
+    """hpa newsapi.ashx 回 JSON 但 Content-Type 標 text/html，須以內容嗅探改走 JSON parser。"""
+    source = SourceRegistry().get("hpa_news_api")
+    body = (
+        '{"newsList":[{"title":"預防熱傷害",'
+        '"content":"多喝水 <a href=\\"https://health99.hpa.gov.tw/x\\">詳情</a>",'
+        '"url":"https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=1&pid=2"}]}'
+    )
+    page = FetchedPage(
+        url=source.url,
+        content_type="text/html",
+        body=body.encode("utf-8"),
+        fetched_at=datetime(2026, 6, 30),
+    )
+
+    parsed = DomainParserRegistry().parse(page, source)
+
+    assert parsed.parser_used.startswith("json:")
+    assert "https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=1&pid=2" in parsed.links
+    assert not any("\\" in link for link in parsed.links)
+
+
+def test_html_parser_drops_links_with_escaped_quotes():
+    """JSON 夾帶的跳脫 href（\\"）不可混進連結清單變成垃圾 URL。"""
+    source = SourceRegistry().get("hpa_elder_health")
+    page = _page(
+        source.url,
+        '<html><body><p>內文</p><a href="\\"https://health99.hpa.gov.tw/x\\"">壞連結</a>'
+        '<a href="/Pages/ok.aspx">好連結</a></body></html>',
+    )
+
+    parsed = DomainParserRegistry().parse(page, source)
+
+    assert any(link.endswith("/Pages/ok.aspx") for link in parsed.links)
+    assert not any('"' in link or "\\" in link for link in parsed.links)
+
+
+def test_crawler_upgrades_followed_http_links_to_https():
+    """站內 http:// 舊連結一律升級 https 再抓（hpa 對 http 直接回 403）。"""
+    source = SourceRegistry().get("hpa_elder_health")
+    pages = {
+        source.url: _page(
+            source.url,
+            '<html><body>首頁 <a href="http://www.hpa.gov.tw/Pages/old.aspx">舊連結</a></body></html>',
+        ),
+        "https://www.hpa.gov.tw/Pages/old.aspx": _page(
+            "https://www.hpa.gov.tw/Pages/old.aspx",
+            "<html><body>舊頁內容衛教</body></html>",
+        ),
+    }
+
+    crawler = HealthEducationCrawler(
+        config=CrawlerConfig(max_pages_per_source=5, delay_seconds=0),
+        fetcher=lambda url: pages[url],
+        sleeper=lambda seconds: None,
+    )
+
+    result = crawler.crawl(source)
+
+    assert len(result.pages) == 2
+    assert result.failed_urls == ()
+
+
+def test_encode_request_url_percent_encodes_non_ascii():
+    """URL 含中文（如 file.data.gov.tw 附件）須 percent-encode，且不可重複編碼既有 %XX。"""
+    from kinsun.rag.crawler import _encode_request_url
+
+    encoded = _encode_request_url("https://file.data.gov.tw/content/附件3_品質.pdf")
+    assert encoded.isascii()
+    assert encoded.startswith("https://file.data.gov.tw/content/%E9%99%84%E4%BB%B6")
+    assert _encode_request_url("https://a.tw/a%20b?x=1") == "https://a.tw/a%20b?x=1"
+
+
 def test_json_and_rss_are_parsed_as_discovery_records():
     source = SourceRegistry().get("hpa_news_api")
     parser = DomainParserRegistry()
