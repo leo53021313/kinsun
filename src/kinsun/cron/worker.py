@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
 from kinsun import tracing
@@ -58,18 +59,27 @@ from kinsun.strategies.reflection import reflect_days
 logger = logging.getLogger("kinsun.cron.worker")
 
 
-def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime]) -> list[Job]:
-    """把 `cron/registry.py` 宣告的、本程序負責的每一支排程綁上它的執行體。
+def _build_nightly_batch(
+    settings: Settings, core: Core, *, clock: Callable[[], datetime]
+) -> Callable[[str], None]:
+    """夜間批次的執行體：對一位長輩跑整理→摘要→反思→問候時間。
 
-    worker 排程執行、web 端 admin 手動觸發（spec 2026-07-12）共用同一份。
-
-    ⚠️ 本函式**不決定任何 job 的時刻**——cron、逾期容許量、要不要背景執行，全部
-    由 registry 宣告（2026-07-27）。這裡只回答「這支 job 要跑什麼程式」。新增排程
-    請先改 registry；只在這裡加，啟動時會因為 registry 沒宣告而根本不會被執行到。
+    ⚠️ **後三步互不拖累**：各自包 try/except，任一失敗只記 warning，其餘照跑。
+    整理（第一步）刻意不設防，故它失敗會中止本位長輩的整批並由 fanout 記一筆
+    ERROR——Mem0 是外部服務、掛掉很寫實，值班的人看到 ERROR 該知道那晚是真的沒整理。
     """
-    db = core.db
     memory = core.memory
     long_term = core.long_term
+    summaries = core.summaries
+    # 摘要納 L1 小訊號（✅ D-10 己-5）：worker 自組 risk_events 讀取端。
+    risk_events = core.risk_events
+    reminder_logs = core.reminder_logs
+    # 反思寫入端；與後台檢視／撤銷同一個 store（已在 Core），不另建。
+    strategies = core.strategies
+    # 問候偏好：夜間批次（第四步）寫、問候 job 讀，同一個 store。
+    greeting_prefs = core.greeting_prefs
+    # 整理進度標記（✅ 庚-06／庚-13）：逐日補齊＋冪等，避免停機漏天與重覆寫入。
+    consolidation_log = PgConsolidationLogStore(core.db, clock=clock)
     # 摘要按用途配模型（✅ D-16 丁-5）：與主模型相同時共用連線。
     gemini = (
         core.gemini
@@ -78,22 +88,6 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
             settings, settings.gemini_model_summary, client_wrapper=tracing.wrap_genai
         )
     )
-    accounts = core.accounts
-    reminder_logs = core.reminder_logs
-    agent = core.agent
-    router = core.router
-    traces = core.traces
-    summaries = core.summaries
-    # 摘要納 L1 小訊號（✅ D-10 己-5）：worker 自組 risk_events 讀取端。
-    risk_events = core.risk_events
-    # 反思寫入端；與後台檢視／撤銷同一個 store（已在 Core），不另建。
-    strategies = core.strategies
-    # 問候偏好：夜間批次（run_one 第四步）寫、問候 job 讀，同一個 store。
-    greeting_prefs = core.greeting_prefs
-    # 話題新聞（spec 2026-07-20）：爬取／清除 job 寫、問候 job 讀，同一個 store。
-    news = core.news
-    # 整理進度標記（✅ 庚-06／庚-13）：逐日補齊＋冪等，避免停機漏天與重覆寫入。
-    consolidation_log = PgConsolidationLogStore(db, clock=clock)
 
     def run_one(elder_id: str) -> None:
         run_consolidation(
@@ -161,6 +155,29 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
                 )
             except Exception:  # noqa: BLE001 - 問候時間計算失敗不影響整理、摘要與反思
                 logger.warning("問候時間計算失敗 elder=%s", elder_id)
+
+    return run_one
+
+
+class _Proactive(NamedTuple):
+    """主動推播的三個接線點，由 `_build_proactive` 一次組出。"""
+
+    greet_one: Callable[[str], None]
+    care_one: Callable[[str], None]
+    greeted_today: Callable[[str], bool]
+
+
+def _build_proactive(core: Core, *, clock: Callable[[], datetime]) -> _Proactive:
+    """問候與失聯關心的共用接線：查可達→取脈絡→生成→（記帳）→送出。
+
+    兩者只差 intent 與要不要記帳，其餘完全同一條路徑，故一起組出——分開寫會讓
+    「先記帳再推播」這種安全關鍵的順序有兩份實作。
+    """
+    memory = core.memory
+    summaries = core.summaries
+    router = core.router
+    agent = core.agent
+    reminder_logs = core.reminder_logs
 
     def _recall(elder_id: str) -> Recall | None:
         """她上次開口那天的對話摘要，供主動推播接續話題（spec 2026-07-17）。
@@ -257,6 +274,30 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
             end=(day_start + timedelta(days=1)).timestamp(),
         )
         return any(log.kind == REMINDER_KIND_PROACTIVE_GREETING for log in logs)
+
+    return _Proactive(greet_one=greet_one, care_one=care_one, greeted_today=greeted_today)
+
+
+def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime]) -> list[Job]:
+    """把 `cron/registry.py` 宣告的、本程序負責的每一支排程綁上它的執行體。
+
+    worker 排程執行、web 端 admin 手動觸發（spec 2026-07-12）共用同一份。
+
+    ⚠️ 本函式**不決定任何 job 的時刻**——cron、逾期容許量、要不要背景執行，全部
+    由 registry 宣告（2026-07-27）。這裡只回答「這支 job 要跑什麼程式」。新增排程
+    請先改 registry；只在這裡加，啟動時會因為 registry 沒宣告而根本不會被執行到。
+    """
+    memory = core.memory
+    accounts = core.accounts
+    reminder_logs = core.reminder_logs
+    router = core.router
+    traces = core.traces
+    # 話題新聞（spec 2026-07-20）：爬取／清除 job 寫、問候 job 讀，同一個 store。
+    news = core.news
+    greeting_prefs = core.greeting_prefs
+    run_one = _build_nightly_batch(settings, core, clock=clock)
+    proactive = _build_proactive(core, clock=clock)
+    greet_one, care_one, greeted_today = proactive
 
     def _purge_expired_news() -> None:
         # 新聞與提及紀錄同一把保留天數：新聞被清掉後，提及紀錄留著也指不到東西。
