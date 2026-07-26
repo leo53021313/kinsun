@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 
 from kinsun import background, tracing
-from kinsun.agent import FALLBACK_REPLY, CareAgent
+from kinsun.agent import NOT_HEARD_REPLY, CareAgent
 from kinsun.llm import LLMUsage, collect_llm_usage
 from kinsun.observability.models import (
     LLM_CALL_KIND_AGENT,
@@ -134,10 +134,13 @@ class VoicePipeline:
         # 對近無聲短檔的確定性幻覺，實錄「? ? ?」），去標點後皆無內容可分級、可回應也不
         # 該進記憶，直接以回退話術（仍走 TTS）請長輩再說一次。
         if not _has_recognizable_speech(user_text):
+            # ⚠️ 這是唯一真的「沒聽清楚」的情形，故用 NOT_HEARD_REPLY 而非系統故障話術：
+            # 這裡叫長輩再說一次是對的（他再說一次真的會成功）。其他回退點都是我們自己
+            # 壞掉，叫他重試只會讓他一再失敗（2026-07-26 實測 M4）。
             tracing.update_trace_metadata(fallback="empty_speech")
-            tracing.set_current_trace_io(user_input=user_text, assistant_output=FALLBACK_REPLY)
+            tracing.set_current_trace_io(user_input=user_text, assistant_output=NOT_HEARD_REPLY)
             result = self._synthesize(
-                FALLBACK_REPLY, external_id=external_id, channel=channel, trace_id=trace_id
+                NOT_HEARD_REPLY, external_id=external_id, channel=channel, trace_id=trace_id
             )
             return replace(result, transcript=user_text)
         # 情境組裝先行啟動（2026-07-26 延遲實測）：它是本輪最慢的一段（長期記憶檢索
