@@ -147,8 +147,19 @@ class GeminiClient:
         if not api_key:
             raise LLMError("缺少 GEMINI_API_KEY")
         from google import genai
+        from google.genai import types
 
-        client = genai.Client(api_key=api_key)
+        # 逾時掛在 client 上（2026-07-26 延遲實測）：先前 timeout 只存進欄位、從未
+        # 傳給 SDK，等於 Gemini 呼叫沒有任何客戶端逾時——生產 llm_calls p95 11.5s、
+        # max 23.8s，實測還撞過單輪 46 秒與 52 秒。ASR／TTS 的逾時之所以有效，
+        # 差別就在有把值傳下去（兩者 latency 精準卡在 15s／30s）。
+        # ⚠️ SDK 的 HttpOptions.timeout 單位是**毫秒**，設定檔（GEMINI_TIMEOUT_SECONDS）
+        # 是秒，換算不可省——漏乘 1000 會變成 30 毫秒逾時，等於全部呼叫立刻失敗。
+        # 掛在 client 而非逐次呼叫：本 client 的每個出口（generate／generate_tool_turn）
+        # 都該受同一把逾時管，逐次傳容易漏掉新增的出口。
+        client = genai.Client(
+            api_key=api_key, http_options=types.HttpOptions(timeout=int(timeout * 1000))
+        )
         # client_wrapper 為觀測層的注入點（如 Opik track_genai）；None＝不包裝。
         # 保持 llm.py 不 import 觀測套件（依賴反轉），包裝由組裝層決定。
         self._client = client_wrapper(client) if client_wrapper is not None else client
@@ -212,9 +223,17 @@ class GeminiClient:
                     ],
                 )
             )
+            # ⚠️ role 必須是 `user`，不可用語意上更貼切的 `tool`（2026-07-26 實機驗證）：
+            # `gemini-3.5-flash-lite`（.env 的正式模型）對 `role="tool"` 直接回 400
+            # `Role 'tool' is not supported`，於是**每一輪用到工具的對話都失敗、退回
+            # 「金孫剛剛沒聽清楚」**——天氣、衛教 RAG、新聞、排程、查證全中。完整往返實測：
+            #   gemini-3.1-flash-lite：tool ✅ / user ✅
+            #   gemini-3.5-flash-lite：tool ❌ 400 / user ✅
+            # `user` 兩個模型都吃，故選它。由 test_llm 的
+            # test_tool_results_go_back_with_a_role_gemini_accepts 守住。
             contents.append(
                 types.Content(
-                    role="tool",
+                    role="user",
                     parts=[
                         types.Part.from_function_response(
                             name=tr.call.name, response={"result": tr.output}

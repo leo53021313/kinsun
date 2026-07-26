@@ -1,7 +1,7 @@
 # API 設計規範 - 金孫 KinSun
 
-> **版本:** v1.4 | **更新:** 2026-07-25 | **狀態:** ✅ 定稿（契約已拍板 D-23～D-29；/v1 已全面落地；`traces/{trace_id}` 回應加 `opik_url` 深連結）
-> **基準:** as-is（現行 22 端點實證）＋ to-be（/v1 契約）。命名規則以 AGENTS.md 為準。
+> **版本:** v1.6 | **更新:** 2026-07-26 | **狀態:** ✅ 定稿（新增 `GET /turns/chunks/{index}` 分段語音串流＋三個錯誤碼，`POST /turns` 回應加 `chunk_count`／`reply_digest`；契約已拍板 D-23～D-29；/v1 已全面落地；`traces/{trace_id}` 回應加 `opik_url` 深連結）
+> **基準:** as-is（現行 23 端點實證）＋ to-be（/v1 契約）。命名規則以 AGENTS.md 為準。
 > DGX 服務認證與速率限制 → 13_安全循環；`admin api disabled` 503 措辭一併列 13。
 
 ---
@@ -93,6 +93,9 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | `unsupported_media_type` | 415 | 對講機收到非音訊 content-type（✅ D-61 丙-11） |
 | `too_many_requests` | 429 | 認證節流（✅ D-20 甲-3；跨進程共享，✅ 庚-08） |
 | `job_not_found` | 404 | admin 手動觸發：查無此排程任務（spec 2026-07-12） |
+| `chunk_not_found` | 404 | 分段語音：這位長輩今天還沒有回覆，或 index 超出段數（2026-07-26） |
+| `chunk_superseded` | 409 | 分段語音：那一輪已被新的一輪取代，前端應停止續播（2026-07-26） |
+| `speech_unavailable` | 502／503 | 分段語音：合成或上傳失敗、或伺服器未接語音相依（2026-07-26） |
 | `internal_testing_disabled` | 403 | admin 手動觸發：內測模式未開（`INTERNAL_TESTING_ENABLED=false`，spec 2026-07-12） |
 | `admin_disabled` | 503 | admin 未設金鑰（fail-closed；措辭是否洩組態 → 13 循環） |
 | `overloaded` | 503 | ⚠️ 死碼待清（庚-43）：文案表殘留、無拋出點 |
@@ -141,7 +144,8 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | `POST /api/app/device-bindings` | `POST /api/v1/device-bindings` | 長輩裝置綁定（PROXY 同意留痕；首次配對必經；僅收長輩綁定碼——家屬邀請碼回 409 invite_wrong_role，庚-04／A-46，2026-07-12） |
 | —（新增） | `PUT /api/v1/elders/{elder_id}/account` | ✅ D-71（己-6）：家屬代辦長輩帳密（帳號＝手機號碼；PUT＝重設）；invalid_phone 400／phone_taken 409 |
 | —（新增） | `POST /api/v1/elder-sessions` | ✅ D-71（己-6）：長輩帳密登入（只管重登；未配對 403 not_paired）；納 D-58 節流 |
-| `POST /api/app/turns` | `POST /api/v1/turns` | 對講機回合（raw body 音檔；上限 env 化 D-26）。選填 query：`location`＋`latitude`＋`longitude`（長輩地名＋模糊座標，App 端已四捨五入至 0.01 度；**三者齊備才寫入** `elder_locations`，寫入排在 dispatch 之前，缺任一即忽略、不清空既有值——spec 2026-07-17 長輩目前地點） |
+| —（新增） | `GET /api/v1/turns/chunks/{index}` | **分段語音串流**（2026-07-26 延遲優化）：取本輪回覆的第 index 段語音。長輩 Bearer token 認證；query `digest`＝`POST /turns` 回應裡的 `reply_digest`，不符即 409（那輪已被新的一輪取代，前端應停止續播）。回覆全文取自這位長輩**自己**今天最後一則金孫回覆（`turns` 表），故不另建表、也沒有「任意文字丟進來合成」的濫用面。回應：`{audio_url, duration_ms, text}` |
+| `POST /api/app/turns` | `POST /api/v1/turns` | 對講機回合（raw body 音檔；上限 env 化 D-26）。回應自 2026-07-26 起多兩個欄位：`chunk_count`（整段回覆被切成幾段；>1 代表 `audio_url` 只是**第一段**，其餘用 `GET /turns/chunks/{index}` 依序取）與 `reply_digest`（取後續段落時帶上）。分段只對 App 通道啟用——LINE 一輪只能回一則語音，給它第一句等於把後面的話吞掉。選填 query：`location`＋`latitude`＋`longitude`（長輩地名＋模糊座標，App 端已四捨五入至 0.01 度；**三者齊備才寫入** `elder_locations`，寫入排在 dispatch 之前，缺任一即忽略、不清空既有值——spec 2026-07-17 長輩目前地點） |
 | `current_app_guardian` 屬性 | **刪除** | 死碼（D-28） |
 
 ### 觀測後台（tags: admin）

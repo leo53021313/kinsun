@@ -265,3 +265,142 @@ def test_location_write_failure_does_not_break_the_turn():
     _, token = _bound_elder_token(svc)
     res = _post_audio(_client(svc, locations=_ExplodingStore()), token, location="台南市")
     assert res.status_code == 201
+
+
+# ── TTS 分段串流（2026-07-26 延遲優化）──────────────────────────────
+_CHUNKED_REPLY = "阿公今天早上好嗎。今天天氣不錯，要不要出去走走？"
+
+
+class _ChunkedLLM:
+    def generate(self, *, system_prompt: str, messages: list[Message]) -> str:
+        return _CHUNKED_REPLY
+
+
+class _SpyChunkTts:
+    def __init__(self) -> None:
+        self.spoken: list[str] = []
+
+    def synthesize(self, text: str) -> TtsResult:
+        self.spoken.append(text)
+        return TtsResult(text=text, audio=b"fake-m4a", duration_ms=900)
+
+
+class _RecordingMemory:
+    """短期記憶替身：分段端點靠它取回「這位長輩最後一則金孫回覆」。"""
+
+    def __init__(self) -> None:
+        self.messages: list[Message] = []
+
+    def assemble(self, elder_id, query):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(system_suffix="", history=[])
+
+    def record_turn(self, elder_id, *messages):
+        self.messages.extend(messages)
+
+    def recent(self, elder_id):
+        return list(self.messages)
+
+
+class _SpyPublisher:
+    def __init__(self) -> None:
+        self.count = 0
+
+    def publish(self, audio: bytes, *, content_type: str) -> str:
+        self.count += 1
+        return f"https://cdn.test/chunk-{self.count}.m4a"
+
+
+def _chunking_client(svc, memory, tts, publisher):
+    pipeline = VoicePipeline(
+        asr=MockAsrClient("阿公早安"),
+        agent=CareAgent(_ChunkedLLM(), memory),
+        tts=tts,
+        detector=RiskDetector(_NullClassifier()),
+        notifier=_NullNotifier(),
+        risk_events=FakeRiskEventStore(),
+        chunked_channels=frozenset({"app"}),
+    )
+    app = FastAPI()
+    install_error_envelope(app)
+    app.include_router(
+        create_app_turns_router(
+            accounts=svc,
+            pipeline=pipeline,
+            gate=ConsentGate(svc),
+            voice=VoiceReplyDelivery(publisher, include_text=True),
+            new_id=lambda: "trace-1",
+            clock=lambda: NOW,
+            memory=memory,
+            tts=tts,
+            audio_publisher=publisher,
+        ),
+        prefix="/api/v1",
+    )
+    return TestClient(app)
+
+
+def _chunk_setup():
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    memory, tts, publisher = _RecordingMemory(), _SpyChunkTts(), _SpyPublisher()
+    return _chunking_client(svc, memory, tts, publisher), token, tts, publisher
+
+
+def test_turn_reports_chunk_count_and_digest_when_chunked():
+    """App 拿到的第一段只是開頭，回應要告訴它總共幾段、以及這是哪一輪的回覆。"""
+    client, token, tts, _ = _chunk_setup()
+
+    body = _post_audio(client, token).json()["data"]
+
+    assert body["text"] == _CHUNKED_REPLY  # 文字仍是完整的一段
+    assert tts.spoken == ["阿公今天早上好嗎。"]  # 但只合成了第一句
+    assert body["chunk_count"] == 2
+    assert len(body["reply_digest"]) == 16
+
+
+def test_fetching_the_second_chunk_synthesizes_only_that_sentence():
+    client, token, tts, publisher = _chunk_setup()
+    body = _post_audio(client, token).json()["data"]
+
+    res = client.get(
+        f"/api/v1/turns/chunks/1?digest={body['reply_digest']}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert res.status_code == 200
+    assert res.json()["data"]["text"] == "今天天氣不錯，要不要出去走走？"
+    assert res.json()["data"]["audio_url"] == "https://cdn.test/chunk-2.m4a"
+    assert tts.spoken == ["阿公今天早上好嗎。", "今天天氣不錯，要不要出去走走？"]
+
+
+def test_stale_digest_is_rejected_so_the_app_stops_playing_the_old_turn():
+    """長輩又講了一句時，舊那輪的後續段落不可以再被播出去。"""
+    client, token, _, _ = _chunk_setup()
+    _post_audio(client, token)
+
+    res = client.get(
+        "/api/v1/turns/chunks/1?digest=0000000000000000",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert res.status_code == 409
+    assert res.json()["error"]["code"] == "chunk_superseded"
+
+
+def test_index_out_of_range_is_not_found():
+    client, token, _, _ = _chunk_setup()
+    body = _post_audio(client, token).json()["data"]
+
+    for index in (0, 2, 99):  # 第 0 段已隨 POST 回過，2 之後不存在
+        res = client.get(
+            f"/api/v1/turns/chunks/{index}?digest={body['reply_digest']}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert res.status_code == 404, index
+
+
+def test_chunk_endpoint_requires_an_elder_token():
+    client, _, _, _ = _chunk_setup()
+    assert client.get("/api/v1/turns/chunks/1").status_code == 401
