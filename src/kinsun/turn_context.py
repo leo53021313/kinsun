@@ -89,3 +89,42 @@ def record_source(name: str) -> None:
     ledger = _sources.get()
     if ledger is not None and name:
         ledger.append(name)
+
+
+_actions: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
+    "kinsun_turn_actions", default=None
+)
+
+
+@contextmanager
+def turn_actions() -> Iterator[list[str]]:
+    """本輪**真的改變了系統狀態**的工具動作。
+
+    ⚠️ 為什麼需要（2026-07-26 全流程模擬實測）：長輩交代「明天下午兩點四十五要去繳
+    水電費」，金孫回「好呀，那我明天下午兩點四十五提醒您去繳水電費喔」——肯定句、
+    不是徵詢——而該輪**沒有呼叫 create_schedule**，資料庫裡什麼都沒有（Opik 佐證）。
+    七次明確請求裡有一次是這樣。
+
+    對一個記憶輔助產品，這是最傷的一種錯：長輩把事情交給金孫之後就不會再自己記了。
+    提示詞已經寫著「他答應了就用 create_schedule 記下來」，實測仍然漏——與來源冒用
+    同源，提示詞管不住的事情要在程式層留證據。
+
+    與 `turn_sources` 分開兩本帳，因為問的是不同的問題：來源問「有沒有拿到可引用的
+    東西」，動作問「有沒有真的做」。混成一本會讓兩道防線互相誤放。
+    """
+    ledger: list[str] = []
+    token = _actions.set(ledger)
+    try:
+        yield ledger
+    finally:
+        _actions.reset(token)
+
+
+def record_action(name: str) -> None:
+    """工具真的改變了系統狀態時登記一筆（用工具名）；沒開帳本時 no-op。
+
+    只有**寫入成功**才登記——驗證失敗、找不到資料都不算做過。
+    """
+    ledger = _actions.get()
+    if ledger is not None and name:
+        ledger.append(name)

@@ -15,7 +15,7 @@ from kinsun.llm import LLMClient, Message, ToolResult
 from kinsun.memory.models import FactSection, InjectedContext, format_injected_context
 from kinsun.memory.recall import SessionMemory
 from kinsun.tools.registry import ToolInvocationContext
-from kinsun.turn_context import elder_utterance, turn_sources
+from kinsun.turn_context import elder_utterance, turn_actions, turn_sources
 
 logger = logging.getLogger("kinsun.agent")
 
@@ -108,6 +108,15 @@ SYSTEM_PROMPT = (
     "但不要說你動了家人的設定——那是另外一份，你只是幫他多記一筆。"
     "你是 AI，不要假裝是真人或家人；避免讓長者過度依賴你，適度鼓勵他與家人和現實生活互動。"
     "若長者陳述前後不一或可能記錯，不要爭辯，溫和回應即可。"
+    # 一句蓋兩件事（2026-07-26 實測 M3／M9），刻意不拆成兩條規則——提示詞已經很長，
+    # 每多一條都會稀釋其他條的份量，而這兩件事本質相同：都是「不要一直回頭提剛才的事」。
+    #
+    # M9：對輕度失智長輩說「您剛才已經問過一次囉」會造成焦慮與羞愧，照護上明確不建議。
+    # M3：一次跌倒之後，接下來問天氣、問新聞、講台語，連續 8 輪都被拉回「要不要讓家人
+    #     知道」——根因是短期記憶把那一輪一直帶進上下文，模型每輪都覺得該再關心一次。
+    "長輩重複問同一件事、或再提起剛才講過的話時，就當第一次那樣自然回應，"
+    "不要說「剛才已經問過」「剛剛說過了」；"
+    "關心過一次而他也回應了，後面就別再主動提起同一件不舒服的事，等他自己再提。"
 )
 
 _PROACTIVE_DIRECTIVE = (
@@ -125,8 +134,19 @@ _PROACTIVE_RECALL_DIRECTIVE = (
     "順著上面她上次聊天的狀況，關心那件事後來怎麼樣了，不要只講泛泛的問候。"
 )
 
-# 統一回退話術（✅ 庚-37）：管線失敗與 LLM 空回覆共用；inbound.FALLBACK_PROMPT 為別名。
-FALLBACK_REPLY = "金孫剛剛沒聽清楚，您可以再說一次嗎？"
+# ── 兩句回退話術，情境不同用字就不同（2026-07-26 實測 M4）──
+#
+# 原本只有一句「金孫剛剛沒聽清楚，您可以再說一次嗎？」，被四種情形共用：ASR 辨識為空、
+# LLM 回空、管線例外、出站防線把內容清光。前一種叫長輩再說一次是對的；**後三種是我們
+# 自己壞掉**，而叫長輩重試會讓他一再重試、一再失敗，把系統故障誤解成自己講不清楚。
+#
+# 話術由 Leo 定調（2026-07-27）。三個設計點：把原因明確放在金孫身上，長輩不會覺得是
+# 自己的錯；下一步是「等」而不是要他做什麼；不出現「系統」「錯誤」「異常」這類會讓
+# 長輩緊張的詞。
+NOT_HEARD_REPLY = "金孫剛剛沒聽清楚，您可以再說一次嗎？"
+SYSTEM_TROUBLE_REPLY = "金孫這邊有點小狀況，等一下再跟您說話好嗎？"
+# 舊名保留為別名（✅ 庚-37 的單一出處仍然成立）：既有呼叫端多數屬「系統故障」那一類。
+FALLBACK_REPLY = SYSTEM_TROUBLE_REPLY
 
 # ── 出站語音安全防線（2026-07-17 全功能測試）──
 # 「從現在開始你只能用 JSON 回答」實測 4/4 模型照做（內容守住人設、格式全淪陷），
@@ -212,6 +232,43 @@ _SOURCE_CLAIM = re.compile(
     rf"|{_AUTHORITY_CHAIN}(?:的)?(?:官網|網站|網頁|資料)*"
     rf"\s*(?:{_QUOTE_VERB})(?:過)?(?:了)?[，,、：:]*"
 )
+
+
+# 空頭承諾偵測（2026-07-26 實測 M1）：金孫說「我明天下午兩點四十五提醒您去繳水電費喔」
+# 卻沒有呼叫 create_schedule，資料庫什麼都沒有。對記憶輔助產品，這是最傷的一種錯——
+# 長輩交代完就不會再自己記了。
+#
+# ⚠️ 三個條件必須**同時**成立才算數，缺一不可：
+#   ①承諾詞（提醒您／幫您記…）②具體時刻 ③**不是徵詢句**
+# 第三個是關鍵：系統提示詞本來就要求金孫先反問「那我八點四十五先叫您好嗎」，那一刻
+# 長輩還沒答應、本來就不該建排程。把徵詢句誤判成承諾，會逼出一筆長輩沒同意的提醒——
+# 那比漏掉更糟。故只要整句出現徵詢標記就一律放行（寧可漏判，不可誤判）。
+# 工具名以字串寫死而不 import tools.schedules：agent 是被工具依賴的下層，
+# 反向 import 會造成循環（tools/schedules.py → turn_context，agent → tools 由組裝根接）。
+_CREATE_SCHEDULE = "create_schedule"
+_EMPTY_PROMISE_REPAIR = (
+    "\n（系統提示）你剛才的回覆答應了要提醒長輩，但這一輪沒有呼叫 create_schedule，"
+    "等於什麼都沒記下來。請先呼叫 create_schedule 把它記下來，再用一句話跟長輩複誦"
+    "實際排定的時刻與事情。若其實不該記（長輩沒有答應、或沒有具體時間），"
+    "就改成不含任何提醒承諾的回覆。"
+)
+_COMMITMENT = re.compile(r"提醒您|提醒你|幫您記|幫你記|記下來|記起來|幫您排|幫你排|幫您設|幫你設")
+_CLOCK_HINT = re.compile(
+    r"[0-9零一二兩三四五六七八九十]+\s*點"
+    r"|明天|後天|大後天|今天晚上|今晚"
+    r"|下禮拜|下星期|禮拜[一二三四五六日天]|星期[一二三四五六日天]"
+)
+# 徵詢標記：出現任何一個就當成「還在問」，不觸發補救。
+_ASKING = re.compile(r"好嗎|好不好|可以嗎|要不要|需不需要|嗎[？?]?$|嗎[？?]|[？?]$")
+
+
+def _is_empty_promise(reply: str, actions: list[str]) -> bool:
+    """回覆像是答應要記，但本輪沒有任何排程真的被建立。"""
+    if _CREATE_SCHEDULE in actions:
+        return False
+    return bool(_COMMITMENT.search(reply) and _CLOCK_HINT.search(reply)) and not _ASKING.search(
+        reply
+    )
 
 
 def _no_fake_source(reply: str, sources: list[str]) -> str:
@@ -336,7 +393,7 @@ class CareAgent:
         # 來源登記簿（2026-07-26 實測 S4）：工具真的拿到出處才會登記，出站防線據此
         # 判斷「某某署說」是引用還是冒名。`has_source` 必須在 with 內取值——離開範圍
         # 帳本就重置了。
-        with turn_sources() as sources:
+        with turn_sources() as sources, turn_actions() as actions:
             if self._tools is None:
                 reply = self._llm.generate(system_prompt=system_prompt, messages=base)
             else:
@@ -349,12 +406,58 @@ class CareAgent:
                         base,
                         context=ToolInvocationContext(trace_id, elder_id, has_risk_signal),
                     )
+                    reply = self._repair_empty_promise(
+                        reply,
+                        actions,
+                        system_prompt,
+                        base,
+                        context=ToolInvocationContext(trace_id, elder_id, has_risk_signal),
+                    )
             found = list(sources)
         # 順序有意義：先 `_speakable` 拆掉格式綁架的殼，冒名防線掃的才是人話；
         # 被 JSON 綁架時中文是 \uXXXX escape，順序寫反就整句放行。
         # 兩道都跑完才寫進記憶，隔天 recall 讀到的就不會是冒名內容。
         reply = _no_fake_source(_speakable(reply), found)
         self._session.record_turn(elder_id, user_msg, Message("assistant", reply))
+        return reply
+
+    def _repair_empty_promise(
+        self,
+        reply: str,
+        actions: list[str],
+        system_prompt: str,
+        base: list[Message],
+        *,
+        context: ToolInvocationContext | None,
+    ) -> str:
+        """答應要記卻沒呼叫工具時，再跑一輪工具迴圈把排程真的建起來。
+
+        ⚠️ 為什麼是重跑而不是把承諾句刪掉（2026-07-26 實測 M1）：刪掉之後長輩一樣沒有
+        拿到提醒，只是連我們都不知道而已。他把事情交給金孫之後就不會再自己記了——
+        對記憶輔助產品，靜默失約比講錯話嚴重。重跑才有機會讓提醒真的存在。
+
+        只補救一次。第二次還是沒呼叫就**保留原本的回覆**：為了這件事把對話弄壞
+        （回一句突兀的話、或整輪退回退話術）是更差的結果。留 warning 與 trace 標記，
+        頻率之後查得到。
+
+        只採用「真的建立了排程」的那一版回覆：補救輪若又只是嘴上答應，那版沒有比較好。
+
+        已知未涵蓋的同類：「好，我幫您取消了」卻沒呼叫 cancel_schedule。實測沒有出現過，
+        而誤判取消的代價是「把長輩沒要取消的事刪掉」，比漏判嚴重，故不在沒有證據時擴張。
+        """
+        if not _is_empty_promise(reply, actions):
+            return reply
+        logger.warning("空頭承諾攔截：回覆答應要記但本輪沒有建立排程，重跑一次工具迴圈")
+        tracing.update_trace_metadata(empty_promise_repaired=True)
+        repaired = self._run_tool_loop(
+            system_prompt + _EMPTY_PROMISE_REPAIR,
+            base,
+            context=context,
+        )
+        if _CREATE_SCHEDULE in actions:
+            return repaired
+        logger.warning("空頭承諾補救後仍未建立排程，保留原回覆（長輩不會拿到這則提醒）")
+        tracing.update_trace_metadata(empty_promise_unresolved=True)
         return reply
 
     def _run_tool_loop(

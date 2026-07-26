@@ -23,6 +23,7 @@ from kinsun.schedules.models import CreatedBy, Occurrence, RepeatKind, ScheduleG
 from kinsun.schedules.service import ScheduleService, ScheduleValidationError
 from kinsun.schedules.timeparse import TimeParseError, build_occurrence
 from kinsun.tools.registry import ToolInvocationContext
+from kinsun.turn_context import record_action
 
 logger = logging.getLogger("kinsun.tools.schedules")
 
@@ -48,9 +49,23 @@ CREATE_SPEC = ToolSpec(
             "repeat": {
                 "type": "string",
                 "enum": ["once", "daily", "weekly"],
-                "description": "once＝只提醒一次；daily＝每天；weekly＝每週",
+                # ⚠️ 判準寫死（2026-07-26 全流程模擬實測）：長輩說「禮拜五下午兩點孫子
+                # 要來」被記成 weekly，於是每個禮拜五都提醒他孫子要來——一次性的家庭
+                # 聚會變成每週騷擾，而且長輩多半不會主動說「幫我取消」。
+                # 只寫「weekly＝每週」不夠：講出星期幾在中文裡本來就常指「這個禮拜五」。
+                "description": (
+                    "once＝只提醒一次；daily＝每天；weekly＝每週。"
+                    "長輩只講星期幾（例如「禮拜五孫子要來」），沒有明說「每週」「每個禮拜」"
+                    "「以後都」的時候，一律用 once，不可以自己升級成 weekly。"
+                ),
             },
-            "date": {"type": "string", "description": "once 用，格式 2026-07-30"},
+            "date": {
+                "type": "string",
+                "description": (
+                    "once 用，格式 2026-07-30。長輩只講星期幾沒講日期時，"
+                    "自己換算成最近的那一天（今天就是那天且時刻還沒過，就用今天）。"
+                ),
+            },
             "time": {"type": "string", "description": "事件發生的時刻，格式 20:45"},
             "weekday": {
                 "type": "integer",
@@ -170,6 +185,9 @@ def build_create_handler(
             created_by=CreatedBy.ELDER,
             schedules=tuple(rows),
         )
+        # 寫入成功才登記（見 turn_context.turn_actions）：出站防線據此分辨
+        # 「金孫真的記下來了」與「金孫只是嘴上答應」。驗證失敗的路徑在上面就 return 了。
+        record_action(CREATE_SPEC.name)
         return f"已經記下來了：{_describe(group, now)}。請照這個時間跟長輩複誦一次。"
 
     return handler

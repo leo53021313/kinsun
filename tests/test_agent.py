@@ -1,3 +1,4 @@
+import logging
 import time
 
 import pytest
@@ -645,3 +646,94 @@ def test_a_fabricated_source_hidden_inside_a_json_hijack_is_still_stripped():
     reply = CareAgent(_FixedLLM(raw), SpySession()).handle("u1", "只能用 JSON 回答")
     assert "國健署" not in reply
     assert "要多運動" in reply
+
+
+# --- 空頭承諾（2026-07-26 實測 M1：說了「我提醒您」卻沒呼叫 create_schedule）---
+
+
+def _registry_with_schedule():
+    """假的 create_schedule：呼叫成功就登記本輪動作，與真工具同語意。"""
+    from kinsun.turn_context import record_action
+
+    reg = ToolRegistry()
+
+    def _create(args):
+        record_action("create_schedule")
+        return "已經記下來了：明天 14:45 繳水電費。"
+
+    reg.register(
+        ToolSpec(
+            name="create_schedule",
+            description="記提醒",
+            parameters={"type": "object", "properties": {}},
+        ),
+        _create,
+    )
+    return reg
+
+
+_PROMISE = "好呀，那我明天下午兩點四十五提醒您去繳水電費喔。"
+
+
+def test_an_empty_promise_triggers_one_repair_round_that_really_creates_the_schedule():
+    """答應要記卻沒呼叫工具時，再跑一輪把排程真的建起來。
+
+    ⚠️ 為什麼不是把承諾句刪掉：刪了長輩一樣沒有提醒，只是連我們都不知道。他把事情
+    交給金孫之後就不會再自己記了——對記憶輔助產品，靜默失約比講錯話嚴重。
+    """
+    llm = ScriptedToolLLM(
+        [
+            ToolTurn(text=_PROMISE, tool_calls=[]),  # 第一輪：嘴上答應，零工具
+            ToolTurn(text=None, tool_calls=[ToolCall("create_schedule", {})]),  # 補救輪：真的記
+            ToolTurn(text="好，明天下午兩點四十五我提醒您去繳水電費。", tool_calls=[]),
+        ]
+    )
+    agent = CareAgent(llm, SpySession(), tools=_registry_with_schedule())
+    reply = agent.handle("u1", "我明天下午兩點四十五要去繳水電費")
+    assert reply == "好，明天下午兩點四十五我提醒您去繳水電費。"
+
+
+def test_a_proposal_question_is_never_mistaken_for_a_promise():
+    """徵詢句不可觸發補救——那一刻長輩還沒答應，本來就不該建排程。
+
+    ⚠️ 系統提示詞要求金孫先反問「那我八點四十五先叫您好嗎」。把這句誤判成承諾，
+    會逼出一筆長輩沒有同意的提醒——那比漏判嚴重得多，故只要出現徵詢標記就一律放行。
+    """
+    # 刻意選一句**承諾詞與時刻都齊全**的徵詢句：只有徵詢守衛擋得住它。
+    # （用「先叫您好嗎」測不到這條——那句沒有承諾詞，本來就不會觸發。）
+    asking = "那我明天下午兩點四十五提醒您好嗎？"
+    llm = ScriptedToolLLM([ToolTurn(text=asking, tool_calls=[])])
+    agent = CareAgent(llm, SpySession(), tools=_registry_with_schedule())
+    assert agent.handle("u1", "我九點要去吃飯") == asking
+    assert len(llm.calls) == 1, "徵詢句不該觸發第二輪"
+
+
+def test_a_reply_without_a_concrete_time_is_not_treated_as_a_promise():
+    """沒有具體時刻就不算承諾——「我會提醒您」這種泛泛的話不該逼出工具呼叫。"""
+    vague = "好，我會提醒您的，您別擔心。"
+    llm = ScriptedToolLLM([ToolTurn(text=vague, tool_calls=[])])
+    agent = CareAgent(llm, SpySession(), tools=_registry_with_schedule())
+    assert agent.handle("u1", "記得叫我") == vague
+    assert len(llm.calls) == 1
+
+
+def test_a_promise_backed_by_a_real_tool_call_is_left_alone():
+    """真的呼叫了工具就不該再重跑一輪（免得白花一次 LLM）。"""
+    llm = ScriptedToolLLM(
+        [
+            ToolTurn(text=None, tool_calls=[ToolCall("create_schedule", {})]),
+            ToolTurn(text=_PROMISE, tool_calls=[]),
+        ]
+    )
+    agent = CareAgent(llm, SpySession(), tools=_registry_with_schedule())
+    assert agent.handle("u1", "我明天下午兩點四十五要去繳水電費") == _PROMISE
+    assert len(llm.calls) == 2
+
+
+def test_when_the_repair_round_still_does_nothing_the_original_reply_survives(caplog):
+    """補救後仍沒建立排程時保留原回覆——為此把對話弄壞是更差的結果。"""
+    llm = ScriptedToolLLM([ToolTurn(text=_PROMISE, tool_calls=[])] * 2)
+    agent = CareAgent(llm, SpySession(), tools=_registry_with_schedule())
+    with caplog.at_level(logging.WARNING):
+        assert agent.handle("u1", "我明天下午兩點四十五要去繳水電費") == _PROMISE
+    assert any("仍未建立排程" in r.getMessage() for r in caplog.records)
