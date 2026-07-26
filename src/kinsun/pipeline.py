@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import replace
 
-from kinsun import tracing
+from kinsun import background, tracing
 from kinsun.agent import FALLBACK_REPLY, CareAgent
 from kinsun.llm import LLMUsage, collect_llm_usage
 from kinsun.observability.models import (
@@ -24,6 +24,7 @@ from kinsun.safety.moderation import AbuseModerator, ModerationResult, reply_for
 from kinsun.safety.notifier import Notifier
 from kinsun.safety.tiers import RiskAssessment, RiskTier
 from kinsun.speech.asr import ASRClient
+from kinsun.speech.chunking import split_for_speech
 from kinsun.speech.tts import TTSClient, TTSError, TtsResult
 
 logger = logging.getLogger("kinsun.pipeline")
@@ -55,6 +56,7 @@ class VoicePipeline:
         reminder_logs: ReminderLogStore | None = None,
         response_window_seconds: int = 3600,
         moderator: AbuseModerator | None = None,
+        chunked_channels: frozenset[str] = frozenset(),
     ) -> None:
         self._asr = asr
         self._agent = agent
@@ -71,6 +73,11 @@ class VoicePipeline:
         self._response_window_seconds = response_window_seconds
         # 選填（預設 None＝不審核，等同 SAFETY_MODERATION_ENABLED=false）。
         self._moderator = moderator
+        # 啟用 TTS 分段串流的通道（2026-07-26 延遲優化）。預設空集合＝所有通道維持
+        # 原行為（整段合成）。逐通道而非全域開關，是因為分段需要**投遞端配合**：
+        # App 拿得到段數、會逐段拉並接著播；LINE 只能收一則語音訊息，給它第一句
+        # 等於把後面的話吞掉。故 app.py 只把 "app" 放進來。
+        self._chunked_channels = chunked_channels
 
     @tracing.track(
         name="care_turn_voice", type="general", capture_input=False, capture_output=False
@@ -133,6 +140,11 @@ class VoicePipeline:
                 FALLBACK_REPLY, external_id=external_id, channel=channel, trace_id=trace_id
             )
             return replace(result, transcript=user_text)
+        # 情境組裝先行啟動（2026-07-26 延遲實測）：它是本輪最慢的一段（長期記憶檢索
+        # ＋七次事實查詢，約 2.9 秒），而輸入只有 elder_id＋原話，不必等安全檢查跑完。
+        # ⚠️ 這只改「何時開始組」，**決策順序一字未動**——底下的落庫／通報／攔截先後
+        # 完全照舊。prepare 只讀不寫，故被攔的那一輪雖白做一次組裝，仍不會進記憶。
+        prepared = self._agent.prepare(elder_id, user_text)
         assessment = self._assess(
             user_text, external_id=external_id, channel=channel, trace_id=trace_id
         )
@@ -178,6 +190,7 @@ class VoicePipeline:
             channel=channel,
             trace_id=trace_id,
             has_risk_signal=assessment.tier >= RiskTier.L1,
+            prepared=prepared,
         )
         # 對話原話＋回覆寫進 trace I/O，Opik Threads 才顯示 First／Last message。
         tracing.set_current_trace_io(user_input=user_text, assistant_output=reply_text)
@@ -203,17 +216,26 @@ class VoicePipeline:
 
         ⚠️ now 用 time.time()（epoch 秒），不可用 self._timer——後者預設 time.monotonic，
         只能量延遲、不是牆鐘時間，拿去跟 reminder_logs.created_at 比較會得到垃圾。
+        now 在**提交前**取值，不可搬進背景動作裡：時間窗判定的基準是長輩開口的那一刻，
+        不是背景執行緒剛好排到的那一刻。
+
+        UPDATE 本身走 `background.run`（2026-07-26 延遲實測）：它是一次約 0.21 秒的
+        Supabase 跨網往返，而反思的訊號沒有任何人在等——移出回覆路徑後，上面那段
+        「try/except 擋得住錯誤、擋不住延遲」的疑慮也就徹底消失了。
         """
         if self._reminder_logs is None:
             return
-        try:
-            self._reminder_logs.mark_responded(
-                elder_id,
-                now=time.time(),
-                within_seconds=self._response_window_seconds,
-            )
-        except Exception:  # noqa: BLE001 - 訊號落庫失敗不可中斷對話
-            logger.warning("提醒回應標記失敗 elder=%s", elder_id)
+        reminder_logs = self._reminder_logs
+        now = time.time()
+        within_seconds = self._response_window_seconds
+
+        def mark() -> None:
+            try:
+                reminder_logs.mark_responded(elder_id, now=now, within_seconds=within_seconds)
+            except Exception:  # noqa: BLE001 - 訊號落庫失敗不可中斷對話
+                logger.warning("提醒回應標記失敗 elder=%s", elder_id)
+
+        background.run(mark)
 
     def _latency_ms(self, started: float) -> int:
         return int((self._timer() - started) * 1000)
@@ -349,6 +371,7 @@ class VoicePipeline:
         channel: str,
         trace_id: str,
         has_risk_signal: bool,
+        prepared=None,
     ) -> str:
         # 每輪記一筆（涵蓋整個 agent 含工具迴圈）；token 用量由收集器彙總本輪
         # 所有 Gemini 呼叫（✅ D-05 戊-2）。零申報（假 LLM／無 usage_metadata）
@@ -376,6 +399,7 @@ class VoicePipeline:
                     user_text,
                     trace_id=trace_id,
                     has_risk_signal=has_risk_signal,
+                    prepared=prepared,
                 )
         return reply
 
@@ -383,6 +407,16 @@ class VoicePipeline:
     def _synthesize(
         self, reply_text: str, *, external_id: str, channel: str, trace_id: str
     ) -> TtsResult:
+        """啟用分段的通道只合成**第一段**，其餘由投遞端逐段取（2026-07-26 延遲優化）。
+
+        回傳的 `text` 一律是完整回覆——長輩看到的字幕、寫進記憶的內容、觀測留存的
+        內容都不可以因為分段而被切掉；只有 `audio` 是第一段。切不出兩段以上時
+        （短回覆、回退話術、被攔的回絕話術）不分段，因為分段的代價（多一次往返）
+        換不到任何東西。
+        """
+        chunks = split_for_speech(reply_text) if channel in self._chunked_channels else []
+        chunked = len(chunks) > 1
+        spoken = chunks[0] if chunked else reply_text
         try:
             with self._span(
                 lambda traces, status, latency_ms, error_message: traces.record_tts_call(
@@ -395,7 +429,8 @@ class VoicePipeline:
                     error_message=error_message,
                 )
             ):
-                return self._tts.synthesize(reply_text)
+                result = self._tts.synthesize(spoken)
+                return replace(result, text=reply_text, chunk_count=len(chunks) if chunked else 0)
         except TTSError:
             logger.warning("TTS 合成失敗，退化為純文字回覆")
             return TtsResult(text=reply_text, audio=None)

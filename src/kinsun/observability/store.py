@@ -13,6 +13,7 @@ from typing import Protocol
 
 from psycopg.types.json import Json
 
+from kinsun import background
 from kinsun.db import Database, _Errors
 from kinsun.observability.models import (
     LLM_CALL_KINDS,
@@ -40,11 +41,24 @@ class TraceError(Exception):
 
 
 def safe_record(action: Callable[[], None]) -> None:
-    """觀測記錄失敗絕不中斷對話：吞掉所有例外、只留 warning。"""
-    try:
-        action()
-    except Exception:  # noqa: BLE001 - 觀測失敗不可影響主流程
-        logger.warning("觀測記錄落庫失敗", exc_info=True)
+    """觀測記錄失敗絕不中斷對話：吞掉所有例外、只留 warning。
+
+    落庫本身走 `background.run`（2026-07-26 延遲實測）：一輪對話有 5 筆觀測寫入，
+    每筆都是一次約 0.21 秒的 Supabase 跨網往返、合計超過 1 秒，而沒有任何後續步驟
+    在等它們——它們只是擋在長輩聽到回覆之前。`background` 未啟用時就地執行，故單元
+    測試與 CLI 的行為一字不差。
+
+    ⚠️ 「失敗只留 warning」的語意因此擴大了一點：過載時整筆會被丟棄（見
+    `background` 的佇列上限）。對呼叫端而言與「寫失敗」是同一件事，故契約不變。
+    """
+
+    def guarded() -> None:
+        try:
+            action()
+        except Exception:  # noqa: BLE001 - 觀測失敗不可影響主流程
+            logger.warning("觀測記錄落庫失敗", exc_info=True)
+
+    background.run(guarded)
 
 
 def _llm_stage_stats(
