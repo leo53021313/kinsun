@@ -330,3 +330,45 @@ def test_dispatch_reminder_transparent_when_tracing_enabled(monkeypatch):
     assert res.status_code == 200
     assert "降血壓藥" in router.sent[0][2]
     assert logs.recorded[0][1] == "medication"
+
+
+# 兩條對照測試刻意**只差一個變數**（`max_lateness_seconds`）：同樣遲到 180 秒，
+# 宣告了 90 秒窗的要叫、沒宣告的不叫。時序：上次執行 NOW-210s → 下次到期 NOW-180s。
+_LATE_BY_180S = timedelta(seconds=210)
+
+
+def test_a_job_with_a_tight_window_is_flagged_before_its_reminders_are_lost():
+    """判定窗小於預設容許量的 job，必須用它自己的窗判逾期。
+
+    ⚠️ `schedule-dispatch` 每分鐘跑、判定窗 90 秒，且窗外的提醒**一律作廢不補**。
+    後台原本一律用 300 秒判逾期，於是遲到 90～300 秒這段區間裡，長輩的吃藥提醒
+    已經永久遺失了，這一頁卻還顯示健康——那正是 2026-07-26 事故裡最該被看見
+    卻沒被看見的一層。
+    """
+    state = FakeScheduleStateStore()
+    state.set_last_run("schedule-dispatch", NOW - _LATE_BY_180S)
+    jobs = [
+        Job(
+            name="schedule-dispatch",
+            cron="* * * * *",
+            run=lambda: None,
+            max_lateness_seconds=90.0,
+        )
+    ]
+    body = (
+        _client(jobs=jobs, schedule_state=state).get("/api/v1/admin/jobs", headers=_auth()).json()
+    )
+    assert body["data"][0]["is_overdue"] is True, "遲到 180 秒＝已經掉了一分多鐘的提醒"
+    assert body["meta"]["overdue"] == ["schedule-dispatch"]
+
+
+def test_a_job_without_a_declared_window_keeps_the_lenient_default():
+    """同樣遲到 180 秒，沒宣告窗的 job 不該被叫——晚幾分鐘沒有損害，嚴判只是假警報。"""
+    state = FakeScheduleStateStore()
+    state.set_last_run("cleanup", NOW - _LATE_BY_180S)
+    jobs = [Job(name="cleanup", cron="* * * * *", run=lambda: None)]
+    body = (
+        _client(jobs=jobs, schedule_state=state).get("/api/v1/admin/jobs", headers=_auth()).json()
+    )
+    assert body["data"][0]["is_overdue"] is False
+    assert body["meta"]["overdue"] == []

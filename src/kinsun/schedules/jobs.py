@@ -191,5 +191,9 @@ def build_schedule_dispatch_job(
         population=population,
         action=action,
         item_id=lambda batch: batch.item_id,
+        # 遲到超過判定窗＝這段時間該送的提醒**已經永久遺失**（窗外的一律作廢不補，
+        # 見上方 population）。後台的預設容許量 300 秒遠大於這個窗，會在提醒已經
+        # 掉了的時候還顯示健康——那正是 2026-07-26 事故裡最該被看見卻沒被看見的一層。
+        max_lateness_seconds=float(window_seconds),
         logger=logger,
     )

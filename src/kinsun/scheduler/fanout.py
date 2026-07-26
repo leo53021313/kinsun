@@ -23,6 +23,7 @@ def fanout_job(  # noqa: UP047
     minute: int = 0,
     cron: str | None = None,
     item_id: Callable[[T], str] = str,
+    max_lateness_seconds: float | None = None,
     logger: logging.Logger = logger,
 ) -> Job:
     """組一個 cron job：遍歷 population()，對每筆呼叫 action，逐筆隔離失敗。
@@ -56,4 +57,4 @@ def fanout_job(  # noqa: UP047
             except Exception:  # noqa: BLE001 - 單一對象失敗不影響其他
                 logger.exception("job %s 處理失敗：%s", name, item_id(item))
 
-    return Job(name=name, cron=schedule, run=run)
+    return Job(name=name, cron=schedule, run=run, max_lateness_seconds=max_lateness_seconds)

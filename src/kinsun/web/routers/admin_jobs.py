@@ -118,7 +118,14 @@ def create_admin_jobs_router(
             # 容許量＝一個掃描間隔再加點餘裕：cron 是分鐘級、掃描也是分鐘級，
             # 沒有容許量的話每個 job 在到期後的那幾十秒都會被誤報成逾期。
             late_seconds = (now - due_at).total_seconds() if due_at else 0.0
-            is_overdue = late_seconds > _OVERDUE_TOLERANCE_SECONDS
+            # 容許量逐 job 決定：`schedule-dispatch` 的判定窗只有 90 秒且窗外不補，
+            # 沿用 300 秒的預設會在提醒**已經永久遺失**時仍顯示健康（2026-07-27 修）。
+            tolerance = (
+                job.max_lateness_seconds
+                if job.max_lateness_seconds is not None
+                else _OVERDUE_TOLERANCE_SECONDS
+            )
+            is_overdue = late_seconds > tolerance
             # ⚠️ 從沒跑過（`scheduler_state` 沒有這一列）必須單獨標出來，不可算成健康：
             # 沒有 last_run_at 就算不出 due_at，`is_overdue` 於是恆為 False——一支
             # 從部署起就沒被排程器碰過的 job，這一頁會顯示成全綠。那正是這一頁要抓的
