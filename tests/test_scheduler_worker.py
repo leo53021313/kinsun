@@ -1052,3 +1052,18 @@ def test_the_watchdog_leaves_a_healthy_scheduler_alone():
     finally:
         worker.time.sleep = original
     assert exits == []
+
+
+def test_jobs_that_fan_out_over_every_elder_run_in_the_background(monkeypatch):
+    """遍歷全部長輩的 job 必須標成背景，清理類的必須不標。
+
+    ⚠️ 判準是「耗時會不會隨長輩人數成長」。2026-07-26 實測：39 位長輩的夜間批次
+    讓每分鐘該派送的 `schedule-dispatch` 停了兩分鐘——同步跑會把整輪掃描卡住，
+    而卡住的是長輩的吃藥提醒。清理類的 job 只是幾句 SQL，丟背景只是多開執行緒。
+    """
+    scheduler, _core = _build(monkeypatch, _settings())
+    background = {j.name for j in scheduler._jobs if j.background}
+    assert background == {"daily-consolidation", "daily-greeting", "inactivity-care"}
+    assert _job(scheduler, "schedule-dispatch").background is False, (
+        "每分鐘的提醒派送丟到背景，就失去『這一輪一定跑完』的保證"
+    )

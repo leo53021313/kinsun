@@ -13,6 +13,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -53,6 +54,11 @@ from kinsun.schedules.jobs import build_schedule_dispatch_job
 from kinsun.strategies.reflection import reflect_days
 
 logger = logging.getLogger("kinsun.scheduler.worker")
+
+# 會遍歷全部長輩、且逐位呼叫 LLM 的 job；改由獨立執行緒跑，不佔住掃描迴圈。
+# ⚠️ 新增這類 job 時要記得列進來——判準是「它的耗時會不會隨長輩人數成長」。
+# 2026-07-26 實測：39 位長輩的夜間批次讓每分鐘的 `schedule-dispatch` 停了兩分鐘。
+_LONG_RUNNING_JOBS = frozenset({"daily-consolidation", "daily-greeting", "inactivity-care"})
 
 
 def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime]) -> list[Job]:
@@ -358,7 +364,10 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
             minute=50,
         )
     )
-    return jobs
+    # 標記長跑 job（見 `Job.background`）：這三支都要遍歷**全部長輩**並逐位呼叫 LLM，
+    # 同步跑會把整輪掃描連同後面的 job 一起卡住。清理類的 job 不列入——它們是幾句
+    # SQL，跑得比一次掃描還快，丟到背景只是多開執行緒。
+    return [replace(job, background=job.name in _LONG_RUNNING_JOBS) for job in jobs]
 
 
 def build_scheduler(

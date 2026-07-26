@@ -1,3 +1,4 @@
+import threading
 from datetime import datetime, timedelta, timezone
 
 from kinsun.scheduler.scheduler import Job, Scheduler
@@ -130,3 +131,93 @@ def test_two_workers_shared_state_run_job_once():
     state.set_last_run("greet", seed)
     w1.run_due()
     assert runs == ["w1"]
+
+
+# --- 長跑 job 不佔住掃描迴圈（2026-07-26 實測：夜間批次卡住每分鐘的提醒派送）---
+
+
+def test_a_long_background_job_does_not_block_the_rest_of_the_tick():
+    """背景 job 只負責啟動就回來，後面的 job 照跑。
+
+    ⚠️ 這條守的是長輩的吃藥提醒：`run_due` 原本逐一同步執行，`daily-consolidation`
+    對 39 位長輩跑整理＋摘要＋反思時，每分鐘該派送的 `schedule-dispatch` 整整兩分鐘
+    沒有動（2026-07-26 實測）。長輩人數再多一些，提醒就會遲到十幾分鐘。
+    """
+    started = threading.Event()
+    release = threading.Event()
+    order: list[str] = []
+
+    def _slow() -> None:
+        order.append("slow-start")
+        started.set()
+        release.wait(timeout=5)
+        order.append("slow-end")
+
+    state = FakeScheduleStateStore()
+    seed = datetime(2026, 7, 12, 7, 0, tzinfo=TPE)
+    now = datetime(2026, 7, 12, 8, 0, tzinfo=TPE)
+    for name in ("slow", "fast"):
+        state.set_last_run(name, seed)
+    sched = Scheduler(
+        [
+            Job("slow", "0 8 * * *", _slow, background=True),
+            Job("fast", "0 8 * * *", lambda: order.append("fast")),
+        ],
+        clock=lambda: now,
+        state=state,
+    )
+    assert sched.run_due() == ["slow", "fast"]
+    assert started.wait(timeout=5), "背景 job 沒有被啟動"
+    assert "fast" in order, "掃描迴圈被慢 job 卡住了——這正是事故當晚的情形"
+    assert "slow-end" not in order, "run_due 等了背景 job 跑完，等於沒有背景化"
+    release.set()
+
+
+def test_a_background_job_still_running_is_not_started_again():
+    """上一輪還沒跑完就不再啟動，也**不認領**。
+
+    認領會把 last_run_at 推到現在＝謊稱「這一輪跑過了」；真正該表達的是
+    「這一輪不必再跑，因為上一輪還沒結束」。夜間批次跑超過一個掃描間隔是常態
+    （逐位長輩呼叫 LLM），沒有這道防護會疊出好幾份同時在寫同一位長輩的記憶。
+    """
+    release = threading.Event()
+    runs: list[int] = []
+
+    def _slow() -> None:
+        runs.append(1)
+        release.wait(timeout=5)
+
+    state = FakeScheduleStateStore()
+    seed = datetime(2026, 7, 12, 7, 0, tzinfo=TPE)
+    now = datetime(2026, 7, 12, 8, 0, tzinfo=TPE)
+    state.set_last_run("slow", seed)
+    sched = Scheduler(
+        [Job("slow", "0 8 * * *", _slow, background=True)], clock=lambda: now, state=state
+    )
+    assert sched.run_due() == ["slow"]
+    claimed_at = state.get_last_run("slow")
+    assert sched.run_due() == [], "上一輪還在跑，不該再啟動一份"
+    assert state.get_last_run("slow") == claimed_at, "跳過的這一輪不該改動 last_run_at"
+    assert len(runs) == 1
+    release.set()
+
+
+def test_a_crashing_background_job_does_not_kill_the_scheduler():
+    """背景 job 拋例外只留 exception log，掃描迴圈照走——與同步 job 同語意。"""
+    boom = threading.Event()
+
+    def _boom() -> None:
+        boom.set()
+        raise RuntimeError("背景炸了")
+
+    state = FakeScheduleStateStore()
+    seed = datetime(2026, 7, 12, 7, 0, tzinfo=TPE)
+    now = datetime(2026, 7, 12, 8, 0, tzinfo=TPE)
+    state.set_last_run("boom", seed)
+    sched = Scheduler(
+        [Job("boom", "0 8 * * *", _boom, background=True)], clock=lambda: now, state=state
+    )
+    assert sched.run_due() == ["boom"]
+    assert boom.wait(timeout=5)
+    # 例外被吞在背景執行緒裡；下一輪（狀態已推進）自然不再到期。
+    assert sched.run_due() == []
