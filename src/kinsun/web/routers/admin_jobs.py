@@ -111,6 +111,7 @@ def create_admin_jobs_router(
         now = clock()
         items = []
         overdue: list[str] = []
+        never_ran: list[str] = []
         for job in jobs:
             last = schedule_state.get_last_run(job.name)
             due_at = croniter(job.cron, last).get_next(datetime) if last else None
@@ -118,7 +119,14 @@ def create_admin_jobs_router(
             # 沒有容許量的話每個 job 在到期後的那幾十秒都會被誤報成逾期。
             late_seconds = (now - due_at).total_seconds() if due_at else 0.0
             is_overdue = late_seconds > _OVERDUE_TOLERANCE_SECONDS
-            if is_overdue:
+            # ⚠️ 從沒跑過（`scheduler_state` 沒有這一列）必須單獨標出來，不可算成健康：
+            # 沒有 last_run_at 就算不出 due_at，`is_overdue` 於是恆為 False——一支
+            # 從部署起就沒被排程器碰過的 job，這一頁會顯示成全綠。那正是這一頁要抓的
+            # 情形裡最嚴重的一種（例如排程器根本沒認得這支 job、或它從未啟動過）。
+            is_never_ran = last is None
+            if is_never_ran:
+                never_ran.append(job.name)
+            elif is_overdue:
                 overdue.append(job.name)
             items.append(
                 {
@@ -128,17 +136,21 @@ def create_admin_jobs_router(
                     "due_at": due_at.timestamp() if due_at else None,
                     "late_seconds": round(late_seconds) if is_overdue else 0,
                     "is_overdue": is_overdue,
+                    "never_ran": is_never_ran,
                 }
             )
-        warnings = (
-            [
+        warnings = []
+        if overdue:
+            warnings.append(
                 f"有 {len(overdue)} 支排程逾期未執行：{'、'.join(overdue)}"
                 "（排程器可能沒在跑或已卡死，程序活著也可能停擺）"
-            ]
-            if overdue
-            else []
-        )
-        return ok(items, meta={"overdue": overdue, "warnings": warnings})
+            )
+        if never_ran:
+            warnings.append(
+                f"有 {len(never_ran)} 支排程從未執行過：{'、'.join(never_ran)}"
+                "（首次部署後排程器會先種基準，若持續顯示請確認排程器有認到這支 job）"
+            )
+        return ok(items, meta={"overdue": overdue, "never_ran": never_ran, "warnings": warnings})
 
     @router.post(
         "/jobs/{job_name}/run",

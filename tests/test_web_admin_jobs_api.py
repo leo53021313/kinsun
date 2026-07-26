@@ -116,12 +116,38 @@ def test_a_stalled_job_is_flagged_with_a_warning():
     assert "逾期未執行" in body["meta"]["warnings"][0]
 
 
-def test_a_job_that_has_never_run_is_not_flagged():
-    """從未跑過的 job（首見種基準前）沒有基準可比，不該報逾期。"""
+def test_a_job_that_has_never_run_is_reported_separately_not_as_healthy():
+    """從未跑過的 job 沒有基準可比，不該報「逾期」——但更不該顯示成健康。
+
+    ⚠️ 這是逾期偵測原本的盲點：沒有 `last_run_at` 就算不出 `due_at`，`is_overdue`
+    於是恆為 False，一支從部署起就沒被排程器碰過的 job 在這一頁上是**全綠**的。
+    而那正是這一頁要抓的情形裡最嚴重的一種——例如排程器根本沒認得這支 job。
+    故另立 `never_ran` 訊號與獨立告警。
+    """
     jobs = [Job(name="never-ran", cron="* * * * *", run=lambda: None)]
     body = _client(jobs=jobs).get("/api/v1/admin/jobs", headers=_auth()).json()
-    assert body["data"][0]["is_overdue"] is False
-    assert body["data"][0]["due_at"] is None
+    row = body["data"][0]
+    assert row["is_overdue"] is False  # 沒有基準，談不上逾期
+    assert row["due_at"] is None
+    assert row["never_ran"] is True
+    assert body["meta"]["never_ran"] == ["never-ran"]
+    assert "從未執行過" in body["meta"]["warnings"][0]
+
+
+def test_never_ran_and_overdue_are_counted_separately():
+    """兩種訊號不可互相蓋掉：一支從未跑過、一支停擺，兩則告警都要出現。"""
+    state = FakeScheduleStateStore()
+    state.set_last_run("stalled", NOW - timedelta(hours=7))
+    jobs = [
+        Job(name="stalled", cron="* * * * *", run=lambda: None),
+        Job(name="fresh-deploy", cron="* * * * *", run=lambda: None),
+    ]
+    body = (
+        _client(jobs=jobs, schedule_state=state).get("/api/v1/admin/jobs", headers=_auth()).json()
+    )
+    assert body["meta"]["overdue"] == ["stalled"]
+    assert body["meta"]["never_ran"] == ["fresh-deploy"]
+    assert len(body["meta"]["warnings"]) == 2
 
 
 def test_list_jobs_requires_admin_key():
