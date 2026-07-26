@@ -13,6 +13,39 @@ class LLMError(Exception):
     """LLM 呼叫失敗。"""
 
 
+# 「這個錯誤重試有機會成功嗎？」的單一判準。
+#
+# ⚠️ 為什麼是字串比對而不是型別／狀態碼（2026-07-27）：同一個配額錯誤會以三種形狀出現
+# ——`google.genai.errors.APIError`（我們自己的呼叫）、mem0 內部包裝過的例外
+# （長期記憶寫入，實測 scheduler.log 的 15 筆 429 全走這條）、以及本模組翻譯出的
+# `LLMError`。呼叫端拿到的是哪一種取決於它站在哪一層，型別比對會在跨層時漏掉。
+#
+# ⚠️ 白名單而非黑名單：認不出來的一律**不**重試。這個預設值必須偏保守——排程端的
+# 重試會拉長夜間批次，而多數程式錯誤重試幾次都一樣。
+#
+# 清單原本住在 `rag/embeddings.py`，2026-07-27 搬來這裡供 cron 端共用——同一個判斷
+# 散成兩份，遲早會有一份忘了更新。
+_RETRYABLE_MARKERS = (
+    "429",
+    "rate limit",
+    "too many requests",
+    "resource_exhausted",
+    "quota",
+    "temporarily unavailable",
+    "503",
+    "timed out",
+    "timeout",
+    "readtimeout",
+    "connecttimeout",
+)
+
+
+def is_retryable_llm_error(exc: BaseException) -> bool:
+    """配額、限流、暫時性故障→True；其餘→False。"""
+    message = str(exc).lower()
+    return any(marker in message for marker in _RETRYABLE_MARKERS)
+
+
 @dataclass
 class LLMUsage:
     """一段範圍內的 token 用量累計（可變累加器）。"""

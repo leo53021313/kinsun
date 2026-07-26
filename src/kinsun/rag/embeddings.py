@@ -8,6 +8,7 @@ from typing import Protocol
 from tenacity import Retrying, retry_if_exception, stop_after_attempt, wait_exponential
 
 from kinsun import tracing
+from kinsun.llm import is_retryable_llm_error
 from kinsun.rag.schemas import RAG_EMBEDDING_DIMENSIONS
 
 _GEMINI_EMBEDDING_001 = "gemini-embedding-001"
@@ -192,21 +193,12 @@ class GeminiEmbeddingModel:
 
 
 def _is_retryable_embedding_error(exc: Exception) -> bool:
-    message = str(exc).lower()
-    retryable_markers = (
-        "429",
-        "rate limit",
-        "too many requests",
-        "resource_exhausted",
-        "quota",
-        "temporarily unavailable",
-        "503",
-        "timed out",
-        "timeout",
-        "readtimeout",
-        "connecttimeout",
-    )
-    return any(marker in message for marker in retryable_markers)
+    """沿用全庫共用的判準（2026-07-27 搬進 `llm.py`）。
+
+    保留這層薄包裝而不是直接用：本模組的 `Retrying` 已指名它，改呼叫端等於動一段
+    有回歸測試守住的重試設定，收益為零。判準本身只有一份。
+    """
+    return is_retryable_llm_error(exc)
 
 
 class CharacterHashEmbedding:
