@@ -83,6 +83,22 @@ _port_open() {
 
 _http_ok() { command -v curl >/dev/null 2>&1 && curl -fsS --max-time 2 "$1" >/dev/null 2>&1; }
 
+# 排程器是否由 systemd 常駐（deploy/kinsun-scheduler.service）。
+# ⚠️ 為什麼非查不可：systemd 起的排程器**不會寫 .run/scheduler.pid**，而本腳本判斷
+# 服務死活全靠那個檔。沒有這道查詢，裝了 unit 之後會有兩個後果，兩個都很糟：
+#   1. `start` 會再起第二個排程器（兩邊搶同一批 job）
+#   2. `status` 會把好好在跑的排程器顯示成 STOPPED
+# 第 2 點正是 2026-07-26 假死事件的同一種病——狀態頁說謊，而人會相信它。
+_systemd_scheduler_active() {
+  command -v systemctl >/dev/null 2>&1 || return 1
+  systemctl --user is-active --quiet kinsun-scheduler 2>/dev/null
+}
+
+# systemd 常駐時，排程器真正的 PID（供 status 顯示與 dump 送訊號）。
+_systemd_scheduler_pid() {
+  systemctl --user show -p MainPID --value kinsun-scheduler 2>/dev/null | grep -E '^[1-9]' || true
+}
+
 # 秒數轉人看得懂的長度（心跳年齡用）。「12960 秒前」沒人算得出是三個半小時。
 _human_age() {
   local s="$1"
@@ -211,6 +227,11 @@ launch_webhook() {
 }
 
 launch_scheduler() {
+  if _systemd_scheduler_active; then
+    warn "Scheduler：已由 systemd 常駐（kinsun-scheduler.service），跳過"
+    info "  管理指令：systemctl --user status|restart|stop kinsun-scheduler"
+    return 0
+  fi
   _precheck scheduler || return 0
   if ! command -v uv >/dev/null 2>&1; then
     warn "Scheduler：找不到 uv，跳過"
@@ -664,7 +685,12 @@ cmd_status() {
   local name state pid note dot port
   for name in "${START_ORDER[@]}"; do
     port="${PORT[$name]:-}"
-    if is_running "$name"; then
+    if [ "$name" = "scheduler" ] && _systemd_scheduler_active; then
+      # systemd 常駐時沒有 PID 檔，照既有邏輯會顯示 STOPPED——那是說謊。
+      state="SYSTEMD"; pid="$(_systemd_scheduler_pid)"; pid="${pid:--}"
+      dot="${C_OK}●${C_OFF}"
+      note="$(_health_note "$name")"
+    elif is_running "$name"; then
       state="RUNNING"; pid="$(_pid_of "$name")"; dot="${C_OK}●${C_OFF}"
       note="$(_health_note "$name")"
     elif [ -n "$port" ] && _port_open "$port"; then
@@ -758,11 +784,17 @@ cmd_dump() {
     scheduler) ;;
     *) err "目前只有 scheduler 接了 SIGUSR1 堆疊傾印"; exit 2 ;;
   esac
-  if ! is_running "$name"; then
-    err "$name 沒在跑（本腳本啟動的），無法傾印"
+  local pid
+  if _systemd_scheduler_active; then
+    # systemd 常駐＝直接跑 venv 的 python（unit 刻意不經 uv），MainPID 就是目標。
+    pid="$(_systemd_scheduler_pid)"
+    [ -n "$pid" ] || { err "systemd 說 kinsun-scheduler 在跑，卻問不到 MainPID"; exit 1; }
+  elif is_running "$name"; then
+    pid="$(_signal_target "$(_pid_of "$name")")"
+  else
+    err "$name 沒在跑，無法傾印"
     exit 1
   fi
-  local pid; pid="$(_signal_target "$(_pid_of "$name")")"
   local log="$LOG_DIR/$name.log"
   local before; before="$(wc -l < "$log" 2>/dev/null || echo 0)"
   info "送出 SIGUSR1 給 $name（PID $pid）…"

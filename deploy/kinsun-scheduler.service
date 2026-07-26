@@ -38,6 +38,9 @@ StartLimitIntervalSec=0
 Type=simple
 WorkingDirectory=%h/kinsun
 Environment=PYTHONPATH=%h/kinsun/src
+# 心跳檔給絕對路徑：`kinsun.sh status` 固定讀 .run/scheduler.heartbeat，寫成相對路徑
+# 就綁死在 WorkingDirectory 上，日後有人改了那一行，狀態頁會安靜地讀不到心跳。
+Environment=SCHEDULER_HEARTBEAT_PATH=%h/kinsun/.run/scheduler.heartbeat
 # 設定與金鑰一律走 .env（AGENTS.md：不寫死路徑、不假設作業系統）；
 # 程式自己會讀專案根目錄的 .env，這裡不重複列舉任何一把金鑰。
 # ⚠️ 不可寫 `uv run`：systemd user manager 的 PATH 不含 ~/.local/bin（uv 裝在那裡），

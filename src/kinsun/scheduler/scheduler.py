@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -13,6 +14,10 @@ from croniter import croniter
 from kinsun.scheduler.state import ScheduleStateStore
 
 logger = logging.getLogger("kinsun.scheduler")
+
+# 背景 job 跑多久算「可能卡住」。夜間批次逐位長輩呼叫 LLM，跑上半小時是正常的；
+# 一小時則已遠超任何合理值，該讓值班的人知道。
+_STUCK_JOB_SECONDS = 3600.0
 
 
 @dataclass(frozen=True)
@@ -43,8 +48,10 @@ class Scheduler:
         self._jobs = jobs
         self._clock = clock
         self._state = state
-        # 背景 job 的在途執行緒；用來防止同一個 job 疊跑（見 run_due）。
-        self._inflight: dict[str, threading.Thread] = {}
+        # 背景 job 的在途執行緒與啟動時刻；防止疊跑（見 run_due），
+        # 並讓「跑太久」變成看得見的告警而不是安靜地永遠跳過。
+        self._inflight: dict[str, tuple[threading.Thread, float]] = {}
+        self._stuck_warned: set[str] = set()
 
     def run_due(self) -> list[str]:
         """掃一輪，把到期的 job 跑掉；回傳本輪啟動的 job 名。
@@ -60,7 +67,7 @@ class Scheduler:
             # 現在，等於謊稱「這一輪跑過了」；而真正該表達的是「這一輪不必再跑，
             # 因為上一輪還沒結束」。at-most-once 的語意在這裡才成立。
             if job.background and self._is_inflight(job.name):
-                logger.info("排程 job %s 上一輪尚未結束，本輪跳過", job.name)
+                self._warn_if_stuck(job.name)
                 continue
             try:
                 claimed = self._claim_if_due(job, now)
@@ -80,8 +87,36 @@ class Scheduler:
         return ran
 
     def _is_inflight(self, name: str) -> bool:
-        thread = self._inflight.get(name)
-        return thread is not None and thread.is_alive()
+        entry = self._inflight.get(name)
+        return entry is not None and entry[0].is_alive()
+
+    def _warn_if_stuck(self, name: str) -> None:
+        """在途太久就升級成 warning——背景化製造出的新盲點，必須自己補上。
+
+        ⚠️ 把長跑 job 移到背景執行緒之後多了一條**安靜失敗**的路徑：這種 job 若永遠
+        不結束，掃描迴圈照跑、心跳照更新、看門狗看不出異常（它守的是 tick 有沒有推進），
+        而這支 job 每一輪都被跳過、**再也不會執行**，日誌卻只有一行 INFO。
+        那正是 2026-07-26 停擺事故的形狀：系統看起來很健康，某個功能已經死了。
+
+        （後端另有一道網：`GET /admin/jobs` 比對 cron 會標出 `is_overdue`，因為
+        `last_run_at` 停在認領當時不再前進。這裡補的是日誌側，讓查 log 的人也看得到。）
+        """
+        entry = self._inflight.get(name)
+        if entry is None:
+            return
+        elapsed = time.monotonic() - entry[1]
+        if elapsed < _STUCK_JOB_SECONDS:
+            logger.info("排程 job %s 上一輪尚未結束（已 %.0f 秒），本輪跳過", name, elapsed)
+            return
+        if name in self._stuck_warned:
+            return  # 每輪刷一次會把日誌洗掉；只在跨過門檻時叫一次
+        self._stuck_warned.add(name)
+        logger.warning(
+            "排程 job %s 已執行 %.0f 分鐘仍未結束，期間每一輪都會被跳過——"
+            "它可能卡住了，請確認（scripts/kinsun.sh dump scheduler 可取堆疊）",
+            name,
+            elapsed / 60,
+        )
 
     def _start_background(self, job: Job) -> None:
         """把 job 丟到獨立的守護執行緒。
@@ -100,7 +135,8 @@ class Scheduler:
                 logger.exception("排程 job 失敗：%s", job.name)
 
         thread = threading.Thread(target=_run, name=f"kinsun-job-{job.name}", daemon=True)
-        self._inflight[job.name] = thread
+        self._inflight[job.name] = (thread, time.monotonic())
+        self._stuck_warned.discard(job.name)  # 新的一輪，重新計算是否卡住
         thread.start()
 
     def _claim_if_due(self, job: Job, now: datetime) -> bool:

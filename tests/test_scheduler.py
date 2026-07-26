@@ -1,4 +1,5 @@
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 from kinsun.scheduler.scheduler import Job, Scheduler
@@ -221,3 +222,36 @@ def test_a_crashing_background_job_does_not_kill_the_scheduler():
     assert boom.wait(timeout=5)
     # 例外被吞在背景執行緒裡；下一輪（狀態已推進）自然不再到期。
     assert sched.run_due() == []
+
+
+def test_a_background_job_stuck_too_long_escalates_to_a_warning(caplog, monkeypatch):
+    """卡住的背景 job 必須叫出來，不能只留一行 INFO。
+
+    ⚠️ 這是背景化製造出的新盲點：背景 job 若永遠不結束，掃描迴圈照跑、心跳照更新、
+    看門狗看不出異常（它守的是 tick 有沒有推進），而這支 job 每一輪都被跳過、
+    再也不會執行——系統看起來很健康，某個功能已經死了。那正是 2026-07-26
+    停擺事故的形狀，不可以在修它的過程中又造一個。
+    """
+    import logging as _logging
+
+    release = threading.Event()
+    state = FakeScheduleStateStore()
+    seed = datetime(2026, 7, 12, 7, 0, tzinfo=TPE)
+    now = datetime(2026, 7, 12, 8, 0, tzinfo=TPE)
+    state.set_last_run("slow", seed)
+    sched = Scheduler(
+        [Job("slow", "0 8 * * *", lambda: release.wait(timeout=5), background=True)],
+        clock=lambda: now,
+        state=state,
+    )
+    sched.run_due()
+    # 假裝它已經跑了兩小時（門檻 1 小時）
+    thread, _started = sched._inflight["slow"]
+    sched._inflight["slow"] = (thread, time.monotonic() - 7200)
+    with caplog.at_level(_logging.WARNING):
+        sched.run_due()
+        sched.run_due()  # 第二輪不該再刷一次，否則日誌會被洗掉
+    warnings = [r for r in caplog.records if r.levelno >= _logging.WARNING]
+    assert len(warnings) == 1, "卡住要叫、但只叫一次"
+    assert "可能卡住" in warnings[0].getMessage()
+    release.set()
