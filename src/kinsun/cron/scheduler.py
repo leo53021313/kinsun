@@ -11,9 +11,9 @@ from datetime import datetime
 
 from croniter import croniter
 
-from kinsun.scheduler.state import ScheduleStateStore
+from kinsun.cron.state import ScheduleStateStore
 
-logger = logging.getLogger("kinsun.scheduler")
+logger = logging.getLogger("kinsun.cron")
 
 # 背景 job 跑多久算「可能卡住」。夜間批次逐位長輩呼叫 LLM，跑上半小時是正常的；
 # 一小時則已遠超任何合理值，該讓值班的人知道。

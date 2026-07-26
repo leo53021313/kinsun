@@ -26,6 +26,8 @@ from kinsun.channels.inbound import VoiceReplyDelivery
 from kinsun.channels.line.webhook import create_app
 from kinsun.composition import assemble_core, build_externals
 from kinsun.config import load_dotenv, load_settings
+from kinsun.cron.state import PgScheduleStateStore
+from kinsun.cron.worker import build_jobs
 from kinsun.llm import build_gemini_for
 from kinsun.logging_setup import setup_logging
 from kinsun.pipeline import VoicePipeline
@@ -35,8 +37,6 @@ from kinsun.safety.deliveries import PgRiskNotificationLogStore
 from kinsun.safety.detector import RiskDetector
 from kinsun.safety.moderation import AbuseModerator, LlmAbuseClassifier
 from kinsun.safety.notifier import GuardianNotifier
-from kinsun.scheduler.state import PgScheduleStateStore
-from kinsun.scheduler.worker import build_jobs
 from kinsun.schedules.flow import ScheduleMenu
 from kinsun.speech.asr import build_asr_client
 from kinsun.speech.tts import build_tts_client

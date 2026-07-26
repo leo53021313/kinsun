@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from kinsun.scheduler.state import FakeScheduleStateStore, PgScheduleStateStore
+from kinsun.cron.state import FakeScheduleStateStore, PgScheduleStateStore
 
 TPE = timezone(timedelta(hours=8))
 

@@ -1,4 +1,4 @@
-from kinsun.scheduler.jobs import build_audio_cleanup_job, build_consolidation_job
+from kinsun.cron.jobs import build_audio_cleanup_job, build_consolidation_job
 
 
 def test_runs_for_each_session():

@@ -1,6 +1,6 @@
 """排程 worker：長跑迴圈，定時 run_due。
 
-CLI：PYTHONPATH=src uv run python -m kinsun.scheduler
+CLI：PYTHONPATH=src uv run python -m kinsun.cron
 """
 
 from __future__ import annotations
@@ -24,6 +24,9 @@ from kinsun.agent import Recall
 from kinsun.audio.publisher import build_audio_publisher
 from kinsun.composition import Core, assemble_core, build_externals
 from kinsun.config import Settings, load_dotenv, load_settings
+from kinsun.cron.jobs import build_audio_cleanup_job, build_consolidation_job
+from kinsun.cron.scheduler import Job, Scheduler
+from kinsun.cron.state import PgScheduleStateStore
 from kinsun.db import Database
 from kinsun.llm import build_gemini_for
 from kinsun.logging_setup import setup_logging
@@ -48,13 +51,10 @@ from kinsun.reports.reminders import (
     safe_record,
 )
 from kinsun.reports.summaries import summarize_day
-from kinsun.scheduler.jobs import build_audio_cleanup_job, build_consolidation_job
-from kinsun.scheduler.scheduler import Job, Scheduler
-from kinsun.scheduler.state import PgScheduleStateStore
 from kinsun.schedules.jobs import build_schedule_dispatch_job
 from kinsun.strategies.reflection import reflect_days
 
-logger = logging.getLogger("kinsun.scheduler.worker")
+logger = logging.getLogger("kinsun.cron.worker")
 
 # 會遍歷全部長輩、且逐位呼叫 LLM 的 job；改由獨立執行緒跑，不佔住掃描迴圈。
 # ⚠️ 新增這類 job 時要記得列進來——判準是「它的耗時會不會隨長輩人數成長」。

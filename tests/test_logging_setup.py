@@ -46,9 +46,9 @@ def test_kinsun_info_reaches_the_stream():
 def test_line_carries_a_timestamp_and_the_logger_name():
     """「何時開始壞的」與「誰印的」是查故障的兩個起點，缺一不可。"""
     stream = _capture()
-    logging.getLogger("kinsun.scheduler").warning("job 失敗")
+    logging.getLogger("kinsun.cron").warning("job 失敗")
     line = stream.getvalue().strip()
-    assert "kinsun.scheduler" in line
+    assert "kinsun.cron" in line
     assert "WARNING" in line
     assert line[:4].isdigit()  # 開頭是年份（asctime）
 
@@ -91,7 +91,7 @@ def test_line_carries_the_trace_id_when_inside_a_turn():
 def test_line_outside_a_turn_still_formats():
     """排程與啟動階段沒有 trace_id，不可因此讓整行 log 炸掉或消失。"""
     stream = _capture()
-    logging.getLogger("kinsun.scheduler").info("排程器啟動")
+    logging.getLogger("kinsun.cron").info("排程器啟動")
     assert "排程器啟動" in stream.getvalue()
 
 

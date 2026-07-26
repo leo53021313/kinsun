@@ -46,7 +46,7 @@ Environment=SCHEDULER_HEARTBEAT_PATH=%h/kinsun/.run/scheduler.heartbeat
 # ⚠️ 不可寫 `uv run`：systemd user manager 的 PATH 不含 ~/.local/bin（uv 裝在那裡），
 # 它不會 source 登入 shell 的 ~/.profile——實測 `systemctl --user show-environment` 確認。
 # 直接指專案 venv 的 python，少一層、也不會在開機時讓 uv 去動與 webhook 共用的 .venv。
-ExecStart=%h/kinsun/.venv/bin/python -m kinsun.scheduler
+ExecStart=%h/kinsun/.venv/bin/python -m kinsun.cron
 Restart=always
 RestartSec=30
 StandardOutput=append:%h/kinsun/logs/scheduler.log

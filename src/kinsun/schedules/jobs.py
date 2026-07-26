@@ -26,9 +26,9 @@ from datetime import datetime, timedelta
 
 from kinsun.accounts.models import ElderGuardian, PrincipalType
 from kinsun.channels.router import ChannelRouter
+from kinsun.cron.fanout import fanout_job
+from kinsun.cron.scheduler import Job
 from kinsun.reports.reminders import safe_record
-from kinsun.scheduler.fanout import fanout_job
-from kinsun.scheduler.scheduler import Job
 from kinsun.schedules.models import Audience, RepeatKind, Schedule, ScheduleKind
 from kinsun.schedules.store import ScheduleStore
 from kinsun.schedules.wording import appointment_texts, custom_text, medication_text

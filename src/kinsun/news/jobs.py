@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
+from kinsun.cron.scheduler import Job
 from kinsun.news.fetchers.protocol import NewsFetcher
 from kinsun.news.store import NewsStore
-from kinsun.scheduler.scheduler import Job
 
 logger = logging.getLogger("kinsun.news")
 

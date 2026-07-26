@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from kinsun.scheduler.scheduler import Job
+from kinsun.cron.scheduler import Job
 
 
 def build_observability_cleanup_job(

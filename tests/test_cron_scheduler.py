@@ -2,7 +2,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 
-from kinsun.scheduler.scheduler import Job, Scheduler
+from kinsun.cron.scheduler import Job, Scheduler
 from tests.fakes import FakeScheduleStateStore
 
 TPE = timezone(timedelta(hours=8))

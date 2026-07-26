@@ -19,8 +19,8 @@ from pydantic import BaseModel
 from kinsun import tracing
 from kinsun.accounts.service import AccountService
 from kinsun.channels.router import ChannelRouter
-from kinsun.scheduler.scheduler import Job
-from kinsun.scheduler.state import ScheduleStateStore
+from kinsun.cron.scheduler import Job
+from kinsun.cron.state import ScheduleStateStore
 from kinsun.schedules.jobs import build_schedule_dispatch_job
 from kinsun.schedules.models import RepeatKind, Schedule, ScheduleKind
 from kinsun.schedules.store import ScheduleStore

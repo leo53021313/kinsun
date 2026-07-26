@@ -244,7 +244,7 @@ launch_scheduler() {
     # _bg 不會 cd，若從別的目錄呼叫本腳本，相對路徑會把心跳寫到別處，
     # 於是 status 讀不到心跳、把「活得好好的」誤報成「無心跳檔」。
     export SCHEDULER_HEARTBEAT_PATH="$RUN_DIR/scheduler.heartbeat"
-    _bg scheduler uv run python -m kinsun.scheduler
+    _bg scheduler uv run python -m kinsun.cron
   )
 }
 

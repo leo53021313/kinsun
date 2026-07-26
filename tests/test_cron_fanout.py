@@ -1,6 +1,6 @@
 import pytest
 
-from kinsun.scheduler.fanout import fanout_job
+from kinsun.cron.fanout import fanout_job
 
 
 def test_runs_action_for_each_item_and_builds_cron():

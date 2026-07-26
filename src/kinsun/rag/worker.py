@@ -9,11 +9,11 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from kinsun.config import load_dotenv, load_rag_worker_settings
+from kinsun.cron.scheduler import Job, Scheduler
+from kinsun.cron.state import PgScheduleStateStore
 from kinsun.db import Database, ensure_schema
 from kinsun.rag.refresh import refresh_known_urls
 from kinsun.rag.schemas import ContentPolicy
-from kinsun.scheduler.scheduler import Job, Scheduler
-from kinsun.scheduler.state import PgScheduleStateStore
 
 
 def main() -> int:

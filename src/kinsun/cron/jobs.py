@@ -5,10 +5,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
-from kinsun.scheduler.fanout import fanout_job
-from kinsun.scheduler.scheduler import Job
+from kinsun.cron.fanout import fanout_job
+from kinsun.cron.scheduler import Job
 
-logger = logging.getLogger("kinsun.scheduler")
+logger = logging.getLogger("kinsun.cron")
 
 
 def build_consolidation_job(

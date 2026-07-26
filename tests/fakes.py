@@ -11,6 +11,7 @@ from typing import NamedTuple
 
 from kinsun.accounts.store import FakeAccountStore as FakeAccountStore
 from kinsun.binding.session import FakeBindingSessionStore as FakeBindingSessionStore
+from kinsun.cron.state import FakeScheduleStateStore as FakeScheduleStateStore
 from kinsun.llm import Message
 from kinsun.locations.store import FakeLocationStore as FakeLocationStore
 from kinsun.memory.models import MemoryItem
@@ -22,7 +23,6 @@ from kinsun.proactive.preferences import (
 from kinsun.reports.reminders import FakeReminderLogStore as FakeReminderLogStore
 from kinsun.reports.summaries import FakeConversationSummaryStore as FakeConversationSummaryStore
 from kinsun.safety.events import FakeRiskEventStore as FakeRiskEventStore
-from kinsun.scheduler.state import FakeScheduleStateStore as FakeScheduleStateStore
 from kinsun.schedules.store import FakeScheduleStore as FakeScheduleStore
 from kinsun.strategies.store import FakeStrategyStore as FakeStrategyStore
 

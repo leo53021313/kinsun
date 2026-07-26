@@ -6,9 +6,9 @@ from fastapi.testclient import TestClient
 from kinsun.accounts.models import Elder, ElderGuardian, Guardian, Role
 from kinsun.accounts.service import AccountService
 from kinsun.accounts.store import FakeAccountStore
+from kinsun.cron.scheduler import Job
+from kinsun.cron.state import FakeScheduleStateStore
 from kinsun.reports.reminders import FakeReminderLogStore
-from kinsun.scheduler.scheduler import Job
-from kinsun.scheduler.state import FakeScheduleStateStore
 from kinsun.schedules.models import (
     Audience,
     CreatedBy,

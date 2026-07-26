@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-import kinsun.scheduler.worker as worker
+import kinsun.cron.worker as worker
 from kinsun.accounts.models import PrincipalType
 from kinsun.agent import Recall
 from kinsun.config import load_settings

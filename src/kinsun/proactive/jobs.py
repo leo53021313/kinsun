@@ -6,9 +6,9 @@ import logging
 from collections.abc import Callable, Sequence
 from datetime import datetime
 
+from kinsun.cron.fanout import fanout_job
+from kinsun.cron.scheduler import Job
 from kinsun.proactive.preferences import GreetingPreferenceStore
-from kinsun.scheduler.fanout import fanout_job
-from kinsun.scheduler.scheduler import Job
 
 logger = logging.getLogger("kinsun.proactive")
 

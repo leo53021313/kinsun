@@ -7,9 +7,9 @@ from collections.abc import Callable, Iterable
 from typing import TypeVar
 
 from kinsun import tracing
-from kinsun.scheduler.scheduler import Job
+from kinsun.cron.scheduler import Job
 
-logger = logging.getLogger("kinsun.scheduler")
+logger = logging.getLogger("kinsun.cron")
 
 T = TypeVar("T")
 
