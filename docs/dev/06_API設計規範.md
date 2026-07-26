@@ -1,6 +1,6 @@
 # API 設計規範 - 金孫 KinSun
 
-> **版本:** v1.8 | **更新:** 2026-07-26 | **狀態:** ✅ 定稿（`GET /admin/jobs` 加逾期偵測欄位（`is_overdue`／`late_seconds`／`never_ran`／`meta.overdue`／`meta.never_ran`／`meta.warnings`）——`never_ran` 為 2026-07-26 補：沒有 `last_run_at` 就算不出 `due_at`、`is_overdue` 恆為 False，從沒被排程器碰過的 job 原本顯示成全綠；新增 `GET /turns/chunks/{index}` 分段語音串流＋三個錯誤碼，`POST /turns` 回應加 `chunk_count`／`reply_digest`；契約已拍板 D-23～D-29；/v1 已全面落地；`traces/{trace_id}` 回應加 `opik_url` 深連結）
+> **版本:** v1.9 | **更新:** 2026-07-27 | **狀態:** ✅ 定稿（`GET /admin/jobs` 加逾期偵測欄位（`is_overdue`／`late_seconds`／`due_at`／`never_ran`／`meta.overdue`／`meta.never_ran`／`meta.warnings`），**逾期容許量改逐 job**（`schedule-dispatch` 用自己的 90 秒判定窗，預設仍 300 秒）——`never_ran` 為 2026-07-26 補：沒有 `last_run_at` 就算不出 `due_at`、`is_overdue` 恆為 False，從沒被排程器碰過的 job 原本顯示成全綠；新增 `GET /turns/chunks/{index}` 分段語音串流＋三個錯誤碼，`POST /turns` 回應加 `chunk_count`／`reply_digest`；契約已拍板 D-23～D-29；/v1 已全面落地；`traces/{trace_id}` 回應加 `opik_url` 深連結）
 > **基準:** as-is（現行 23 端點實證）＋ to-be（/v1 契約）。命名規則以 AGENTS.md 為準。
 > DGX 服務認證與速率限制 → 13_安全循環；`admin api disabled` 503 措辭一併列 13。
 
