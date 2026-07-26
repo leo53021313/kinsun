@@ -7,12 +7,14 @@ MessagingApi／MessagingApiBlob 換成替身；訊息模型（TextMessage 等）
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 
 import pytest
 
 from kinsun.channels.line.messenger import (
     LINE_API_TIMEOUT_SECONDS,
+    LINE_SEND_MAX_ATTEMPTS,
     LineApiMessenger,
     LineOutboundChannel,
 )
@@ -181,3 +183,99 @@ def test_outbound_channel_delegates_to_push():
     kind, request = calls[0]
     assert kind == "push"
     assert request.to == "U-1"
+
+
+# ── 出站重試：只補「確定沒送出去」的那幾種（2026-07-27）──
+#
+# urllib3 的隱形重試已關掉（見上），所以一次網路抖動就等於一則危急通知永久消失。
+# 重試改在這一層做——看得見、有日誌、且能挑對象。挑對象是重點：家屬收到兩則一模一樣
+# 的危急警報，比漏收一則更容易讓人以後不再相信這個警報。
+
+
+class _FlakyMessenger:
+    """依序拋出腳本裡的例外；None 代表這次成功。"""
+
+    def __init__(self, script) -> None:
+        self.script = list(script)
+        self.attempts = 0
+
+    def push_text(self, line_user_id: str, text: str) -> None:
+        self.attempts += 1
+        exc = self.script.pop(0) if self.script else None
+        if exc is not None:
+            raise exc
+
+
+def _channel(script, slept=None):
+    messenger = _FlakyMessenger(script)
+    channel = LineOutboundChannel(messenger, sleep=(slept.append if slept is not None else None))
+    return channel, messenger
+
+
+def _max_retry_error():
+    from urllib3.exceptions import MaxRetryError
+
+    return MaxRetryError(pool=None, url="https://api.line.me", reason=OSError("connection refused"))
+
+
+def _service_exception():
+    from linebot.v3.messaging.exceptions import ServiceException
+
+    return ServiceException(status=503, reason="Service Unavailable")
+
+
+def test_connection_failure_is_retried_until_it_succeeds():
+    """連線根本沒建立起來＝請求沒送出去，重試不可能造成重複投遞。"""
+    slept: list[float] = []
+    channel, messenger = _channel([_max_retry_error(), None], slept)
+    channel.send_text("U-1", "危急通知")
+    assert messenger.attempts == 2
+    assert slept, "重試之間必須退避，不可連打"
+
+
+def test_server_error_is_retried():
+    """5xx＝LINE 自己沒處理成功，重送是安全的。"""
+    slept: list[float] = []
+    channel, messenger = _channel([_service_exception(), None], slept)
+    channel.send_text("U-1", "危急通知")
+    assert messenger.attempts == 2
+
+
+def test_read_timeout_is_never_retried():
+    """⚠️ 這是本次最重要的一條：逾時代表 LINE 收到了但沒回應，那則通知可能已經送達。
+
+    重試會讓家屬收到兩則一模一樣的危急警報。寧可記一次失敗，也不要製造重複警報。
+    """
+    from urllib3.exceptions import ReadTimeoutError
+
+    channel, messenger = _channel([ReadTimeoutError(pool=None, url="x", message="timed out")])
+    with pytest.raises(ReadTimeoutError):
+        channel.send_text("U-1", "危急通知")
+    assert messenger.attempts == 1
+
+
+def test_client_errors_are_never_retried():
+    """4xx＝請求本身有問題（token 失效、對象封鎖），重送幾次都一樣，只是拖慢通報。"""
+    from linebot.v3.messaging.exceptions import ForbiddenException
+
+    channel, messenger = _channel([ForbiddenException(status=403, reason="blocked")])
+    with pytest.raises(ForbiddenException):
+        channel.send_text("U-1", "危急通知")
+    assert messenger.attempts == 1
+
+
+def test_retries_are_bounded_and_the_error_still_surfaces():
+    """重試用盡仍要把例外往上拋——ChannelRouter 據此記成投遞失敗，語意不可被吞掉。"""
+    slept: list[float] = []
+    channel, messenger = _channel([_max_retry_error()] * 10, slept)
+    with pytest.raises(Exception):  # noqa: B017 - 型別不重要，重點是有拋出來
+        channel.send_text("U-1", "危急通知")
+    assert messenger.attempts == LINE_SEND_MAX_ATTEMPTS
+
+
+def test_retry_is_logged(caplog):
+    """urllib3 的隱形重試查不到，這一層的必須查得到。"""
+    channel, _ = _channel([_max_retry_error(), None], [])
+    with caplog.at_level(logging.WARNING, logger="kinsun.channels.line"):
+        channel.send_text("U-1", "危急通知")
+    assert any("重試" in r.message for r in caplog.records)
