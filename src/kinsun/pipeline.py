@@ -133,6 +133,11 @@ class VoicePipeline:
                 FALLBACK_REPLY, external_id=external_id, channel=channel, trace_id=trace_id
             )
             return replace(result, transcript=user_text)
+        # 情境組裝先行啟動（2026-07-26 延遲實測）：它是本輪最慢的一段（長期記憶檢索
+        # ＋七次事實查詢，約 2.9 秒），而輸入只有 elder_id＋原話，不必等安全檢查跑完。
+        # ⚠️ 這只改「何時開始組」，**決策順序一字未動**——底下的落庫／通報／攔截先後
+        # 完全照舊。prepare 只讀不寫，故被攔的那一輪雖白做一次組裝，仍不會進記憶。
+        prepared = self._agent.prepare(elder_id, user_text)
         assessment = self._assess(
             user_text, external_id=external_id, channel=channel, trace_id=trace_id
         )
@@ -178,6 +183,7 @@ class VoicePipeline:
             channel=channel,
             trace_id=trace_id,
             has_risk_signal=assessment.tier >= RiskTier.L1,
+            prepared=prepared,
         )
         # 對話原話＋回覆寫進 trace I/O，Opik Threads 才顯示 First／Last message。
         tracing.set_current_trace_io(user_input=user_text, assistant_output=reply_text)
@@ -358,6 +364,7 @@ class VoicePipeline:
         channel: str,
         trace_id: str,
         has_risk_signal: bool,
+        prepared=None,
     ) -> str:
         # 每輪記一筆（涵蓋整個 agent 含工具迴圈）；token 用量由收集器彙總本輪
         # 所有 Gemini 呼叫（✅ D-05 戊-2）。零申報（假 LLM／無 usage_metadata）
@@ -385,6 +392,7 @@ class VoicePipeline:
                     user_text,
                     trace_id=trace_id,
                     has_risk_signal=has_risk_signal,
+                    prepared=prepared,
                 )
         return reply
 

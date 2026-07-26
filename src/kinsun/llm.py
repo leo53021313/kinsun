@@ -147,8 +147,19 @@ class GeminiClient:
         if not api_key:
             raise LLMError("缺少 GEMINI_API_KEY")
         from google import genai
+        from google.genai import types
 
-        client = genai.Client(api_key=api_key)
+        # 逾時掛在 client 上（2026-07-26 延遲實測）：先前 timeout 只存進欄位、從未
+        # 傳給 SDK，等於 Gemini 呼叫沒有任何客戶端逾時——生產 llm_calls p95 11.5s、
+        # max 23.8s，實測還撞過單輪 46 秒與 52 秒。ASR／TTS 的逾時之所以有效，
+        # 差別就在有把值傳下去（兩者 latency 精準卡在 15s／30s）。
+        # ⚠️ SDK 的 HttpOptions.timeout 單位是**毫秒**，設定檔（GEMINI_TIMEOUT_SECONDS）
+        # 是秒，換算不可省——漏乘 1000 會變成 30 毫秒逾時，等於全部呼叫立刻失敗。
+        # 掛在 client 而非逐次呼叫：本 client 的每個出口（generate／generate_tool_turn）
+        # 都該受同一把逾時管，逐次傳容易漏掉新增的出口。
+        client = genai.Client(
+            api_key=api_key, http_options=types.HttpOptions(timeout=int(timeout * 1000))
+        )
         # client_wrapper 為觀測層的注入點（如 Opik track_genai）；None＝不包裝。
         # 保持 llm.py 不 import 觀測套件（依賴反轉），包裝由組裝層決定。
         self._client = client_wrapper(client) if client_wrapper is not None else client

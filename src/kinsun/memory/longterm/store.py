@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextvars
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Protocol
 
 from kinsun import tracing
@@ -145,8 +147,28 @@ class Mem0LongTermStore:
 
     @tracing.track(name="mem0_search", type="general", capture_input=True, capture_output=True)
     def search(self, elder_id: str, query: str, *, top_k: int | None = None) -> list[MemoryItem]:
-        user_items = self._search_raw(query, elder_id, top_k or self._top_k)
-        health_items = self._search_raw(HEALTH_QUERY, elder_id, self._health_top_k)
+        """長輩原話與健康增補**並行**檢索（2026-07-26 延遲實測）。
+
+        每次 `_search_raw` 都是「embedding API ＋ 向量查詢 ＋（視設定）LLM rerank」，
+        實測合計約 2.3 秒；兩次排隊跑就是 4.6 秒，佔端到端延遲近三成。兩個查詢彼此
+        無依賴（一個用長輩原話、一個用固定的健康關鍵字），沒有理由排隊。
+
+        ⚠️ 合併順序維持「先 user、後 health」不可交換：`_dedup` 保留先出現者，兩邊
+        撈到同一筆記憶時，該留下的是**依長輩原話**檢索出來的那筆。並行只改變兩者
+        何時發出，不改變合併與排序（`test_search_dedups_overlapping_id` 守住）。
+
+        `_search_raw` 自帶 fail-safe（檢索失敗回空清單、不上拋），故兩邊各自的失敗
+        互不影響——`test_health_search_failure_keeps_user_results` 守住這條。
+        """
+        contexts = [contextvars.copy_context() for _ in range(2)]
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            user_future = pool.submit(
+                contexts[0].run, self._search_raw, query, elder_id, top_k or self._top_k
+            )
+            health_future = pool.submit(
+                contexts[1].run, self._search_raw, HEALTH_QUERY, elder_id, self._health_top_k
+            )
+            user_items, health_items = user_future.result(), health_future.result()
         merged = self._dedup(user_items + health_items)
         for item in merged:
             if "score_details" in item:  # explain 供調閱：debug 層記錄，不進 prompt

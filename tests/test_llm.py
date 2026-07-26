@@ -243,3 +243,18 @@ def test_gemini_client_applies_client_wrapper():
 def test_gemini_client_without_wrapper_keeps_native_client():
     client = GeminiClient(api_key="dummy", model="m", timeout=30.0)
     assert client._client is not None
+
+
+def test_gemini_client_applies_the_configured_timeout():
+    """`GEMINI_TIMEOUT_SECONDS` 必須真的送到 SDK（2026-07-26 延遲實測）。
+
+    先前 `timeout` 只存進 `self._timeout` 就沒下文，等於 Gemini 呼叫**沒有任何
+    客戶端逾時**：生產資料 llm_calls p95 11.5s、max 23.8s，實測還撞過單輪 46 秒與
+    52 秒（同批其他次都在 7～8 秒）。對照組 ASR／TTS 的逾時確實生效，兩者的
+    latency 精準卡在設定值（15s／30s）——差別就在有沒有把值傳下去。
+
+    SDK 的 `HttpOptions.timeout` 單位是**毫秒**，設定檔是秒，故換算不可省。
+    """
+    client = GeminiClient(api_key="dummy", model="m", timeout=12.5)
+
+    assert client._client._api_client._http_options.timeout == 12500
