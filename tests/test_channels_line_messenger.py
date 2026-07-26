@@ -9,7 +9,13 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from kinsun.channels.line.messenger import LineApiMessenger, LineOutboundChannel
+import pytest
+
+from kinsun.channels.line.messenger import (
+    LINE_API_TIMEOUT_SECONDS,
+    LineApiMessenger,
+    LineOutboundChannel,
+)
 
 
 class _FakeApiClient:
@@ -26,29 +32,36 @@ class _FakeApiClient:
 def _messenger(*, profile_raises: bool = False) -> tuple[LineApiMessenger, list]:
     calls: list = []
 
+    kwargs_seen: list[dict] = []
+
     class _FakeApi:
         def __init__(self, api_client) -> None:
             pass
 
-        def reply_message(self, request) -> None:
+        def reply_message(self, request, **kwargs) -> None:
+            kwargs_seen.append(kwargs)
             calls.append(("reply", request))
 
-        def push_message(self, request) -> None:
+        def push_message(self, request, **kwargs) -> None:
+            kwargs_seen.append(kwargs)
             calls.append(("push", request))
 
-        def get_profile(self, line_user_id: str):
+        def get_profile(self, line_user_id: str, **kwargs):
+            kwargs_seen.append(kwargs)
             if profile_raises:
                 raise RuntimeError("api down")
             return SimpleNamespace(display_name="阿孫")
 
-        def link_rich_menu_id_to_user(self, line_user_id: str, rich_menu_id: str) -> None:
+        def link_rich_menu_id_to_user(self, line_user_id: str, rich_menu_id: str, **kwargs) -> None:
+            kwargs_seen.append(kwargs)
             calls.append(("link", line_user_id, rich_menu_id))
 
     class _FakeBlob:
         def __init__(self, api_client) -> None:
             pass
 
-        def get_message_content(self, message_id: str) -> bytes:
+        def get_message_content(self, message_id: str, **kwargs) -> bytes:
+            kwargs_seen.append(kwargs)
             calls.append(("blob", message_id))
             return b"AUDIO"
 
@@ -56,6 +69,7 @@ def _messenger(*, profile_raises: bool = False) -> tuple[LineApiMessenger, list]
     messenger._ApiClient = _FakeApiClient
     messenger._MessagingApi = _FakeApi
     messenger._MessagingApiBlob = _FakeBlob
+    messenger.kwargs_seen = kwargs_seen  # 測試用：驗證每個出口都帶了逾時
     return messenger, calls
 
 
@@ -113,6 +127,52 @@ def test_link_rich_menu_passes_ids():
     messenger, calls = _messenger()
     messenger.link_rich_menu("U-1", "menu-1")
     assert calls == [("link", "U-1", "menu-1")]
+
+
+# ── 逾時：每一個出口都必須帶（2026-07-27）──
+#
+# LINE API 一旦假死，該輪對話永遠不返回，佔住一個 uvicorn worker 與一條 Postgres 連線；
+# 家屬危急通報又排在回覆生成之前（pipeline.py），卡住的代價是長輩連回覆都拿不到。
+# 本專案為完全同型的問題付過兩次學費：llm.py:152-162（Gemini 的 timeout 存進欄位卻從沒
+# 傳給 SDK）與 db.py:445-465（死 TCP 讓排程器停擺七小時）。
+
+
+@pytest.mark.parametrize(
+    ("method", "args"),
+    [
+        ("reply_text", ("rt-1", "早安")),
+        ("push_text", ("U-1", "記得吃藥")),
+        ("get_audio", ("mid-1",)),
+        ("display_name", ("U-1",)),
+        ("link_rich_menu", ("U-1", "menu-1")),
+        ("reply_voice", ("rt-1", "https://x/a.m4a", 800, "好喔")),
+    ],
+)
+def test_every_line_api_call_carries_a_timeout(method, args):
+    """逐一列出所有出口——新增方法時漏傳逾時，這條會紅。"""
+    messenger, _ = _messenger()
+    getattr(messenger, method)(*args)
+    assert messenger.kwargs_seen, f"{method} 沒有呼叫任何 LINE API"
+    for kwargs in messenger.kwargs_seen:
+        assert "_request_timeout" in kwargs, f"{method} 沒有傳 _request_timeout"
+        assert kwargs["_request_timeout"] == LINE_API_TIMEOUT_SECONDS
+
+
+def test_urllib3_retries_are_disabled_so_the_timeout_is_a_real_bound():
+    """`_request_timeout` 是每次嘗試的上限，不是總時限。
+
+    黑洞位址（192.0.2.1，RFC 5737 TEST-NET-1）實測：urllib3 預設 retries=None 會自己
+    重試 3 次，逾時設 2 秒實際 8 秒才放棄，且全程無日誌。關掉之後 2 秒就是 2 秒。
+    """
+    messenger, _ = _messenger()
+    assert messenger._configuration.retries == 0
+
+
+def test_timeout_is_configurable_per_instance():
+    messenger, _ = _messenger()
+    messenger._timeout = 3.0
+    messenger.push_text("U-1", "記得吃藥")
+    assert messenger.kwargs_seen[0]["_request_timeout"] == 3.0
 
 
 def test_outbound_channel_delegates_to_push():
