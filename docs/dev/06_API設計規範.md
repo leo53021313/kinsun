@@ -1,6 +1,6 @@
 # API 設計規範 - 金孫 KinSun
 
-> **版本:** v1.6 | **更新:** 2026-07-26 | **狀態:** ✅ 定稿（新增 `GET /turns/chunks/{index}` 分段語音串流＋三個錯誤碼，`POST /turns` 回應加 `chunk_count`／`reply_digest`；契約已拍板 D-23～D-29；/v1 已全面落地；`traces/{trace_id}` 回應加 `opik_url` 深連結）
+> **版本:** v1.7 | **更新:** 2026-07-26 | **狀態:** ✅ 定稿（`GET /admin/jobs` 加逾期偵測欄位（`is_overdue`／`late_seconds`／`meta.warnings`）；新增 `GET /turns/chunks/{index}` 分段語音串流＋三個錯誤碼，`POST /turns` 回應加 `chunk_count`／`reply_digest`；契約已拍板 D-23～D-29；/v1 已全面落地；`traces/{trace_id}` 回應加 `opik_url` 深連結）
 > **基準:** as-is（現行 23 端點實證）＋ to-be（/v1 契約）。命名規則以 AGENTS.md 為準。
 > DGX 服務認證與速率限制 → 13_安全循環；`admin api disabled` 503 措辭一併列 13。
 
@@ -154,6 +154,7 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | :--- | :--- | :--- |
 | `GET /api/admin/overview`／`elders`／`messages`／`elders/{elder_id}/timeline`／`traces/{trace_id}` | 同路徑掛 `/api/v1/admin/` | messages 加 `before` 回翻（D-29）；`traces/{trace_id}` 回應加 `opik_url`（工程觀測開啟且捕捉到 Opik trace id 時＝直達 Opik 的深連結，否則空字串，前端據此隱藏連結）|
 | —（新增） | `GET /api/v1/admin/elders/{elder_id}/reminders`／`memory`／`account`／`risk-notifications`、`GET /api/v1/admin/jobs` | 內測基礎建設（spec 2026-07-12）：長輩詳情四分頁＋排程狀態，唯讀、`X-Admin-Key` 守門 |
+| —（加欄位） | `GET /api/v1/admin/jobs` | 逾期偵測（2026-07-26 全流程模擬實測）：每列加 `due_at`／`late_seconds`／`is_overdue`，`meta` 加 `overdue`（逾期的 job 名陣列）與 `warnings`（人話告警）。判定＝`croniter(cron, last_run).get_next()` 早於現在超過 5 分鐘；`last_run_at` 為 null（從未跑過）者不判逾期。**加法**，舊前端忽略即維持原行為 |
 | `/elders/{id}/medications`、`/elders/{id}/appointments`（**移除**） | `GET/POST/PUT/DELETE /api/v1/elders/{elder_id}/schedules[/{group_id}]` | 統一排程（D-76 P3）：用藥、回診與長輩自訂三類合成單一資源。**操作單位為 group（一件事）而非單一鬧鐘**——家屬按刪除時想刪的是「這個藥」，不是「這個藥的早上那次」。`kind` query 可篩類型；PUT 走 replace_group（先驗證再動手，失敗時原組原封不動）；DELETE 為軟刪（寫 `cancelled_at`，永久保留）。 |
 | `POST .../reminders/dispatch`（body 改） | 同路徑，body 由 `{kind, slot}` 改為 `{kind}`（medication／appointment／custom） | 改接統一派送（D-76 P5）。⚠ 手動觸發**不寫** `fired_at`／`settled_at`——測試動作不可吃掉長輩當天真正該收到的那一則。 |
 | `GET .../admin/elders/{id}/reminders`（回應改） | 同路徑，`medications`＋`appointments` 兩份清單合成 `schedules` 一份 | kind 欄位保留分類，另有 `created_by` 區分家屬設的與長輩自己交代的。 |
