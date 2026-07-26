@@ -1,0 +1,51 @@
+# 金孫排程器：開機自動啟動、當掉自動重啟的 systemd user unit。
+#
+# 為什麼需要它（2026-07-26 全流程模擬實測）：排程器原本跟著 `scripts/kinsun.sh start`
+# 手動起，開機紀錄全落在白天——而夜間批次排在凌晨 3:05，於是「記憶整理／每日摘要／
+# 每晚反思」三個功能自 2026-07-13 起就沒有自動跑過（13 天、287 輪對話沒被整理）。
+#
+# ⚠️ 這只解決「沒常駐」。同一輪實測還抓到「程序活著卻卡死」（連線對端消失、無
+# keepalive、無限期等待），那一項是靠 `db.py` 的 TCP keepalive 與後台 /jobs 的逾期
+# 告警處理的——Restart=always 救得了掛掉，救不了假死。
+#
+# 安裝（這台 DGX 已經開好 Linger=yes，不必登入也會啟動）：
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/kinsun-scheduler.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now kinsun-scheduler
+#   systemctl --user status kinsun-scheduler
+#
+# ⚠️ 第一次啟動前先讀 docs/dev/14_部署與運維.md 的「補跑」一節：排程器有補跨語意，
+# 停擺很久之後啟動會把積欠的 job 補跑一次。
+#
+# 停用：systemctl --user disable --now kinsun-scheduler
+# 看日誌：journalctl --user -u kinsun-scheduler -f
+
+[Unit]
+Description=金孫 KinSun 排程器（提醒派送、主動關懷、夜間批次）
+# ⚠️ 刻意不寫 network-online.target：user manager 沒有這個 target（本機
+# `systemctl --user list-units --type=target` 只有 basic／default／paths／sockets／timers），
+# 寫了不會生效、只會誤導。網路還沒好就啟動的那一輪會失敗，交給 Restart 重試。
+#
+# ⚠️ 也刻意不設 StartLimitBurst：開機時網路慢、Supabase 短暫不可達都會用掉重試配額，
+# 一旦用完 unit 進 failed 就**不再重試**，要人手動 reset-failed——排程器永久不在，
+# 而那正是我們要解決的問題。反覆重啟的可見性交給 journal 與後台的逾期告警。
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h/kinsun
+Environment=PYTHONPATH=%h/kinsun/src
+# 設定與金鑰一律走 .env（AGENTS.md：不寫死路徑、不假設作業系統）；
+# 程式自己會讀專案根目錄的 .env，這裡不重複列舉任何一把金鑰。
+# ⚠️ 不可寫 `uv run`：systemd user manager 的 PATH 不含 ~/.local/bin（uv 裝在那裡），
+# 它不會 source 登入 shell 的 ~/.profile——實測 `systemctl --user show-environment` 確認。
+# 直接指專案 venv 的 python，少一層、也不會在開機時讓 uv 去動與 webhook 共用的 .venv。
+ExecStart=%h/kinsun/.venv/bin/python -m kinsun.scheduler
+Restart=always
+RestartSec=30
+StandardOutput=append:%h/kinsun/logs/scheduler.log
+StandardError=append:%h/kinsun/logs/scheduler.log
+
+[Install]
+WantedBy=default.target

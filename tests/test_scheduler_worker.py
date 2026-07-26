@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import inspect
 import logging
+import signal
+import time
 from datetime import datetime
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -868,7 +870,8 @@ def test_serve_ticks_until_interrupted(monkeypatch):
 
     monkeypatch.setattr(worker.time, "sleep", _sleep)
     with pytest.raises(KeyboardInterrupt):
-        worker.serve(scheduler, tick_seconds=30)
+        # watchdog=False：看門狗也會呼叫 time.sleep，開著會污染這條測試的計數
+        worker.serve(scheduler, tick_seconds=30, watchdog=False)
     assert len(ran) == 2
     assert slept == [30, 30]
 
@@ -881,7 +884,11 @@ def test_main_builds_serves_and_closes_db(monkeypatch, capsys):
     monkeypatch.setattr(worker, "build_scheduler", lambda settings, *, clock: (scheduler, db))
     served: list[tuple] = []
     monkeypatch.setattr(
-        worker, "serve", lambda s, *, tick_seconds: served.append((s, tick_seconds))
+        worker,
+        "serve",
+        lambda s, *, tick_seconds, heartbeat=None, heartbeat_path=None: served.append(
+            (s, tick_seconds)
+        ),
     )
     assert worker.main() == 0
     assert served == [(scheduler, 60)] or served[0][0] is scheduler
@@ -922,3 +929,126 @@ def test_interest_lookup_failure_does_not_block_greeting(monkeypatch, caplog):
         _job(scheduler, "daily-greeting").run()  # 不應拋出
     assert [(pt, pid) for pt, pid, _ in router.sent] == [(PrincipalType.ELDER, "e1")]
     assert "興趣可能包含" not in router.sent[0][2]
+
+
+# --- 看門狗（2026-07-26 全流程模擬實測：排程器活著但停止推進）---
+
+
+def test_the_watchdog_kills_a_stalled_scheduler():
+    """tick 停止推進超過門檻就自殺，交給 systemd 的 Restart=always 撿起來。
+
+    ⚠️ 這一層刻意不賭任何一種診斷：不論卡在 DB、mem0 還是別處，只看「有沒有在動」。
+    實測那次假死，程序活著、日誌零成長、狀態頁顯示 RUNNING，七小時沒有人發現。
+    """
+    exits: list[int] = []
+    stale = [time.monotonic() - 9999]  # 上次推進是很久以前
+    with pytest.raises(RuntimeError):  # 用例外代替 os._exit，測試才停得下來
+
+        def _exit(code: int) -> None:
+            exits.append(code)
+            raise RuntimeError("stop")
+
+        worker._watchdog(stale, stall_seconds=0.4, exit_now=_exit)
+    assert exits == [1]
+
+
+def test_the_watchdog_covers_startup_not_just_the_tick_loop(monkeypatch):
+    """看門狗必須在 build_scheduler **之前**就開始計時。
+
+    2026-07-26 23:00 現場：排程器當天重啟六次全部卡在啟動階段（啟動橫幅一次都沒印出來，
+    `schedule-dispatch` 停在 14:05 不動）。看門狗若只包在 serve() 裡，這一整類假死一次
+    也攔不到——因為 tick 迴圈根本還沒開始跑。
+    """
+    for key, value in _BASE_ENV.items():
+        monkeypatch.setenv(key, value)
+    order: list[str] = []
+    monkeypatch.setattr(
+        worker,
+        "start_watchdog",
+        lambda *, stall_seconds: (order.append("watchdog"), [time.monotonic()])[1],
+    )
+
+    def _build(settings, *, clock):
+        order.append("build_scheduler")
+        return SimpleNamespace(run_due=lambda: None), _FakeDb()
+
+    monkeypatch.setattr(worker, "build_scheduler", _build)
+    monkeypatch.setattr(
+        worker, "serve", lambda s, *, tick_seconds, heartbeat=None, heartbeat_path=None: None
+    )
+    assert worker.main() == 0
+    assert order == ["watchdog", "build_scheduler"], (
+        "看門狗晚於 build_scheduler 啟動＝對啟動階段的假死失明"
+    )
+
+
+def test_main_registers_a_stack_dump_signal(monkeypatch):
+    """`kill -USR1` 要能把全執行緒堆疊倒進日誌。
+
+    ⚠️ 沒有這條，假死時就只能靠 py-spy——而 DGX 的 ptrace_scope=1 讓 py-spy 需要 root，
+    2026-07-26 現場就是因此拿不到任何 Python 堆疊，只知道它卡住、不知道卡在哪。
+    """
+    if not hasattr(signal, "SIGUSR1"):
+        pytest.skip("此平台沒有 SIGUSR1")
+    for key, value in _BASE_ENV.items():
+        monkeypatch.setenv(key, value)
+    registered: list[int] = []
+    monkeypatch.setattr(
+        worker.faulthandler,
+        "register",
+        lambda sig, all_threads=True, chain=True: registered.append(sig),
+    )
+    monkeypatch.setattr(
+        worker, "build_scheduler", lambda settings, *, clock: (SimpleNamespace(), _FakeDb())
+    )
+    monkeypatch.setattr(
+        worker, "serve", lambda s, *, tick_seconds, heartbeat=None, heartbeat_path=None: None
+    )
+    assert worker.main() == 0
+    assert registered == [signal.SIGUSR1]
+
+
+def test_heartbeat_file_lets_status_tell_frozen_from_alive(tmp_path):
+    """心跳檔＝狀態頁分辨「行程活著」與「迴圈凍住」的唯一依據（假死七小時全程 RUNNING）。"""
+    path = tmp_path / "run" / "scheduler.heartbeat"
+    worker.write_heartbeat(path)
+    written = float(path.read_text(encoding="utf-8").strip())
+    assert abs(written - time.time()) < 5
+    assert not (tmp_path / "run" / "scheduler.heartbeat.tmp").exists(), "暫存檔沒清掉"
+
+
+def test_heartbeat_failure_never_stops_the_tick_loop(tmp_path, caplog):
+    """心跳只是觀測。寫不進去要照跑，而且不可以每分鐘刷一行把真錯誤淹掉。"""
+    worker._heartbeat_warned[0] = False
+    blocked = tmp_path / "not-a-dir"
+    blocked.write_text("我是檔案不是目錄", encoding="utf-8")
+    target = blocked / "scheduler.heartbeat"
+    with caplog.at_level(logging.WARNING):
+        worker.write_heartbeat(target)  # 不應拋出
+        worker.write_heartbeat(target)
+        worker.write_heartbeat(target)
+    assert sum("心跳檔寫入失敗" in r.message for r in caplog.records) == 1, "重複警告會變成雜訊"
+    worker._heartbeat_warned[0] = False
+
+
+def test_the_watchdog_leaves_a_healthy_scheduler_alone():
+    exits: list[int] = []
+    fresh = [time.monotonic()]
+    stop = []
+
+    def _exit(code: int) -> None:  # pragma: no cover - 不該被呼叫
+        exits.append(code)
+
+    def _sleep(_seconds: float) -> None:
+        stop.append(1)
+        if len(stop) >= 2:
+            raise RuntimeError("測試結束")
+
+    original = worker.time.sleep
+    worker.time.sleep = _sleep
+    try:
+        with pytest.raises(RuntimeError):
+            worker._watchdog(fresh, stall_seconds=0.4, exit_now=_exit)
+    finally:
+        worker.time.sleep = original
+    assert exits == []

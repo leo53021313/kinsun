@@ -12,6 +12,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Literal
 
+from croniter import croniter
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -26,6 +27,10 @@ from kinsun.schedules.store import ScheduleStore
 from kinsun.web.envelope import ok
 from kinsun.web.errors import ErrorCode
 from kinsun.web.routers.admin import build_require_admin
+
+# 逾期容許量：cron 與掃描都是分鐘級，沒有餘裕的話每支 job 在到期後的幾十秒內
+# 都會被誤報。五分鐘足以吸收抖動，又遠小於實測到的停擺規模（七小時／十三天）。
+_OVERDUE_TOLERANCE_SECONDS = 300.0
 
 
 class DispatchReminderBody(BaseModel):
@@ -93,17 +98,47 @@ def create_admin_jobs_router(
 
     @router.get("/jobs", dependencies=[Depends(require_admin)])
     def list_jobs() -> dict:
+        """各 job 的上次執行時間，**並標出逾期未跑的**。
+
+        ⚠️ 為什麼需要 overdue（2026-07-26 全流程模擬實測）：排程器可能「活著但停止
+        運作」——程序在、`kinsun.sh status` 顯示 RUNNING、日誌零成長，而每分鐘該跑的
+        派送停了七個小時、夜間批次停了十三天，沒有任何地方會叫。這一頁本來就有
+        `last_run_at`，缺的只是「有沒有人拿它跟 cron 比一下」。
+
+        判定看的是 job 本身有沒有按時跑，不是程序在不在——程序被停掉、卡死、當掉，
+        三種情形都會在這裡浮現。
+        """
+        now = clock()
         items = []
+        overdue: list[str] = []
         for job in jobs:
             last = schedule_state.get_last_run(job.name)
+            due_at = croniter(job.cron, last).get_next(datetime) if last else None
+            # 容許量＝一個掃描間隔再加點餘裕：cron 是分鐘級、掃描也是分鐘級，
+            # 沒有容許量的話每個 job 在到期後的那幾十秒都會被誤報成逾期。
+            late_seconds = (now - due_at).total_seconds() if due_at else 0.0
+            is_overdue = late_seconds > _OVERDUE_TOLERANCE_SECONDS
+            if is_overdue:
+                overdue.append(job.name)
             items.append(
                 {
                     "job_name": job.name,
                     "cron": job.cron,
                     "last_run_at": last.timestamp() if last else None,
+                    "due_at": due_at.timestamp() if due_at else None,
+                    "late_seconds": round(late_seconds) if is_overdue else 0,
+                    "is_overdue": is_overdue,
                 }
             )
-        return ok(items)
+        warnings = (
+            [
+                f"有 {len(overdue)} 支排程逾期未執行：{'、'.join(overdue)}"
+                "（排程器可能沒在跑或已卡死，程序活著也可能停擺）"
+            ]
+            if overdue
+            else []
+        )
+        return ok(items, meta={"overdue": overdue, "warnings": warnings})
 
     @router.post(
         "/jobs/{job_name}/run",

@@ -203,6 +203,9 @@ class Settings(_BaseEnvSettings):
     longterm_embedding_model: str = "gemini-embedding-001"
     longterm_consolidation_hour: int = 0
     scheduler_tick_seconds: int = 60
+    # 排程器心跳檔（2026-07-26 假死事件）：每輪 tick 寫入 epoch 秒，讓 kinsun.sh status
+    # 分得出「行程活著」與「迴圈凍住」——PID 還在不代表它在做事。設空字串＝關閉。
+    scheduler_heartbeat_path: str = ".run/scheduler.heartbeat"
     # 基準問候時間：真的鐘點，且須落在自適應上下限內（見 _validate_greeting_guardrails）。
     proactive_greeting_hour: Annotated[int, BeforeValidator(_hour("PROACTIVE_GREETING_HOUR"))] = 8
     proactive_inactivity_hour: int = 10

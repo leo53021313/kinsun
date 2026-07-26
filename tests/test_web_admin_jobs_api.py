@@ -76,9 +76,52 @@ def test_list_jobs_with_last_run():
     jobs = [Job(name="daily-x", cron="0 3 * * *", run=lambda: None)]
     res = _client(jobs=jobs, schedule_state=state).get("/api/v1/admin/jobs", headers=_auth())
     assert res.status_code == 200
-    assert res.json()["data"] == [
-        {"job_name": "daily-x", "cron": "0 3 * * *", "last_run_at": NOW.timestamp()}
-    ]
+    row = res.json()["data"][0]
+    assert row["job_name"] == "daily-x"
+    assert row["cron"] == "0 3 * * *"
+    assert row["last_run_at"] == NOW.timestamp()
+
+
+# --- 逾期偵測（2026-07-26 全流程模擬實測：排程器活著卻停止運作）---
+
+
+def test_a_job_that_ran_on_time_is_not_flagged():
+    """剛跑過的 job 不該被誤報——時鐘固定在 NOW，上次執行也是 NOW。"""
+    state = FakeScheduleStateStore()
+    state.set_last_run("daily-x", NOW)
+    jobs = [Job(name="daily-x", cron="0 3 * * *", run=lambda: None)]
+    body = (
+        _client(jobs=jobs, schedule_state=state).get("/api/v1/admin/jobs", headers=_auth()).json()
+    )
+    assert body["data"][0]["is_overdue"] is False
+    assert body["meta"]["overdue"] == []
+    assert body["meta"]["warnings"] == []
+
+
+def test_a_stalled_job_is_flagged_with_a_warning():
+    """實測情境：每分鐘該跑的派送停在好幾小時前，程序卻還顯示 RUNNING。
+
+    這一頁本來就有 last_run_at，缺的只是拿它跟 cron 比一下。
+    """
+    state = FakeScheduleStateStore()
+    state.set_last_run("schedule-dispatch", NOW - timedelta(hours=7))
+    jobs = [Job(name="schedule-dispatch", cron="* * * * *", run=lambda: None)]
+    body = (
+        _client(jobs=jobs, schedule_state=state).get("/api/v1/admin/jobs", headers=_auth()).json()
+    )
+    row = body["data"][0]
+    assert row["is_overdue"] is True
+    assert row["late_seconds"] > 6 * 3600
+    assert body["meta"]["overdue"] == ["schedule-dispatch"]
+    assert "逾期未執行" in body["meta"]["warnings"][0]
+
+
+def test_a_job_that_has_never_run_is_not_flagged():
+    """從未跑過的 job（首見種基準前）沒有基準可比，不該報逾期。"""
+    jobs = [Job(name="never-ran", cron="* * * * *", run=lambda: None)]
+    body = _client(jobs=jobs).get("/api/v1/admin/jobs", headers=_auth()).json()
+    assert body["data"][0]["is_overdue"] is False
+    assert body["data"][0]["due_at"] is None
 
 
 def test_list_jobs_requires_admin_key():

@@ -442,8 +442,31 @@ ELDER_GUARDIANS_TRANSCRIPT_COLUMN_RETIRE_DDL = (
 SCHEMA_MIGRATION_LOCK_KEY = 4_242_001
 
 
+# 連線層存活設定（2026-07-26 全流程模擬實測抓到的排程器假死）──
+#
+# 現場：排程程序活著、CPU 幾乎零、日誌零成長，但每分鐘該跑的 job 停在七小時前；
+# `ss -tnp` 顯示它與 Supabase 的連線 `Recv-Q=11988`——收到資料卻沒有人讀。
+# 那是一條對端已經不在、而本地毫不知情的 TCP 連線；沒有 keepalive，作業系統
+# 永遠不會告訴我們，psycopg 就一直等下去。整個排程（含用藥提醒）因此靜默停擺。
+#
+# ⚠️ 伺服器端的 statement_timeout 救不了這種情形——回應根本到不了，不是查詢跑太久。
+# （實測附帶結論：Supabase 的 Supavisor 會把連線的 statement_timeout 覆寫成自己的
+# 2 分鐘，`options="-c statement_timeout=..."` 送過去不會報錯但也不會生效，故不設。）
+#
+# keepalives_idle=30＋interval=10＋count=3：閒置 30 秒開始探測，最多 3 次、每次
+# 間隔 10 秒——約一分鐘內就會讓死連線變成一個**看得見的錯誤**，而不是無限期的等待。
+# 錯誤有人接（排程器每個 job 各自 try／except 並記 log），下一個 tick 就會重試。
+_KEEPALIVE_KWARGS: dict[str, int] = {
+    "connect_timeout": 10,
+    "keepalives": 1,
+    "keepalives_idle": 30,
+    "keepalives_interval": 10,
+    "keepalives_count": 3,
+}
+
+
 def connect(database_url: str) -> psycopg.Connection:
-    return psycopg.connect(database_url)
+    return psycopg.connect(database_url, **_KEEPALIVE_KWARGS)
 
 
 def ensure_schema(database_url: str) -> None:
@@ -533,7 +556,18 @@ class Database:
 
     @classmethod
     def open(cls, url: str, *, min_size: int = 1, max_size: int = 5) -> Database:
-        return cls(ConnectionPool(url, min_size=min_size, max_size=max_size, open=True))
+        # kwargs：每條池內連線都開 TCP keepalive（見 _KEEPALIVE_KWARGS 的實測來由）。
+        # 沒有它，對端消失的連線會讓借到它的人無限期等待——排程器就是這樣靜默停擺
+        # 七小時而狀態頁還顯示 RUNNING。
+        return cls(
+            ConnectionPool(
+                url,
+                min_size=min_size,
+                max_size=max_size,
+                open=True,
+                kwargs=_KEEPALIVE_KWARGS,
+            )
+        )
 
     def close(self) -> None:
         self._pool.close()

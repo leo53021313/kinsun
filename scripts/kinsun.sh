@@ -83,6 +83,15 @@ _port_open() {
 
 _http_ok() { command -v curl >/dev/null 2>&1 && curl -fsS --max-time 2 "$1" >/dev/null 2>&1; }
 
+# 秒數轉人看得懂的長度（心跳年齡用）。「12960 秒前」沒人算得出是三個半小時。
+_human_age() {
+  local s="$1"
+  if   [ "$s" -lt 60 ];   then printf '%d 秒' "$s"
+  elif [ "$s" -lt 3600 ]; then printf '%d 分' $(( s / 60 ))
+  else printf '%d 小時 %d 分' $(( s / 3600 )) $(( (s % 3600) / 60 ))
+  fi
+}
+
 # 本機區網 IP（Expo Go 掃的 exp:// 位址要用它）。取預設路由的來源位址，
 # 避開 docker 橋接（172.17.x）與 Tailscale（100.x）等非區網介面。
 _lan_ip() {
@@ -210,6 +219,10 @@ launch_scheduler() {
   info "啟動 Scheduler…"
   (
     export PYTHONPATH="src${PYTHONPATH:+:$PYTHONPATH}"
+    # 心跳檔給絕對路徑（load_dotenv 只補缺不覆蓋，這裡 export 的會贏）：
+    # _bg 不會 cd，若從別的目錄呼叫本腳本，相對路徑會把心跳寫到別處，
+    # 於是 status 讀不到心跳、把「活得好好的」誤報成「無心跳檔」。
+    export SCHEDULER_HEARTBEAT_PATH="$RUN_DIR/scheduler.heartbeat"
     _bg scheduler uv run python -m kinsun.scheduler
   )
 }
@@ -606,7 +619,26 @@ _health_note() {
       else
         echo "—"
       fi ;;
-    scheduler|rag_worker)
+    scheduler)
+      # ⚠️ 只看 PID 會說謊：2026-07-26 排程器假死七小時，這一列全程顯示 RUNNING。
+      # 心跳檔（worker 每輪 tick 寫 epoch 秒）才分得出「行程活著」與「迴圈凍住」。
+      local hb="$RUN_DIR/scheduler.heartbeat" ts age
+      ts="$(cat "$hb" 2>/dev/null || true)"
+      if [ -z "$ts" ]; then
+        echo "（無心跳檔——尚未寫入或已停用）"
+      else
+        age=$(( $(date +%s) - ts ))
+        [ "$age" -lt 0 ] && age=0
+        if [ "$age" -le 180 ]; then
+          echo "心跳 $(_human_age "$age")前"
+        elif [ "$age" -le 600 ]; then
+          # 夜間批次逐位長輩跑 LLM 會壓住迴圈一段時間，這區間屬正常。
+          echo "心跳 $(_human_age "$age")前（批次執行中？）"
+        else
+          echo "⚠️ 心跳 $(_human_age "$age")前，疑似假死 → scripts/kinsun.sh dump scheduler"
+        fi
+      fi ;;
+    rag_worker)
       echo "（無對外埠）" ;;
     ngrok)
       local d; d="$(read_env NGROK_DOMAIN)"
@@ -658,6 +690,7 @@ usage() {
   stop [服務]      關閉全部或指定服務
   restart [服務]   先 stop 再 start
   status           檢視各服務狀態（PID／埠／健康）＋ Opik 觀測後台連結
+  dump [服務]      把執行中服務的全執行緒堆疊倒進它的 log（目前只支援 scheduler）
 
 服務名：asr　tts　webhook　scheduler　rag_worker　frontend　app　ngrok　opik
 
@@ -677,6 +710,15 @@ App（Expo Go）：
   scripts/kinsun.sh status         看 app 那列的 exp:// 位址——手機用 Expo Go 掃它
                                    （iOS 用相機、Android 用 Expo Go 內建掃碼）
 
+排程器假死排查（2026-07-26 曾假死七小時，status 全程顯示 RUNNING）：
+  status 的 scheduler 那列會顯示「心跳 N 秒前」——那才是它有沒有在做事的依據，PID 不是。
+  心跳超過 10 分鐘沒更新時該列會轉為警告，這時跑：
+    scripts/kinsun.sh dump scheduler   送 SIGUSR1，把全執行緒堆疊寫進 logs/scheduler.log
+  排程器自己也有看門狗：停止推進超過 10 分鐘會自我了結（讓外部監管重啟）。
+  ⚠️ 純用本腳本啟動時沒有任何監管者，看門狗結束後它就停著不動——status 會誠實顯示
+     STOPPED（而非以前那種騙人的 RUNNING），需手動 restart scheduler。要自動復活請改掛
+     systemd（deploy/kinsun-scheduler.service），但別讓兩邊同時啟動同一個排程器。
+
 環境變數：
   KINSUN_RELOAD=1        Webhook 啟用 --reload（開發用；預設關）
   KINSUN_EXPO_TUNNEL=0   App 改走區網（僅手機與 DGX 同一個 Wi-Fi 時可用；啟動較快）
@@ -686,12 +728,42 @@ log：logs/<service>.log　PID：.run/<service>.pid
 EOF
 }
 
+# ── 堆疊傾印（假死時查「卡在哪一行」）──────────────────────────────────
+# 2026-07-26 排程器假死七小時，現場想抓 Python 堆疊卻卡在 DGX 的 ptrace_scope=1
+# ——py-spy 需要 root。改由行程自己印：worker 的 main() 已把 SIGUSR1 綁到
+# faulthandler，收到訊號就把「全部執行緒」的堆疊寫進自己的 log。不需要任何特權。
+cmd_dump() {
+  local name="${1:-scheduler}"
+  _assert_service "$name" || exit 2
+  case "$name" in
+    scheduler) ;;
+    *) err "目前只有 scheduler 接了 SIGUSR1 堆疊傾印"; exit 2 ;;
+  esac
+  if ! is_running "$name"; then
+    err "$name 沒在跑（本腳本啟動的），無法傾印"
+    exit 1
+  fi
+  local pid; pid="$(_pid_of "$name")"
+  local log="$LOG_DIR/$name.log"
+  local before; before="$(wc -l < "$log" 2>/dev/null || echo 0)"
+  info "送出 SIGUSR1 給 $name（PID $pid）…"
+  if ! kill -USR1 "$pid" 2>/dev/null; then
+    err "訊號送出失敗（PID $pid 可能已不存在）"
+    exit 1
+  fi
+  sleep 1
+  ok "堆疊已寫入 $log"
+  echo
+  tail -n "+$((before + 1))" "$log"
+}
+
 # ── 進入點 ────────────────────────────────────────────────────────────
 case "${1:-}" in
   start)   cmd_start "${2:-}" ;;
   stop)    cmd_stop "${2:-}" ;;
   status)  cmd_status ;;
   restart) cmd_restart "${2:-}" ;;
+  dump)    cmd_dump "${2:-}" ;;
   ""|-h|--help|help) usage ;;
   *) err "未知指令：$1"; echo; usage; exit 2 ;;
 esac

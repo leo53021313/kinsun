@@ -5,12 +5,16 @@ CLI：PYTHONPATH=src uv run python -m kinsun.scheduler
 
 from __future__ import annotations
 
+import faulthandler
 import logging
 import os
+import signal
+import threading
 import time
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from kinsun import tracing
@@ -99,7 +103,9 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
                 risk_events=risk_events,
             )
         except Exception:  # noqa: BLE001 - 摘要失敗不影響整理與其他長輩
-            logger.warning("對話摘要失敗 elder=%s", elder_id)
+            # exc_info：沒有例外內容的一行 warning 查不出任何東西——每晚反思就是這樣
+            # 靜默失敗六天沒人發現（2026-07-26 全流程模擬實測才抓到是 Gemini 回 400）。
+            logger.warning("對話摘要失敗 elder=%s", elder_id, exc_info=True)
         # 每晚反思（spec 2026-07-14）：接在既有的夜間批次尾巴，與摘要共用
         # GEMINI_MODEL_SUMMARY 這顆模型。反思因此是每晚自動的主線行為，不需另立 cron。
         # ⚠️ 用 if 包起來、不用 `if not enabled: return`：後面還有第四步，提早 return
@@ -122,7 +128,7 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
                 # reflect_days 對 LLM timeout／MemoryStoreError 刻意不設防（快速失敗），防線在此。
                 # 少了這層，例外會沿 fanout 冒上去：本該只是「今晚少學一條」，卻會把整位長輩的
                 # 夜間批次記成失敗——縱使整理與摘要其實都做完了，值班的人會查錯方向。
-                logger.warning("每晚反思失敗 elder=%s", elder_id)
+                logger.warning("每晚反思失敗 elder=%s", elder_id, exc_info=True)
         # 自適應問候時間（spec 2026-07-16）：純統計、不經 LLM，不需另立 cron。
         # 掛在第四步而非另開排程。**後三步**（摘要／反思／問候時間）互不拖累：各自包
         # try/except，任一失敗只記 warning，其餘照跑。整理（第一步）刻意不設防，故它
@@ -365,17 +371,150 @@ def build_scheduler(
     return Scheduler(jobs, clock, state), core.db
 
 
-def serve(scheduler: Scheduler, *, tick_seconds: int) -> None:
+def _watchdog(last_tick: list[float], *, stall_seconds: float, exit_now=os._exit) -> None:
+    """卡住就自殺，交給 systemd 的 Restart=always 撿起來。
+
+    ⚠️ 為什麼需要這一層（2026-07-26 全流程模擬實測）：實測抓到排程器「活著但停止
+    運作」——程序在、CPU 幾乎零、日誌零成長，而每分鐘該跑的派送停了七小時、夜間
+    批次停了十三天，`kinsun.sh status` 全程顯示 RUNNING。
+
+    當時推斷是連線對端消失而本地無限期等待（已於 `db.py` 加 TCP keepalive），但
+    現場證據其實**不支持**那個結論：`ss` 顯示 `Recv-Q=11988`，那是「資料已經到了、
+    沒有人去讀」，不是「對端不見了」。也就是說**真正的根因沒有被證實**。
+    所以這裡不賭任何一種診斷：不論它卡在 DB、卡在 mem0、還是卡在別的地方，
+    只要 tick 停止推進就重啟。`Restart=always` 救得了程序掛掉，救不了假死——這條救得了。
+    """
+    while True:
+        stalled = time.monotonic() - last_tick[0]
+        if stalled > stall_seconds:
+            logger.critical(
+                "排程器停止推進 %.0f 秒（門檻 %.0f 秒），自我重啟交給 systemd 接手",
+                stalled,
+                stall_seconds,
+            )
+            exit_now(1)
+        time.sleep(min(30.0, stall_seconds / 4))
+
+
+_heartbeat_warned: list[bool] = [False]
+
+
+def write_heartbeat(path: Path | None) -> None:
+    """把「還在動」寫成檔案（epoch 秒），供 `kinsun.sh status` 判讀。
+
+    ⚠️ 為什麼需要（2026-07-26 現場）：排程器假死七小時期間，`kinsun.sh status` 全程顯示
+    RUNNING——因為它只看 PID 檔還在不在。**PID 活著不等於它在做事**，這個檔案補的正是
+    這個差：狀態頁從此能分辨「行程活著」與「迴圈凍住」。
+
+    設計借自 NousResearch/hermes-agent 的 `record_ticker_heartbeat`（`cron/jobs.py`）。
+    刻意只取心跳這一個訊號，不照抄它的「上次成功」第二訊號：那是為了分辨「迴圈活著但
+    每次 tick 都拋例外」，而我們的 `run_due` 逐 job 吞例外、不會拋，job 層級的真相已經
+    記在 `scheduler_state.last_run_at`（後台 `/jobs` 的逾期告警讀的就是它）。
+
+    盡力而為：寫不進去絕不可打斷 tick 迴圈；且只在第一次失敗時警告，
+    否則每分鐘一行、一天 1440 行雜訊會把真正的錯誤淹掉。
+    """
+    if path is None:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.tmp")
+        tmp.write_text(f"{time.time():.0f}\n", encoding="utf-8")
+        tmp.replace(path)  # 原子換檔：status 永遠讀到完整的一行，不會讀到寫到一半的內容
+    except Exception:  # noqa: BLE001 - 心跳只是觀測，不可拖垮排程
+        if not _heartbeat_warned[0]:
+            _heartbeat_warned[0] = True
+            logger.warning("心跳檔寫入失敗，狀態頁將無法判讀假死 path=%s", path, exc_info=True)
+
+
+def watchdog_stall_seconds(tick_seconds: int) -> float:
+    """停止推進的門檻＝十個掃描間隔（預設 60s → 10 分鐘），下限 5 分鐘。
+
+    夜間批次逐位長輩跑 LLM 可能跑很久，門檻太緊會在正常工作時誤殺；
+    啟動階段（載 mem0／建連線池）實測不到 10 秒，同一個門檻綽綽有餘。
+    """
+    return max(300.0, tick_seconds * 10)
+
+
+def start_watchdog(*, stall_seconds: float) -> list[float]:
+    """啟動看門狗執行緒，回傳心跳；呼叫端每前進一步就 `heartbeat[0] = time.monotonic()`。
+
+    ⚠️ 刻意讓 `main()` 在 `build_scheduler()` **之前**啟動，而不是包在 `serve()` 裡面。
+    2026-07-26 23:00 的現場推翻了原本的假設：排程器當天重啟六次（16:05、16:11、17:11、
+    17:14、19:09、19:31）全部卡在**啟動階段**——`main()` 那行「排程器啟動：…」橫幅一次
+    都沒印出來，`schedule-dispatch` 停在 14:05 不動。看門狗若只守 tick 迴圈，這一整類的
+    假死它一次也攔不到，因為迴圈根本還沒開始跑。
+    """
+    heartbeat = [time.monotonic()]
+    threading.Thread(
+        target=_watchdog,
+        args=(heartbeat,),
+        kwargs={"stall_seconds": stall_seconds},
+        name="kinsun-scheduler-watchdog",
+        daemon=True,
+    ).start()
+    return heartbeat
+
+
+def serve(
+    scheduler: Scheduler,
+    *,
+    tick_seconds: int,
+    watchdog: bool = True,
+    heartbeat: list[float] | None = None,
+    heartbeat_path: Path | None = None,
+) -> None:
+    """tick 迴圈；`heartbeat` 由 `main()` 傳入（啟動階段就已在計時），沒傳才自己開一條。"""
+    if heartbeat is None:
+        heartbeat = (
+            start_watchdog(stall_seconds=watchdog_stall_seconds(tick_seconds))
+            if watchdog
+            else [time.monotonic()]
+        )
     while True:
         scheduler.run_due()
+        heartbeat[0] = time.monotonic()
+        write_heartbeat(heartbeat_path)
         time.sleep(tick_seconds)
 
 
 def main() -> int:
+    # ⚠️ 全庫原本沒有任何 logging 設定，root logger 停在預設的 WARNING、走
+    # `logging.lastResort`（stderr、無時間戳、無 logger 名）——排程器新加的
+    # `logger.info` 一行都不會出現，`exc_info` 印出來也查不出「何時開始壞的」。
+    # 2026-07-26 全流程模擬實測才發現這件事。
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    # `kill -USR1 <pid>`（或 `scripts/kinsun.sh dump scheduler`）→ 全執行緒 Python 堆疊
+    # 直接倒進 stderr，也就是 logs/scheduler.log。
+    # ⚠️ 為什麼非有不可：2026-07-26 排程器假死時，DGX 的 `ptrace_scope=1` 讓 py-spy 需要
+    # root 才能附掛，而現場拿不到 root——結果是「明知它卡住，卻永遠不知道卡在哪一行」。
+    # faulthandler 由行程自己印，不需要任何特權，下次假死就有堆疊可看。
+    if hasattr(signal, "SIGUSR1"):  # Windows 沒有 SIGUSR1；開發機不該因此起不來
+        try:
+            faulthandler.register(signal.SIGUSR1, all_threads=True, chain=False)
+        except (ValueError, OSError):
+            # stderr 不是真的檔案描述子時（pytest 攔截輸出、某些嵌入式執行環境）註冊會失敗。
+            # 這只是少了一個診斷工具，絕不能讓排程器因此起不來。
+            logger.warning("SIGUSR1 堆疊傾印註冊失敗，假死時將無法取得 Python 堆疊")
     load_dotenv()
     settings = load_settings(os.environ)
     tz = ZoneInfo(settings.timezone)
+    # 看門狗在 build_scheduler **之前**就開始計時：實測的六次假死全部發生在啟動階段
+    # （見 start_watchdog）。晚一步啟動，就等於對這一整類故障失明。
+    heartbeat = start_watchdog(
+        stall_seconds=watchdog_stall_seconds(settings.scheduler_tick_seconds)
+    )
+    heartbeat_path = (
+        Path(settings.scheduler_heartbeat_path) if settings.scheduler_heartbeat_path else None
+    )
+    # 啟動當下先寫一次：卡在啟動階段時，狀態頁看到的是「心跳越來越舊」而不是「沒有心跳」，
+    # 前者是明確的假死訊號，後者會被誤讀成「還沒跑過」。
+    write_heartbeat(heartbeat_path)
     scheduler, db = build_scheduler(settings, clock=lambda: datetime.now(tz))
+    heartbeat[0] = time.monotonic()  # 啟動完成，交棒給 tick 迴圈
     # 問候那段不能再寫死「X:00」：自適應開啟時每位長輩各有各的時間，這行印的是機制。
     greeting = (
         f"問候 每半小時掃描（每位長輩各自的時間，"
@@ -397,7 +536,12 @@ def main() -> int:
         "舊表對帳 每 5 分鐘。"
     )
     try:
-        serve(scheduler, tick_seconds=settings.scheduler_tick_seconds)
+        serve(
+            scheduler,
+            tick_seconds=settings.scheduler_tick_seconds,
+            heartbeat=heartbeat,
+            heartbeat_path=heartbeat_path,
+        )
     finally:
         db.close()
     return 0
