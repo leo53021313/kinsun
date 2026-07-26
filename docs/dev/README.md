@@ -16,14 +16,14 @@
 | 04 | [ADR（04_adr/）](04_adr/README.md) | ✅ 定稿（11 筆；ADR-003 補述 庚-54） | 2026-07-13 |
 | 05 | [架構與設計](05_架構與設計.md) | ✅ v1.39（統一排程 D-76 五刀全完成：schedules 取代 medications／appointments、提醒管線改寫為單一每分鐘派送；時間改每輪注入情境、get_current_time 移除；§8.5 補濫用審核：三類越權／位置在家屬通報之後為安全屬性／誤攔防線三層；§12 離線評測四實驗；D-74 消費端） | 2026-07-25 |
 | 06 | [API設計規範](06_API設計規範.md) | ✅ v1.5（統一排程 /schedules 取代 /medications 與 /appointments；新增 `GET /api/v1/admin/news` 話題新聞檢視，D-74） | 2026-07-25 |
-| 07 | [模組規格與測試](07_模組規格與測試.md) | ✅ v1.30（統一排程五刀全完成、舊模組退役、合約 18 組、總測試 1726；新增 clock.py 列＋test_clock；safety 列補 AbuseModerator，6→7 檔；總測試 1607、合約 19 組；D-74 消費端完成式） | 2026-07-25 |
+| 07 | [模組規格與測試](07_模組規格與測試.md) | ✅ v1.31（RAG crawler 實戰修五瑕疵：WebForms、JSON 嗅探、垃圾連結、http 升級、URL 編碼＋NUL；統一排程五刀全完成、舊模組退役；總測試 1731） | 2026-07-26 |
 | 08 | [專案結構指南](08_專案結構指南.md) | ✅ v1.14（schedules/ 八檔全配、medications/ 與 appointments/ 退役；頂層新增 clock.py、tools/clock.py 移除；news/fetchers 補 rss.py；admin 八頁 NewsPage） | 2026-07-25 |
 | 09 | [模組依賴關係](09_模組依賴關係.md) | ✅ v1.8（Protocol 47 重掃／合約 19；濫用審核走 LLMClient seam 不新增對外依賴） | 2026-07-25 |
 | 10 | [類別關係](10_類別關係.md) | ✅ v1.20（統一排程五刀全完成、舊模組類別移除；FactProvider 六段、TimeFacts 排首位；群 4 補 AbuseModerator／AbuseClassifier／ModerationResult，VoicePipeline 補選配 moderator；Protocol 47） | 2026-07-25 |
 | 11 | [審查與重構指南](11_審查與重構指南.md) | ✅ v1.1（CI 已落地；docs/dev 同步鐵律入自查） | 2026-07-17 |
 | 12 | [前端架構規範](12_前端架構規範.md) | ✅ v1.7（admin 話題新聞頁 D-74；web 端 React 19.2.8＋react-router 8.3） | 2026-07-25 |
 | 13 | [安全與就緒檢查](13_安全與就緒檢查.md) | ✅ v1.4（位置隱私列；依賴掃描與 healthz 結案） | 2026-07-17 |
-| 14 | [部署與運維](14_部署與運維.md) | ✅ v1.13（NEWS_BLOCKED_KEYWORDS＋NEWS_RSS_FEEDS；NEWS_API_DOMAINS 改後過濾白名單；話題新聞清理與降級語意；Opik 服務；RAG Runbook） | 2026-07-25 |
+| 14 | [部署與運維](14_部署與運維.md) | ✅ v1.14（RAG 週更補 hpa 憑證 bundle 與爬深 ≥100 兩項硬前置；NEWS 白名單；Opik 服務；RAG Runbook） | 2026-07-26 |
 | 15 | [文檔與維護指南](15_文檔與維護指南.md) | ✅ v1.1（同步鐵律＋前端／WBS 兩列） | 2026-07-17 |
 | 16 | [WBS開發計畫](16_WBS開發計畫.md) | ✅ v1.15（辛-10 濫用審核＋辛-11 觀測與評測強化＋辛-12 防呆待施工；RAG 個人庫驗收；甲～庚結案＋辛批 10 項；⚠ 庚-09 待 Leo 確認） | 2026-07-25 |
 | 17 | [前端資訊架構](17_前端資訊架構.md) | ✅ v1.11（對講機雙手勢＋admin 7 頁 D-74 話題新聞頁） | 2026-07-25 |
