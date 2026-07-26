@@ -404,6 +404,22 @@ _opik_tunnel_url() {
     | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1
 }
 
+# 等 Quick Tunnel 配發網址：取到就印在 stdout 並回 0，逾時回 1（不印）。$1＝最多等幾秒。
+#
+# 為何需要等：cloudflared 起來後還要跟 Cloudflare 要一組臨時網域，實測約 3 秒才寫進 log
+# （2026-07-26：19:09:34 啟動、19:09:37 才出現網址）。而 cmd_start 只 sleep 2 就印 status，
+# 於是網址永遠來不及被抓到、狀態列只印得出「啟動中…」。等到網址真的出現再往下走，
+# start 結尾那張表才會直接是可點的連結。
+_wait_opik_tunnel_url() {
+  local i url
+  for i in $(seq 1 "${1:-20}"); do
+    url="$(_opik_tunnel_url)"
+    if [ -n "$url" ]; then printf '%s' "$url"; return 0; fi
+    sleep 1
+  done
+  return 1
+}
+
 # start opik＝後端(docker)＋公開隧道。⚠️ 隧道為 Quick Tunnel【公開、無認證】且網址每次
 # 會變；真實長輩資料進入 Opik 前切勿長時間開（見 docs/dev/14）。
 launch_opik() {
@@ -431,6 +447,12 @@ launch_opik() {
   warn "opik 隧道為【公開且無認證】的臨時網址；看完請 stop opik，勿在有真實長輩資料時長開。"
   info "啟動 Opik 公開隧道（Cloudflare Quick Tunnel → :5273）…"
   _bg opik cloudflared tunnel --url http://localhost:5273 --no-autoupdate
+  local url
+  if url="$(_wait_opik_tunnel_url 20)"; then
+    ok "Opik 隧道就緒：$url"
+  else
+    warn "opik 隧道：20 秒內未取得網址，稍後再跑 status（詳見 logs/opik.log）"
+  fi
 }
 
 # stop_one 收尾鉤：關掉隧道 pid 後，把 docker 後端也停掉（即使隧道沒在跑也要停後端）。
@@ -590,10 +612,13 @@ _health_note() {
       local d; d="$(read_env NGROK_DOMAIN)"
       if [ -n "$d" ]; then echo "https://$d"; else echo "臨時網域（見 log）"; fi ;;
     opik)
-      # 狀態列＝後端（is_running=後端在）；此處補隧道：開了顯示網址＋無認證警告，否則「隧道未開」。
+      # 狀態列＝後端（is_running=後端在）；此處補隧道：開了就顯示網址，否則「隧道未開」。
+      # 網址還沒進 log（剛啟動的頭幾秒）時短等一下再放棄——寧可 status 慢幾秒，也不要印出
+      # 無法點的「啟動中…」讓人再跑一次 status。
       if _opik_tunnel_running; then
         local u; u="$(_opik_tunnel_url)"
-        echo "後端 :5273　|　隧道 ${u:-啟動中…}　⚠公開無認證"
+        [ -n "$u" ] || u="$(_wait_opik_tunnel_url 8)"
+        echo "後端 :5273　|　隧道 ${u:-啟動中…（見 logs/opik.log）}"
       else
         echo "後端 :5273　|　隧道未開（start opik 開）"
       fi ;;
