@@ -732,6 +732,25 @@ EOF
 # 2026-07-26 排程器假死七小時，現場想抓 Python 堆疊卻卡在 DGX 的 ptrace_scope=1
 # ——py-spy 需要 root。改由行程自己印：worker 的 main() 已把 SIGUSR1 綁到
 # faulthandler，收到訊號就把「全部執行緒」的堆疊寫進自己的 log。不需要任何特權。
+# PID 檔記的可能是外殼行程，訊號要送給真正在跑 Python 的那個。
+# ⚠️ scheduler／rag_worker 是以 `uv run python -m ...` 啟動的，`_bg` 記下的是 uv 的 PID，
+# 而 uv **不會**把 SIGUSR1 轉給子行程——照著 PID 檔送訊號，堆疊永遠不會出現，
+# 而且看起來像「送成功了但沒有用」，比明確失敗更難查（2026-07-26 實測踩到）。
+_signal_target() {
+  local pid="$1" cmd child
+  cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+  case "$cmd" in
+    *uv*run*)
+      for child in $(pgrep -P "$pid" 2>/dev/null); do
+        case "$(cat "/proc/$child/comm" 2>/dev/null)" in
+          python*) printf '%s' "$child"; return 0 ;;
+        esac
+      done
+      ;;
+  esac
+  printf '%s' "$pid"
+}
+
 cmd_dump() {
   local name="${1:-scheduler}"
   _assert_service "$name" || exit 2
@@ -743,7 +762,7 @@ cmd_dump() {
     err "$name 沒在跑（本腳本啟動的），無法傾印"
     exit 1
   fi
-  local pid; pid="$(_pid_of "$name")"
+  local pid; pid="$(_signal_target "$(_pid_of "$name")")"
   local log="$LOG_DIR/$name.log"
   local before; before="$(wc -l < "$log" 2>/dev/null || echo 0)"
   info "送出 SIGUSR1 給 $name（PID $pid）…"
