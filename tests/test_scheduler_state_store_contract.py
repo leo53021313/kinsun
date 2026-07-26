@@ -44,6 +44,26 @@ def test_per_job_name_isolation(store, ns):
     assert store.get_last_run(f"{ns}b") is None
 
 
+def test_try_claim_tolerates_a_truncated_expected_value(store, ns):
+    """讀回值比實際儲存值少了幾位小數時，仍然必須認領得到。
+
+    ⚠️ 這條守的是 2026-07-26 正式環境停擺事故：Supabase 連線的 `extra_float_digits = 0`
+    讓 PostgreSQL 只用 15 位有效數字輸出 double，`1785045932.084225` 讀回來變成
+    `1785045932.08422`（另一個 double）。舊的 `WHERE last_run_at = %s` 因此永遠對不上，
+    每個 job 在「時間戳剛好需要 16 位以上」的那一刻無聲死掉，再也不會執行——
+    排程器本身還活著、每分鐘照掃，狀態頁顯示 RUNNING，重啟六次也沒用（壞值在資料庫裡）。
+
+    以「讀回值略小於實際值」模擬截斷；容差內就得認領成功。
+    """
+    seed = datetime(2026, 7, 12, 3, 0, 0, 84225, tzinfo=TPE)
+    store.set_last_run(f"{ns}job", seed)
+    truncated = seed - timedelta(microseconds=5)  # 讀回時掉了幾位小數
+    now = datetime(2026, 7, 13, 3, 0, tzinfo=TPE)
+    assert store.try_claim(f"{ns}job", expected=truncated, now=now) is True, (
+        "亞微秒的往返誤差就讓 job 永遠認領不到——這正是停擺事故的成因"
+    )
+
+
 def test_try_claim_succeeds_only_when_expected_matches(store, ns):
     """✅ 庚-17（A-42）：原子先搶先贏——expected 與現值相符才更新並回 True；
     已被別的 worker 搶走（現值變了）回 False 且不覆寫。"""
