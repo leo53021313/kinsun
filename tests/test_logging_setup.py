@@ -128,6 +128,41 @@ def test_trace_id_does_not_leak_between_concurrent_turns():
         assert marker in line, f"trace_id 串台了：{line}"
 
 
+# ── 常駐行程涵蓋率（2026-07-27）──
+#
+# 這條是實測逼出來的：setup_logging 上線時只裝了 webhook 與 scheduler 兩個行程，
+# 但 `scripts/kinsun.sh` 的 START_ORDER 實際起的是**三個**——漏掉的 rag_worker
+# 於是繼續走 logging.lastResort。人工清點會再漏一次，故把清單釘進測試。
+
+# 每個常駐行程的進入點：(模組路徑, 該模組裡負責啟動的函式名)。
+# ⚠️ 新增常駐行程時**必須**同時加進這份清單，否則這條測試不會保護它。
+DAEMON_ENTRYPOINTS = [
+    ("src/kinsun/app.py", "build_app"),
+    ("src/kinsun/cron/worker.py", "main"),
+    ("src/kinsun/rag/worker.py", "main"),
+]
+
+
+@pytest.mark.parametrize(("path", "func_name"), DAEMON_ENTRYPOINTS)
+def test_every_daemon_entrypoint_calls_setup_logging(path, func_name):
+    """常駐行程沒有日誌設定＝它出事時畫面上一個字都不會留下。"""
+    import ast
+    import pathlib
+
+    tree = ast.parse(pathlib.Path(path).read_text(encoding="utf-8"))
+    func = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == func_name
+    )
+    called = {
+        ast.unparse(node.func)
+        for node in ast.walk(func)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name | ast.Attribute)
+    }
+    assert "setup_logging" in called, f"{path}::{func_name} 沒有呼叫 setup_logging"
+
+
 def test_level_is_configurable_without_an_env_key():
     stream = io.StringIO()
     logging_setup.setup_logging(level=logging.WARNING, stream=stream)

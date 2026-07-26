@@ -18,8 +18,20 @@ from tenacity import (
 logger = logging.getLogger("kinsun.channels.line")
 
 # 出站重試（2026-07-27）：次數與總時長雙上限。
-# ⚠️ 總時長上限非有不可：危急通報排在長輩的回覆生成**之前**（pipeline.py），而連線逾時
+# 總時長上限的存在理由：危急通報排在長輩的回覆生成**之前**（pipeline.py），而連線逾時
 # 每次要花滿 LINE_API_TIMEOUT_SECONDS——只設次數，最壞情況會讓長輩多等三十秒。
+#
+# ⚠️ **`LINE_SEND_MAX_TOTAL_SECONDS` 不是硬上限**（2026-07-27 更正，原註解寫錯）：
+# tenacity 的 `stop_after_delay` 只在兩次嘗試**之間**判定，不會中斷已經在跑的那一次
+# （其 docstring 逐字寫「max_delay will be exceeded」）。實際最壞是
+# `10s（第一次吃滿逾時）＋0.5s（退避）＋10s（第二次吃滿）≈ 20.5 秒`。
+# 要真正的硬上限得換 `stop_before_delay`，但那會在退避前就放棄、等於少試一次，
+# 對「確定沒送出去」的危急通知不划算，故維持現狀並在此據實載明。
+#
+# ⚠️ 另一個必須知道的放大效應：這個上限是**每位家屬、每個通道各一份**。
+# `GuardianNotifier.notify` 是序列迴圈（safety/notifier.py），而它排在長輩的回覆之前——
+# 三位家屬同時失敗時，長輩最壞要多等約 60 秒。真正的解法是把家屬通報移出長輩的
+# 回覆路徑（`background.run`），那是架構層變更，需另案評估。
 LINE_SEND_MAX_ATTEMPTS = 3
 LINE_SEND_MAX_TOTAL_SECONDS = 15.0
 LINE_SEND_BACKOFF_SECONDS = 0.5
