@@ -294,3 +294,56 @@ def test_cannot_cancel_another_elders_schedule(create, service_and_store):
 def test_cancel_unknown_id_is_explained(create, service_and_store):
     service, _ = service_and_store
     assert "找不到" in build_cancel_handler(service)({"group_id": "nope"}, CTX)
+
+
+# ── 參數型別守衛（2026-07-27）──
+#
+# 實測：模型送 weekday="3"（字串）時，`timeparse` 的 `0 <= weekday <= 6` 會拋
+# TypeError，訊息是 Python 的英文原文 `'<=' not supported between instances of
+# 'int' and 'str'`——它會被包進工具回傳字串、餵回模型 context，最壞的情況是金孫
+# 照著唸給長輩聽。
+
+
+def test_string_weekday_is_coerced_not_exploded(create, service_and_store):
+    """模型送字串數字是常見行為，能轉就轉，不該讓長輩付代價。"""
+    service, _ = service_and_store
+    reply = create(
+        {"title": "上課", "kind": "custom", "repeat": "weekly", "time": "14:00", "weekday": "3"},
+        CTX,
+    )
+    assert "複誦" in reply
+    assert service.groups_for_elder("e1")[0].title == "上課"
+
+
+def test_unparseable_weekday_is_refused_in_plain_chinese(create, service_and_store):
+    """轉不動時要用白話拒絕，**不可**讓 Python 的英文例外原文流進模型 context。"""
+    service, _ = service_and_store
+    reply = create(
+        {
+            "title": "上課",
+            "kind": "custom",
+            "repeat": "weekly",
+            "time": "14:00",
+            "weekday": "禮拜三",
+        },
+        CTX,
+    )
+    assert "not supported" not in reply  # 英文例外原文
+    assert "instances of" not in reply
+    assert service.groups_for_elder("e1") == []
+
+
+def test_non_string_title_does_not_explode(create, service_and_store):
+    """模型偶爾把 title 送成清單；str() 已能吸收，這條守住不回歸。"""
+    service, _ = service_and_store
+    reply = create(
+        {
+            "title": ["去吃飯"],
+            "kind": "custom",
+            "repeat": "once",
+            "date": "2026-07-25",
+            "time": "21:00",
+        },
+        CTX,
+    )
+    assert "not supported" not in reply and "AttributeError" not in reply

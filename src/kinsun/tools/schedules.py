@@ -143,6 +143,25 @@ def _describe(group: ScheduleGroup, now: datetime) -> str:
     return f"{when} {group.title}"
 
 
+def _as_int(value, field: str) -> int | None:
+    """把模型送來的數字參數轉成 int；轉不動就拋白話的 TimeParseError。
+
+    ⚠️ 為什麼需要（2026-07-27 實測）：模型送 `weekday="3"`（字串）時，`timeparse` 的
+    `0 <= weekday <= 6` 會拋 `TypeError: '<=' not supported between instances of
+    'int' and 'str'`——這句**英文原文**會被 handler 的 except 包進回傳字串、餵回模型的
+    context，最壞的情況是金孫照著唸給長輩聽。JSON Schema 標了 integer 也擋不住，
+    模型該送字串時照樣送。
+
+    能轉就轉（字串數字是常見且無害的變體），轉不動才拒絕，且用白話拒絕。
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise TimeParseError(f"{field}要給數字。") from exc
+
+
 def _occurrence_for(arguments: dict, *, now: datetime) -> tuple[Occurrence, float | None]:
     """回傳（鬧鐘, 事件時刻）。
 
@@ -150,10 +169,12 @@ def _occurrence_for(arguments: dict, *, now: datetime) -> tuple[Occurrence, floa
     提前量由金孫提議、長輩一句話認可）。提前量為 0 時事件時刻留 None，措辭才會走
     「提醒您」而不是「再過 n 分鐘」。
     """
-    advance = max(0, int(arguments.get("advance_minutes") or 0))
-    in_minutes = arguments.get("in_minutes")
+    # 三個數字參數統一經 `_as_int` 轉型：模型送字串數字是常見行為，而未轉型會讓
+    # Python 的英文例外原文流進模型 context（見 `_as_int` 的說明）。
+    advance = max(0, _as_int(arguments.get("advance_minutes"), "提前幾分鐘") or 0)
+    in_minutes = _as_int(arguments.get("in_minutes"), "幾分鐘後")
     if in_minutes is not None:
-        event_at = (now + timedelta(minutes=int(in_minutes))).timestamp()
+        event_at = (now + timedelta(minutes=in_minutes)).timestamp()
         return Occurrence(RepeatKind.ONCE, scheduled_at=event_at - advance * 60), (
             event_at if advance else None
         )
@@ -161,7 +182,7 @@ def _occurrence_for(arguments: dict, *, now: datetime) -> tuple[Occurrence, floa
         repeat=str(arguments.get("repeat", "")),
         time_text=str(arguments.get("time", "")),
         date_text=str(arguments.get("date", "")),
-        weekday=arguments.get("weekday"),
+        weekday=_as_int(arguments.get("weekday"), "星期幾"),
         now=now,
     )
     if occurrence.repeat_kind != RepeatKind.ONCE or not advance:

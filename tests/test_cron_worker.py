@@ -51,6 +51,17 @@ _BASE_JOB_NAMES = [
 ]
 
 
+@pytest.fixture(autouse=True)
+def _block_dotenv(monkeypatch):
+    """擋掉 `worker.main()` 內的 load_dotenv（2026-07-27）。
+
+    它會把正式 .env 的鍵灌回**整個測試行程**、汙染後面所有測試（與 test_app.py、
+    test_safety_evaluation.py 同型）。用 autouse 而不是逐個測試加——本檔有三個測試
+    呼叫 main()，逐個加就是等著漏掉第四個。由 conftest 的 pytest_sessionfinish 守住。
+    """
+    monkeypatch.setattr(worker, "load_dotenv", lambda *a, **k: None)
+
+
 class _FakeDb:
     def __init__(self) -> None:
         self.closed = False

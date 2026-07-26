@@ -57,10 +57,22 @@ def _read_env_file(path: Path) -> dict[str, str]:
 
 
 _DOTENV = _read_env_file(_REPO_ROOT / ".env")
+_DOTENV_EXAMPLE = _read_env_file(_REPO_ROOT / ".env.example")
 
 # 「這個應用會讀哪些鍵」的單一真實來源＝`.env.example`（AGENTS.md 要求每個鍵都列在那）。
 # 用它當清單而不是人工維護第二份名單——否則日後新增金鑰會漏掉密封。
-APP_ENV_KEYS = frozenset(_read_env_file(_REPO_ROOT / ".env.example")) | frozenset(_DOTENV)
+APP_ENV_KEYS = frozenset(_DOTENV_EXAMPLE) | frozenset(_DOTENV)
+
+# 真正該擋的「正式值」＝ .env 有值、且與 .env.example 的預設不同的那些。
+# ⚠️ 收尾檢查比對**值**而不是「鍵在不在」：應用本來就會合法地寫環境變數
+# （`tracing.configure` 就把 OPIK_URL_OVERRIDE 等三把 setdefault 進 os.environ，
+# 那是設定 opik SDK 的方式），值來自測試給的 Settings、不是正式設定。
+# 只看鍵會把這種合法寫入誤判成洩漏，逼人去關掉守衛——那才是最糟的結果。
+PRODUCTION_VALUES = {
+    key: value
+    for key, value in _DOTENV.items()
+    if value and key not in TEST_ONLY_KEYS and _DOTENV_EXAMPLE.get(key) != value
+}
 
 for _key in APP_ENV_KEYS - TEST_ONLY_KEYS:
     os.environ.pop(_key, None)
@@ -99,7 +111,7 @@ def pytest_sessionfinish(session, exitstatus) -> None:  # noqa: ARG001 - pytest 
     只警告不改變 exitstatus 的做法在這裡不夠：靜默的洩漏正是這次要根治的東西，
     故直接讓整場測試紅。
     """
-    leaked = sorted(key for key in APP_ENV_KEYS - TEST_ONLY_KEYS if key in os.environ)
+    leaked = sorted(key for key, value in PRODUCTION_VALUES.items() if os.environ.get(key) == value)
     if leaked:
         session.exitstatus = 1
         print(  # noqa: T201 - 收尾報告，必須讓 CI 的輸出看得到

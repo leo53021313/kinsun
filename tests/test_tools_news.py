@@ -313,3 +313,13 @@ def test_news_detail_handler_registers_the_publisher():
     with turn_sources() as sources:
         build_news_detail_handler(store, clock=_clock)({"title": "流感疫苗"}, None)
     assert sources == ["測試媒體"]
+
+
+def test_non_string_topic_does_not_break_the_tool():
+    """實測：模型把 topic 送成 ["健康"] 時原本會拋 AttributeError，被吞成「工具執行失敗」。"""
+    from kinsun.news.store import FakeNewsStore
+    from kinsun.tools.news import build_news_handler
+
+    handler = build_news_handler(FakeNewsStore(), clock=lambda: _NOW)
+    reply = handler({"topic": ["健康"]}, ToolInvocationContext("t", "e1"))
+    assert "AttributeError" not in reply and "工具執行失敗" not in reply
