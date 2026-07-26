@@ -129,6 +129,31 @@ def _content_policy(value: Any) -> str:
     return normalized
 
 
+def _speech_backend(key: str, allowed: frozenset[str]):
+    """回傳一個 before 驗證器：正規化後必須落在白名單，否則拋 ConfigError（含鍵名與值）。
+
+    ⚠️ 為什麼這兩個鍵非驗不可（2026-07-27）：`build_asr_client`／`build_tts_client` 的
+    分支是「等於 dgx 才用真後端，**其餘一律**回替身」，而 `MockAsrClient` 對任何音檔都
+    回傳寫死的「今天天氣真好」。少打一個字母，長輩每一句話都會被辨識成那一句、金孫照著
+    回，且全程不印任何錯誤——這種靜默降級要靠人偶然發現。改成載入當下就拒絕，與
+    `_require_present` 對四把必要金鑰的 fail-fast 同級。
+
+    大小寫與前後空白照 `_content_policy` 的慣例正規化（無害的變體不該擋人），
+    真正要攔的是拼錯的值。
+    """
+
+    def _validate(value: Any) -> str:
+        normalized = str(value).strip().lower()
+        if normalized not in allowed:
+            raise ConfigError(
+                f"{key}（{value!r}）必須為 {' 或 '.join(sorted(allowed))}："
+                "值不在白名單時語音後端會靜默降級成寫死的測試替身，不會有任何錯誤訊息。"
+            )
+        return normalized
+
+    return _validate
+
+
 def _refresh_cron(value: Any) -> str:
     normalized = str(value).strip() or "0 3 * * 0"
     if not croniter.is_valid(normalized):
@@ -193,7 +218,9 @@ class Settings(_BaseEnvSettings):
     # 按用途配模型（✅ D-16 丁-5）：未設＝沿用 GEMINI_MODEL（見 _resolve_model_fallbacks）。
     gemini_model_safety: str = "gemini-3.5-flash-lite"
     gemini_model_summary: str = "gemini-3.5-flash-lite"
-    asr_backend: str = "mock"
+    asr_backend: Annotated[
+        str, BeforeValidator(_speech_backend("ASR_BACKEND", frozenset({"mock", "dgx"})))
+    ] = "mock"
     asr_endpoint: str = ""
     asr_api_key: str = ""
     asr_timeout_seconds: float = 15.0
@@ -303,7 +330,9 @@ class Settings(_BaseEnvSettings):
     liff_timeout_seconds: float = 10.0
     rich_menu_id: str = ""
     binding_gate_enabled: Bool = True
-    tts_backend: str = "bubble"
+    tts_backend: Annotated[
+        str, BeforeValidator(_speech_backend("TTS_BACKEND", frozenset({"bubble", "dgx"})))
+    ] = "bubble"
     tts_endpoint: str = ""
     tts_api_key: str = ""
     tts_timeout_seconds: float = 30.0
