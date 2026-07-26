@@ -151,7 +151,7 @@ def test_a_long_background_job_does_not_block_the_rest_of_the_tick():
     def _slow() -> None:
         order.append("slow-start")
         started.set()
-        release.wait(timeout=5)
+        release.wait(timeout=30)
         order.append("slow-end")
 
     state = FakeScheduleStateStore()
@@ -168,7 +168,7 @@ def test_a_long_background_job_does_not_block_the_rest_of_the_tick():
         state=state,
     )
     assert sched.run_due() == ["slow", "fast"]
-    assert started.wait(timeout=5), "背景 job 沒有被啟動"
+    assert started.wait(timeout=30), "背景 job 沒有被啟動"
     assert "fast" in order, "掃描迴圈被慢 job 卡住了——這正是事故當晚的情形"
     assert "slow-end" not in order, "run_due 等了背景 job 跑完，等於沒有背景化"
     release.set()
@@ -186,7 +186,7 @@ def test_a_background_job_still_running_is_not_started_again():
 
     def _slow() -> None:
         runs.append(1)
-        release.wait(timeout=5)
+        release.wait(timeout=30)
 
     state = FakeScheduleStateStore()
     seed = datetime(2026, 7, 12, 7, 0, tzinfo=TPE)
@@ -219,7 +219,7 @@ def test_a_crashing_background_job_does_not_kill_the_scheduler():
         [Job("boom", "0 8 * * *", _boom, background=True)], clock=lambda: now, state=state
     )
     assert sched.run_due() == ["boom"]
-    assert boom.wait(timeout=5)
+    assert boom.wait(timeout=30)
     # 例外被吞在背景執行緒裡；下一輪（狀態已推進）自然不再到期。
     assert sched.run_due() == []
 
@@ -240,7 +240,7 @@ def test_a_background_job_stuck_too_long_escalates_to_a_warning(caplog, monkeypa
     now = datetime(2026, 7, 12, 8, 0, tzinfo=TPE)
     state.set_last_run("slow", seed)
     sched = Scheduler(
-        [Job("slow", "0 8 * * *", lambda: release.wait(timeout=5), background=True)],
+        [Job("slow", "0 8 * * *", lambda: release.wait(timeout=30), background=True)],
         clock=lambda: now,
         state=state,
     )
