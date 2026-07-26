@@ -19,8 +19,12 @@ class Notifier(Protocol):
 class TextSender(Protocol):
     """「可送文字」插座（✅ D-18）：safety 核心只依賴此抽象，
     不 import 邊緣層的 channels.router——組裝處把 ChannelRouter 插進來。
-    回傳實際成功的通道名（✅ 庚-16），供送達留痕標註語意。"""
+    回傳實際成功的通道名（✅ 庚-16），供送達留痕標註語意。
 
+    `has_route` 供「還沒綁通道」與「送出失敗」分流（2026-07-27）：兩者的
+    `send_text_channels` 回傳都是空清單，光看結果分不出來。"""
+
+    def has_route(self, principal_type: PrincipalType, principal_id: str) -> bool: ...
     def send_text_channels(
         self, principal_type: PrincipalType, principal_id: str, text: str
     ) -> list[str]: ...
@@ -68,7 +72,15 @@ class DeliveryLog(Protocol):
         *,
         delivered: bool,
         channels: str = "",
+        outcome: str = "",
     ) -> None: ...
+
+
+# 送達結果分類（寫進 risk_notification_logs.outcome）。`no_route` 是常態不是故障，
+# admin 的投遞失敗告警只算 `failed`——見 deliveries.count_failed_since。
+_OUTCOME_SENT = "sent"
+_OUTCOME_NO_ROUTE = "no_route"
+_OUTCOME_FAILED = "failed"
 
 
 class GuardianNotifier:
@@ -86,13 +98,18 @@ class GuardianNotifier:
         self._deliveries = deliveries
 
     def _record_delivery(
-        self, elder_id: str, guardian_id: str, tier, *, delivered: bool, channels: str
+        self, elder_id: str, guardian_id: str, tier, *, delivered: bool, channels: str, outcome: str
     ) -> None:
         if self._deliveries is None:
             return
         try:
             self._deliveries.record(
-                elder_id, guardian_id, tier, delivered=delivered, channels=channels
+                elder_id,
+                guardian_id,
+                tier,
+                delivered=delivered,
+                channels=channels,
+                outcome=outcome,
             )
         except Exception:  # noqa: BLE001 - 留痕失敗不可反噬通知
             logger.warning("送達紀錄寫入失敗 elder=%s guardian=%s", elder_id, guardian_id)
@@ -113,7 +130,23 @@ class GuardianNotifier:
                 return
             text = _format_alert(assessment)
             sent = 0
+            unbound = 0
             for guardian_id in targets:
+                # 先問有沒有可達通道（2026-07-27）：沒綁通道與送出失敗的
+                # `send_text_channels` 回傳都是空清單，事後分不出來，只能事前問。
+                # 沒有通道就不必白呼叫一次出站，但仍要留痕——稽核問的是「家屬當時
+                # 有沒有收到」，沒收到就是沒收到，理由記在 outcome。
+                if not self._router.has_route(PrincipalType.GUARDIAN, guardian_id):
+                    unbound += 1
+                    self._record_delivery(
+                        elder_id,
+                        guardian_id,
+                        assessment.tier,
+                        delivered=False,
+                        channels="",
+                        outcome=_OUTCOME_NO_ROUTE,
+                    )
+                    continue
                 channels = self._router.send_text_channels(
                     PrincipalType.GUARDIAN, guardian_id, text
                 )
@@ -128,13 +161,15 @@ class GuardianNotifier:
                     assessment.tier,
                     delivered=delivered,
                     channels=",".join(channels),
+                    outcome=_OUTCOME_SENT if delivered else _OUTCOME_FAILED,
                 )
             logger.warning(
-                "已通知家屬 elder=%s tier=%s 成功=%d/%d",
+                "已通知家屬 elder=%s tier=%s 成功=%d/%d（其中 %d 位尚未綁定通道）",
                 elder_id,
                 assessment.tier.name,
                 sent,
                 len(targets),
+                unbound,
             )
         except Exception:  # noqa: BLE001
             logger.exception("家屬通知流程異常 elder=%s", elder_id)
