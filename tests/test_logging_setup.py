@@ -75,6 +75,59 @@ def test_quieted_loggers_still_report_real_problems():
     assert "connection reset" in stream.getvalue()
 
 
+# ── trace_id：logs 只記「發生什麼事」，內容去 Opik 看（2026-07-27 政策）──
+#
+# 拿掉對話內容之後，log 說「出站冒名防線攔截了」卻沒說攔了什麼。trace_id 就是那道橋：
+# 看到哪一輪出事，拿 id 去 Opik 查內容。
+
+
+def test_line_carries_the_trace_id_when_inside_a_turn():
+    stream = _capture()
+    with logging_setup.log_trace("t-abc"):
+        logging.getLogger("kinsun.agent").warning("出站冒名防線攔截")
+    assert "t-abc" in stream.getvalue()
+
+
+def test_line_outside_a_turn_still_formats():
+    """排程與啟動階段沒有 trace_id，不可因此讓整行 log 炸掉或消失。"""
+    stream = _capture()
+    logging.getLogger("kinsun.scheduler").info("排程器啟動")
+    assert "排程器啟動" in stream.getvalue()
+
+
+def test_trace_id_is_restored_after_the_turn():
+    stream = _capture()
+    with logging_setup.log_trace("t-1"):
+        pass
+    logging.getLogger("kinsun.web").warning("turn 之外")
+    assert "t-1" not in stream.getvalue()
+
+
+def test_trace_id_does_not_leak_between_concurrent_turns():
+    """⚠ 這是本機制最重要的一條：兩個入站 handler 都是 async def，同一條事件迴圈執行緒
+    會交錯處理多位長輩。用 threading.local 會把 A 長輩的 trace_id 貼到 B 的 log 上——
+    比沒有 trace_id 更糟。contextvars 才有正確的隔離。
+    """
+    import asyncio
+
+    stream = _capture()
+
+    async def turn(trace_id: str, delay: float) -> None:
+        with logging_setup.log_trace(trace_id):
+            await asyncio.sleep(delay)  # 交出控制權，讓另一個回合插進來
+            logging.getLogger("kinsun.web").warning("回合 %s 結束", trace_id)
+
+    async def both() -> None:
+        await asyncio.gather(turn("t-A", 0.02), turn("t-B", 0.01))
+
+    asyncio.run(both())
+    lines = [ln for ln in stream.getvalue().splitlines() if "回合" in ln]
+    assert len(lines) == 2
+    for line in lines:
+        marker = "t-A" if "回合 t-A" in line else "t-B"
+        assert marker in line, f"trace_id 串台了：{line}"
+
+
 def test_level_is_configurable_without_an_env_key():
     stream = io.StringIO()
     logging_setup.setup_logging(level=logging.WARNING, stream=stream)

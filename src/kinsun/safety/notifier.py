@@ -32,12 +32,12 @@ class TextSender(Protocol):
 
 class LogNotifier:
     def notify(self, elder_id: str, assessment: RiskAssessment) -> None:
+        # reason 是分級器對長輩健康狀態的描述＝對話內容，不進 log（2026-07-27 政策）。
         logger.warning(
-            "危急通知 elder=%s tier=%s confidence=%.2f reason=%s signals=%s",
+            "危急通知 elder=%s tier=%s confidence=%.2f signals=%s",
             elder_id,
             assessment.tier.name,
             assessment.confidence,
-            assessment.reason,
             assessment.signals,
         )
 
@@ -114,18 +114,19 @@ class GuardianNotifier:
         except Exception:  # noqa: BLE001 - 留痕失敗不可反噬通知
             logger.warning("送達紀錄寫入失敗 elder=%s guardian=%s", elder_id, guardian_id)
 
-    @tracing.track(
-        name="guardian_notify", type="general", capture_input=False, capture_output=False
-    )
+    @tracing.track(name="guardian_notify", type="general", capture_input=True, capture_output=True)
     def notify(self, elder_id: str, assessment: RiskAssessment) -> None:
         try:
             targets = [eg.guardian_id for eg in self._directory.guardians_of(elder_id)]
             if not targets:
+                # ⚠️ 刻意不印 assessment.reason（2026-07-27 政策，Leo 定案）：那是分級器
+                # 對長輩健康狀態的描述，屬對話內容，只進 Opik（`risk_assess` span 的輸出）
+                # 與 risk_events 表。這裡印訊號名——那是系統事實（哪條規則命中）。
                 logger.warning(
-                    "危急但查無可通知家屬 elder=%s tier=%s reason=%s",
+                    "危急但查無可通知家屬 elder=%s tier=%s 訊號=%s",
                     elder_id,
                     assessment.tier.name,
-                    assessment.reason,
+                    ",".join(assessment.signals),
                 )
                 return
             text = _format_alert(assessment)

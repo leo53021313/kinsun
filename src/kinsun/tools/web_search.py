@@ -81,7 +81,15 @@ def _site_of(url: str) -> str:
 
 
 # capture_input=False：本函式第二個參數是 api_key，絕不可被觀測層記錄。
-@tracing.track(name="web_search_tavily", type="tool", capture_input=False, capture_output=False)
+# ⚠ api_key 是第二個參數，opik 不會自動移除（只會 pop self／cls），必須顯式排除；
+# http 是 Transport 物件，序列化沒有意義。排除後 query／topic 就看得到了。
+@tracing.track(
+    name="web_search_tavily",
+    type="tool",
+    capture_input=True,
+    capture_output=True,
+    ignore_arguments=["api_key", "http"],
+)
 def _search(http: Transport, api_key: str, query: str, topic: str) -> list[dict]:
     payload: dict = {"query": query, "search_depth": "basic", "max_results": _MAX_RESULTS}
     domains = _ALLOWED_DOMAINS[topic]

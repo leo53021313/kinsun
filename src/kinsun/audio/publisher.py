@@ -55,7 +55,13 @@ class SupabaseAudioPublisher:
     def _object_path(self, name: str) -> str:
         return f"{self._prefix}/{self._clock().strftime('%Y%m%d')}/{name}"
 
-    @tracing.track(name="audio_upload", type="general", capture_input=False, capture_output=True)
+    @tracing.track(
+        name="audio_upload",
+        type="general",
+        capture_input=True,
+        capture_output=True,
+        ignore_arguments=["audio"],  # 整包音檔 bytes
+    )
     def publish(self, audio: bytes, *, content_type: str) -> str:
         path = self._object_path(f"{self._new_id()}.m4a")
         upload_url = f"{self._base}/storage/v1/object/{self._bucket}/{path}"

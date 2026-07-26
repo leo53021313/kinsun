@@ -272,6 +272,14 @@ def _is_empty_promise(reply: str, actions: list[str]) -> bool:
     )
 
 
+def _named_authorities(reply: str) -> set[str]:
+    """回覆裡點名了哪些機關（只回封閉清單裡的名字，不含長輩或模型的其他用字）。
+
+    給日誌用：內容不進 log（政策），但「是哪一種冒名」是純粹的系統事實、可以印。
+    """
+    return {name for name in _AUTHORITY_TOKENS if name in reply}
+
+
 def _no_fake_source(reply: str, sources: list[str]) -> str:
     """移除「某機關說」——除非本輪真的有工具登記到**那個機關**的來源。
 
@@ -298,7 +306,12 @@ def _no_fake_source(reply: str, sources: list[str]) -> str:
     stripped = _SOURCE_CLAIM.sub(_drop, reply)
     if stripped == reply:
         return reply
-    logger.warning("出站冒名防線攔截：原文=%r", reply[:120])
+    # ⚠️ 刻意不印回覆原文（2026-07-27 政策，Leo 定案）：logs 只記「發生了什麼事」，
+    # 長輩的對話內容一律去 Opik 看。要查這一輪到底講了什麼，拿行首的 trace_id 去查
+    # `care_agent` span——那裡有完整的輸入與輸出，而且 Opik 是自架的。
+    # 印出被攔掉的機關名（來自封閉清單 `_AUTHORITY_TOKENS`，不是長輩的話），
+    # 這樣不必開 Opik 也看得出「是哪一種冒名在發生」。
+    logger.warning("出站冒名防線攔截：機關=%s", "、".join(sorted(_named_authorities(reply))))
     tracing.update_trace_metadata(fake_source_stripped=True)
     stripped = stripped.strip()
     return stripped if _CJK.search(stripped) else FALLBACK_REPLY
@@ -419,7 +432,13 @@ class CareAgent:
         )
         return SYSTEM_PROMPT + ctx.system_suffix, ctx.history
 
-    @tracing.track(name="care_agent", type="general", capture_input=False, capture_output=False)
+    @tracing.track(
+        name="care_agent",
+        type="general",
+        capture_input=True,
+        capture_output=True,
+        ignore_arguments=["prepared"],  # PreparedTurn 物件，序列化沒有意義
+    )
     def handle(
         self,
         elder_id: str,
@@ -538,7 +557,7 @@ class CareAgent:
         )
         return turn.text or FALLBACK_REPLY
 
-    @tracing.track(name="proactive_turn", type="general", capture_input=False, capture_output=False)
+    @tracing.track(name="proactive_turn", type="general", capture_input=True, capture_output=True)
     def proactive(self, elder_id: str, intent: str, *, recall: Recall | None = None) -> str:
         """主動開場。recall＝她上次開口那天的摘要（spec 2026-07-17-主動問候接續昨天話題）。
 

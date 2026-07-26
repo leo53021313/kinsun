@@ -145,7 +145,8 @@ class Reflector(Protocol):
     ) -> str: ...
 
 
-@tracing.track(name="nightly_reflection", type="general", capture_input=False, capture_output=False)
+# 同 daily_summary：輸入全是 store 與 callable，只開輸出（學到的守則）。
+@tracing.track(name="nightly_reflection", type="general", capture_input=False, capture_output=True)
 def reflect_days(
     elder_id: str,
     *,
@@ -191,7 +192,10 @@ def reflect_days(
     candidates = _parse(reply)
     if candidates is None:
         # 整批丟棄：格式壞掉代表這份回應的來源不可信，挑得出來的那幾條同樣不可信。
-        logger.warning("反思回傳格式不合，整批丟棄 elder=%s 回應=%r", elder_id, reply[:200])
+        # ⚠️ 刻意不印模型回應原文（2026-07-27 政策，Leo 定案）：logs 只記「發生了什麼事」，
+        # 對話內容一律去 Opik 看（`nightly_reflection` span 的輸出）。印出長度供判斷
+        # 「是空回應還是格式跑掉」——那是純粹的系統事實，不含長輩的話。
+        logger.warning("反思回傳格式不合，整批丟棄 elder=%s 回應長度=%d", elder_id, len(reply))
         return
 
     plausible, forged = _split_forged_evidence(candidates, lookback_days)
@@ -267,11 +271,12 @@ def _record(strategies: StrategyStore, elder_id: str, candidate: Candidate) -> N
         )
     except StrategyError as exc:
         # 最常見的來源：反思讀完生效中守則後、寫入前，家屬在後台撤銷了取代對象。
+        # ⚠️ 不印 candidate.content（2026-07-27 政策）：守則是從長輩的對話推導出來的
+        # 描述（「阿嬤心情低落時先聊孫子」），屬對話內容，只進 Opik 與 strategies 表。
         logger.warning(
-            "守則寫入失敗，跳過此條 elder=%s 取代對象=%s 內容=%r 原因=%s",
+            "守則寫入失敗，跳過此條 elder=%s 取代對象=%s 原因=%s",
             elder_id,
             candidate.supersedes,
-            candidate.content,
             exc,
         )
 

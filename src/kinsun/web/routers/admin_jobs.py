@@ -63,14 +63,17 @@ class _ForcedDueStore:
 # 手動觸發的 Opik root trace（工程觀測，OPIK_ENABLED 才生效）。FastAPI handler 因
 # 依賴注入需保留原 signature，不能直接貼 @track，故把實際執行抽到這兩個 helper：
 # worker 排程走 fanout 各自成 root，後台觸發則統一掛在此 root 下、標記為 admin 通道。
-@tracing.track(name="admin_run_job", type="general", capture_input=False, capture_output=False)
+@tracing.track(name="admin_run_job", type="general", capture_input=True, ignore_arguments=["job"])
 def _run_job_traced(job: Job) -> None:
     tracing.tag_current_trace(channel="admin", job=job.name)
     job.run()
 
 
 @tracing.track(
-    name="admin_dispatch_reminder", type="general", capture_input=False, capture_output=False
+    name="admin_dispatch_reminder",
+    type="general",
+    capture_input=True,
+    ignore_arguments=["job"],  # Job 帶 callable，序列化沒有意義
 )
 def _dispatch_reminder_traced(job: Job, *, elder_id: str, kind: str) -> None:
     tracing.tag_current_trace(elder_id=elder_id, channel="admin", kind=kind)

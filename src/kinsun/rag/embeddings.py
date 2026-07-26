@@ -125,7 +125,8 @@ class GeminiEmbeddingModel:
             )
         return tuple(vectors)
 
-    @tracing.track(name="embedding", type="general", capture_input=False, capture_output=False)
+    # 輸出維持關閉：回傳的是 768 維向量，攤進 span 只是把畫面塞爆。
+    @tracing.track(name="embedding", type="general", capture_input=True, capture_output=False)
     def _embed(self, text: str, *, task_type: str, title: str | None = None) -> tuple[float, ...]:
         return self._embed_many((text,), task_type=task_type, title=title)[0]
 
