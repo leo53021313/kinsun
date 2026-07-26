@@ -47,6 +47,22 @@ export type TurnReply = {
   audio_url: string;
   /** 回覆音檔時長；目前三端零消費，保留給虛擬形象動畫對嘴（階段 5 後）。 */
   duration_ms: number | null;
+  /**
+   * 分段串流（2026-07-26 延遲優化）：整段回覆被切成幾段。
+   * >1 代表 `audio_url` 只是**第一段**，其餘要用 `getTurnChunk` 依序取來接著播；
+   * 0／1 代表就這一段。TTS 是 0.9 秒固定成本＋每字 0.10 秒，整段合成完才送出
+   * 會讓長輩等 5～8 秒，先送第一句可提早約 2～4 秒聽到聲音。
+   */
+  chunk_count: number;
+  /** 這一輪回覆的短雜湊；取後續段落時帶上，伺服器據此確認不是上一輪的回覆。 */
+  reply_digest: string;
+};
+
+/** 分段串流的後續段落（第 0 段已隨 `TurnReply` 回過）。 */
+export type TurnChunk = {
+  audio_url: string;
+  duration_ms: number | null;
+  text: string;
 };
 
 // --- 觀測後台（admin） ---

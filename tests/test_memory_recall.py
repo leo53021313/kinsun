@@ -4,6 +4,8 @@
 順序、None／失敗段略過、history 帶入、record_turn 逐筆寫入。
 """
 
+import time
+
 from kinsun.llm import Message
 from kinsun.memory.models import FactSection, InjectedContext, MemoryItem
 from kinsun.memory.recall import SessionMemory
@@ -60,6 +62,38 @@ def test_assemble_skips_failing_fact_provider():
     s1 = FactSection("\n用藥：\n", ["A"])
     ctx = _session(facts=[_BoomFacts(), _FakeFacts(s1)]).assemble("s", "x")
     assert ctx.injected.sections == [s1]
+
+
+class _SlowFacts:
+    """每次查詢固定睡 delay 秒——用來分辨事實提供者是排隊跑還是並行跑。"""
+
+    def __init__(self, section, delay: float) -> None:
+        self._section = section
+        self._delay = delay
+
+    def facts(self, line_user_id):
+        time.sleep(self._delay)
+        return self._section
+
+
+def test_assemble_queries_fact_providers_concurrently():
+    """事實提供者必須並行查（2026-07-26 延遲實測）。
+
+    正式組裝有七個（時間／稱呼／三種排程／守則／位置），除時間外各是一次約 0.21 秒的
+    Supabase 跨網往返、彼此無依賴，排隊查等於白等約 1.5 秒。
+    這裡以「四個各睡 0.1 秒的提供者，總耗時必須明顯少於 0.4 秒」釘住並行性——
+    只斷言順序不會發現迴歸（並行版與序列版的輸出一模一樣）。
+    """
+    delay = 0.1
+    providers = [_SlowFacts(FactSection(f"\n第{i}段：\n", [str(i)]), delay) for i in range(4)]
+
+    started = time.monotonic()
+    ctx = _session(facts=providers).assemble("s", "x")
+    elapsed = time.monotonic() - started
+
+    expected = [f"\n第{i}段：\n" for i in range(len(providers))]
+    assert [s.title for s in ctx.injected.sections] == expected
+    assert elapsed < delay * len(providers) * 0.75, f"耗時 {elapsed:.2f}s，看起來仍是排隊查"
 
 
 def test_record_turn_appends_each_message():

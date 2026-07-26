@@ -15,7 +15,8 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from linebot.v3 import WebhookParser
 
-from kinsun import tracing
+from kinsun import background, tracing
+from kinsun.accounts.models import Channel
 from kinsun.audio.publisher import build_audio_publisher
 from kinsun.binding.flow import BindingFlow
 from kinsun.binding.gate import AllowAllGate, ConsentGate
@@ -60,6 +61,10 @@ def build_app() -> FastAPI:
     def clock() -> datetime:
         return datetime.now(tz)
 
+    # 背景落庫（2026-07-26 延遲實測）：觀測稽核與提醒回應標記移出長輩的回覆路徑。
+    # 只有這個組裝根啟用——排程 worker 是批次作業，沒有人在等它的回覆，多一個池只是
+    # 多一份連線競爭；單元測試不啟用，故行為與引入前一字不差。
+    background.configure()
     externals = build_externals(settings)
     core = assemble_core(settings, externals, clock=clock)
     db = core.db
@@ -98,10 +103,15 @@ def build_app() -> FastAPI:
         if settings.safety_moderation_enabled
         else None
     )
+    # TTS 分段串流（2026-07-26 延遲優化）：只對 App 通道啟用。
+    # ⚠️ LINE 不可加入——它一輪只能回一則語音訊息，給它第一句等於把後面的話吞掉；
+    # 分段需要投遞端「逐段拉、接著播」的配合，目前只有 App 對講機做得到。
+    tts_client = build_tts_client(settings)
     pipeline = VoicePipeline(
         asr=build_asr_client(settings),
         agent=core.agent,
-        tts=build_tts_client(settings),
+        tts=tts_client,
+        chunked_channels=frozenset({Channel.APP.value}),
         detector=RiskDetector(
             LlmRiskClassifier(safety_llm),
             mid=settings.safety_confidence_mid,
@@ -162,6 +172,13 @@ def build_app() -> FastAPI:
     voice = VoiceReplyDelivery(
         publisher, settings.tts_reply_text, show_transcript=settings.asr_debug_show_transcript
     )
+
+    def _shutdown() -> None:
+        # ⚠️ 順序有意義：背景落庫必須先排空，否則佇列裡的觀測寫入會撞上已關閉的
+        # 連線池，部署重啟就吃掉最後幾筆稽核。
+        background.shutdown()
+        db.close()
+
     parser = WebhookParser(settings.line_channel_secret)
     app = create_app(
         parser=parser,
@@ -173,7 +190,7 @@ def build_app() -> FastAPI:
         traces=core.traces,
         inbound_audio=inbound_audio,
         text_input_enabled=settings.line_text_input_enabled,
-        on_shutdown=db.close,
+        on_shutdown=_shutdown,
     )
     verifier = LineIdTokenVerifier(settings.liff_channel_id, settings.liff_timeout_seconds)
     install_error_envelope(app)  # HTTPException → 統一信封（✅ D-23 乙-1）
@@ -270,6 +287,10 @@ def build_app() -> FastAPI:
             locations=core.locations,
             clock=clock,
             max_audio_bytes=settings.audio_max_upload_bytes,
+            # 分段串流的後續段落：從長輩自己最後一則回覆重新切句、逐段合成上傳。
+            memory=core.memory,
+            tts=tts_client,
+            audio_publisher=publisher,
         ),
         prefix="/api/v1",
     )
