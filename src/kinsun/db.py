@@ -67,7 +67,11 @@ BINDING_DDL = (
 
 SCHEDULER_DDL = (
     "CREATE TABLE IF NOT EXISTS scheduler_state ("
-    "job_name TEXT PRIMARY KEY, last_run_at DOUBLE PRECISION NOT NULL);"
+    "job_name TEXT PRIMARY KEY, last_run_at DOUBLE PRECISION NOT NULL, "
+    "last_success_at DOUBLE PRECISION);"
+    # last_success_at 可為 NULL＝「還沒成功過」，與「失敗」是兩回事——舊列升級後一律
+    # 為 NULL，後台必須顯示成「未知」而不是紅字，否則第一次部署整排變紅。
+    "ALTER TABLE scheduler_state ADD COLUMN IF NOT EXISTS last_success_at DOUBLE PRECISION;"
 )
 
 # 認證節流共享計數（✅ 庚-08／A-54）：多 worker 共用同一滑動視窗，避免 per-process

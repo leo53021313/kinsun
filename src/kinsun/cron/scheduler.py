@@ -96,6 +96,8 @@ class Scheduler:
                     job.run()
                 except Exception:  # noqa: BLE001 - 排程不可因單一 job 崩潰
                     logger.exception("排程 job 失敗：%s", job.name)
+                else:
+                    self._record_success(job.name, now)
             ran.append(job.name)
         return ran
 
@@ -146,11 +148,30 @@ class Scheduler:
                 job.run()
             except Exception:  # noqa: BLE001 - 背景 job 崩潰不可影響掃描迴圈
                 logger.exception("排程 job 失敗：%s", job.name)
+            else:
+                # 背景 job 的成功時刻取「跑完的那一刻」而非認領時刻：長跑批次可能跑好幾分鐘，
+                # 用認領時刻會讓後台以為它比實際更早就完成了。
+                self._record_success(job.name, self._clock())
 
         thread = threading.Thread(target=_run, name=f"kinsun-job-{job.name}", daemon=True)
         self._inflight[job.name] = (thread, time.monotonic())
         self._stuck_warned.discard(job.name)  # 新的一輪，重新計算是否卡住
         thread.start()
+
+    def _record_success(self, job_name: str, when: datetime) -> None:
+        """記下 job 真的跑完的時刻（2026-07-27）。
+
+        ⚠️ 這是與 `last_run_at` **獨立**的訊號，不可合併：後者由 `_claim_if_due` 在執行
+        **之前**寫入（at-most-once 原子搶占所必需，✅ 庚-17／A-42），所以 job 失敗也算
+        「已跑」。少了成功訊號，「每輪都認領成功、每輪都拋例外」的 job 在 `/admin/jobs`
+        一律顯示健康——比沒有告警更危險，因為它看起來是綠的。
+
+        寫入失敗只記 warning：這是觀測訊號，不可反過來弄壞排程本身。
+        """
+        try:
+            self._state.record_success(job_name, when)
+        except Exception:  # noqa: BLE001 - 觀測訊號失敗不可反噬排程
+            logger.warning("排程成功訊號寫入失敗：%s", job_name)
 
     def _claim_if_due(self, job: Job, now: datetime) -> bool:
         """到期則原子搶占（✅ 庚-17／A-42）：執行前先以「現值仍為我讀到的 last」

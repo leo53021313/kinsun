@@ -133,6 +133,7 @@ def create_admin_jobs_router(
         items = []
         overdue: list[str] = []
         never_ran: list[str] = []
+        failing: list[str] = []
         for spec in specs:
             last = schedule_state.get_last_run(spec.name)
             due_at = croniter(spec.cron, last).get_next(datetime) if last else None
@@ -152,10 +153,26 @@ def create_admin_jobs_router(
             # 從部署起就沒被排程器碰過的 job，這一頁會顯示成全綠。那正是這一頁要抓的
             # 情形裡最嚴重的一種（例如排程器根本沒認得這支 job、或它從未啟動過）。
             is_never_ran = last is None
+            # ⚠️ 「一直在跑、但一直失敗」是這一頁先前完全看不見的盲區（2026-07-27）：
+            # `last_run_at` 由 `_claim_if_due` 在執行**之前**寫入（at-most-once 搶占所
+            # 必需），所以每輪都拋例外的 job 照樣按時更新 last_run_at，上面的 is_overdue
+            # 永遠是 False——後台顯示全綠。要靠獨立的成功訊號才分得出來。
+            #
+            # `last_success_at` 為 None 有兩種可能：真的從沒成功過，或這一列是本欄上線前
+            # 的舊資料。兩者都**不可**當成失敗——否則第一次部署整排變紅、狼來了一次之後
+            # 就沒人再看這一頁了。故只在「有成功紀錄、但落後超過一個容許量」時才報。
+            last_success = schedule_state.get_last_success(spec.name)
+            is_failing = (
+                last_success is not None
+                and last is not None
+                and (last - last_success).total_seconds() > tolerance
+            )
             if is_never_ran:
                 never_ran.append(spec.name)
             elif is_overdue:
                 overdue.append(spec.name)
+            elif is_failing:
+                failing.append(spec.name)
             items.append(
                 {
                     "job_name": spec.name,
@@ -171,6 +188,9 @@ def create_admin_jobs_router(
                     "late_seconds": round(late_seconds) if is_overdue else 0,
                     "is_overdue": is_overdue,
                     "never_ran": is_never_ran,
+                    # None＝還沒有成功紀錄（含本欄上線前的舊列）；前端顯示「未知」不是紅字。
+                    "last_success_at": last_success.timestamp() if last_success else None,
+                    "is_failing": is_failing,
                 }
             )
         owner_of = {spec.name: spec.owner for spec in specs}
@@ -185,7 +205,21 @@ def create_admin_jobs_router(
                 f"有 {len(never_ran)} 支排程從未執行過：{_with_owners(never_ran, owner_of)}"
                 "（首次部署後會先種基準，若持續顯示請確認該程序有啟動、且有認到這支 job）"
             )
-        return ok(items, meta={"overdue": overdue, "never_ran": never_ran, "warnings": warnings})
+        if failing:
+            warnings.append(
+                f"有 {len(failing)} 支排程按時執行但持續失敗：{_with_owners(failing, owner_of)}"
+                "（有被認領、但最後一次成功已落後；請查該 job 的 log，"
+                "外部配額或憑證失效是常見原因）"
+            )
+        return ok(
+            items,
+            meta={
+                "overdue": overdue,
+                "never_ran": never_ran,
+                "failing": failing,
+                "warnings": warnings,
+            },
+        )
 
     @router.post(
         "/jobs/{job_name}/run",

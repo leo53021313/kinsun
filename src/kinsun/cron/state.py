@@ -22,6 +22,8 @@ class ScheduleStateStore(Protocol):
     def get_last_run(self, job_name: str) -> datetime | None: ...
     def set_last_run(self, job_name: str, when: datetime) -> None: ...
     def try_claim(self, job_name: str, *, expected: datetime, now: datetime) -> bool: ...
+    def record_success(self, job_name: str, when: datetime) -> None: ...
+    def get_last_success(self, job_name: str) -> datetime | None: ...
 
 
 class PgScheduleStateStore:
@@ -46,6 +48,35 @@ class PgScheduleStateStore:
             "ON CONFLICT (job_name) DO UPDATE SET last_run_at = EXCLUDED.last_run_at",
             (job_name, when.timestamp()),
         )
+
+    def record_success(self, job_name: str, when: datetime) -> None:
+        """記下這支 job **真的跑完沒出事**的時刻（2026-07-27）。
+
+        ⚠️ 為什麼不能沿用 `last_run_at`：那一欄寫的是「認領」不是「成功」——
+        `Scheduler._claim_if_due` 搶到就先把它推到 now、**之後才**執行，job 拋例外時
+        `run_due` 只記一行 log 就往下走。那是 at-most-once 原子搶占（✅ 庚-17／A-42）
+        所必需的語意，不可更動（`test_cron_scheduler` 明文守住「失敗仍標記」）。
+        於是「每輪都認領成功、每輪都拋例外」的 job，在 `/admin/jobs` 一律顯示健康——
+        比沒有告警更危險，因為它看起來是綠的。兩個訊號分開，這件事才看得見。
+
+        用 UPDATE 而非 upsert：成功必然發生在認領之後，那一列一定已經存在；
+        真的不存在（被人手動刪掉）就當作沒有成功訊號，不要憑空造一列出來。
+        """
+        self._db.execute(
+            "UPDATE scheduler_state SET last_success_at = %s WHERE job_name = %s",
+            (when.timestamp(), job_name),
+        )
+
+    def get_last_success(self, job_name: str) -> datetime | None:
+        """None＝還沒成功過（含本欄上線前的舊列）。⚠️ 與「失敗」是兩回事，
+        後台必須顯示成「未知」而不是紅字，否則第一次部署整排變紅。"""
+        row = self._db.query_one(
+            "SELECT last_success_at FROM scheduler_state WHERE job_name = %s",
+            (job_name,),
+        )
+        if row is None or row[0] is None:
+            return None
+        return datetime.fromtimestamp(row[0], self._tz)
 
     def try_claim(self, job_name: str, *, expected: datetime, now: datetime) -> bool:
         """原子先搶先贏（✅ 庚-17／A-42）：現值未超過我讀到的 expected 才更新成 now。
@@ -97,6 +128,15 @@ class FakeScheduleStateStore:
 
     def __init__(self) -> None:
         self._last: dict[str, datetime] = {}
+        self._success: dict[str, datetime] = {}
+
+    def record_success(self, job_name: str, when: datetime) -> None:
+        # 與 Pg 同語意：只更新既有列（成功必在認領之後），不 upsert。
+        if job_name in self._last:
+            self._success[job_name] = when
+
+    def get_last_success(self, job_name: str) -> datetime | None:
+        return self._success.get(job_name)
 
     def get_last_run(self, job_name: str) -> datetime | None:
         return self._last.get(job_name)

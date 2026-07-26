@@ -255,3 +255,49 @@ def test_a_background_job_stuck_too_long_escalates_to_a_warning(caplog, monkeypa
     assert len(warnings) == 1, "卡住要叫、但只叫一次"
     assert "可能卡住" in warnings[0].getMessage()
     release.set()
+
+
+# ── 成功訊號（2026-07-27）──
+#
+# `last_run_at` 寫的是「認領」不是「成功」（見 _claim_if_due），所以「每輪都認領成功、
+# 每輪都拋例外」的 job 在後台一律顯示健康。加獨立的成功訊號才分得開。
+
+
+def test_success_is_recorded_only_when_the_job_actually_finishes():
+    state = FakeScheduleStateStore()
+    state.set_last_run("boom", datetime(2026, 7, 26, 3, 0, tzinfo=TPE))
+    state.set_last_run("ok", datetime(2026, 7, 26, 3, 0, tzinfo=TPE))
+
+    def boom():
+        raise RuntimeError("boom")
+
+    clock = FakeClock(datetime(2026, 7, 27, 3, 0, tzinfo=TPE))
+    sched = Scheduler(
+        [Job("boom", "0 3 * * *", boom), Job("ok", "0 3 * * *", lambda: None)], clock, state
+    )
+
+    sched.run_due()
+
+    # 兩支都被認領（at-most-once 語意不變，庚-17／A-42）
+    assert state.get_last_run("boom") == clock.dt
+    assert state.get_last_run("ok") == clock.dt
+    # 但只有真的跑完的那支留下成功訊號——這正是後台分得出「持續失敗」的依據
+    assert state.get_last_success("boom") is None
+    assert state.get_last_success("ok") == clock.dt
+
+
+def test_recording_success_failure_does_not_break_the_scheduler():
+    """成功訊號是觀測用的，寫不進去不可反過來弄壞排程。"""
+
+    class _BoomOnSuccess(FakeScheduleStateStore):
+        def record_success(self, job_name, when):
+            raise RuntimeError("db down")
+
+    state = _BoomOnSuccess()
+    state.set_last_run("ok", datetime(2026, 7, 26, 3, 0, tzinfo=TPE))
+    ran = []
+    clock = FakeClock(datetime(2026, 7, 27, 3, 0, tzinfo=TPE))
+    sched = Scheduler([Job("ok", "0 3 * * *", lambda: ran.append(1))], clock, state)
+
+    assert sched.run_due() == ["ok"]
+    assert ran == [1]

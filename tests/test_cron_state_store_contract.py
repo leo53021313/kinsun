@@ -17,6 +17,7 @@ import pytest
 from kinsun.cron.state import FakeScheduleStateStore, PgScheduleStateStore
 
 TPE = timezone(timedelta(hours=8))
+FIXED = datetime(2026, 7, 27, 3, 0, tzinfo=TPE)
 
 
 @pytest.fixture(params=["fake", "pg"])
@@ -78,3 +79,35 @@ def test_try_claim_succeeds_only_when_expected_matches(store, ns):
     assert store.try_claim(f"{ns}job", expected=seed, now=later) is False
     got2 = store.get_last_run(f"{ns}job")
     assert got2 is not None and got2.timestamp() == now.timestamp()
+
+
+# ── 成功訊號（2026-07-27）──
+#
+# `try_claim` 寫的是「認領」不是「成功」（見 PgScheduleStateStore.try_claim 的 docstring
+# 與 Scheduler._claim_if_due：搶占＝寫入 last_run，故 job 失敗也算已跑）。於是「每輪都
+# 認領成功、每輪都拋例外」的 job，`/admin/jobs` 的逾期判斷一律顯示健康。
+# 加一個獨立的成功訊號，兩件事才分得開。⚠️ 不可改 last_run_at 的語意——
+# at-most-once 的原子搶占（庚-17／A-42）靠它，test_cron_scheduler 明文守住「失敗仍標記」。
+
+
+def test_success_is_recorded_independently_of_last_run(store, ns):
+    job = f"{ns}job"
+    store.set_last_run(job, FIXED)
+    assert store.get_last_success(job) is None  # 只認領過、還沒成功過
+    store.record_success(job, FIXED)
+    assert store.get_last_success(job).timestamp() == FIXED.timestamp()
+    assert store.get_last_run(job).timestamp() == FIXED.timestamp()
+
+
+def test_last_success_is_none_for_a_job_that_never_ran(store, ns):
+    assert store.get_last_success(f"{ns}never") is None
+
+
+def test_recording_success_does_not_move_last_run(store, ns):
+    """兩個欄位必須各自獨立：成功訊號不得干擾認領語意。"""
+    job = f"{ns}job2"
+    store.set_last_run(job, FIXED)
+    later = FIXED + timedelta(hours=1)
+    store.record_success(job, later)
+    assert store.get_last_run(job).timestamp() == FIXED.timestamp()
+    assert store.get_last_success(job).timestamp() == later.timestamp()
