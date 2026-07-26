@@ -26,6 +26,7 @@ from kinsun.composition import Core, assemble_core, build_externals
 from kinsun.config import Settings, load_dotenv, load_settings
 from kinsun.db import Database
 from kinsun.llm import build_gemini_for
+from kinsun.logging_setup import setup_logging
 from kinsun.memory.longterm.consolidation import run_consolidation
 from kinsun.memory.longterm.consolidation_log import PgConsolidationLogStore
 from kinsun.news.fetchers.mohw import MohwNewsFetcher
@@ -492,10 +493,10 @@ def main() -> int:
     # `logging.lastResort`（stderr、無時間戳、無 logger 名）——排程器新加的
     # `logger.info` 一行都不會出現，`exc_info` 印出來也查不出「何時開始壞的」。
     # 2026-07-26 全流程模擬實測才發現這件事。
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    # 2026-07-27 起改走共用入口（原為此處獨有的 basicConfig）：webhook 主行程有同樣
+    # 的缺口，兩邊必須是同一份設定，否則查故障時兩個檔的格式與等級各說各話。
+    # 輸出格式與原 basicConfig 逐字相同，scheduler.log 的既有形狀不變。
+    setup_logging()
     # `kill -USR1 <pid>`（或 `scripts/kinsun.sh dump scheduler`）→ 全執行緒 Python 堆疊
     # 直接倒進 stderr，也就是 logs/scheduler.log。
     # ⚠️ 為什麼非有不可：2026-07-26 排程器假死時，DGX 的 `ptrace_scope=1` 讓 py-spy 需要

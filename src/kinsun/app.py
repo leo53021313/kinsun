@@ -27,6 +27,7 @@ from kinsun.channels.line.webhook import create_app
 from kinsun.composition import assemble_core, build_externals
 from kinsun.config import load_dotenv, load_settings
 from kinsun.llm import build_gemini_for
+from kinsun.logging_setup import setup_logging
 from kinsun.pipeline import VoicePipeline
 from kinsun.rag.releases import PgRagReleaseStore
 from kinsun.safety.classifier import LlmRiskClassifier
@@ -54,6 +55,10 @@ from kinsun.web.security import install_security_headers
 
 
 def build_app() -> FastAPI:
+    # ⚠️ 必須是第一行：在此之前發生的任何事（設定載入失敗、建表卡住）都印不出來。
+    # 這個行程原本完全沒有日誌設定，39 個 kinsun.* logger 的 INFO 全數丟棄——見
+    # logging_setup 的模組 docstring。
+    setup_logging()
     load_dotenv()
     settings = load_settings(os.environ)
     tz = ZoneInfo(settings.timezone)
