@@ -20,8 +20,13 @@ export function SystemPage() {
     reload: load,
   } = useLoadable(
     useCallback(async () => {
-      const [jobs, rag, meta] = await Promise.all([listJobs(), getRagStatus(), getMeta()]);
-      return { jobs, rag, testing: meta.internal_testing };
+      const [jobsResult, rag, meta] = await Promise.all([listJobs(), getRagStatus(), getMeta()]);
+      return {
+        jobs: jobsResult.jobs,
+        jobWarnings: jobsResult.meta.warnings,
+        rag,
+        testing: meta.internal_testing,
+      };
     }, []),
   );
   const [notice, setNotice] = useState("");
@@ -43,11 +48,18 @@ export function SystemPage() {
 
   if (error) return <p className="error-banner">{strings.common.loadFailedRefresh}</p>;
   if (!data) return <p>{strings.common.loading}</p>;
-  const { jobs, rag, testing } = data;
+  const { jobs, jobWarnings, rag, testing } = data;
   return (
     <section>
       <h2>{strings.system.title}</h2>
       {notice && <p className="card">{notice}</p>}
+      {/* 排程告警置頂：2026-07-26 排程停擺 13 天，這一頁當時只印了「上次執行」的
+          時間戳——資料就在畫面上，卻沒有任何東西說它不對勁。 */}
+      {jobWarnings.map((warning) => (
+        <p className="error-banner" key={warning}>
+          {warning}
+        </p>
+      ))}
       <div className="card">
         <h3>{strings.system.rag.heading}</h3>
         {rag.warnings.map((warning) => (
@@ -74,6 +86,7 @@ export function SystemPage() {
             <th>{strings.system.columns.job}</th>
             <th>{strings.system.columns.cron}</th>
             <th>{strings.system.columns.lastRun}</th>
+            <th>{strings.system.columns.health}</th>
             {testing && <th>{strings.system.columns.action}</th>}
           </tr>
         </thead>
@@ -85,6 +98,13 @@ export function SystemPage() {
                 <code>{j.cron}</code>
               </td>
               <td>{j.last_run_at ? formatTime(j.last_run_at) : strings.system.neverRun}</td>
+              <td className={j.is_overdue || j.never_ran ? "job-unhealthy" : undefined}>
+                {j.never_ran
+                  ? strings.system.healthNeverRan
+                  : j.is_overdue
+                    ? strings.system.healthOverdue(j.late_seconds)
+                    : strings.system.healthOk}
+              </td>
               {testing && (
                 <td>
                   <button

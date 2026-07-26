@@ -1,5 +1,7 @@
 /** 觀測後台 UI 文案集中（✅ 庚-31／D-50）：改文案只動此檔。 */
 
+import { formatDuration } from "kinsun-shared/format";
+
 export const strings = {
   // 跨頁共用文案
   common: {
@@ -122,9 +124,15 @@ export const strings = {
       job: "任務",
       cron: "排程（cron）",
       lastRun: "上次執行",
+      health: "狀態",
       action: "操作",
     },
     neverRun: "尚未執行",
+    // 健康欄的三種狀態。⚠️ 2026-07-26 排程停擺 13 天期間，這一頁只印了「上次執行」
+    // 的時間戳——資料就在畫面上，卻沒有任何顏色或文字說它不對勁。
+    healthOk: "正常",
+    healthOverdue: (lateSeconds: number) => `⚠ 逾期 ${formatDuration(lateSeconds)}`,
+    healthNeverRan: "⚠ 從未執行",
     running: "執行中…",
     runNow: "立即執行（內測）",
     manualRunNote: "手動執行不會更新「上次執行」（不干擾排程器的到期判斷）。",

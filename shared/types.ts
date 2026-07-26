@@ -251,7 +251,25 @@ export type AdminRiskNotification = {
   channels: string;
   created_at: number;
 };
-export type AdminJob = { job_name: string; cron: string; last_run_at: number | null };
+export type AdminJob = {
+  job_name: string;
+  cron: string;
+  last_run_at: number | null;
+  /** 依 cron 算出的下次應執行時刻；`null` ＝ 從未執行過，無基準可算。 */
+  due_at: number | null;
+  /** 遲到秒數；未逾期一律 0。 */
+  late_seconds: number;
+  /** 已逾期未執行——排程器可能停擺或認領不到工作。 */
+  is_overdue: boolean;
+  /** 從未執行過。⚠️ 與 is_overdue 互斥：沒有基準就談不上逾期，但更不該當成健康。 */
+  never_ran: boolean;
+};
+/** `GET /admin/jobs` 的 meta：逾期與從未執行分列，另附人話告警。 */
+export type AdminJobsMeta = {
+  overdue: string[];
+  never_ran: string[];
+  warnings: string[];
+};
 export type RagStatus = {
   active_release: string | null;
   active_published_at: number | null;
