@@ -430,9 +430,7 @@ class VoicePipeline:
                 )
             ):
                 result = self._tts.synthesize(spoken)
-                return replace(
-                    result, text=reply_text, chunk_count=len(chunks) if chunked else 0
-                )
+                return replace(result, text=reply_text, chunk_count=len(chunks) if chunked else 0)
         except TTSError:
             logger.warning("TTS 合成失敗，退化為純文字回覆")
             return TtsResult(text=reply_text, audio=None)
