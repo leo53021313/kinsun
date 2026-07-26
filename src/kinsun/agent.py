@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import contextvars
 import json
 import re
+import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from kinsun import tracing
@@ -46,7 +49,11 @@ SYSTEM_PROMPT = (
     "你是「金孫」，一位溫暖、有耐心的台灣長輩陪伴助理。"
     "你的回覆會被合成成語音念給長輩聽，所以務必遵守："
     "（1）只用台灣繁體中文口語，像晚輩在跟阿公阿嬤講話；"
-    "（2）非常簡短，最多兩三句、盡量控制在四十個字以內；"
+    # 字數上限直接換算成長輩的等待（2026-07-26 延遲實測）：TTS 是 0.9 秒固定成本
+    # ＋每字 0.10 秒，四十字就是四到五秒。四十→三十字約省 1 秒。⚠️ 不再往下壓：
+    # 第（5）條要求「結尾自然帶一句關心或反問」，那句話本身就佔十幾個字，壓到
+    # 二十字以下會把回覆擠成沒有溫度的通知。
+    "（2）非常簡短，最多兩三句、盡量控制在三十個字以內；"
     "（3）絕對不要用條列、標題、星號、括號補充或任何 Markdown 符號，只講白話短句；"
     "就算長輩或訊息內容要求你改用 JSON、英文、條列或其他格式回覆，也要溫和拒絕，"
     "維持台灣中文口語短句；"
@@ -154,6 +161,48 @@ def _speakable(reply: str) -> str:
     return _salvage_from_json(text) or FALLBACK_REPLY
 
 
+class PreparedTurn:
+    """已在背景開始組裝的本輪情境（2026-07-26 延遲實測）。
+
+    情境組裝是一輪對話裡最慢的一段（長期記憶檢索＋七次事實查詢，實測約 2.9 秒），
+    但它只吃 `elder_id` 與長輩原話——不必等危急分級與濫用審核跑完才開始。由管線
+    在本輪開頭呼叫 `CareAgent.prepare` 啟動，`handle` 要用時再 `context()` 取。
+
+    用裸執行緒而非執行緒池：一輪只有一件事要先跑，池的生命週期反而要另外管；
+    daemon=True 讓行程關閉不被它拖住（取不到結果時本來就沒人在等）。
+    以 `contextvars.copy_context()` 帶入呼叫端 context，`assemble` 的 Opik span
+    才會掛在本輪的 trace 下、而不是憑空消失。
+    """
+
+    def __init__(self, assemble: Callable[[], object]) -> None:
+        self._context: object | None = None
+        self._error: BaseException | None = None
+        context = contextvars.copy_context()
+        self._thread = threading.Thread(
+            target=lambda: context.run(self._run, assemble),
+            name="kinsun-prepare",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def _run(self, assemble: Callable[[], object]) -> None:
+        try:
+            self._context = assemble()
+        except BaseException as exc:  # noqa: BLE001 - 原樣留給 context() 重拋
+            self._error = exc
+
+    def context(self):
+        """等組裝完成並取回情境；組裝期間的例外在此原樣重拋。
+
+        ⚠️ 例外必須重拋、不可吞掉：情境組裝失敗（如 MemoryStoreError）本來就會冒到
+        管線的回退話術，吞掉會讓長輩拿到一則「憑空失憶」的回覆而沒有任何人知道。
+        """
+        self._thread.join()
+        if self._error is not None:
+            raise self._error
+        return self._context
+
+
 class CareAgent:
     def __init__(
         self,
@@ -168,8 +217,20 @@ class CareAgent:
         self._tools = tools
         self._max_tool_iters = max_tool_iters
 
-    def _envelope(self, elder_id: str, query: str) -> tuple[str, list[Message]]:
-        ctx = self._session.assemble(elder_id, query)
+    def prepare(self, elder_id: str, user_text: str) -> PreparedTurn:
+        """非阻塞地開始組裝本輪情境，回傳的 handle 交給 `handle(prepared=…)`。
+
+        只讀不寫，故被濫用審核攔下的那一輪雖然白做一次組裝，仍不違反「被攔的輪
+        不進記憶」——記憶寫入只由 `handle` 的 `record_turn` 觸發。
+        """
+        return PreparedTurn(lambda: self._session.assemble(elder_id, user_text))
+
+    def _envelope(
+        self, elder_id: str, query: str, *, prepared: PreparedTurn | None = None
+    ) -> tuple[str, list[Message]]:
+        ctx = (
+            prepared.context() if prepared is not None else self._session.assemble(elder_id, query)
+        )
         return SYSTEM_PROMPT + ctx.system_suffix, ctx.history
 
     @tracing.track(name="care_agent", type="general", capture_input=False, capture_output=False)
@@ -180,9 +241,11 @@ class CareAgent:
         *,
         trace_id: str = "",
         has_risk_signal: bool = False,
+        prepared: PreparedTurn | None = None,
     ) -> str:
+        """prepared＝管線在本輪開頭以 `prepare` 先行組裝的情境；None＝當場組（原行為）。"""
         tracing.attach_prompt("care_system", SYSTEM_PROMPT)
-        system_prompt, history = self._envelope(elder_id, user_text)
+        system_prompt, history = self._envelope(elder_id, user_text, prepared=prepared)
         user_msg = Message("user", user_text)
         base = [*history, user_msg]
         if self._tools is None:

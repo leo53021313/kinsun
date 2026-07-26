@@ -15,12 +15,30 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { AvatarPlaceholder, type AvatarState } from "@/components/AvatarPlaceholder";
 import { MicIcon } from "@/components/MicIcon";
 import { RoleSwitcher } from "@/components/RoleSwitcher";
-import { ApiError, logoutSession, postTurn } from "@/lib/api";
+import { ApiError, getTurnChunk, logoutSession, postTurn } from "@/lib/api";
+import type { TurnChunk } from "@/lib/api";
 import { type ElderPlace, currentPlace } from "@/lib/location";
 import { useSession } from "@/lib/SessionProvider";
 import { strings } from "@/lib/strings";
 import { createTalkGesture } from "@/lib/talkGesture";
 import { colors, elder, spacing } from "@/lib/theme";
+
+/**
+ * 分段播放的進度（2026-07-26 延遲優化）。
+ *
+ * 伺服器只先合成回覆的第一句就送出（TTS 是 0.9 秒固定成本＋每字 0.10 秒，整段合成
+ * 完才送會讓長輩等 5～8 秒），其餘由這裡逐段取來接著播。`digest` 綁定是哪一輪的
+ * 回覆——長輩若在播放中又講了一句，伺服器會回 409，續播就此停止。
+ */
+type ChunkQueue = {
+  digest: string;
+  token: string;
+  total: number;
+  /** 下一個「要去取」的段號（第 0 段已隨回合回應拿到）。 */
+  nextIndex: number;
+  /** 已在背景取的下一段；一邊播這段、一邊取下一段，才不會段與段之間卡住。 */
+  pending: Promise<TurnChunk | null> | null;
+};
 
 /**
  * 對講機：兩種說話方式（2026-07-25）→ 金孫回覆（文字放大＋自動播放語音）。
@@ -48,6 +66,10 @@ export default function ElderTalk() {
   const gestureRef = useRef(createTalkGesture());
   // 這一輪開錄流程的 promise：停止前先 await，消除「pressOut 跑在 record() 完成前」的競態。
   const startPromiseRef = useRef<Promise<boolean>>(Promise.resolve(false));
+  // 分段播放佇列（2026-07-26 延遲優化）：伺服器只先合成第一句就送出，其餘逐段取。
+  // 用 ref 而非 state——它的變動不該觸發重繪，而且 playbackStatusUpdate 的回呼要讀到
+  // 最新值（state 會被閉包鎖在註冊當下的那一版）。
+  const queueRef = useRef<ChunkQueue | null>(null);
 
   const { loading: sessionLoading, session, signOut, internalTesting } = useSession();
 
@@ -128,8 +150,22 @@ export default function ElderTalk() {
       const place = await (placeRef.current ?? Promise.resolve(null));
       const reply = await postTurn(uri, session?.token ?? "", place);
       setReplyText(reply.text);
+      // 上一輪的續播就此作廢：advanceQueue 以物件識別比對，舊佇列的取回會自行退場。
+      queueRef.current = null;
       if (reply.audio_url) {
         setAvatar("speaking");
+        if (reply.chunk_count > 1 && reply.reply_digest) {
+          const queue: ChunkQueue = {
+            digest: reply.reply_digest,
+            token: session?.token ?? "",
+            total: reply.chunk_count,
+            nextIndex: 1,
+            pending: null,
+          };
+          queueRef.current = queue;
+          // 第一段還在播的時候就去取第二段——不先取，段與段之間會空掉一整個合成的時間。
+          prefetchNext(queue);
+        }
         player.replace({ uri: reply.audio_url });
         player.play();
       } else {
@@ -177,14 +213,50 @@ export default function ElderTalk() {
     }
   }
 
-  // 播放結束回到待機表情。
+  /** 背景取下一段；取不到（409／網路／合成失敗）就記成 null，播完這段即收工。 */
+  function prefetchNext(queue: ChunkQueue) {
+    if (queue.nextIndex >= queue.total) {
+      queue.pending = null;
+      return;
+    }
+    const index = queue.nextIndex;
+    queue.nextIndex += 1;
+    queue.pending = getTurnChunk(index, queue.digest, queue.token).catch(() => null);
+  }
+
+  /** 這一段播完了：接上已在背景取好的下一段；沒有下一段就回到待機。 */
+  async function advanceQueue() {
+    const queue = queueRef.current;
+    if (!queue?.pending) {
+      queueRef.current = null;
+      setAvatar("idle");
+      return;
+    }
+    const chunk = await queue.pending;
+    // 等待期間長輩又講了一句：這一輪已作廢，交給新的那一輪，不可以插播。
+    if (queueRef.current !== queue) {
+      return;
+    }
+    if (!chunk?.audio_url) {
+      queueRef.current = null;
+      setAvatar("idle");
+      return;
+    }
+    prefetchNext(queue);
+    player.replace({ uri: chunk.audio_url });
+    player.play();
+  }
+
+  // 一段播完就接下一段；沒有下一段才回到待機表情。
   useEffect(() => {
     const sub = player.addListener("playbackStatusUpdate", (status) => {
       if (status.didJustFinish) {
-        setAvatar("idle");
+        void advanceQueue();
       }
     });
     return () => sub.remove();
+    // advanceQueue 只讀 ref 與 player，不需要進相依陣列（進了會每次重繪都重掛監聽）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [player]);
 
   function confirmLogout() {

@@ -1,3 +1,7 @@
+import time
+
+import pytest
+
 from kinsun.agent import FALLBACK_REPLY, SYSTEM_PROMPT, CareAgent, Recall
 from kinsun.llm import Message, ToolCall, ToolSpec, ToolTurn
 from kinsun.tools.registry import ToolRegistry
@@ -407,3 +411,72 @@ def test_proactive_tool_loop_reply_is_guarded():
     llm = ScriptedToolLLM([ToolTurn(text='{"greeting": "阿嬤早安呀。"}', tool_calls=[])])
     agent = CareAgent(llm, SpySession(), tools=_registry_with_weather())
     assert agent.proactive("u1", "早安問候") == "阿嬤早安呀。"
+
+
+class _SlowSession(SpySession):
+    """assemble 固定睡 delay 秒——用來分辨情境組裝是排隊跑還是已在背景先跑。"""
+
+    def __init__(self, delay: float, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.delay = delay
+
+    def assemble(self, line_user_id: str, query: str):
+        time.sleep(self.delay)
+        return super().assemble(line_user_id, query)
+
+
+def test_prepare_starts_context_assembly_without_blocking():
+    """`prepare` 必須立刻返回（2026-07-26 延遲實測）。
+
+    情境組裝是本輪最慢的一段（長期記憶檢索＋七次事實查詢，實測約 2.9 秒），而它
+    只吃 elder_id 與原話——不必等危急分級與濫用審核跑完才開始。`prepare` 若會阻塞，
+    整個預取就沒有意義。
+    """
+    session = _SlowSession(0.2)
+    agent = CareAgent(SpyLLM(), session)
+
+    started = time.monotonic()
+    prepared = agent.prepare("u1", "我今天有點累")
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.1, f"prepare 耗時 {elapsed:.2f}s，並沒有非阻塞"
+    assert prepared.context().history == []  # 取結果時才等它完成
+
+
+def test_handle_reuses_the_prepared_context_instead_of_assembling_again():
+    """帶著 prepared 進 handle 不可以重組一次——重組等於白做一次最慢的工作。"""
+    session = SpySession(history=[Message("user", "早安")])
+    agent = CareAgent(SpyLLM(), session)
+
+    prepared = agent.prepare("u1", "我今天有點累")
+    agent.handle("u1", "我今天有點累", prepared=prepared)
+
+    assert session.queries == ["我今天有點累"]  # 只組裝過一次
+
+
+def test_handle_without_prepared_keeps_assembling_inline():
+    """未預取時行為一字不變（排程 worker 與既有呼叫端都走這條）。"""
+    session = SpySession()
+    agent = CareAgent(SpyLLM(), session)
+
+    agent.handle("u1", "我今天有點累")
+
+    assert session.queries == ["我今天有點累"]
+
+
+class _BoomSession(SpySession):
+    def assemble(self, line_user_id: str, query: str):
+        raise RuntimeError("記憶掛了")
+
+
+def test_prepared_assembly_failure_surfaces_from_handle():
+    """預取期間的例外必須在 handle 取結果時原樣拋出。
+
+    情境組裝失敗（MemoryStoreError）本來就會往上冒到管線的回退話術；搬到背景執行緒
+    後若把例外吞掉，長輩會拿到一則「沒有記憶」的回覆卻沒有任何人知道記憶壞了。
+    """
+    agent = CareAgent(SpyLLM(), _BoomSession())
+    prepared = agent.prepare("u1", "我今天有點累")
+
+    with pytest.raises(RuntimeError, match="記憶掛了"):
+        agent.handle("u1", "我今天有點累", prepared=prepared)

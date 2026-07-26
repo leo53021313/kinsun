@@ -54,6 +54,9 @@ ERROR_MESSAGES: dict[str, str] = {
     "audio_too_large": "音檔太大，請縮短錄音再試一次",
     "unsupported_media_type": "上傳格式不正確，請使用語音錄音",
     "job_not_found": "找不到這個排程任務",
+    "chunk_not_found": "找不到這段語音",
+    "chunk_superseded": "這段語音已經是上一輪的了",
+    "speech_unavailable": "語音合成暫時無法使用",
     "internal_testing_disabled": "內部測試模式未開啟",
     "admin_disabled": "服務未開放",
 }

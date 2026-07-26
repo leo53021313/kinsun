@@ -18,6 +18,7 @@ import type {
   ScheduleGroup,
   ScheduleInput,
   Meta,
+  TurnChunk,
   TurnReply,
 } from "kinsun-shared/types";
 
@@ -33,6 +34,7 @@ export type {
   ScheduleGroup,
   ScheduleInput,
   Meta,
+  TurnChunk,
   TurnReply,
 };
 
@@ -127,6 +129,16 @@ export async function postTurn(
     headers: { "Content-Type": "audio/m4a" },
     token,
   });
+}
+
+/**
+ * 取回覆的第 index 段語音（分段串流；第 0 段已隨 postTurn 回過）。
+ *
+ * digest 讓伺服器確認取的是同一輪的回覆——長輩若在播放中又講了一句，這裡會回 409，
+ * 呼叫端應停止續拉，否則會把新回覆的句子接在舊回覆後面播出去。
+ */
+export function getTurnChunk(index: number, digest: string, token: string): Promise<TurnChunk> {
+  return request(`/api/v1/turns/chunks/${index}?digest=${encodeURIComponent(digest)}`, { token });
 }
 
 // --- 家屬端 REST（App token 認證） ---

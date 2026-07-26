@@ -480,3 +480,67 @@ def test_dispatch_round_trip_null_when_received_at_unknown():
         timer=iter([0.0, 0.1]).__next__,
     )
     assert traces.replies[0].round_trip_ms is None
+
+
+class _ChunkedPipeline:
+    """回傳已分段結果的管線替身，用來驗 dispatch 交出去的 outcome。"""
+
+    def __init__(self, reply: str, chunk_count: int, transcript: str = "") -> None:
+        self._result = TtsResult(
+            text=reply, audio=b"A", duration_ms=900, transcript=transcript, chunk_count=chunk_count
+        )
+
+    def process(self, audio, **kwargs):
+        return self._result
+
+    def process_text(self, text, **kwargs):
+        return self._result
+
+
+def test_dispatch_reports_chunk_count_and_digest_of_the_real_reply():
+    """digest 必須由**真正的回覆文字**算出，不是投遞層的顯示字串。
+
+    ⚠️ 這條是實機驗證踩出來的（2026-07-26）：`ASR_DEBUG_SHOW_TRANSCRIPT=true` 時，
+    文字泡泡會變成「辨識：…\\n\\n回復：…」，而分段端點是從 `turns` 讀**純回覆**重新
+    切句比對。兩邊來源不同，雜湊就永遠對不上——每一段都被判為過期、回 409，長輩只
+    聽得到第一句。單元測試若只驗「有沒有 digest」不會發現，故這裡把來源釘死。
+    """
+    from kinsun.speech.chunking import reply_digest
+
+    reply = "阿公今天早上好嗎。今天天氣不錯，要不要出去走走？"
+    cap = _VoiceCapture()
+    msg = InboundMessage(
+        Channel.APP, "U-1", "audio", "", b"x", cap.reply, cap.reply_voice, received_at=1.0
+    )
+
+    outcome = dispatch(
+        msg,
+        pipeline=_ChunkedPipeline(reply, chunk_count=2, transcript="醫生說我血壓有點高"),
+        binding=_Binding(None),
+        gate=None,
+        voice=VoiceReplyDelivery(_Publisher(), include_text=True, show_transcript=True),
+        elder_id="e1",
+    )
+
+    assert outcome.chunk_count == 2
+    assert outcome.reply_digest == reply_digest(reply)
+    # 顯示字串確實帶了 debug 前綴——證明本測試真的踩在那個分岔上。
+    assert cap.voice_sent[0][2].startswith("辨識：")
+
+
+def test_unchunked_reply_carries_no_digest():
+    """沒分段就不該給 digest——前端據此判斷「不必再拉後續段落」。"""
+    cap = _VoiceCapture()
+    msg = InboundMessage(Channel.APP, "U-1", "audio", "", b"x", cap.reply, cap.reply_voice)
+
+    outcome = dispatch(
+        msg,
+        pipeline=_ChunkedPipeline("就這一句話而已喔阿公", chunk_count=0),
+        binding=_Binding(None),
+        gate=None,
+        voice=VoiceReplyDelivery(_Publisher(), include_text=True),
+        elder_id="e1",
+    )
+
+    assert outcome.chunk_count == 0
+    assert outcome.reply_digest == ""

@@ -19,6 +19,10 @@ class TtsResult:
     audio: bytes | None = None
     duration_ms: int = 0
     transcript: str = ""  # 本輪 ASR 辨識到的長者原話（debug 用，不進語音合成）
+    # 分段串流（2026-07-26 延遲優化）：>0 代表 `audio` 只是**第一段**、整段回覆被切成
+    # chunk_count 段，其餘由呼叫端另外取（見 speech/chunking.py 與 App 對講機端點）。
+    # 0＝沒有分段，`audio` 就是完整回覆（LINE 與所有未啟用分段的通道皆為此值）。
+    chunk_count: int = 0
 
 
 class TTSClient(Protocol):

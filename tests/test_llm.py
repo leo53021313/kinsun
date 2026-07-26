@@ -243,3 +243,47 @@ def test_gemini_client_applies_client_wrapper():
 def test_gemini_client_without_wrapper_keeps_native_client():
     client = GeminiClient(api_key="dummy", model="m", timeout=30.0)
     assert client._client is not None
+
+
+def test_gemini_client_applies_the_configured_timeout():
+    """`GEMINI_TIMEOUT_SECONDS` 必須真的送到 SDK（2026-07-26 延遲實測）。
+
+    先前 `timeout` 只存進 `self._timeout` 就沒下文，等於 Gemini 呼叫**沒有任何
+    客戶端逾時**：生產資料 llm_calls p95 11.5s、max 23.8s，實測還撞過單輪 46 秒與
+    52 秒（同批其他次都在 7～8 秒）。對照組 ASR／TTS 的逾時確實生效，兩者的
+    latency 精準卡在設定值（15s／30s）——差別就在有沒有把值傳下去。
+
+    SDK 的 `HttpOptions.timeout` 單位是**毫秒**，設定檔是秒，故換算不可省。
+    """
+    client = GeminiClient(api_key="dummy", model="m", timeout=12.5)
+
+    assert client._client._api_client._http_options.timeout == 12500
+
+
+def test_tool_results_go_back_with_a_role_gemini_accepts():
+    """工具結果必須以 `user` 角色回帶，不可用 `tool`（2026-07-26 實機驗證）。
+
+    ⚠️ 這條是實測釘死的，不是風格偏好：`gemini-3.5-flash-lite`（.env 的正式模型）
+    對 `role="tool"` 直接回 400 `Role 'tool' is not supported`，於是**每一輪用到工具的
+    對話都會失敗、退回「金孫剛剛沒聽清楚」**——天氣、衛教 RAG、新聞、排程、查證全中。
+    完整往返實測：
+
+    | 模型 | role="tool" | role="user" |
+    | gemini-3.1-flash-lite | OK | OK |
+    | gemini-3.5-flash-lite | **400** | OK |
+
+    `user` 兩個模型都吃，故選它。⚠️ 請不要「順手改回」語意上更貼切的 `tool`。
+    """
+    client = GeminiClient(api_key="dummy", model="m", timeout=30.0)
+    fake = _FakeGenAI(_FakeResp(parts=[], text="台北晴"))
+    client._client = fake
+
+    client.generate_tool_turn(
+        system_prompt="s",
+        messages=[Message("user", "天氣")],
+        tools=[_weather_spec()],
+        tool_results=[ToolResult(ToolCall("get_weather", {"location": "台北"}), "晴 25°C")],
+    )
+
+    roles = [getattr(c, "role", None) or c.get("role") for c in fake.last_contents]
+    assert "tool" not in roles, f"工具結果用了 gemini-3.5 不接受的 role：{roles}"
