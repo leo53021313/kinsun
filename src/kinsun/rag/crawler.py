@@ -140,7 +140,14 @@ class HtmlTextExtractor(HTMLParser):
 
     @property
     def links(self) -> tuple[str, ...]:
-        return tuple(dict.fromkeys(_strip_fragment(link) for link in self._links))
+        # 跳脫 href（\"…\"）經 urljoin 會變成含引號／反斜線的垃圾 URL，直接剔除。
+        return tuple(
+            dict.fromkeys(
+                _strip_fragment(link)
+                for link in self._links
+                if "\\" not in link and '"' not in link
+            )
+        )
 
 
 class DomainParserRegistry:
@@ -152,6 +159,13 @@ class DomainParserRegistry:
         content_type = page.content_type.lower()
         if "json" in content_type or page.url.lower().endswith(".json"):
             return self._parse_json(page, source)
+        # 內容嗅探：hpa newsapi.ashx 等端點回 JSON 但 Content-Type 標 text/html，
+        # 誤走 HTML parser 會把跳脫 href 撿成垃圾連結。
+        if page.body.lstrip()[:1] in (b"{", b"["):
+            try:
+                return self._parse_json(page, source)
+            except json.JSONDecodeError:
+                pass
         if "xml" in content_type or "rss" in content_type or page.url.lower().endswith(".xml"):
             return self._parse_xml(page, source)
         if content_type.startswith("image/"):
@@ -244,7 +258,7 @@ class HealthEducationCrawler:
         failed: list[tuple[str, str]] = []
 
         while queue and len(seen) < self._config.max_pages_per_source:
-            url = _strip_fragment(queue.popleft())
+            url = _upgrade_to_https(_strip_fragment(queue.popleft()))
             if url in seen:
                 continue
             seen.add(url)
@@ -280,7 +294,7 @@ class HealthEducationCrawler:
         skipped: list[str] = []
         failed: list[tuple[str, str]] = []
         for raw_url in dict.fromkeys(urls):
-            url = _strip_fragment(raw_url)
+            url = _upgrade_to_https(_strip_fragment(raw_url))
             if not _is_allowed_url(url, source.allowed_domains):
                 skipped.append(url)
                 continue
@@ -299,7 +313,7 @@ class HealthEducationCrawler:
     def _fetch(self, url: str) -> FetchedPage:
         def _once() -> FetchedPage:
             request = urllib.request.Request(
-                url,
+                _encode_request_url(url),
                 headers={"User-Agent": self._config.user_agent},
                 method="GET",
             )
@@ -334,6 +348,27 @@ def _clean_inline(text: str) -> str:
 def _strip_fragment(url: str) -> str:
     parsed = urllib.parse.urlsplit(url)
     return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, ""))
+
+
+def _upgrade_to_https(url: str) -> str:
+    """站內舊 http:// 連結一律升級 https（政府網站對 http 常直接 403，實測無 http 成功案例）。"""
+    if url.startswith("http://"):
+        return "https://" + url[len("http://") :]
+    return url
+
+
+def _encode_request_url(url: str) -> str:
+    """URL 含非 ASCII（如中文附件檔名）時 percent-encode；safe 含 % 避免重複編碼既有 %XX。"""
+    parsed = urllib.parse.urlsplit(url)
+    return urllib.parse.urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            urllib.parse.quote(parsed.path, safe="/%"),
+            urllib.parse.quote(parsed.query, safe="=&%+"),
+            "",
+        )
+    )
 
 
 def _domain(url: str) -> str:
