@@ -223,9 +223,17 @@ class GeminiClient:
                     ],
                 )
             )
+            # ⚠️ role 必須是 `user`，不可用語意上更貼切的 `tool`（2026-07-26 實機驗證）：
+            # `gemini-3.5-flash-lite`（.env 的正式模型）對 `role="tool"` 直接回 400
+            # `Role 'tool' is not supported`，於是**每一輪用到工具的對話都失敗、退回
+            # 「金孫剛剛沒聽清楚」**——天氣、衛教 RAG、新聞、排程、查證全中。完整往返實測：
+            #   gemini-3.1-flash-lite：tool ✅ / user ✅
+            #   gemini-3.5-flash-lite：tool ❌ 400 / user ✅
+            # `user` 兩個模型都吃，故選它。由 test_llm 的
+            # test_tool_results_go_back_with_a_role_gemini_accepts 守住。
             contents.append(
                 types.Content(
-                    role="tool",
+                    role="user",
                     parts=[
                         types.Part.from_function_response(
                             name=tr.call.name, response={"result": tr.output}
