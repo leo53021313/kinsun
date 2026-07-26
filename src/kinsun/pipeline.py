@@ -24,6 +24,7 @@ from kinsun.safety.moderation import AbuseModerator, ModerationResult, reply_for
 from kinsun.safety.notifier import Notifier
 from kinsun.safety.tiers import RiskAssessment, RiskTier
 from kinsun.speech.asr import ASRClient
+from kinsun.speech.chunking import split_for_speech
 from kinsun.speech.tts import TTSClient, TTSError, TtsResult
 
 logger = logging.getLogger("kinsun.pipeline")
@@ -55,6 +56,7 @@ class VoicePipeline:
         reminder_logs: ReminderLogStore | None = None,
         response_window_seconds: int = 3600,
         moderator: AbuseModerator | None = None,
+        chunked_channels: frozenset[str] = frozenset(),
     ) -> None:
         self._asr = asr
         self._agent = agent
@@ -71,6 +73,11 @@ class VoicePipeline:
         self._response_window_seconds = response_window_seconds
         # 選填（預設 None＝不審核，等同 SAFETY_MODERATION_ENABLED=false）。
         self._moderator = moderator
+        # 啟用 TTS 分段串流的通道（2026-07-26 延遲優化）。預設空集合＝所有通道維持
+        # 原行為（整段合成）。逐通道而非全域開關，是因為分段需要**投遞端配合**：
+        # App 拿得到段數、會逐段拉並接著播；LINE 只能收一則語音訊息，給它第一句
+        # 等於把後面的話吞掉。故 app.py 只把 "app" 放進來。
+        self._chunked_channels = chunked_channels
 
     @tracing.track(
         name="care_turn_voice", type="general", capture_input=False, capture_output=False
@@ -400,6 +407,16 @@ class VoicePipeline:
     def _synthesize(
         self, reply_text: str, *, external_id: str, channel: str, trace_id: str
     ) -> TtsResult:
+        """啟用分段的通道只合成**第一段**，其餘由投遞端逐段取（2026-07-26 延遲優化）。
+
+        回傳的 `text` 一律是完整回覆——長輩看到的字幕、寫進記憶的內容、觀測留存的
+        內容都不可以因為分段而被切掉；只有 `audio` 是第一段。切不出兩段以上時
+        （短回覆、回退話術、被攔的回絕話術）不分段，因為分段的代價（多一次往返）
+        換不到任何東西。
+        """
+        chunks = split_for_speech(reply_text) if channel in self._chunked_channels else []
+        chunked = len(chunks) > 1
+        spoken = chunks[0] if chunked else reply_text
         try:
             with self._span(
                 lambda traces, status, latency_ms, error_message: traces.record_tts_call(
@@ -412,7 +429,10 @@ class VoicePipeline:
                     error_message=error_message,
                 )
             ):
-                return self._tts.synthesize(reply_text)
+                result = self._tts.synthesize(spoken)
+                return replace(
+                    result, text=reply_text, chunk_count=len(chunks) if chunked else 0
+                )
         except TTSError:
             logger.warning("TTS 合成失敗，退化為純文字回覆")
             return TtsResult(text=reply_text, audio=None)

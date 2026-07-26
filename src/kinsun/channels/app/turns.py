@@ -10,6 +10,7 @@ InboundMessage(Channel.APP, …) 進既有 dispatch——閘門（同意複核�
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 import uuid
@@ -22,6 +23,8 @@ from kinsun.accounts.models import Channel, PrincipalType
 from kinsun.accounts.service import AccountService
 from kinsun.channels.inbound import InboundMessage, dispatch
 from kinsun.locations.store import ElderLocation
+from kinsun.speech.chunking import split_for_speech
+from kinsun.speech.tts import TTSError
 from kinsun.web.envelope import ok
 from kinsun.web.errors import ErrorCode
 
@@ -55,6 +58,17 @@ class _TurnCollector:
             self.text = text
 
 
+def reply_digest(reply: str) -> str:
+    """回覆內容的短雜湊，用來確認後續段落取的是同一輪的回覆。
+
+    分段串流是跨請求的：第一段隨 POST /turns 回，其餘由 App 逐段 GET。中間長輩若
+    又講了一句，「最近一則金孫回覆」就換人了——沒有這道確認，App 會把新回覆的第二句
+    接在舊回覆後面播出去。伺服器不留狀態（回覆全文本來就已寫進 turns），故用雜湊比對
+    而非另建一張表。
+    """
+    return hashlib.sha1(reply.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
+
+
 def create_app_turns_router(
     *,
     accounts: AccountService,
@@ -67,6 +81,9 @@ def create_app_turns_router(
     locations=None,
     clock: Callable[[], datetime] | None = None,
     max_audio_bytes: int = _DEFAULT_MAX_AUDIO_BYTES,
+    memory=None,
+    tts=None,
+    audio_publisher=None,
 ) -> APIRouter:
     router = APIRouter(tags=["turns"])
     make_id = new_id or (lambda: uuid.uuid4().hex)
@@ -144,7 +161,7 @@ def create_app_turns_router(
             audio_url=_publish_inbound(audio),
             received_at=received_at,
         )
-        dispatch(
+        outcome = dispatch(
             msg,
             pipeline=pipeline,
             binding=_NullBinding(),
@@ -153,12 +170,56 @@ def create_app_turns_router(
             traces=traces,
             elder_id=elder_id,  # 入口已解析並複核同意，dispatch 不再重查（✅ 庚-12）
         )
+        chunk_count = outcome.chunk_count if outcome else 0
         return ok(
             {
                 "text": collector.text,
                 "audio_url": collector.audio_url,
                 "duration_ms": collector.duration_ms,
+                # 分段串流（2026-07-26 延遲優化）：>1 代表 audio_url 只是第一段，
+                # App 應依序取 1..chunk_count-1 接著播；0／1 代表就這一段、不必再拉。
+                "chunk_count": chunk_count,
+                "reply_digest": reply_digest(collector.text) if chunk_count > 1 else "",
             }
         )
+
+    @router.get("/turns/chunks/{index}")
+    def get_turn_chunk(
+        index: int,
+        digest: str = "",
+        elder_id: str = Depends(current_elder),
+    ) -> dict:
+        """取回覆的第 index 段語音（分段串流；第 0 段已隨 POST /turns 回過）。
+
+        回覆全文取自這位長輩**自己**今天最後一則金孫回覆（`turns` 表，`record_turn`
+        同步寫入），故不必另建一張表，也不存在「任意文字丟進來合成」的濫用面——
+        長輩只合成得到自己剛聽到的那句話。`digest` 不符即 409（那輪已被新的一輪取代），
+        App 收到就該停止續拉，否則會把新回覆的句子接在舊回覆後面播。
+        """
+        if memory is None or tts is None or audio_publisher is None:
+            raise HTTPException(status_code=503, detail=ErrorCode.SPEECH_UNAVAILABLE)
+        replies = [m.content for m in memory.recent(elder_id) if m.role == "assistant"]
+        if not replies:
+            raise HTTPException(status_code=404, detail=ErrorCode.CHUNK_NOT_FOUND)
+        reply = replies[-1]
+        if digest and digest != reply_digest(reply):
+            raise HTTPException(status_code=409, detail=ErrorCode.CHUNK_SUPERSEDED)
+        chunks = split_for_speech(reply)
+        if index < 1 or index >= len(chunks):
+            raise HTTPException(status_code=404, detail=ErrorCode.CHUNK_NOT_FOUND)
+        try:
+            result = tts.synthesize(chunks[index])
+        except TTSError:
+            # 合成失敗不給假資料：App 收到 502 就停止續播，長輩至少聽完前面幾段。
+            logger.warning("分段語音合成失敗 index=%s", index)
+            raise HTTPException(status_code=502, detail=ErrorCode.SPEECH_UNAVAILABLE) from None
+        if result.audio is None:
+            raise HTTPException(status_code=502, detail=ErrorCode.SPEECH_UNAVAILABLE)
+        try:
+            url = audio_publisher.publish(result.audio, content_type="audio/mp4")
+        except Exception:  # noqa: BLE001 - 上傳失敗同樣不給假資料
+            logger.warning("分段語音上傳失敗 index=%s", index)
+            raise HTTPException(status_code=502, detail=ErrorCode.SPEECH_UNAVAILABLE) from None
+        return ok({"audio_url": url, "duration_ms": result.duration_ms, "text": chunks[index]})
 
     return router

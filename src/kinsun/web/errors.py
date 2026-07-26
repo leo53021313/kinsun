@@ -30,6 +30,11 @@ class ErrorCode(StrEnum):
     SCHEDULE_NOT_FOUND = "schedule_not_found"
     JOB_NOT_FOUND = "job_not_found"
     STRATEGY_NOT_FOUND = "strategy_not_found"
+    CHUNK_NOT_FOUND = "chunk_not_found"
+
+    # --- 分段語音串流（2026-07-26 延遲優化）---
+    CHUNK_SUPERSEDED = "chunk_superseded"  # 那一輪已被新的一輪取代，App 應停止續拉
+    SPEECH_UNAVAILABLE = "speech_unavailable"  # 合成或上傳失敗，後續段落取不到
 
     # --- 帳號 ---
     EMAIL_TAKEN = "email_taken"

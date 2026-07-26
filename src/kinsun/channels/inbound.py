@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from kinsun import tracing
 from kinsun.accounts.models import Channel
@@ -53,6 +53,9 @@ class DeliveryOutcome:
 
     kind: str
     audio_url: str = ""
+    # 分段串流（2026-07-26 延遲優化）：>1 代表送出的只是第一段，呼叫端（App 對講機）
+    # 據此告訴前端還有幾段要拉。LINE 收不到分段（只能一則語音），故恆為 0。
+    chunk_count: int = 0
 
 
 class VoiceReplyDelivery:
@@ -103,24 +106,24 @@ def dispatch(
     text_input_enabled: bool = True,
     timer: Callable[[], float] = time.monotonic,
     elder_id: str | None = None,
-) -> None:
+) -> DeliveryOutcome | None:
     """elder_id：呼叫端已解析過本人時傳入（✅ 庚-12），dispatch 不再重查閘門；
     未傳（LINE webhook 路徑）照舊經 gate 解析。"""
     if msg.kind == "text":
         reply = binding.handle(msg.external_id, msg.text)
         if reply is not None:
             msg.reply(reply)
-            return
+            return None
         # 非綁定自由文字走完整對話管線（危急偵測＋回覆＋記憶，✅ D-11 與語音同等對待）；
         # 旗標關為維運逃生口，回到只收語音提示。
         if not text_input_enabled:
             msg.reply(NON_AUDIO_PROMPT)
-            return
+            return None
         elder_id = elder_id or gate.resolve_elder(msg.channel, msg.external_id)
         if elder_id is None:
             msg.reply(BIND_FIRST_PROMPT)
-            return
-        _run_pipeline(
+            return None
+        return _run_pipeline(
             msg,
             lambda: pipeline.process_text(
                 msg.text,
@@ -133,15 +136,14 @@ def dispatch(
             traces=traces,
             timer=timer,
         )
-        return
     if msg.kind != "audio":
         msg.reply(NON_AUDIO_PROMPT)
-        return
+        return None
     elder_id = elder_id or gate.resolve_elder(msg.channel, msg.external_id)
     if elder_id is None:
         msg.reply(BIND_FIRST_PROMPT)
-        return
-    _run_pipeline(
+        return None
+    return _run_pipeline(
         msg,
         lambda: pipeline.process(
             msg.audio,
@@ -176,7 +178,7 @@ def _run_pipeline(
     except (ASRError, LLMError, MemoryStoreError) as exc:
         logger.warning("對話管線失敗（回退提示）：%s: %s", type(exc).__name__, exc)
         msg.reply(FALLBACK_PROMPT)
-        return
+        return None
     started = timer()
     if voice is not None:
         # 「or」容忍測試替身回 None（既有 _SpyVoice 類 fake）。
@@ -184,7 +186,13 @@ def _run_pipeline(
     else:
         msg.reply(result.text)
         outcome = DeliveryOutcome(kind="text")
+    # 段數來自管線（只有啟用分段的通道會 >1）；投遞層不自行判斷，兩邊各判一次
+    # 遲早會分岔成「送出的段數」與「宣告的段數」不一致，App 就會多播或漏播一段。
+    # getattr 預設 0：produce 是通道中立的 seam，回傳物件只保證有 text／audio
+    # （測試替身就用 SimpleNamespace），沒有 chunk_count 即視為未分段。
+    outcome = replace(outcome, chunk_count=getattr(result, "chunk_count", 0))
     _record_reply(traces, msg, outcome, started, timer)
+    return outcome
 
 
 def _record_reply(

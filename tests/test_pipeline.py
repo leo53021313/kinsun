@@ -767,3 +767,95 @@ class _RecordingSession:
 
     def record_turn(self, elder_id: str, *messages) -> None:
         self.recorded.append((elder_id, messages))
+
+
+_LONG_REPLY = "阿公今天早上好嗎。今天天氣不錯，要不要出去走走？記得多喝水喔。"
+
+
+class _SpyTts:
+    """記下每次實際送去合成的文字，用來確認送的是第一句而不是整段。"""
+
+    def __init__(self) -> None:
+        self.spoken: list[str] = []
+
+    def synthesize(self, text: str) -> TtsResult:
+        self.spoken.append(text)
+        return TtsResult(text=text, audio=b"AUDIO", duration_ms=1000)
+
+
+def _chunking_pipeline(tts, **kwargs):
+    return VoicePipeline(
+        asr=_ExplodingAsr(),
+        agent=CareAgent(_FixedLLM(_LONG_REPLY), NullSession()),
+        tts=tts,
+        detector=StubDetector(RiskTier.L0),
+        notifier=SpyNotifier(),
+        risk_events=FakeRiskEventStore(),
+        **kwargs,
+    )
+
+
+def test_chunked_channel_synthesizes_only_the_first_sentence():
+    """App 通道只合成第一句先送出（2026-07-26 延遲實測）。
+
+    TTS 是 0.9 秒固定成本＋每字 0.10 秒，整段合成完才送出等於長輩要等 5～8 秒。
+    回覆**文字**仍是完整的一段——長輩看到的字幕與寫進記憶的內容都不可以被切掉。
+    """
+    tts = _SpyTts()
+    result = _chunking_pipeline(tts, chunked_channels=frozenset({"app"})).process_text(
+        "我想聊天", elder_id="u1", channel="app"
+    )
+
+    assert tts.spoken == ["阿公今天早上好嗎。"]  # 只合成第一句
+    assert result.text == _LONG_REPLY  # 但文字是完整的
+    # 兩段而非三段：末句「記得多喝水喔。」只有 7 字，低於門檻故往前併（見 chunking）。
+    assert result.chunk_count == 2  # 讓 App 知道總共幾段
+
+
+def test_unchunked_channel_still_synthesizes_the_whole_reply():
+    """LINE（與任何未列入的通道）行為一字不變：整段合成、沒有後續段落。"""
+    tts = _SpyTts()
+    result = _chunking_pipeline(tts, chunked_channels=frozenset({"app"})).process_text(
+        "我想聊天", elder_id="u1", channel="line"
+    )
+
+    assert tts.spoken == [_LONG_REPLY]
+    assert result.chunk_count == 0
+
+
+def test_chunking_defaults_to_off():
+    """未指定 chunked_channels＝所有通道都維持原行為（既有呼叫端不受影響）。"""
+    tts = _SpyTts()
+    result = _chunking_pipeline(tts).process_text("我想聊天", elder_id="u1", channel="app")
+
+    assert tts.spoken == [_LONG_REPLY]
+    assert result.chunk_count == 0
+
+
+def test_short_reply_is_not_chunked_even_on_a_chunked_channel():
+    """只切得出一段的短回覆不分段——分段的代價（多一次往返）換不到任何東西。"""
+    tts = _SpyTts()
+    pipeline = VoicePipeline(
+        asr=_ExplodingAsr(),
+        agent=CareAgent(_FixedLLM("阿公您今天過得好嗎"), NullSession()),
+        tts=tts,
+        detector=StubDetector(RiskTier.L0),
+        notifier=SpyNotifier(),
+        risk_events=FakeRiskEventStore(),
+        chunked_channels=frozenset({"app"}),
+    )
+
+    result = pipeline.process_text("我想聊天", elder_id="u1", channel="app")
+
+    assert tts.spoken == ["阿公您今天過得好嗎"]
+    assert result.chunk_count == 0
+
+
+class _FixedLLM:
+    """固定回同一句話的 LLM 替身，讓分段測試能斷言確切的切句結果。"""
+
+    def __init__(self, reply: str) -> None:
+        self._reply = reply
+
+    def generate(self, *, system_prompt: str, messages: list[Message]) -> str:
+        return self._reply
