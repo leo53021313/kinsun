@@ -15,20 +15,16 @@ def build_consolidation_job(
     *,
     sessions: Callable[[], list[str]],
     run_one: Callable[[str], object],
-    hour: int,
-    minute: int = 0,
+    cron: str,
     name: str = "daily-consolidation",
 ) -> Job:
-    return fanout_job(
-        name=name, hour=hour, minute=minute, population=sessions, action=run_one, logger=logger
-    )
+    return fanout_job(name=name, cron=cron, population=sessions, action=run_one, logger=logger)
 
 
 def build_audio_cleanup_job(
     *,
     cleanup: Callable[[], None],
-    hour: int,
-    minute: int = 30,
+    cron: str,
     name: str = "audio-cleanup",
 ) -> Job:
-    return Job(name=name, cron=f"{minute} {hour} * * *", run=cleanup)
+    return Job(name=name, cron=cron, run=cleanup)

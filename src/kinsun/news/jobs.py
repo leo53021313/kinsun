@@ -16,8 +16,7 @@ def build_news_crawl_job(
     *,
     fetchers: list[NewsFetcher],
     store: NewsStore,
-    hour: int,
-    minute: int = 0,
+    cron: str,
     name: str = "news-crawl",
 ) -> Job:
     def run() -> None:
@@ -30,14 +29,13 @@ def build_news_crawl_job(
             for item in items:
                 store.save(item)
 
-    return Job(name=name, cron=f"{minute} {hour} * * *", run=run)
+    return Job(name=name, cron=cron, run=run)
 
 
 def build_news_cleanup_job(
     *,
     purge: Callable[[], None],
-    hour: int,
-    minute: int = 45,
+    cron: str,
     name: str = "news-cleanup",
 ) -> Job:
-    return Job(name=name, cron=f"{minute} {hour} * * *", run=purge)
+    return Job(name=name, cron=cron, run=purge)

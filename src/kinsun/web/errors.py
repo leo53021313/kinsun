@@ -29,6 +29,8 @@ class ErrorCode(StrEnum):
     TRACE_NOT_FOUND = "trace_not_found"
     SCHEDULE_NOT_FOUND = "schedule_not_found"
     JOB_NOT_FOUND = "job_not_found"
+    # 這支 job 存在，但由別的程序執行（如 RAG 週更），後台無法就地觸發。
+    JOB_NOT_RUNNABLE_HERE = "job_not_runnable_here"
     STRATEGY_NOT_FOUND = "strategy_not_found"
     CHUNK_NOT_FOUND = "chunk_not_found"
 

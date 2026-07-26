@@ -27,6 +27,7 @@ from datetime import datetime, timedelta
 from kinsun.accounts.models import ElderGuardian, PrincipalType
 from kinsun.channels.router import ChannelRouter
 from kinsun.cron.fanout import fanout_job
+from kinsun.cron.registry import SCHEDULE_DISPATCH_CRON
 from kinsun.cron.scheduler import Job
 from kinsun.reports.reminders import safe_record
 from kinsun.schedules.models import Audience, RepeatKind, Schedule, ScheduleKind
@@ -34,8 +35,6 @@ from kinsun.schedules.store import ScheduleStore
 from kinsun.schedules.wording import appointment_texts, custom_text, medication_text
 
 logger = logging.getLogger("kinsun.schedules")
-
-_DISPATCH_CRON = "* * * * *"
 
 
 @dataclass(frozen=True)
@@ -124,6 +123,7 @@ def build_schedule_dispatch_job(
     guardians_of: Callable[[str], list[ElderGuardian]],
     router: ChannelRouter,
     clock: Callable[[], datetime],
+    cron: str = SCHEDULE_DISPATCH_CRON,
     window_seconds: int = 90,
     record: Callable[[str, str, str], None] | None = None,
     name: str = "schedule-dispatch",
@@ -187,7 +187,7 @@ def build_schedule_dispatch_job(
 
     return fanout_job(
         name=name,
-        cron=_DISPATCH_CRON,
+        cron=cron,
         population=population,
         action=action,
         item_id=lambda batch: batch.item_id,

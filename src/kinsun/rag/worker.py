@@ -9,6 +9,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from kinsun.config import load_dotenv, load_rag_worker_settings
+from kinsun.cron.registry import rag_refresh_spec
 from kinsun.cron.scheduler import Job, Scheduler
 from kinsun.cron.state import PgScheduleStateStore
 from kinsun.db import Database, ensure_schema
@@ -54,7 +55,11 @@ def main() -> int:
             return 0
         jobs = []
         if settings.rag_refresh_enabled:
-            jobs.append(Job("rag-weekly-refresh", settings.rag_refresh_cron, run_refresh))
+            # 名稱與 cron 一律由 cron/registry.py 給（2026-07-27）：後台
+            # `GET /admin/jobs` 以 job 名去 scheduler_state 查上次執行時間，名稱只要
+            # 對不上，這支就會被那一頁誤報成「從未執行」——而它其實跑得好好的。
+            spec = rag_refresh_spec(cron=settings.rag_refresh_cron)
+            jobs.append(Job(spec.name, spec.cron, run_refresh))
         scheduler = Scheduler(
             jobs,
             lambda: datetime.now(timezone),

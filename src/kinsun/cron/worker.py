@@ -25,6 +25,7 @@ from kinsun.audio.publisher import build_audio_publisher
 from kinsun.composition import Core, assemble_core, build_externals
 from kinsun.config import Settings, load_dotenv, load_settings
 from kinsun.cron.jobs import build_audio_cleanup_job, build_consolidation_job
+from kinsun.cron.registry import OWNER_SCHEDULER, JobSpec, job_specs
 from kinsun.cron.scheduler import Job, Scheduler
 from kinsun.cron.state import PgScheduleStateStore
 from kinsun.db import Database
@@ -56,14 +57,16 @@ from kinsun.strategies.reflection import reflect_days
 
 logger = logging.getLogger("kinsun.cron.worker")
 
-# 會遍歷全部長輩、且逐位呼叫 LLM 的 job；改由獨立執行緒跑，不佔住掃描迴圈。
-# ⚠️ 新增這類 job 時要記得列進來——判準是「它的耗時會不會隨長輩人數成長」。
-# 2026-07-26 實測：39 位長輩的夜間批次讓每分鐘的 `schedule-dispatch` 停了兩分鐘。
-_LONG_RUNNING_JOBS = frozenset({"daily-consolidation", "daily-greeting", "inactivity-care"})
-
 
 def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime]) -> list[Job]:
-    """組出全部排程 job；worker 排程執行、web 端 admin 手動觸發（spec 2026-07-12）共用同一份。"""
+    """把 `cron/registry.py` 宣告的、本程序負責的每一支排程綁上它的執行體。
+
+    worker 排程執行、web 端 admin 手動觸發（spec 2026-07-12）共用同一份。
+
+    ⚠️ 本函式**不決定任何 job 的時刻**——cron、逾期容許量、要不要背景執行，全部
+    由 registry 宣告（2026-07-27）。這裡只回答「這支 job 要跑什麼程式」。新增排程
+    請先改 registry；只在這裡加，啟動時會因為 registry 沒宣告而根本不會被執行到。
+    """
     db = core.db
     memory = core.memory
     long_term = core.long_term
@@ -255,16 +258,53 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
         )
         return any(log.kind == REMINDER_KIND_PROACTIVE_GREETING for log in logs)
 
-    jobs = [
-        build_consolidation_job(
-            sessions=memory.sessions,
-            run_one=run_one,
-            hour=settings.longterm_consolidation_hour,
-            # ✅ 庚-48（A-21）：xx:05 執行——「昨日對話短長期兩不著」的凌晨盲窗
-            # 由三小時縮到 5 分鐘（短期只裝今天、長期要等整理）。
-            minute=5,
+    def _purge_expired_news() -> None:
+        # 新聞與提及紀錄同一把保留天數：新聞被清掉後，提及紀錄留著也指不到東西。
+        cutoff = clock().timestamp() - settings.news_retention_days * 86400
+        news.purge_older_than(cutoff)
+        core.news_mentions.purge_older_than(cutoff)
+
+    def _build_news_crawl(spec: JobSpec) -> Job:
+        # 話題新聞（spec 2026-07-20）：衛福部與 RSS 免金鑰、一律註冊（RSS feed 清單
+        # 留空＝不用）；News API 需要 NEWS_API_KEY，留空＝優雅降級。單一來源失敗不擋
+        # 其他來源（news/jobs.py）。
+        fetchers: list[NewsFetcher] = [MohwNewsFetcher(clock=clock)]
+        for feed_url in settings.news_rss_feeds.split(","):
+            if feed_url.strip():
+                fetchers.append(RssNewsFetcher(feed_url=feed_url.strip(), clock=clock))
+        if settings.news_api_key:
+            fetchers.append(
+                NewsApiFetcher(
+                    api_key=settings.news_api_key,
+                    clock=clock,
+                    query=settings.news_api_query,
+                    domains=settings.news_api_domains,
+                )
+            )
+        return build_news_crawl_job(fetchers=fetchers, store=news, cron=spec.cron)
+
+    def _build_audio_cleanup(spec: JobSpec) -> Job:
+        publisher = build_audio_publisher(settings, clock=clock, new_id=lambda: uuid.uuid4().hex)
+        return build_audio_cleanup_job(
+            cleanup=lambda: publisher.cleanup(retention_days=settings.audio_retention_days),
+            cron=spec.cron,
+        )
+
+    def _build_inbound_audio_cleanup(spec: JobSpec) -> Job:
+        inbound_audio = build_audio_publisher(
+            settings, clock=clock, new_id=lambda: uuid.uuid4().hex, prefix="inbound"
+        )
+        return build_audio_cleanup_job(
+            cleanup=lambda: inbound_audio.cleanup(retention_days=settings.audio_retention_days),
+            cron=spec.cron,
+            name="inbound-audio-cleanup",
+        )
+
+    binders: dict[str, Callable[[JobSpec], Job]] = {
+        "daily-consolidation": lambda spec: build_consolidation_job(
+            sessions=memory.sessions, run_one=run_one, cron=spec.cron
         ),
-        build_greeting_job(
+        "daily-greeting": lambda spec: build_greeting_job(
             sessions=memory.sessions,
             greet_one=greet_one,
             default_hour=settings.proactive_greeting_hour,
@@ -273,102 +313,53 @@ def build_jobs(settings: Settings, core: Core, *, clock: Callable[[], datetime])
             prefs=greeting_prefs if settings.proactive_greeting_adaptive_enabled else None,
             greeted_today=greeted_today,
             clock=clock,
+            cron=spec.cron,
         ),
-        build_inactivity_job(
+        "inactivity-care": lambda spec: build_inactivity_job(
             sessions=memory.sessions,
             last_active=memory.last_active,
             clock=clock,
             threshold_seconds=settings.proactive_inactivity_days * 86400,
             care_one=care_one,
-            hour=settings.proactive_inactivity_hour,
+            cron=spec.cron,
         ),
-    ]
-    # 統一排程派送（D-76 P2）：一個每分鐘的 job 取代原本四個用藥 job ＋ 一個回診 job。
-    # 頻率必須提高，因為時刻改成每位長輩、每筆排程各自設定，沒有共用鐘點可以掛 cron。
-    jobs.append(
-        build_schedule_dispatch_job(
+        # 統一排程派送（D-76 P2）：一個每分鐘的 job 取代原本四個用藥 job ＋ 一個回診 job。
+        "schedule-dispatch": lambda spec: build_schedule_dispatch_job(
             store=core.schedule_store,
             lookup_elder=accounts.get_elder,
             guardians_of=accounts.guardians_of,
             router=router,
             clock=clock,
+            cron=spec.cron,
             window_seconds=settings.schedule_dispatch_window_seconds,
             record=reminder_logs.record,
-        )
-    )
-    # 音檔清理僅在 AUDIO_RETENTION_DAYS>0 時註冊（0＝音檔本體不刪，2026-07-09 修訂）。
-    if settings.tts_backend == "dgx" and settings.audio_retention_days > 0:
-        publisher = build_audio_publisher(settings, clock=clock, new_id=lambda: uuid.uuid4().hex)
-        jobs.append(
-            build_audio_cleanup_job(
-                cleanup=lambda: publisher.cleanup(retention_days=settings.audio_retention_days),
-                hour=settings.longterm_consolidation_hour,
-            )
-        )
-    jobs.append(
-        build_observability_cleanup_job(
+        ),
+        "audio-cleanup": _build_audio_cleanup,
+        "inbound-audio-cleanup": _build_inbound_audio_cleanup,
+        "observability-cleanup": lambda spec: build_observability_cleanup_job(
             purge=lambda: traces.purge_older_than(
                 clock().timestamp() - settings.admin_retention_days * 86400
             ),
-            hour=settings.longterm_consolidation_hour,
-        )
-    )
-    # 進站音檔與 TTS 音檔同樣走過期清理；有 Supabase 憑證且 retention>0 才啟用。
-    has_storage = bool(settings.supabase_url and settings.supabase_service_key)
-    if has_storage and settings.audio_retention_days > 0:
-        inbound_audio = build_audio_publisher(
-            settings, clock=clock, new_id=lambda: uuid.uuid4().hex, prefix="inbound"
-        )
-        jobs.append(
-            build_audio_cleanup_job(
-                cleanup=lambda: inbound_audio.cleanup(retention_days=settings.audio_retention_days),
-                hour=settings.longterm_consolidation_hour,
-                name="inbound-audio-cleanup",
-            )
-        )
-    # 話題新聞（spec 2026-07-20）：衛福部與 RSS 免金鑰、一律註冊（RSS feed 清單
-    # 留空＝不用）；News API 需要 NEWS_API_KEY，留空＝優雅降級。單一來源失敗不擋
-    # 其他來源（news/jobs.py）。跑在夜間批次同一個鐘點、錯開分鐘，讓早上問候時
-    # 已有當天的新聞可用。
-    news_fetchers: list[NewsFetcher] = [MohwNewsFetcher(clock=clock)]
-    for feed_url in settings.news_rss_feeds.split(","):
-        if feed_url.strip():
-            news_fetchers.append(RssNewsFetcher(feed_url=feed_url.strip(), clock=clock))
-    if settings.news_api_key:
-        news_fetchers.append(
-            NewsApiFetcher(
-                api_key=settings.news_api_key,
-                clock=clock,
-                query=settings.news_api_query,
-                domains=settings.news_api_domains,
-            )
-        )
-    jobs.append(
-        build_news_crawl_job(
-            fetchers=news_fetchers,
-            store=news,
-            hour=settings.longterm_consolidation_hour,
-            minute=15,
-        )
-    )
+            cron=spec.cron,
+        ),
+        "news-crawl": _build_news_crawl,
+        "news-cleanup": lambda spec: build_news_cleanup_job(
+            purge=_purge_expired_news, cron=spec.cron
+        ),
+    }
 
-    def _purge_expired_news() -> None:
-        # 新聞與提及紀錄同一把保留天數：新聞被清掉後，提及紀錄留著也指不到東西。
-        cutoff = clock().timestamp() - settings.news_retention_days * 86400
-        news.purge_older_than(cutoff)
-        core.news_mentions.purge_older_than(cutoff)
-
-    jobs.append(
-        build_news_cleanup_job(
-            purge=_purge_expired_news,
-            hour=settings.longterm_consolidation_hour,
-            minute=50,
-        )
-    )
-    # 標記長跑 job（見 `Job.background`）：這三支都要遍歷**全部長輩**並逐位呼叫 LLM，
-    # 同步跑會把整輪掃描連同後面的 job 一起卡住。清理類的 job 不列入——它們是幾句
-    # SQL，跑得比一次掃描還快，丟到背景只是多開執行緒。
-    return [replace(job, background=job.name in _LONG_RUNNING_JOBS) for job in jobs]
+    specs = [s for s in job_specs(settings) if s.owner == OWNER_SCHEDULER]
+    # registry 宣告了卻沒人綁得出來＝這支排程從此靜默消失，而後台只會顯示它「從未
+    # 執行」——那是最難查的一種。寧可啟動就炸，不要安靜地少跑一支。
+    unbound = [spec.name for spec in specs if spec.name not in binders]
+    if unbound:
+        raise RuntimeError(f"cron/registry.py 宣告了無人綁定的排程：{'、'.join(unbound)}")
+    return [
+        # background 由 registry 宣告（見 `JobSpec.background`）：一支 job 會不會塞住
+        # 掃描取決於它要遍歷多少長輩，那是部署面的性質，不是工廠的性質。
+        replace(binders[spec.name](spec), background=spec.background)
+        for spec in specs
+    ]
 
 
 def build_scheduler(

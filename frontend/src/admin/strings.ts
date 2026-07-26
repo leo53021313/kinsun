@@ -123,6 +123,9 @@ export const strings = {
     columns: {
       job: "任務",
       cron: "排程（cron）",
+      // 哪個程序在跑它。逾期時要重啟的不一定是排程器（RAG 週更住在 rag_worker），
+      // 沒有這一欄，值班的人會對著健康的排程器查半天。
+      owner: "執行程序",
       lastRun: "上次執行",
       health: "狀態",
       action: "操作",
@@ -135,6 +138,8 @@ export const strings = {
     healthNeverRan: "⚠ 從未執行",
     running: "執行中…",
     runNow: "立即執行（內測）",
+    // 跑在別的程序的排程沒有「立即執行」——它動輒數小時，不該由一條後台請求拖著跑。
+    runElsewhere: (owner: string) => `由 ${owner} 執行`,
     manualRunNote: "手動執行不會更新「上次執行」（不干擾排程器的到期判斷）。",
   },
 

@@ -1067,3 +1067,57 @@ def test_jobs_that_fan_out_over_every_elder_run_in_the_background(monkeypatch):
     assert _job(scheduler, "schedule-dispatch").background is False, (
         "每分鐘的提醒派送丟到背景，就失去『這一輪一定跑完』的保證"
     )
+
+
+# --- 排程宣告漂移守門（2026-07-27）---
+#
+# registry 是「全系統有哪些排程」的唯一真實來源，而唯一真實來源只有在沒有人能繞過
+# 它的時候才成立。以下三條確保 build_jobs 完全依 registry 而生：宣告了卻沒綁＝那支
+# 排程靜默消失（後台只會顯示「從未執行」，最難查的一種）；綁了卻與宣告的時刻不同
+# ＝後台會在錯的時間點喊逾期，或在提醒已經掉了的時候顯示健康。
+
+
+def _full_settings():
+    """讓條件註冊的 job 全部成立，守門才涵蓋得到它們。"""
+    return _settings(
+        TTS_BACKEND="dgx",
+        SUPABASE_URL="https://demo.supabase.co",
+        SUPABASE_SERVICE_KEY="service-key",
+        RAG_REFRESH_ENABLED="true",
+    )
+
+
+def test_every_scheduler_owned_spec_is_actually_bound(monkeypatch):
+    """registry 宣告由排程器負責的每一支，build_jobs 都要綁得出執行體。"""
+    from kinsun.cron.registry import OWNER_SCHEDULER, job_specs
+
+    settings = _full_settings()
+    scheduler, _core = _build(monkeypatch, settings)
+    declared = {s.name for s in job_specs(settings) if s.owner == OWNER_SCHEDULER}
+    assert {j.name for j in scheduler._jobs} == declared
+
+
+def test_bound_jobs_use_exactly_the_declared_schedule(monkeypatch):
+    """cron、逾期容許量、背景旗標一律以 registry 為準，工廠不得自己算第二份。"""
+    from kinsun.cron.registry import OWNER_SCHEDULER, job_specs
+
+    settings = _full_settings()
+    scheduler, _core = _build(monkeypatch, settings)
+    declared = {s.name: s for s in job_specs(settings) if s.owner == OWNER_SCHEDULER}
+    for job in scheduler._jobs:
+        spec = declared[job.name]
+        assert job.cron == spec.cron, job.name
+        assert job.max_lateness_seconds == spec.max_lateness_seconds, job.name
+        assert job.background == spec.background, job.name
+
+
+def test_a_spec_nobody_binds_fails_at_startup(monkeypatch):
+    """宣告了卻沒人綁，寧可啟動就炸——安靜地少跑一支排程沒有任何地方會叫。"""
+    from kinsun.cron import registry
+
+    settings = _settings()
+    real_specs = registry.job_specs(settings)
+    ghost = registry.JobSpec("ghost-job", "0 4 * * *", registry.OWNER_SCHEDULER)
+    monkeypatch.setattr(worker, "job_specs", lambda s: [*real_specs, ghost])
+    with pytest.raises(RuntimeError, match="ghost-job"):
+        worker.build_jobs(settings, _fake_core(settings), clock=_clock)

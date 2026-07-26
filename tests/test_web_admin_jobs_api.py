@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from kinsun.accounts.models import Elder, ElderGuardian, Guardian, Role
 from kinsun.accounts.service import AccountService
 from kinsun.accounts.store import FakeAccountStore
+from kinsun.cron.registry import OWNER_RAG_WORKER, OWNER_SCHEDULER, JobSpec
 from kinsun.cron.scheduler import Job
 from kinsun.cron.state import FakeScheduleStateStore
 from kinsun.reports.reminders import FakeReminderLogStore
@@ -35,10 +36,21 @@ class _FakeRouter:
         return 1
 
 
+def _specs_of(jobs: list[Job]) -> list[JobSpec]:
+    """由本程序綁得出來的 job 推出對應宣告——正式環境反過來（registry 先、綁定後），
+    但對「只驗這一頁怎麼算健康」的測試而言，兩者等價且不必逐條列 spec。
+    跨程序的情形（RAG 週更）由專門的測試直接給 specs。"""
+    return [
+        JobSpec(j.name, j.cron, OWNER_SCHEDULER, max_lateness_seconds=j.max_lateness_seconds)
+        for j in jobs
+    ]
+
+
 def _client(
     *,
     internal_testing_enabled: bool = True,
     jobs: list[Job] | None = None,
+    specs: list[JobSpec] | None = None,
     accounts: FakeAccountStore | None = None,
     schedule_store: FakeScheduleStore | None = None,
     channel_router: _FakeRouter | None = None,
@@ -53,6 +65,7 @@ def _client(
         create_admin_jobs_router(
             admin_api_key="secret",
             internal_testing_enabled=internal_testing_enabled,
+            specs=specs if specs is not None else _specs_of(jobs or []),
             jobs=jobs or [],
             schedule_state=schedule_state or FakeScheduleStateStore(),
             accounts=AccountService(store, clock=lambda: NOW, ttl_hours=24, max_attempts=5),
@@ -372,3 +385,67 @@ def test_a_job_without_a_declared_window_keeps_the_lenient_default():
     )
     assert body["data"][0]["is_overdue"] is False
     assert body["meta"]["overdue"] == []
+
+
+def test_a_job_owned_by_another_process_is_still_watched():
+    """跑在別的程序的排程（RAG 週更）也必須出現在這一頁上。
+
+    ⚠️ 這是 2026-07-27 修掉的盲區：這一頁原本逐一走「本程序綁得出執行體的 job」，
+    而 `rag-weekly-refresh` 住在 `python -m kinsun.rag.worker`。於是那支排程對這一頁
+    **完全不存在**——RAG 週更程序掛掉、`RAG_REFRESH_ENABLED` 忘了打開、從部署起
+    一次都沒跑過，這一頁一律顯示全綠。這一頁存在的唯一理由就是抓這種事。
+    """
+    specs = [JobSpec("rag-weekly-refresh", "0 3 * * 0", OWNER_RAG_WORKER)]
+    # jobs 刻意留空：webhook 這個程序本來就綁不出它的執行體。
+    body = _client(jobs=[], specs=specs).get("/api/v1/admin/jobs", headers=_auth()).json()
+    row = body["data"][0]
+    assert row["job_name"] == "rag-weekly-refresh"
+    assert row["never_ran"] is True
+    assert body["meta"]["never_ran"] == ["rag-weekly-refresh"]
+    # 告警要說出該去重啟誰——owner 的字面就是 kinsun.sh 的服務名。
+    assert "rag_worker" in body["meta"]["warnings"][0]
+
+
+def test_a_stalled_job_from_another_process_is_flagged():
+    """別的程序停擺，這一頁一樣要叫——判定看的是 job 有沒有按時跑，不是誰在跑它。"""
+    state = FakeScheduleStateStore()
+    state.set_last_run("rag-weekly-refresh", NOW - timedelta(days=21))
+    specs = [JobSpec("rag-weekly-refresh", "0 3 * * 0", OWNER_RAG_WORKER)]
+    body = (
+        _client(jobs=[], specs=specs, schedule_state=state)
+        .get("/api/v1/admin/jobs", headers=_auth())
+        .json()
+    )
+    assert body["data"][0]["is_overdue"] is True
+    assert body["meta"]["overdue"] == ["rag-weekly-refresh"]
+    assert "rag_worker" in body["meta"]["warnings"][0]
+
+
+def test_a_job_this_process_cannot_run_is_marked_and_refuses_to_run():
+    """看得到不等於按得動：RAG 週更跑數小時，不該由一條 HTTP 請求拖著跑。
+
+    錯誤碼與「查無此 job」分開——混成同一個 404，值班的人會以為後台壞了。
+    """
+    specs = [JobSpec("rag-weekly-refresh", "0 3 * * 0", OWNER_RAG_WORKER)]
+    client = _client(jobs=[], specs=specs)
+    row = client.get("/api/v1/admin/jobs", headers=_auth()).json()["data"][0]
+    assert row["can_run_now"] is False
+    assert row["owner"] == OWNER_RAG_WORKER
+
+    res = client.post("/api/v1/admin/jobs/rag-weekly-refresh/run", headers=_auth())
+    assert res.status_code == 409
+    assert res.json()["error"]["code"] == "job_not_runnable_here"
+    # 打錯名字仍是 404，兩者不可混為一談。
+    assert client.post("/api/v1/admin/jobs/nope/run", headers=_auth()).status_code == 404
+
+
+def test_a_job_this_process_owns_is_runnable():
+    """對照組：本程序綁得出來的照樣可以按。"""
+    ran = []
+    jobs = [Job(name="news-crawl", cron="15 0 * * *", run=lambda: ran.append(True))]
+    client = _client(jobs=jobs)
+    row = client.get("/api/v1/admin/jobs", headers=_auth()).json()["data"][0]
+    assert row["can_run_now"] is True
+    assert row["owner"] == OWNER_SCHEDULER
+    assert client.post("/api/v1/admin/jobs/news-crawl/run", headers=_auth()).status_code == 200
+    assert ran == [True]

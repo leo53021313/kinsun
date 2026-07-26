@@ -26,6 +26,7 @@ from kinsun.channels.inbound import VoiceReplyDelivery
 from kinsun.channels.line.webhook import create_app
 from kinsun.composition import assemble_core, build_externals
 from kinsun.config import load_dotenv, load_settings
+from kinsun.cron.registry import job_specs
 from kinsun.cron.state import PgScheduleStateStore
 from kinsun.cron.worker import build_jobs
 from kinsun.llm import build_gemini_for
@@ -240,10 +241,13 @@ def build_app() -> FastAPI:
         prefix="/api/v1/admin",
     )
     # 內測操作面（spec 2026-07-12 §3.4）：與 worker 共用同一份 job 清單。
+    # specs 是**全系統**的排程宣告（含跑在別的程序的 RAG 週更），jobs 只有本程序
+    # 綁得出執行體的那些——監控要看得到全部，手動觸發只能動得了自己這一份。
     app.include_router(
         create_admin_jobs_router(
             admin_api_key=settings.admin_api_key,
             internal_testing_enabled=settings.internal_testing_enabled,
+            specs=job_specs(settings),
             jobs=build_jobs(settings, core, clock=clock),
             schedule_state=PgScheduleStateStore(db, tz),
             accounts=core.accounts,

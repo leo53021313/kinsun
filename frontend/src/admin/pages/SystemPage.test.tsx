@@ -26,6 +26,8 @@ function job(overrides: Record<string, unknown> = {}) {
   return {
     job_name: "schedule-dispatch",
     cron: "* * * * *",
+    owner: "scheduler",
+    can_run_now: true,
     last_run_at: 1_785_000_000,
     due_at: 1_785_000_060,
     late_seconds: 0,
@@ -89,5 +91,39 @@ describe("SystemPage 排程健康狀態", () => {
     expect(await screen.findByText("⚠ 從未執行")).toBeInTheDocument();
     expect(screen.getByText(/從未執行過/)).toBeInTheDocument();
     expect(screen.queryByText("正常")).not.toBeInTheDocument();
+  });
+
+  it("跑在別的程序的排程照樣列出，但不給「立即執行」", async () => {
+    // ⚠️ 2026-07-27 修掉的盲區：RAG 週更住在 rag_worker，原本這一頁完全看不到它。
+    // 現在看得到了，但按不動——它動輒數小時，不該由一條後台請求拖著跑。
+    vi.mocked(getMeta).mockResolvedValue({ internal_testing: true });
+    vi.mocked(listJobs).mockResolvedValue({
+      jobs: [
+        job(),
+        job({
+          job_name: "rag-weekly-refresh",
+          cron: "0 3 * * 0",
+          owner: "rag_worker",
+          can_run_now: false,
+          last_run_at: null,
+          due_at: null,
+          never_ran: true,
+        }),
+      ],
+      meta: {
+        overdue: [],
+        never_ran: ["rag-weekly-refresh"],
+        warnings: ["有 1 支排程從未執行過：rag-weekly-refresh（rag_worker）"],
+      },
+    } as never);
+
+    render(<SystemPage />);
+
+    expect(await screen.findByText("rag-weekly-refresh")).toBeInTheDocument();
+    // 該去重啟誰要看得見。
+    expect(screen.getByText("rag_worker")).toBeInTheDocument();
+    expect(screen.getByText("由 rag_worker 執行")).toBeInTheDocument();
+    // 排程器自己的那支照樣可按，兩者不可一起關掉。
+    expect(screen.getAllByRole("button", { name: "立即執行（內測）" })).toHaveLength(1);
   });
 });

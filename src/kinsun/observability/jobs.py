@@ -10,8 +10,7 @@ from kinsun.cron.scheduler import Job
 def build_observability_cleanup_job(
     *,
     purge: Callable[[], None],
-    hour: int,
-    minute: int = 45,
+    cron: str,
     name: str = "observability-cleanup",
 ) -> Job:
-    return Job(name=name, cron=f"{minute} {hour} * * *", run=purge)
+    return Job(name=name, cron=cron, run=purge)

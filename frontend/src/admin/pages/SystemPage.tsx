@@ -85,6 +85,7 @@ export function SystemPage() {
           <tr>
             <th>{strings.system.columns.job}</th>
             <th>{strings.system.columns.cron}</th>
+            <th>{strings.system.columns.owner}</th>
             <th>{strings.system.columns.lastRun}</th>
             <th>{strings.system.columns.health}</th>
             {testing && <th>{strings.system.columns.action}</th>}
@@ -97,6 +98,9 @@ export function SystemPage() {
               <td>
                 <code>{j.cron}</code>
               </td>
+              <td>
+                <code>{j.owner}</code>
+              </td>
               <td>{j.last_run_at ? formatTime(j.last_run_at) : strings.system.neverRun}</td>
               <td className={j.is_overdue || j.never_ran ? "job-unhealthy" : undefined}>
                 {j.never_ran
@@ -107,13 +111,18 @@ export function SystemPage() {
               </td>
               {testing && (
                 <td>
-                  <button
-                    type="button"
-                    disabled={busyJob === j.job_name}
-                    onClick={() => run(j.job_name)}
-                  >
-                    {busyJob === j.job_name ? strings.system.running : strings.system.runNow}
-                  </button>
+                  {/* 跑在別的程序的排程按不動：讓按鈕直接消失，而不是讓人按下去才吃 409。 */}
+                  {j.can_run_now ? (
+                    <button
+                      type="button"
+                      disabled={busyJob === j.job_name}
+                      onClick={() => run(j.job_name)}
+                    >
+                      {busyJob === j.job_name ? strings.system.running : strings.system.runNow}
+                    </button>
+                  ) : (
+                    <small>{strings.system.runElsewhere(j.owner)}</small>
+                  )}
                 </td>
               )}
             </tr>

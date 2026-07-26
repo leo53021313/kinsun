@@ -51,10 +51,6 @@ def greeting_intent(now: datetime, *, interests: Sequence[str] = ()) -> str:
     )
 
 
-# 每半小時掃描一次；偏好時間對齊半點（見 proactive/constants.py 的 SLOT_MINUTES），
-# 兩者必須一致。
-GREETING_SCAN_CRON = "0,30 * * * *"
-
 # 補問候的時限（分鐘）。四小時是推導來的：既有契約要求「時段錯過仍要補」
 # （test_it_still_greets_late_when_her_slot_was_missed：8:00 的長輩在 10:30 仍要收到），
 # 所以下界至少要涵蓋 2.5 小時；上界則要擋掉實測踩到的情形——排程停擺一整天後
@@ -76,6 +72,7 @@ def build_greeting_job(
     prefs: GreetingPreferenceStore | None,
     greeted_today: Callable[[str], bool],
     clock: Callable[[], datetime],
+    cron: str,
     name: str = "daily-greeting",
     max_delay_minutes: int = _GREETING_MAX_DELAY_MINUTES,
 ) -> Job:
@@ -124,7 +121,7 @@ def build_greeting_job(
 
     return fanout_job(
         name=name,
-        cron=GREETING_SCAN_CRON,
+        cron=cron,
         population=sessions,
         action=action,
         logger=logger,
@@ -138,8 +135,7 @@ def build_inactivity_job(
     clock: Callable[[], datetime],
     threshold_seconds: float,
     care_one: Callable[[str], object],
-    hour: int,
-    minute: int = 0,
+    cron: str,
     name: str = "inactivity-care",
 ) -> Job:
     """久未互動的關懷推播；只在可推播時段送出。
@@ -165,6 +161,4 @@ def build_inactivity_job(
         if last is not None and now.timestamp() - last >= threshold_seconds:
             care_one(elder_id)
 
-    return fanout_job(
-        name=name, hour=hour, minute=minute, population=sessions, action=action, logger=logger
-    )
+    return fanout_job(name=name, cron=cron, population=sessions, action=action, logger=logger)

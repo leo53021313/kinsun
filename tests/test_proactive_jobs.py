@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
+from kinsun.cron.registry import GREETING_SCAN_CRON
 from kinsun.proactive.jobs import build_greeting_job, build_inactivity_job
 from kinsun.proactive.preferences import FakeGreetingPreferenceStore, GreetingPreference
 
@@ -31,6 +32,7 @@ def _greeting_job(
         prefs=FakeGreetingPreferenceStore() if prefs is _DEFAULT_PREFS else prefs,
         greeted_today=greeted_today,
         clock=lambda: datetime(2026, 7, 16, at[0], at[1], tzinfo=TPE),
+        cron=GREETING_SCAN_CRON,
     )
 
 
@@ -67,12 +69,6 @@ def test_greeting_isolates_failure():
 
     _greeting_job(sessions=lambda: ["u1", "u2"], greet_one=greet_one).run()
     assert greeted == ["u2"]
-
-
-def test_the_greeting_job_scans_every_half_hour():
-    """每位長輩的問候時間對齊半點（spec 2026-07-16），故掃描頻率必須是半小時。"""
-    job = _greeting_job(sessions=lambda: [], greet_one=lambda _e: None)
-    assert job.cron == "0,30 * * * *"
 
 
 def test_it_greets_once_her_preferred_time_has_passed():
@@ -207,7 +203,7 @@ def test_inactivity_only_cares_for_stale():
         clock=lambda: NOW,
         threshold_seconds=2 * 86400,
         care_one=cared.append,
-        hour=10,
+        cron="0 10 * * *",
     )
     job.run()
     assert cared == ["u1"]
@@ -228,7 +224,7 @@ def test_inactivity_isolates_failure():
         clock=lambda: NOW,
         threshold_seconds=2 * 86400,
         care_one=care_one,
-        hour=10,
+        cron="0 10 * * *",
     ).run()
     assert cared == ["u2"]
 
@@ -357,7 +353,7 @@ def test_inactivity_care_is_not_pushed_at_night_after_downtime():
         clock=lambda: night,
         threshold_seconds=2 * 86400,
         care_one=cared.append,
-        hour=10,
+        cron="0 10 * * *",
     ).run()
     assert cared == []
 
@@ -372,7 +368,7 @@ def test_inactivity_care_still_goes_out_during_the_day():
         clock=lambda: noon,
         threshold_seconds=2 * 86400,
         care_one=cared.append,
-        hour=10,
+        cron="0 10 * * *",
     ).run()
     assert cared == ["u1"]
 
@@ -390,6 +386,6 @@ def test_inactivity_care_survives_midnight():
         clock=lambda: after_midnight,
         threshold_seconds=2 * 86400,
         care_one=cared.append,
-        hour=10,
+        cron="0 10 * * *",
     ).run()
     assert cared == []
