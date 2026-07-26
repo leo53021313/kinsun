@@ -16,6 +16,7 @@ from kinsun.tools.schedules import (
     build_create_handler,
     build_list_handler,
 )
+from kinsun.turn_context import elder_utterance
 
 TZ = ZoneInfo("Asia/Taipei")
 NOW = datetime(2026, 7, 25, 20, 0, tzinfo=TZ)
@@ -42,6 +43,16 @@ def service_and_store():
         return f"g{counter['n']}"
 
     return ScheduleService(store, clock=lambda: NOW, new_id=new_id), store
+
+
+@pytest.fixture(autouse=True)
+def _elder_spoke():
+    """本模組預設都在「長輩剛開口」的情境下跑——那是寫入型工具的前提（安全界線 4）。
+
+    要測沒開口的那一輪（主動關懷路徑），在測試裡自己用 `elder_utterance("")` 蓋掉。
+    """
+    with elder_utterance("阿嬤剛剛講的話"):
+        yield
 
 
 @pytest.fixture
@@ -186,6 +197,39 @@ def test_without_a_context_nothing_is_written(create, service_and_store):
     reply = create(args, None)
     assert "不知道是誰" in reply
     assert service.groups_for_elder("e1") == []
+
+
+# ── 安全界線 4：長輩沒開口的那一輪不得寫入 ──
+#
+# 主動關懷（`CareAgent.proactive`）也走工具迴圈，且把原話明確設為空字串。那一輪長輩
+# 根本沒說話，任何寫入都不可能得到他的同意。比照 `weather._is_from_elder` 的做法，
+# 防線放在工具內、以 `current_utterance()` 判定。
+
+
+def test_create_refuses_when_the_elder_never_spoke(create, service_and_store):
+    service, _ = service_and_store
+    with elder_utterance(""):  # 主動關懷路徑：agent.proactive 就是這樣設的
+        reply = create(_once_args("長輩沒答應的事"), CTX)
+    assert "沒有開口" in reply
+    assert service.groups_for_elder("e1") == []
+
+
+def test_cancel_refuses_when_the_elder_never_spoke(create, service_and_store):
+    service, _ = service_and_store
+    create(_once_args("去吃飯"), CTX)  # 長輩自己設的（autouse fixture 供原話）
+    with elder_utterance(""):
+        reply = build_cancel_handler(service)({"group_id": "g1"}, CTX)
+    assert "沒有開口" in reply
+    assert service.groups_for_elder("e1")[0].title == "去吃飯"  # 沒被取消
+
+
+def test_list_is_allowed_without_an_utterance(create, service_and_store):
+    """唯讀工具不受此界線約束——問候要看得到今天有什麼事才講得出話。"""
+    service, _ = service_and_store
+    create(_once_args("去吃飯"), CTX)
+    with elder_utterance(""):
+        reply = build_list_handler(service, clock=lambda: NOW)({}, CTX)
+    assert "去吃飯" in reply
 
 
 # ── 查詢 ──

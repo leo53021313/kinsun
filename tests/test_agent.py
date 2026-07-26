@@ -414,6 +414,50 @@ def test_proactive_tool_loop_reply_is_guarded():
     assert agent.proactive("u1", "早安問候") == "阿嬤早安呀。"
 
 
+def test_proactive_cannot_create_a_schedule_the_elder_never_agreed_to():
+    """端到端守住安全界線 4：主動問候那一輪長輩沒開口，模型不得替她建立提醒。
+
+    這條走**真的** create_schedule handler（不是替身）——防線在工具內，用替身測
+    等於測了個寂寞。單元層的對照在 test_tools_schedules 的
+    test_create_refuses_when_the_elder_never_spoke。
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from kinsun.schedules.service import ScheduleService
+    from kinsun.schedules.store import FakeScheduleStore
+    from kinsun.tools.schedules import CREATE_SPEC, build_create_handler
+
+    now = datetime(2026, 7, 25, 20, 0, tzinfo=ZoneInfo("Asia/Taipei"))
+    service = ScheduleService(FakeScheduleStore(), clock=lambda: now, new_id=lambda: "g1")
+    registry = ToolRegistry()
+    registry.register(CREATE_SPEC, build_create_handler(service, clock=lambda: now))
+    llm = ScriptedToolLLM(
+        [
+            ToolTurn(
+                text=None,
+                tool_calls=[
+                    ToolCall(
+                        "create_schedule",
+                        {
+                            "title": "長輩沒答應的事",
+                            "kind": "custom",
+                            "repeat": "once",
+                            "date": "2026-07-25",
+                            "time": "21:00",
+                        },
+                    )
+                ],
+            ),
+            ToolTurn(text="阿嬤早安，我幫您記下來了。", tool_calls=[]),
+        ]
+    )
+
+    CareAgent(llm, SpySession(), tools=registry).proactive("u1", "早安問候")
+
+    assert service.groups_for_elder("u1") == []
+
+
 class _SlowSession(SpySession):
     """assemble 固定睡 delay 秒——用來分辨情境組裝是排隊跑還是已在背景先跑。"""
 
