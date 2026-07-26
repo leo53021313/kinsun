@@ -365,7 +365,12 @@ launch_ngrok() {
 # ── Opik 複合服務（後端 docker 堆疊 ＋ 公開隧道）──────────────────────────
 # 後端由 $OPIK_DIR 的 ./opik.sh（docker compose）管理，非單一 PID，故不走 _bg；
 # 隧道（cloudflared）才走 _bg／pidfile。啟動＝先確保後端起來再開隧道；停止＝先關隧道
-# （stop_one 的 pidfile）再由 _post_stop_opik 停後端。埠沿用首次建置的 5273 組態。
+# （stop_one 的 pidfile）再由 _post_stop_opik 停後端。
+#
+# ⚠️ 三個埠由 _opik_backend_start 明確釘死，**不是**環境殘留或首次建置的遺留值：
+# Opik 的 nginx 預設會算出 5173，正好撞上本檔 PORT[frontend]=5173（Vite 開發伺服器）。
+# 繞過本腳本直接跑 `./opik.sh` 就會吃到預設值，把前端的埠佔走、UI 也不在 5273
+# （2026-07-25 實際踩過）。改埠時 377 行與下面這行必須一起改。
 _opik_backend_up() { _port_open 5273; }
 
 _opik_backend_start() {
