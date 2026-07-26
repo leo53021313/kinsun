@@ -1,10 +1,13 @@
 import logging
+import threading
 import time
 
 import pytest
 
+from kinsun import agent as agent_module
 from kinsun.agent import FALLBACK_REPLY, SYSTEM_PROMPT, CareAgent, Recall
 from kinsun.llm import Message, ToolCall, ToolSpec, ToolTurn
+from kinsun.memory.shortterm import MemoryStoreError
 from kinsun.tools.registry import ToolRegistry
 
 
@@ -525,6 +528,66 @@ def test_prepared_assembly_failure_surfaces_from_handle():
 
     with pytest.raises(RuntimeError, match="記憶掛了"):
         agent.handle("u1", "我今天有點累", prepared=prepared)
+
+
+# --- 情境組裝的等待上限（2026-07-27）---
+#
+# mem0 檢索沒有任何逾時可設：mem0 的 gemini LLM／embedder 自建 genai.Client 卻不帶
+# http_options，而 google-genai 的預設是 Timeout(timeout=None)——實測確認完全沒有上限。
+# 組裝一旦卡住，這一輪就永遠不返回，長輩連回退話術都拿不到，uvicorn worker 也一直被佔著。
+
+
+class _HangingSession(SpySession):
+    """assemble 卡住不返回——模擬 mem0 或 Supabase 假死。"""
+
+    def __init__(self, released: threading.Event, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._released = released
+
+    def assemble(self, line_user_id: str, query: str):
+        self._released.wait()
+        return super().assemble(line_user_id, query)
+
+
+def test_prepared_context_gives_up_instead_of_waiting_forever():
+    """等不到就丟 MemoryStoreError——inbound 接住後長輩至少拿得到回退話術。"""
+    released = threading.Event()
+    agent = CareAgent(SpyLLM(), _HangingSession(released))
+    try:
+        prepared = agent.prepare("u1", "我今天有點累")
+        prepared._timeout = 0.05  # 測試用短上限，避免真的等 15 秒
+        started = time.monotonic()
+        with pytest.raises(MemoryStoreError, match="情境組裝逾時"):
+            prepared.context()
+        assert time.monotonic() - started < 1.0
+    finally:
+        released.set()  # 放走背景執行緒，不留給其他測試
+
+
+def test_prepared_context_still_returns_when_assembly_finishes_in_time():
+    """正常路徑一字未變：組裝來得及就照常回傳情境。"""
+    released = threading.Event()
+    released.set()
+    agent = CareAgent(SpyLLM(), _HangingSession(released))
+    assert agent.prepare("u1", "我今天有點累").context().history == []
+
+
+def test_proactive_gives_up_instead_of_hanging_the_whole_greeting_job(monkeypatch):
+    """主動問候跑在排程的**序列**扇出裡，一位長輩卡住就等於當天所有人都收不到。
+
+    逾時後丟 MemoryStoreError，由 fanout 的逐筆隔離接住、換下一位——這是本次
+    把 `_envelope` 的當場組裝也改走 PreparedTurn 的唯一理由。
+    """
+    monkeypatch.setattr(agent_module, "CONTEXT_ASSEMBLY_TIMEOUT_SECONDS", 0.05)
+    released = threading.Event()
+    agent = CareAgent(SpyLLM(), _HangingSession(released))
+    try:
+        started = time.monotonic()
+        with pytest.raises(MemoryStoreError, match="情境組裝逾時"):
+            agent.proactive("u1", "早安問候")
+        assert time.monotonic() - started < 1.0
+    finally:
+        released.set()
 
 
 # --- 出站冒名防線（2026-07-26 全流程模擬實測：零工具呼叫卻說「國健署網站說」）---

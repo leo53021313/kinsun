@@ -14,6 +14,7 @@ from kinsun import tracing
 from kinsun.llm import LLMClient, Message, ToolResult
 from kinsun.memory.models import FactSection, InjectedContext, format_injected_context
 from kinsun.memory.recall import SessionMemory
+from kinsun.memory.shortterm import MemoryStoreError
 from kinsun.tools.registry import ToolInvocationContext
 from kinsun.turn_context import elder_utterance, turn_actions, turn_sources
 
@@ -303,6 +304,23 @@ def _no_fake_source(reply: str, sources: list[str]) -> str:
     return stripped if _CJK.search(stripped) else FALLBACK_REPLY
 
 
+# 情境組裝的等待上限（秒）。
+#
+# ⚠️ 為什麼非有不可（2026-07-27 查證）：組裝裡的 mem0 檢索**沒有任何逾時可設**——
+# mem0 的 gemini LLM 與 embedder 各自 `genai.Client(api_key=...)`、不帶 http_options，
+# 而 google-genai 的預設實測是 `Timeout(timeout=None)`，也就是無限等。mem0 的 config
+# 也沒有 timeout 欄位可傳。組裝一旦卡住，這一輪就永遠不返回：長輩連回退話術都拿不到，
+# uvicorn worker 與那個請求一起被佔住。
+#
+# 15 秒是「只攔永遠不回來」的門檻，不是效能目標：組裝實測約 2.9 秒（長期記憶檢索
+# ＋七次事實查詢），15 秒有五倍餘裕，正常回合不會碰到。刻意不壓更低——誤殺一次
+# 就是讓一位本來只是慢一點的長輩憑空失去今天的記憶。
+#
+# 不開成環境變數：目前沒有人需要調（config.py 已 502 行）；真的要調的那天，
+# 先看 `context_assembly_timeout` 這個 trace 標記的實際發生率再決定。
+CONTEXT_ASSEMBLY_TIMEOUT_SECONDS = 15.0
+
+
 class PreparedTurn:
     """已在背景開始組裝的本輪情境（2026-07-26 延遲實測）。
 
@@ -316,9 +334,11 @@ class PreparedTurn:
     才會掛在本輪的 trace 下、而不是憑空消失。
     """
 
-    def __init__(self, assemble: Callable[[], object]) -> None:
+    def __init__(self, assemble: Callable[[], object], *, timeout: float | None = None) -> None:
         self._context: object | None = None
         self._error: BaseException | None = None
+        # 在此解析而非寫成預設引數：預設引數在類別定義時就綁死，測試改不動模組常數。
+        self._timeout = CONTEXT_ASSEMBLY_TIMEOUT_SECONDS if timeout is None else timeout
         context = contextvars.copy_context()
         self._thread = threading.Thread(
             target=lambda: context.run(self._run, assemble),
@@ -334,12 +354,26 @@ class PreparedTurn:
             self._error = exc
 
     def context(self):
-        """等組裝完成並取回情境；組裝期間的例外在此原樣重拋。
+        """等組裝完成並取回情境；組裝期間的例外在此原樣重拋，等太久則放棄。
 
         ⚠️ 例外必須重拋、不可吞掉：情境組裝失敗（如 MemoryStoreError）本來就會冒到
         管線的回退話術，吞掉會讓長輩拿到一則「憑空失憶」的回覆而沒有任何人知道。
+        逾時同理丟 `MemoryStoreError`——`channels/inbound.py` 已經在接這個型別，
+        長輩至少拿得到回退話術，而不是永遠等不到回應。
+
+        ⚠️ **逾時不等於取消**：`join(timeout)` 只是讓呼叫端不再等，背景那條執行緒
+        還活著，仍握著 mem0 的連線與那個 httpx socket 直到它自己結束。這是刻意接受的
+        殘餘風險，因為另一邊是「整個請求連同 uvicorn worker 一起卡死」——嚴格更糟。
+        殘餘風險有界：mem0 走的是它自己的連線（`mem0_factory` 直接把 `database_url`
+        交給 supabase 向量庫），不佔 `db.py` 那個上限 5 的 psycopg 池，所以卡住的
+        組裝執行緒不會連帶讓其他長輩查不到資料；且執行緒是 daemon，不擋行程關閉。
+        真的開始堆積時，訊號會是這裡的 warning——先看到那個再談在途上限。
         """
-        self._thread.join()
+        self._thread.join(self._timeout)
+        if self._thread.is_alive():
+            logger.warning("情境組裝逾時（%.1f 秒），本輪退回話術", self._timeout)
+            tracing.update_trace_metadata(context_assembly_timeout=True)
+            raise MemoryStoreError(f"情境組裝逾時（{self._timeout} 秒）")
         if self._error is not None:
             raise self._error
         return self._context
@@ -370,8 +404,18 @@ class CareAgent:
     def _envelope(
         self, elder_id: str, query: str, *, prepared: PreparedTurn | None = None
     ) -> tuple[str, list[Message]]:
+        """沒有預取時當場組——但同樣走 `PreparedTurn`，為的是那道等待上限。
+
+        ⚠️ 這條路徑主要是主動關懷（`proactive`）在走，而它跑在排程的**序列**扇出裡
+        （`scheduler/fanout.py` 是一個 for 迴圈）。組裝一旦卡住，當天的問候就不只是
+        這位長輩收不到，而是**排在他後面的所有長輩都收不到**——迴圈永遠停在他身上。
+        改走 PreparedTurn 之後逾時會變成一個 MemoryStoreError，由 fanout 的逐筆隔離
+        接住、記一筆 log 然後換下一位。多開一條執行緒的代價，換整批問候不被一個人拖垮。
+        """
         ctx = (
-            prepared.context() if prepared is not None else self._session.assemble(elder_id, query)
+            prepared.context()
+            if prepared is not None
+            else PreparedTurn(lambda: self._session.assemble(elder_id, query)).context()
         )
         return SYSTEM_PROMPT + ctx.system_suffix, ctx.history
 
