@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import replace
 
-from kinsun import tracing
+from kinsun import background, tracing
 from kinsun.agent import FALLBACK_REPLY, CareAgent
 from kinsun.llm import LLMUsage, collect_llm_usage
 from kinsun.observability.models import (
@@ -203,17 +203,26 @@ class VoicePipeline:
 
         ⚠️ now 用 time.time()（epoch 秒），不可用 self._timer——後者預設 time.monotonic，
         只能量延遲、不是牆鐘時間，拿去跟 reminder_logs.created_at 比較會得到垃圾。
+        now 在**提交前**取值，不可搬進背景動作裡：時間窗判定的基準是長輩開口的那一刻，
+        不是背景執行緒剛好排到的那一刻。
+
+        UPDATE 本身走 `background.run`（2026-07-26 延遲實測）：它是一次約 0.21 秒的
+        Supabase 跨網往返，而反思的訊號沒有任何人在等——移出回覆路徑後，上面那段
+        「try/except 擋得住錯誤、擋不住延遲」的疑慮也就徹底消失了。
         """
         if self._reminder_logs is None:
             return
-        try:
-            self._reminder_logs.mark_responded(
-                elder_id,
-                now=time.time(),
-                within_seconds=self._response_window_seconds,
-            )
-        except Exception:  # noqa: BLE001 - 訊號落庫失敗不可中斷對話
-            logger.warning("提醒回應標記失敗 elder=%s", elder_id)
+        reminder_logs = self._reminder_logs
+        now = time.time()
+        within_seconds = self._response_window_seconds
+
+        def mark() -> None:
+            try:
+                reminder_logs.mark_responded(elder_id, now=now, within_seconds=within_seconds)
+            except Exception:  # noqa: BLE001 - 訊號落庫失敗不可中斷對話
+                logger.warning("提醒回應標記失敗 elder=%s", elder_id)
+
+        background.run(mark)
 
     def _latency_ms(self, started: float) -> int:
         return int((self._timer() - started) * 1000)
