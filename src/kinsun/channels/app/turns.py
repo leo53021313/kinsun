@@ -10,7 +10,6 @@ InboundMessage(Channel.APP, …) 進既有 dispatch——閘門（同意複核�
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import time
 import uuid
@@ -23,7 +22,7 @@ from kinsun.accounts.models import Channel, PrincipalType
 from kinsun.accounts.service import AccountService
 from kinsun.channels.inbound import InboundMessage, dispatch
 from kinsun.locations.store import ElderLocation
-from kinsun.speech.chunking import split_for_speech
+from kinsun.speech.chunking import reply_digest, split_for_speech
 from kinsun.speech.tts import TTSError
 from kinsun.web.envelope import ok
 from kinsun.web.errors import ErrorCode
@@ -56,17 +55,6 @@ class _TurnCollector:
         self.duration_ms = duration_ms
         if text:
             self.text = text
-
-
-def reply_digest(reply: str) -> str:
-    """回覆內容的短雜湊，用來確認後續段落取的是同一輪的回覆。
-
-    分段串流是跨請求的：第一段隨 POST /turns 回，其餘由 App 逐段 GET。中間長輩若
-    又講了一句，「最近一則金孫回覆」就換人了——沒有這道確認，App 會把新回覆的第二句
-    接在舊回覆後面播出去。伺服器不留狀態（回覆全文本來就已寫進 turns），故用雜湊比對
-    而非另建一張表。
-    """
-    return hashlib.sha1(reply.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
 
 
 def create_app_turns_router(
@@ -179,7 +167,7 @@ def create_app_turns_router(
                 # 分段串流（2026-07-26 延遲優化）：>1 代表 audio_url 只是第一段，
                 # App 應依序取 1..chunk_count-1 接著播；0／1 代表就這一段、不必再拉。
                 "chunk_count": chunk_count,
-                "reply_digest": reply_digest(collector.text) if chunk_count > 1 else "",
+                "reply_digest": outcome.reply_digest if outcome else "",
             }
         )
 

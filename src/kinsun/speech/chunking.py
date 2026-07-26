@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 
 # 段數上限：每多一段就多一次「TTS 固定成本＋上傳往返」，而長輩只在乎第一句多快到。
@@ -62,3 +63,18 @@ def split_for_speech(text: str) -> list[str]:
         head, tail = merged[: MAX_CHUNKS - 1], merged[MAX_CHUNKS - 1 :]
         merged = [*head, "".join(tail)]
     return merged
+
+
+def reply_digest(reply: str) -> str:
+    """回覆內容的短雜湊，用來確認後續段落取的是同一輪的回覆。
+
+    分段串流是跨請求的：第一段隨回合回應送出，其餘由前端逐段取。中間長輩若又講了
+    一句，「最近一則金孫回覆」就換人了——沒有這道確認，前端會把新回覆的第二句接在
+    舊回覆後面播。伺服器不留狀態（回覆全文本來就已寫進 `turns`），故用雜湊比對。
+
+    ⚠️ 一定要餵**真正的回覆文字**（`TtsResult.text`），不可餵投遞層的顯示字串：
+    `ASR_DEBUG_SHOW_TRANSCRIPT=true` 時顯示字串會多出「辨識：…／回復：…」的前綴，
+    與寫進 `turns` 的內容不同，雜湊對不上就變成每一段都被判為過期（2026-07-26
+    實機驗證踩到）。
+    """
+    return hashlib.sha1(reply.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]

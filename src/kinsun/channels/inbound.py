@@ -14,6 +14,7 @@ from kinsun.llm import LLMError
 from kinsun.memory.shortterm import MemoryStoreError
 from kinsun.observability.store import TraceStore, safe_record
 from kinsun.speech.asr import ASRError
+from kinsun.speech.chunking import reply_digest
 from kinsun.speech.tts import TtsResult
 
 logger = logging.getLogger("kinsun.inbound")
@@ -56,6 +57,9 @@ class DeliveryOutcome:
     # 分段串流（2026-07-26 延遲優化）：>1 代表送出的只是第一段，呼叫端（App 對講機）
     # 據此告訴前端還有幾段要拉。LINE 收不到分段（只能一則語音），故恆為 0。
     chunk_count: int = 0
+    # 這一輪回覆的短雜湊，前端取後續段落時帶上。⚠️ 由**真正的回覆文字**算出，不是
+    # 投遞層的顯示字串——後者在 debug 模式會多「辨識：…」前綴，與 turns 的內容不同。
+    reply_digest: str = ""
 
 
 class VoiceReplyDelivery:
@@ -190,7 +194,12 @@ def _run_pipeline(
     # 遲早會分岔成「送出的段數」與「宣告的段數」不一致，App 就會多播或漏播一段。
     # getattr 預設 0：produce 是通道中立的 seam，回傳物件只保證有 text／audio
     # （測試替身就用 SimpleNamespace），沒有 chunk_count 即視為未分段。
-    outcome = replace(outcome, chunk_count=getattr(result, "chunk_count", 0))
+    chunk_count = getattr(result, "chunk_count", 0)
+    outcome = replace(
+        outcome,
+        chunk_count=chunk_count,
+        reply_digest=reply_digest(result.text) if chunk_count > 1 else "",
+    )
     _record_reply(traces, msg, outcome, started, timer)
     return outcome
 
