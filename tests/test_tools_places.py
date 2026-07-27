@@ -26,7 +26,7 @@ def _wire(places: list[Place], *, located: bool = True, recorded_at: float = 175
         clock=lambda: NOW,
         stale_after_hours=2,
         # 假地理編碼：只認得「西門町」，其餘一律查不到——測試不碰網路。
-        resolve_place=lambda q: (25.042, 121.507) if "西門" in q else None,
+        resolve_place=lambda q: (25.0425, 121.507) if "西門" in q else None,
     )
 
 
@@ -92,6 +92,62 @@ def test_place_parameter_overrides_elder_location():
         ToolInvocationContext("t", ELDER, False),
     )
     assert "西門町的店" in out
+
+
+def test_place_too_far_from_elder_is_refused():
+    """模型把店名當地名傳進來時，不可直接報那邊的店（2026-07-28 端到端實測抓到）。
+
+    實測 Nominatim 對店名照單全收：「麥當勞」解析到台南、離中和 254 公里。
+    沒有這道護欄，長輩說「我想吃麥當勞」會收到一串台南的店、而句子裡寫著「附近」。
+    """
+    place_store = FakePlaceStore()
+    place_store.save_many([_place("台南的店", 23.047, 120.188, category="restaurant")])
+    locations = FakeLocationStore()
+    locations.save(ElderLocation(ELDER, "中和區", NOW, 25.0, 121.5))
+    handler = build_nearby_handler(
+        place_store,
+        locations,
+        clock=lambda: NOW,
+        stale_after_hours=2,
+        resolve_place=lambda q: (23.047, 120.188),  # 台南
+    )
+    out = handler(
+        {"category": "restaurant", "place": "麥當勞"},
+        ToolInvocationContext("t", ELDER, False),
+    )
+    assert "台南的店" not in out
+    assert "太遠" in out
+
+
+def test_place_within_same_area_is_allowed():
+    """「西門町附近有什麼吃的」是合法用法，離中和 4.9 公里，護欄不可誤擋。"""
+    handler = _wire([_place("西門町的店", 25.0425, 121.507, category="restaurant")])
+    out = handler(
+        {"category": "restaurant", "place": "西門町"},
+        ToolInvocationContext("t", ELDER, False),
+    )
+    assert "西門町的店" in out
+
+
+def test_place_center_is_named_in_the_output():
+    """中心點不是長輩所在地時，回傳字串必須講出來。
+
+    ⚠️ 原本無論中心點在哪都寫死「附近的餐廳：」，於是模型把別區的店講成「附近」，
+    而它沒有任何線索知道該改口——工具沒告訴它中心點被換過。
+    """
+    handler = _wire([_place("西門町的店", 25.0425, 121.507, category="restaurant")])
+    out = handler(
+        {"category": "restaurant", "place": "西門町"},
+        ToolInvocationContext("t", ELDER, False),
+    )
+    assert out.startswith("西門町附近的")
+
+
+def test_own_location_output_says_plain_nearby():
+    """沒填 place 時維持原本的「附近的…」措辭，不要多出地名。"""
+    handler = _wire([_place("余宗益調理整復所", 25.0025, 121.5)])
+    out = handler({"category": "chiropractic"}, ToolInvocationContext("t", ELDER, False))
+    assert out.startswith("附近的")
 
 
 def test_unresolvable_place_asks_instead_of_falling_back():
