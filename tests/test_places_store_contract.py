@@ -38,17 +38,18 @@ def _place(ns: str, suffix: str, lat: float, lon: float, category: str, **kw) ->
 
 
 def test_list_near_returns_empty_when_nothing_stored(store, ns):
-    assert store.list_near(
-        latitude=ELDER_LAT, longitude=ELDER_LON, category=f"{ns}restaurant", radius_meters=1500
-    ) == []
+    assert (
+        store.list_near(
+            latitude=ELDER_LAT, longitude=ELDER_LON, category=f"{ns}restaurant", radius_meters=1500
+        )
+        == []
+    )
 
 
 def test_save_many_then_list_near_round_trips_with_distance(store, ns):
     cat = f"{ns}restaurant"
     store.save_many([_place(ns, "a", 25.00169, 121.49776, cat, name="小高拉麵")])
-    got = store.list_near(
-        latitude=ELDER_LAT, longitude=ELDER_LON, category=cat, radius_meters=1500
-    )
+    got = store.list_near(latitude=ELDER_LAT, longitude=ELDER_LON, category=cat, radius_meters=1500)
     assert len(got) == 1
     assert got[0].place.name == "小高拉麵"
     assert 291 <= got[0].distance_meters <= 297
@@ -62,9 +63,7 @@ def test_list_near_sorts_by_distance(store, ns):
             _place(ns, "near", 25.001, 121.5, cat, name="近的"),
         ]
     )
-    got = store.list_near(
-        latitude=ELDER_LAT, longitude=ELDER_LON, category=cat, radius_meters=1500
-    )
+    got = store.list_near(latitude=ELDER_LAT, longitude=ELDER_LON, category=cat, radius_meters=1500)
     assert [n.place.name for n in got] == ["近的", "遠的"]
 
 
@@ -80,9 +79,7 @@ def test_list_near_breaks_distance_ties_by_place_id(store, ns):
             _place(ns, "a", 25.001, 121.5, cat, name="A店"),
         ]
     )
-    got = store.list_near(
-        latitude=ELDER_LAT, longitude=ELDER_LON, category=cat, radius_meters=1500
-    )
+    got = store.list_near(latitude=ELDER_LAT, longitude=ELDER_LON, category=cat, radius_meters=1500)
     assert [n.place.place_id for n in got] == [f"{ns}a", f"{ns}z"]
 
 
@@ -91,9 +88,10 @@ def test_list_near_excludes_beyond_radius(store, ns):
     # 約 2.2 公里外——超過 1500 公尺半徑。這條同時守住「不因查無結果而放大半徑」
     # 的前提：store 只負責誠實回報半徑內的東西。
     store.save_many([_place(ns, "outside", 25.020, 121.5, cat, name="板橋分店")])
-    assert store.list_near(
-        latitude=ELDER_LAT, longitude=ELDER_LON, category=cat, radius_meters=1500
-    ) == []
+    assert (
+        store.list_near(latitude=ELDER_LAT, longitude=ELDER_LON, category=cat, radius_meters=1500)
+        == []
+    )
 
 
 def test_list_near_filters_by_category(store, ns):
@@ -113,9 +111,7 @@ def test_save_many_is_upsert_on_place_id(store, ns):
     cat = f"{ns}restaurant"
     store.save_many([_place(ns, "a", 25.001, 121.5, cat, name="舊名")])
     store.save_many([_place(ns, "a", 25.001, 121.5, cat, name="新名")])
-    got = store.list_near(
-        latitude=ELDER_LAT, longitude=ELDER_LON, category=cat, radius_meters=1500
-    )
+    got = store.list_near(latitude=ELDER_LAT, longitude=ELDER_LON, category=cat, radius_meters=1500)
     assert [n.place.name for n in got] == ["新名"]
 
 
@@ -133,9 +129,7 @@ def test_save_many_last_wins_on_duplicate_place_id_within_one_call(store, ns):
             _place(ns, "a", 25.001, 121.5, cat, name="新名"),
         ]
     )
-    got = store.list_near(
-        latitude=ELDER_LAT, longitude=ELDER_LON, category=cat, radius_meters=1500
-    )
+    got = store.list_near(latitude=ELDER_LAT, longitude=ELDER_LON, category=cat, radius_meters=1500)
     assert [n.place.name for n in got] == ["新名"]
 
 
@@ -147,9 +141,17 @@ def test_optional_fields_round_trip(store, ns):
     store.save_many(
         [
             _place(
-                ns, "a", 25.001, 121.5, cat,
-                name="芳碩藥局", postcode=f"{ns}235", city="新北市",
-                phone="02-12345678", confidence=0.93, address="連城路100號",
+                ns,
+                "a",
+                25.001,
+                121.5,
+                cat,
+                name="芳碩藥局",
+                postcode=f"{ns}235",
+                city="新北市",
+                phone="02-12345678",
+                confidence=0.93,
+                address="連城路100號",
                 overture_category="pharmacy",
             )
         ]
@@ -199,18 +201,32 @@ def test_purge_older_than_removes_only_stale_rows(store, ns):
     """
     cat = f"{ns}restaurant"
     store.save_many(
-        [Place(place_id=f"{ns}old", name="上個月的", latitude=25.001, longitude=121.5,
-               category=cat, ingested_at=1.0)]
+        [
+            Place(
+                place_id=f"{ns}old",
+                name="上個月的",
+                latitude=25.001,
+                longitude=121.5,
+                category=cat,
+                ingested_at=1.0,
+            )
+        ]
     )
     store.save_many(
-        [Place(place_id=f"{ns}new", name="這個月的", latitude=25.001, longitude=121.5,
-               category=cat, ingested_at=2.0)]
+        [
+            Place(
+                place_id=f"{ns}new",
+                name="這個月的",
+                latitude=25.001,
+                longitude=121.5,
+                category=cat,
+                ingested_at=2.0,
+            )
+        ]
     )
     removed = store.purge_older_than(1.5)
     assert removed == 1
-    got = store.list_near(
-        latitude=ELDER_LAT, longitude=ELDER_LON, category=cat, radius_meters=1500
-    )
+    got = store.list_near(latitude=ELDER_LAT, longitude=ELDER_LON, category=cat, radius_meters=1500)
     assert [n.place.name for n in got] == ["這個月的"]
 
 

@@ -121,7 +121,8 @@ DEFAULT_SOURCES: tuple[Source, ...] = (
         RecommendedStatus.APPROVED,
         True,
         ("health99.hpa.gov.tw",),
-        "國健署官方衛教入口；文字內容依政府網站資料開放宣告使用（Leo 核定 2026-07-27），影音下載素材仍不抓取。",
+        "國健署官方衛教入口；文字內容依政府網站資料開放宣告使用"
+        "（Leo 核定 2026-07-27），影音下載素材仍不抓取。",
     ),
     Source(
         "mohw_health_window",

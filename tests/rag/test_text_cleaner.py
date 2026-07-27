@@ -39,4 +39,7 @@ def test_strips_view_counter_lines():
     assert clean_text("瀏覽人次: 1,234") == ""
     assert clean_text("觀看次數：42") == ""
     # 內文提及次數的完整句子不可誤殺
-    assert clean_text("這支影片的點閱次數：破百萬，很受長輩歡迎") == "這支影片的點閱次數：破百萬，很受長輩歡迎"
+    assert (
+        clean_text("這支影片的點閱次數：破百萬，很受長輩歡迎")
+        == "這支影片的點閱次數：破百萬，很受長輩歡迎"
+    )
