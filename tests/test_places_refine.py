@@ -6,6 +6,7 @@ from kinsun.places.models import NearbyPlace, Place
 from kinsun.places.refine import (
     dedupe,
     drop_suspicious_coordinates,
+    refine,
     speakable_name,
 )
 
@@ -113,6 +114,63 @@ def test_drop_suspicious_keeps_rows_without_postcode():
         [_n("沒有郵遞區號的店", 300, postcode=None)], [("235", 600)]
     )
     assert len(got) == 1
+
+
+def test_speakable_name_keeps_brand_hyphen():
+    # 實測：7-ELEVEN／7-11 開頭全台 1,340 筆，英數字間帶連字號共 13,341 筆。
+    # 超商是 categories.py 明訂的分類、密度全台最高，切成「7」會系統性發生。
+    assert speakable_name("7-ELEVEN 石潭門市") == "7-ELEVEN 石潭門市"
+    assert speakable_name("7-11湖慧門市~") == "7-11湖慧門市~"
+
+
+def test_speakable_name_still_cuts_chinese_hyphen_suffix():
+    assert speakable_name("斗六魷魚羹嘴羹-中和店") == "斗六魷魚羹嘴羹"
+
+
+def test_speakable_name_never_returns_empty_for_separator_leading_names():
+    # 實測全台 705 筆店名以分隔符開頭。回空字串等於把這家店從長輩的答案裡抹掉。
+    assert speakable_name("【麵匠】麵食堂-彌陀總店") != ""
+    assert speakable_name("(預約制)喜嫁六禮十二禮 禮俗用品") != ""
+
+
+def test_dedupe_does_not_let_separator_leading_name_swallow_everything():
+    """⚠️ 這條守的是一個會讓長輩收到空答案的 Critical。
+
+    店名以分隔符開頭時，主幹若切成空字串，而空字串是**任何字串的子字串**——
+    那一筆就變成萬用比對，把四十公尺內所有不相干的合法店家全部當成重複刪掉。
+    實測全台有 705 筆這種店名。
+    """
+    got = dedupe(
+        [
+            _n("【麵匠】麵食堂-彌陀總店", 10),
+            _n("好安心藥局", 15),
+            _n("全家福藥局", 20),
+        ]
+    )
+    assert len(got) == 3
+
+
+def test_dedupe_keeps_short_name_and_longer_unrelated_shop():
+    # 實測全台有 7,412 筆店名剛好兩個字（含「全家」）。沒有長度門檻時
+    # 「全家」會被判定為「全家福小吃店」的重複而讓其中一家消失。
+    got = dedupe([_n("全家", 10), _n("全家福小吃店", 15)])
+    assert len(got) == 2
+
+
+def test_refine_enforces_order_and_limit():
+    """組合入口：剔除 → 去重 → 清洗 → 截斷，且截斷在最後。"""
+    fingerprint = [("235", 600), ("112", 2)]
+    got = refine(
+        [
+            _n("台北榮總", 100, postcode="112"),  # 座標可疑，應被剔除
+            _n("宏益整復所", 200),
+            _n("埔里按摩推拿整復-宏益整復所", 205),  # 與上一筆同店，應被去重
+            _n("好安心藥局｜糖尿病照護、銀髮營養", 300),
+        ],
+        fingerprint,
+        limit=5,
+    )
+    assert [s.name for s in got] == ["宏益整復所", "好安心藥局"]
 
 
 def test_drop_suspicious_keeps_everything_when_fingerprint_too_small():
