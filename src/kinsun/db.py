@@ -324,8 +324,10 @@ NEWS_MENTIONS_DDL = (
     "PRIMARY KEY (elder_id, news_item_id));"
 )
 
-# 台灣店家 POI（Overture Maps，2026-07-27 spec 附近地點搜尋）。約 20–30 萬列、
-# 佔用約 19 MB——Supabase 免費方案的 500 MB 是共用預算，這一項要記在帳上。
+# 台灣店家 POI（Overture Maps，2026-07-27 spec 附近地點搜尋）。2026-07-28 正式庫
+# 實測：285,140 列，佔用 153 MB（heap 76 MB + index 77 MB），整庫 235 MB / 500 MB。
+# spec 原估 19 MB，實際低估近 8 倍——Supabase 免費方案的 500 MB 是共用預算，
+# 這一項要記在帳上。
 #
 # 刻意不用 PostGIS：查詢走「矩形粗篩 ＋ Haversine」，少一個擴充相依就少一個
 # 「託管環境有沒有裝」的外部變數。
