@@ -37,6 +37,9 @@ _SPEAK_CUT = re.compile(
 _STEM_CUT = re.compile(r"[|｜/／,，、(（【\[]")
 _LINE_ID = re.compile(r"LINE\s*[:：]?\s*@?\w+", re.IGNORECASE)
 _SEO_SYMBOLS = re.compile(r"[★☆✦✧♡♥※◆◇▲△●○]")
+# 只在 speakable_name 的 fallback 用（見該函式）：正常路徑切在左括號處，右括號本來
+# 就不會留下；fallback 是整串清理，不一起去掉會留下孤兒右括號。
+_CLOSERS = re.compile(r"[)）】\]］}｝]")
 _SPEAKABLE_MAX_CHARS = 15
 
 # 同址重複的距離門檻。40 公尺是實測值：同一家店的兩筆紀錄相距 2–18 公尺，
@@ -69,7 +72,10 @@ def speakable_name(name: str) -> str:
     if not cleaned:
         # 名字以分隔符開頭時第一段是空的（實測全台 705 筆）。回空字串等於把這家店
         # 從長輩的答案裡抹掉，比唸得不漂亮更糟——退回「整串去掉分隔符與符號」。
-        cleaned = _SEO_SYMBOLS.sub("", _SPEAK_CUT.sub("", stripped)).strip()
+        # ⚠️ 這裡要連**右**括號一起去掉：切點集合只收左括號（開頭那個才是灌詞的起點），
+        # 但走到這條 fallback 時是整串清理，只去左括號會留下孤兒「】」「)」，
+        # 而這串字會進 TTS 唸給長輩聽。
+        cleaned = _CLOSERS.sub("", _SEO_SYMBOLS.sub("", _SPEAK_CUT.sub("", stripped))).strip()
     if len(cleaned) > _SPEAKABLE_MAX_CHARS:
         cleaned = cleaned[:_SPEAKABLE_MAX_CHARS]
     return cleaned

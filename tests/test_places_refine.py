@@ -158,19 +158,41 @@ def test_dedupe_keeps_short_name_and_longer_unrelated_shop():
 
 
 def test_refine_enforces_order_and_limit():
-    """組合入口：剔除 → 去重 → 清洗 → 截斷，且截斷在最後。"""
+    """組合入口：剔除 → 去重 → 清洗 → 截斷，且截斷在最後。
+
+    ⚠️ 這條測試的資料是刻意設計的，**兩種寫錯的實作都必須讓它失敗**——上一版寫得
+    太鬆，複審員建了「截斷提前」與「順序對調」兩個壞版本，兩個都照樣通過，等於
+    這條測試什麼都沒守住。設計如下：
+
+    - 前兩筆是**同一家店**（主幹相同、相距約 22 公尺），近的那筆座標可疑、遠的正常。
+      正確順序（先剔除）：可疑那筆先被拿掉，正常那筆留下。
+      顛倒順序（先去重）：近的可疑筆當錨點把正常筆吃掉，接著自己被剔除 → **回空**。
+    - `limit=2` 小於處理後的筆數。截斷若提前發生，可疑那筆會先佔掉一個名額，
+      最後只剩一筆。
+    """
     fingerprint = [("235", 600), ("112", 2)]
     got = refine(
         [
-            _n("台北榮總", 100, postcode="112"),  # 座標可疑，應被剔除
-            _n("宏益整復所", 200),
-            _n("埔里按摩推拿整復-宏益整復所", 205),  # 與上一筆同店，應被去重
+            # 近、但座標可疑（郵遞區號在鄰域佔比 0.3%）
+            _n("宏益整復所", 100, postcode="112", lat=25.0),
+            # 遠、座標正常；與上一筆相距約 22 公尺，屬同一家
+            _n("宏益整復所", 200, postcode="235", lat=25.0002),
             _n("好安心藥局｜糖尿病照護、銀髮營養", 300),
+            _n("力賀藥局LINE:@553oyqwx中和體重管理諮詢藥局", 400),
         ],
         fingerprint,
-        limit=5,
+        limit=2,
     )
-    assert [s.name for s in got] == ["宏益整復所", "好安心藥局"]
+    assert [(s.name, s.distance_meters) for s in got] == [
+        ("宏益整復所", 200),
+        ("好安心藥局", 300),
+    ]
+
+
+def test_speakable_name_fallback_leaves_no_orphan_bracket():
+    # fallback 是整串清理，只去左括號會留下孤兒「】」「)」，而這串字會進 TTS。
+    assert speakable_name("【麵匠】麵食堂-彌陀總店") == "麵匠麵食堂彌陀總店"
+    assert ")" not in speakable_name("(預約制)喜嫁六禮十二禮 禮俗用品")
 
 
 def test_drop_suspicious_keeps_everything_when_fingerprint_too_small():
