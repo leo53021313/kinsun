@@ -40,11 +40,19 @@ def test_test_only_flags_still_pass_through():
     assert _conftest.TEST_ONLY_KEYS == {"KINSUN_IT", "KINSUN_TEST_DATABASE_URL"}
 
 
+@pytest.mark.skipif(
+    not _conftest._DOTENV.get("DATABASE_URL"),
+    reason="這台機器沒有正式 .env（CI 即如此）：沒有正式庫可誤寫，D-69 防呆無事可擋",
+)
 def test_d69_guard_still_sees_the_production_url():
     """⚠️ 密封最容易踩壞的東西：D-69 防呆原本拿 `os.environ["DATABASE_URL"]` 比對，
     金鑰一清掉就變成跟空字串比、**靜默失效**——防呆看起來還在，其實不再擋任何東西。
 
     故改由 `_production_database_url()` 直接讀 .env 檔（不進 os.environ）。
+
+    ⚠️ 前提條件由**直接讀檔**（`_DOTENV`）判斷，不可改成問 `_production_database_url()`：
+    那正是受測對象，它一壞掉這條測試會跟著一起被跳過，等於自己把自己關掉
+    （2026-07-27：本條原本無條件斷言，於是在沒有 .env 的 CI 上必炸，main 紅了兩輪）。
     """
     assert "DATABASE_URL" not in os.environ  # 已密封
     url = _conftest._production_database_url()

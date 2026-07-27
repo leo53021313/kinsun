@@ -392,6 +392,9 @@ class Settings(_BaseEnvSettings):
     # 啟用時的連線探測逾時（秒）：configure() 在此秒數內判定 Opik 是否可達；連不到就
     # 安靜降級（no-op），避免 Windows/macOS 開發機或 CI 無 Opik 服務時噴連線錯誤。
     opik_ping_timeout_seconds: float = 2.0
+    # 降級後的重探間隔（秒）：連不到之後每隔這麼久重探一次，Opik 起來就自動接回。
+    # 預設 60 秒——比 Opik 冷啟（30–60 秒）長一輪即可，不必更密。
+    opik_reprobe_interval_seconds: float = 60.0
 
     @model_validator(mode="before")
     @classmethod

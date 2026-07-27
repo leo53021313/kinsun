@@ -132,6 +132,33 @@ def test_generate_tool_turn_echoes_thought_signature_back():
     assert _find_function_call_signature(fake.last_contents, "get_weather") == b"SIG-1"
 
 
+def test_tool_turn_asks_the_model_to_think_before_choosing_a_tool():
+    """工具回合必須明說思考層級——預設值在 gemini-3.5-flash-lite 上等於不呼叫工具。"""
+    client = GeminiClient(api_key="dummy", model="m", timeout=30.0)
+    fake = _FakeGenAI(_FakeResp(parts=[], text="好喔"))
+    client._client = fake
+
+    client.generate_tool_turn(
+        system_prompt="s",
+        messages=[Message("user", "附近哪裡有拉麵")],
+        tools=[_weather_spec()],
+        tool_results=[],
+    )
+
+    assert fake.last_config.thinking_config.thinking_level == "MEDIUM"
+
+
+def test_plain_generate_does_not_pay_for_thinking():
+    """無工具的呼叫（危急分級、審核、摘要）不加思考——它們吃的是延遲，不是工具判斷。"""
+    client = GeminiClient(api_key="dummy", model="m", timeout=30.0)
+    fake = _FakeGenAI(_FakeResp(parts=[], text="好喔"))
+    client._client = fake
+
+    client.generate(system_prompt="s", messages=[Message("user", "嗨")])
+
+    assert fake.last_config.thinking_config is None
+
+
 # --- 結構化輸出（response_schema → 受控生成）---
 
 

@@ -13,6 +13,31 @@ class LLMError(Exception):
     """LLM 呼叫失敗。"""
 
 
+# 工具回合的思考層級。**不可省略**——省略掉的預設值在 `gemini-3.5-flash-lite` 上等於
+# 「工具形同不存在」（2026-07-27 Opik 對照＋原封重放實測）。
+#
+# 這是 3.1→3.5 平移升版（2026-07-25）的第二顆地雷，第一顆是 `role="tool"` 回 400。
+# 症狀比 400 陰險：不報錯，模型改成**用講的代替查**——長輩問「哪一家拉麵店」，它回
+# 「系統這裡查不太到名字」（`web_search` 根本沒動），或直接編一個店名出來
+# （實測編過一蘭、山頭火、一番）。
+#
+# 生產數據（Opik project `kinsun`，帶工具的呼叫中真的吐出 function_call 的比例）：
+#   07-20/21 gemini-3.1-flash-lite：21/62   07-26/27 gemini-3.5-flash-lite：4/24
+#   07-27 App 對話（7 輪、多次該查）：0/7
+# 拿 07-27 那筆 24 輪真實請求原封重放，一次只換一個變因：
+#   不設（現況）3/10、LOW 2/7、**MEDIUM 5/5**、HIGH 5/5；換回 3.1 不設 3/3。
+#   工具數不是變因——3.5 縮回舊的 5 個工具仍是 0/3。
+# 延遲代價（同一筆請求中位數）：不設 ~1.0s、MEDIUM 2.33s、HIGH 2.8–3.5s。
+#
+# 選 MEDIUM 而非 HIGH：兩者工具呼叫率同為 5/5，HIGH 多花約 1 秒買不到東西——而這一秒
+# 直接加在長輩的等待上（端到端 07-26 實測 9.22s）。⚠️ 不要為了省延遲降到 LOW，實測
+# LOW 與「不設」同樣不可靠。
+#
+# 只掛在工具回合：`generate()`（危急分級、濫用審核、摘要、反思）走受控生成、不需要
+# 選工具，那條路上的每一毫秒都是長輩的等待。
+TOOL_TURN_THINKING_LEVEL = "MEDIUM"
+
+
 # 「這個錯誤重試有機會成功嗎？」的單一判準。
 #
 # ⚠️ 為什麼是字串比對而不是型別／狀態碼（2026-07-27）：同一個配額錯誤會以三種形狀出現
@@ -287,7 +312,9 @@ class GeminiClient:
                 model=self._model,
                 contents=contents,
                 config=types.GenerateContentConfig(
-                    system_instruction=system_prompt, tools=[genai_tool]
+                    system_instruction=system_prompt,
+                    tools=[genai_tool],
+                    thinking_config=types.ThinkingConfig(thinking_level=TOOL_TURN_THINKING_LEVEL),
                 ),
             )
         except Exception as exc:  # noqa: BLE001 - 統一轉成可辨識的 LLMError
