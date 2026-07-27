@@ -11,6 +11,7 @@ import type {
   AdminElderMemory,
   AdminElderReminders,
   AdminJob,
+  AdminJobsMeta,
   AdminNewsItem,
   AdminRiskNotification,
   FeedMessage,
@@ -32,6 +33,7 @@ export type {
   AdminElderMemory,
   AdminElderReminders,
   AdminJob,
+  AdminJobsMeta,
   AdminNewsItem,
   AdminRiskNotification,
   FeedMessage,
@@ -145,8 +147,24 @@ export async function listElderRiskNotifications(
   ).data;
 }
 
-export async function listJobs(): Promise<AdminJob[]> {
-  return (await apiFetch<AdminJob[]>("/api/v1/admin/jobs")).data;
+/**
+ * 排程狀態＋逾期告警。
+ *
+ * ⚠️ 一併回傳 meta（不只 data）：`warnings` 是後端算好的人話告警，前端不再自己
+ * 推導一次。2026-07-26 排程停擺 13 天，後台這一頁只印了 `last_run_at`——資料
+ * 明明就在畫面上，卻沒有人（也沒有任何顏色）說它不對勁。
+ */
+export async function listJobs(): Promise<{ jobs: AdminJob[]; meta: AdminJobsMeta }> {
+  const res = await apiFetch<AdminJob[]>("/api/v1/admin/jobs");
+  const meta = (res.meta ?? {}) as Partial<AdminJobsMeta>;
+  return {
+    jobs: res.data,
+    meta: {
+      overdue: meta.overdue ?? [],
+      never_ran: meta.never_ran ?? [],
+      warnings: meta.warnings ?? [],
+    },
+  };
 }
 
 export async function getRagStatus(): Promise<RagStatus> {

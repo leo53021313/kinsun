@@ -10,10 +10,25 @@ from kinsun.tracing.client import is_enabled
 logger = logging.getLogger("kinsun.tracing")
 
 
-def track(name=None, type="general", capture_input=True, capture_output=True):
+def track(
+    name=None, type="general", capture_input=True, capture_output=True, ignore_arguments=None
+):
     """為函式加 Opik span。開關判斷延後到呼叫時（裝飾器在 import 期套用，早於 configure）。
 
     停用＝直接跑原函式；啟用＝首次呼叫時才 lazy 包成 opik.track 並快取。
+
+    `ignore_arguments`＝開著輸入捕捉、但排除指定參數（2026-07-27）。
+
+    ⚠️ 為什麼需要它：opik 的 `extract_inputs` 只會自動 pop 掉 `self`／`cls`，
+    **不認得金鑰**——實測 `extract_inputs(f, ("HTTP", "SECRET", "天氣"), {})` 原樣回傳
+    `api_key`。沒有這個轉出，`tools/web_search.py` 那種「第二個參數是 api_key」的函式
+    就只能整個關掉輸入，於是連長輩查了什麼都看不到。同理用於排除音檔 bytes
+    （`asr`／`care_turn_voice`／`audio_upload` 的 `audio` 參數）。
+
+    ⚠️ 附帶更正一個曾被寫進註解的錯誤前提：先前多處以「首參是 self」為由關閉輸入捕捉，
+    但 opik 本來就會把 self 拿掉（`opik/decorator/inspect_helpers.py::extract_inputs`
+    的 `arg_dict.pop("self")`）。那不是關閉輸入的正當理由，真正的理由只有金鑰、
+    大型 bytes 與「參數是 store／callable 物件、序列化出來看不懂」三種。
     """
 
     def decorator(func):
@@ -32,6 +47,7 @@ def track(name=None, type="general", capture_input=True, capture_output=True):
                     type=type,
                     capture_input=capture_input,
                     capture_output=capture_output,
+                    ignore_arguments=ignore_arguments,
                 )(func)
             return opik_wrapped(*args, **kwargs)
 

@@ -6,9 +6,10 @@ from fastapi.testclient import TestClient
 from kinsun.accounts.models import Elder, ElderGuardian, Guardian, Role
 from kinsun.accounts.service import AccountService
 from kinsun.accounts.store import FakeAccountStore
+from kinsun.cron.registry import OWNER_RAG_WORKER, OWNER_SCHEDULER, JobSpec
+from kinsun.cron.scheduler import Job
+from kinsun.cron.state import FakeScheduleStateStore
 from kinsun.reports.reminders import FakeReminderLogStore
-from kinsun.scheduler.scheduler import Job
-from kinsun.scheduler.state import FakeScheduleStateStore
 from kinsun.schedules.models import (
     Audience,
     CreatedBy,
@@ -35,10 +36,21 @@ class _FakeRouter:
         return 1
 
 
+def _specs_of(jobs: list[Job]) -> list[JobSpec]:
+    """由本程序綁得出來的 job 推出對應宣告——正式環境反過來（registry 先、綁定後），
+    但對「只驗這一頁怎麼算健康」的測試而言，兩者等價且不必逐條列 spec。
+    跨程序的情形（RAG 週更）由專門的測試直接給 specs。"""
+    return [
+        JobSpec(j.name, j.cron, OWNER_SCHEDULER, max_lateness_seconds=j.max_lateness_seconds)
+        for j in jobs
+    ]
+
+
 def _client(
     *,
     internal_testing_enabled: bool = True,
     jobs: list[Job] | None = None,
+    specs: list[JobSpec] | None = None,
     accounts: FakeAccountStore | None = None,
     schedule_store: FakeScheduleStore | None = None,
     channel_router: _FakeRouter | None = None,
@@ -53,6 +65,7 @@ def _client(
         create_admin_jobs_router(
             admin_api_key="secret",
             internal_testing_enabled=internal_testing_enabled,
+            specs=specs if specs is not None else _specs_of(jobs or []),
             jobs=jobs or [],
             schedule_state=schedule_state or FakeScheduleStateStore(),
             accounts=AccountService(store, clock=lambda: NOW, ttl_hours=24, max_attempts=5),
@@ -76,9 +89,78 @@ def test_list_jobs_with_last_run():
     jobs = [Job(name="daily-x", cron="0 3 * * *", run=lambda: None)]
     res = _client(jobs=jobs, schedule_state=state).get("/api/v1/admin/jobs", headers=_auth())
     assert res.status_code == 200
-    assert res.json()["data"] == [
-        {"job_name": "daily-x", "cron": "0 3 * * *", "last_run_at": NOW.timestamp()}
+    row = res.json()["data"][0]
+    assert row["job_name"] == "daily-x"
+    assert row["cron"] == "0 3 * * *"
+    assert row["last_run_at"] == NOW.timestamp()
+
+
+# --- 逾期偵測（2026-07-26 全流程模擬實測：排程器活著卻停止運作）---
+
+
+def test_a_job_that_ran_on_time_is_not_flagged():
+    """剛跑過的 job 不該被誤報——時鐘固定在 NOW，上次執行也是 NOW。"""
+    state = FakeScheduleStateStore()
+    state.set_last_run("daily-x", NOW)
+    jobs = [Job(name="daily-x", cron="0 3 * * *", run=lambda: None)]
+    body = (
+        _client(jobs=jobs, schedule_state=state).get("/api/v1/admin/jobs", headers=_auth()).json()
+    )
+    assert body["data"][0]["is_overdue"] is False
+    assert body["meta"]["overdue"] == []
+    assert body["meta"]["warnings"] == []
+
+
+def test_a_stalled_job_is_flagged_with_a_warning():
+    """實測情境：每分鐘該跑的派送停在好幾小時前，程序卻還顯示 RUNNING。
+
+    這一頁本來就有 last_run_at，缺的只是拿它跟 cron 比一下。
+    """
+    state = FakeScheduleStateStore()
+    state.set_last_run("schedule-dispatch", NOW - timedelta(hours=7))
+    jobs = [Job(name="schedule-dispatch", cron="* * * * *", run=lambda: None)]
+    body = (
+        _client(jobs=jobs, schedule_state=state).get("/api/v1/admin/jobs", headers=_auth()).json()
+    )
+    row = body["data"][0]
+    assert row["is_overdue"] is True
+    assert row["late_seconds"] > 6 * 3600
+    assert body["meta"]["overdue"] == ["schedule-dispatch"]
+    assert "逾期未執行" in body["meta"]["warnings"][0]
+
+
+def test_a_job_that_has_never_run_is_reported_separately_not_as_healthy():
+    """從未跑過的 job 沒有基準可比，不該報「逾期」——但更不該顯示成健康。
+
+    ⚠️ 這是逾期偵測原本的盲點：沒有 `last_run_at` 就算不出 `due_at`，`is_overdue`
+    於是恆為 False，一支從部署起就沒被排程器碰過的 job 在這一頁上是**全綠**的。
+    而那正是這一頁要抓的情形裡最嚴重的一種——例如排程器根本沒認得這支 job。
+    故另立 `never_ran` 訊號與獨立告警。
+    """
+    jobs = [Job(name="never-ran", cron="* * * * *", run=lambda: None)]
+    body = _client(jobs=jobs).get("/api/v1/admin/jobs", headers=_auth()).json()
+    row = body["data"][0]
+    assert row["is_overdue"] is False  # 沒有基準，談不上逾期
+    assert row["due_at"] is None
+    assert row["never_ran"] is True
+    assert body["meta"]["never_ran"] == ["never-ran"]
+    assert "從未執行過" in body["meta"]["warnings"][0]
+
+
+def test_never_ran_and_overdue_are_counted_separately():
+    """兩種訊號不可互相蓋掉：一支從未跑過、一支停擺，兩則告警都要出現。"""
+    state = FakeScheduleStateStore()
+    state.set_last_run("stalled", NOW - timedelta(hours=7))
+    jobs = [
+        Job(name="stalled", cron="* * * * *", run=lambda: None),
+        Job(name="fresh-deploy", cron="* * * * *", run=lambda: None),
     ]
+    body = (
+        _client(jobs=jobs, schedule_state=state).get("/api/v1/admin/jobs", headers=_auth()).json()
+    )
+    assert body["meta"]["overdue"] == ["stalled"]
+    assert body["meta"]["never_ran"] == ["fresh-deploy"]
+    assert len(body["meta"]["warnings"]) == 2
 
 
 def test_list_jobs_requires_admin_key():
@@ -261,3 +343,109 @@ def test_dispatch_reminder_transparent_when_tracing_enabled(monkeypatch):
     assert res.status_code == 200
     assert "降血壓藥" in router.sent[0][2]
     assert logs.recorded[0][1] == "medication"
+
+
+# 兩條對照測試刻意**只差一個變數**（`max_lateness_seconds`）：同樣遲到 180 秒，
+# 宣告了 90 秒窗的要叫、沒宣告的不叫。時序：上次執行 NOW-210s → 下次到期 NOW-180s。
+_LATE_BY_180S = timedelta(seconds=210)
+
+
+def test_a_job_with_a_tight_window_is_flagged_before_its_reminders_are_lost():
+    """判定窗小於預設容許量的 job，必須用它自己的窗判逾期。
+
+    ⚠️ `schedule-dispatch` 每分鐘跑、判定窗 90 秒，且窗外的提醒**一律作廢不補**。
+    後台原本一律用 300 秒判逾期，於是遲到 90～300 秒這段區間裡，長輩的吃藥提醒
+    已經永久遺失了，這一頁卻還顯示健康——那正是 2026-07-26 事故裡最該被看見
+    卻沒被看見的一層。
+    """
+    state = FakeScheduleStateStore()
+    state.set_last_run("schedule-dispatch", NOW - _LATE_BY_180S)
+    jobs = [
+        Job(
+            name="schedule-dispatch",
+            cron="* * * * *",
+            run=lambda: None,
+            max_lateness_seconds=90.0,
+        )
+    ]
+    body = (
+        _client(jobs=jobs, schedule_state=state).get("/api/v1/admin/jobs", headers=_auth()).json()
+    )
+    assert body["data"][0]["is_overdue"] is True, "遲到 180 秒＝已經掉了一分多鐘的提醒"
+    assert body["meta"]["overdue"] == ["schedule-dispatch"]
+
+
+def test_a_job_without_a_declared_window_keeps_the_lenient_default():
+    """同樣遲到 180 秒，沒宣告窗的 job 不該被叫——晚幾分鐘沒有損害，嚴判只是假警報。"""
+    state = FakeScheduleStateStore()
+    state.set_last_run("cleanup", NOW - _LATE_BY_180S)
+    jobs = [Job(name="cleanup", cron="* * * * *", run=lambda: None)]
+    body = (
+        _client(jobs=jobs, schedule_state=state).get("/api/v1/admin/jobs", headers=_auth()).json()
+    )
+    assert body["data"][0]["is_overdue"] is False
+    assert body["meta"]["overdue"] == []
+
+
+def test_a_job_owned_by_another_process_is_still_watched():
+    """跑在別的程序的排程（RAG 週更）也必須出現在這一頁上。
+
+    ⚠️ 這是 2026-07-27 修掉的盲區：這一頁原本逐一走「本程序綁得出執行體的 job」，
+    而 `rag-weekly-refresh` 住在 `python -m kinsun.rag.worker`。於是那支排程對這一頁
+    **完全不存在**——RAG 週更程序掛掉、`RAG_REFRESH_ENABLED` 忘了打開、從部署起
+    一次都沒跑過，這一頁一律顯示全綠。這一頁存在的唯一理由就是抓這種事。
+    """
+    specs = [JobSpec("rag-weekly-refresh", "0 3 * * 0", OWNER_RAG_WORKER)]
+    # jobs 刻意留空：webhook 這個程序本來就綁不出它的執行體。
+    body = _client(jobs=[], specs=specs).get("/api/v1/admin/jobs", headers=_auth()).json()
+    row = body["data"][0]
+    assert row["job_name"] == "rag-weekly-refresh"
+    assert row["never_ran"] is True
+    assert body["meta"]["never_ran"] == ["rag-weekly-refresh"]
+    # 告警要說出該去重啟誰——owner 的字面就是 kinsun.sh 的服務名。
+    assert "rag_worker" in body["meta"]["warnings"][0]
+
+
+def test_a_stalled_job_from_another_process_is_flagged():
+    """別的程序停擺，這一頁一樣要叫——判定看的是 job 有沒有按時跑，不是誰在跑它。"""
+    state = FakeScheduleStateStore()
+    state.set_last_run("rag-weekly-refresh", NOW - timedelta(days=21))
+    specs = [JobSpec("rag-weekly-refresh", "0 3 * * 0", OWNER_RAG_WORKER)]
+    body = (
+        _client(jobs=[], specs=specs, schedule_state=state)
+        .get("/api/v1/admin/jobs", headers=_auth())
+        .json()
+    )
+    assert body["data"][0]["is_overdue"] is True
+    assert body["meta"]["overdue"] == ["rag-weekly-refresh"]
+    assert "rag_worker" in body["meta"]["warnings"][0]
+
+
+def test_a_job_this_process_cannot_run_is_marked_and_refuses_to_run():
+    """看得到不等於按得動：RAG 週更跑數小時，不該由一條 HTTP 請求拖著跑。
+
+    錯誤碼與「查無此 job」分開——混成同一個 404，值班的人會以為後台壞了。
+    """
+    specs = [JobSpec("rag-weekly-refresh", "0 3 * * 0", OWNER_RAG_WORKER)]
+    client = _client(jobs=[], specs=specs)
+    row = client.get("/api/v1/admin/jobs", headers=_auth()).json()["data"][0]
+    assert row["can_run_now"] is False
+    assert row["owner"] == OWNER_RAG_WORKER
+
+    res = client.post("/api/v1/admin/jobs/rag-weekly-refresh/run", headers=_auth())
+    assert res.status_code == 409
+    assert res.json()["error"]["code"] == "job_not_runnable_here"
+    # 打錯名字仍是 404，兩者不可混為一談。
+    assert client.post("/api/v1/admin/jobs/nope/run", headers=_auth()).status_code == 404
+
+
+def test_a_job_this_process_owns_is_runnable():
+    """對照組：本程序綁得出來的照樣可以按。"""
+    ran = []
+    jobs = [Job(name="news-crawl", cron="15 0 * * *", run=lambda: ran.append(True))]
+    client = _client(jobs=jobs)
+    row = client.get("/api/v1/admin/jobs", headers=_auth()).json()["data"][0]
+    assert row["can_run_now"] is True
+    assert row["owner"] == OWNER_SCHEDULER
+    assert client.post("/api/v1/admin/jobs/news-crawl/run", headers=_auth()).status_code == 200
+    assert ran == [True]

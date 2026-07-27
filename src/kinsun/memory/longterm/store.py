@@ -171,7 +171,10 @@ class Mem0LongTermStore:
             user_items, health_items = user_future.result(), health_future.result()
         merged = self._dedup(user_items + health_items)
         for item in merged:
-            if "score_details" in item:  # explain 供調閱：debug 層記錄，不進 prompt
+            # explain 供檢索調校：⚠️ score_details 可能含記憶原文，故只走 DEBUG。
+            # 正式環境的 root level 是 INFO（logging_setup），這行不會出現在 logs/；
+            # **不可為了除錯把正式環境調成 DEBUG**——對話內容只進 Opik（2026-07-27 政策）。
+            if "score_details" in item:
                 logger.debug("記憶評分 %s：%s", item.get("id"), item.get("score_details"))
         # 由新到舊：對話日遞減（同日再比寫入時刻）；兩者皆缺者排最後。
         ordered = sorted(merged, key=_recency_key, reverse=True)

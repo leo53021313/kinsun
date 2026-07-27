@@ -251,7 +251,32 @@ export type AdminRiskNotification = {
   channels: string;
   created_at: number;
 };
-export type AdminJob = { job_name: string; cron: string; last_run_at: number | null };
+export type AdminJob = {
+  job_name: string;
+  cron: string;
+  /**
+   * 哪個程序負責執行它（字面即 `kinsun.sh` 的服務名，如 `scheduler`、`rag_worker`）。
+   * 逾期時該重啟的不一定是排程器——沒有這一欄，值班的人會對著健康的排程器查半天。
+   */
+  owner: string;
+  /** 後台能否就地「立即執行」。跑在別的程序的排程（RAG 週更）為 false。 */
+  can_run_now: boolean;
+  last_run_at: number | null;
+  /** 依 cron 算出的下次應執行時刻；`null` ＝ 從未執行過，無基準可算。 */
+  due_at: number | null;
+  /** 遲到秒數；未逾期一律 0。 */
+  late_seconds: number;
+  /** 已逾期未執行——負責的程序可能停擺或認領不到工作。 */
+  is_overdue: boolean;
+  /** 從未執行過。⚠️ 與 is_overdue 互斥：沒有基準就談不上逾期，但更不該當成健康。 */
+  never_ran: boolean;
+};
+/** `GET /admin/jobs` 的 meta：逾期與從未執行分列，另附人話告警。 */
+export type AdminJobsMeta = {
+  overdue: string[];
+  never_ran: string[];
+  warnings: string[];
+};
 export type RagStatus = {
   active_release: string | null;
   active_published_at: number | null;

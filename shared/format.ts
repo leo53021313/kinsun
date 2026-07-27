@@ -21,3 +21,24 @@ export function formatClock(epochSeconds: number): string {
 export function formatLatency(ms: number): string {
   return ms >= 1000 ? `${(ms / 1000).toFixed(2)} 秒` : `${ms} 毫秒`;
 }
+
+/**
+ * 一段長度（秒）轉人看得懂的講法：`90` → 「1 分 30 秒」、`46800` → 「13 小時」。
+ *
+ * 只取最大的兩級單位——排程逾期告警要能一眼判斷嚴重程度，
+ * 「1123200 秒」沒有人算得出那是十三天。
+ */
+export function formatDuration(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s} 秒`;
+  if (s < 3600) {
+    const rest = s % 60;
+    return rest ? `${Math.floor(s / 60)} 分 ${rest} 秒` : `${Math.floor(s / 60)} 分`;
+  }
+  if (s < 86400) {
+    const rest = Math.floor((s % 3600) / 60);
+    return rest ? `${Math.floor(s / 3600)} 小時 ${rest} 分` : `${Math.floor(s / 3600)} 小時`;
+  }
+  const rest = Math.floor((s % 86400) / 3600);
+  return rest ? `${Math.floor(s / 86400)} 天 ${rest} 小時` : `${Math.floor(s / 86400)} 天`;
+}

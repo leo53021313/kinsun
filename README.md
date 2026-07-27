@@ -85,12 +85,12 @@ uv run pre-commit install   # 啟用 commit 前自動檢查（ruff lint/format�
 
    ```bash
    # macOS / Linux
-   PYTHONPATH=src uv run python -m kinsun.scheduler
+   PYTHONPATH=src uv run python -m kinsun.cron
    ```
 
    ```powershell
    # Windows（PowerShell）
-   $env:PYTHONPATH="src"; uv run python -m kinsun.scheduler
+   $env:PYTHONPATH="src"; uv run python -m kinsun.cron
    ```
 
 4. 用 ngrok 之類工具把 `https://<你的網域>/line/webhook` 設為 LINE 的 Webhook URL，對 LINE 官方帳號傳語音即可收到金孫回覆（dev 期 ASR 為 mock 文字）。

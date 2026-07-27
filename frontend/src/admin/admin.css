@@ -149,6 +149,13 @@ body {
   margin-bottom: 0.75rem;
 }
 
+/* 排程逾期／從未執行。與 .error-banner 同色系，讓「這一列不對勁」在整頁掃過時
+   一眼就跳出來——2026-07-26 停擺 13 天，當時這一頁每一列長得一模一樣。 */
+.job-unhealthy {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
 details pre {
   overflow-x: auto;
   background: #f3f4f6;

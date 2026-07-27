@@ -17,6 +17,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 
 from kinsun.accounts.models import Channel, PrincipalType
 from kinsun.accounts.service import AccountService
@@ -132,6 +133,35 @@ def create_app_turns_router(
         audio = await request.body()
         if len(audio) > max_audio_bytes:
             raise HTTPException(status_code=413, detail=ErrorCode.AUDIO_TOO_LARGE)
+        # ⚠️ 一定要交給執行緒池：底下整段（進站上傳、ASR、Gemini、TTS、落庫）全是
+        # 同步阻塞呼叫，留在 async handler 裡就是佔住事件迴圈。實測（2026-07-26 全流程
+        # 模擬）一輪對話進行中，連 GET /healthz 都要等 2.89 秒——整台後端一次只服務得了
+        # 一位長輩，第二位開口就得排隊，家屬 App 與後台也一起卡住。FastAPI 對所有同步
+        # handler 本來就是這樣跑的，這裡只是把這支端點放回同一條路上。
+        return ok(
+            await run_in_threadpool(
+                _run_turn,
+                audio=audio,
+                elder_id=elder_id,
+                external_id=external_id,
+                location=location,
+                latitude=latitude,
+                longitude=longitude,
+                received_at=received_at,
+            )
+        )
+
+    def _run_turn(
+        *,
+        audio: bytes,
+        elder_id: str,
+        external_id: str,
+        location: str,
+        latitude: float | None,
+        longitude: float | None,
+        received_at: float,
+    ) -> dict:
+        """一輪對話的同步本體（在工作執行緒裡跑）。順序與拆出前一字不差。"""
         # ⚠️ 必須排在 dispatch 之前：長輩這句話問的就是天氣時，這一輪就得用得到；
         # 排在後面等於永遠慢一輪——而「慢一輪」在對講機上的表現就是他問第一次
         # 還是被反問，功能等於沒做。
@@ -159,17 +189,15 @@ def create_app_turns_router(
             elder_id=elder_id,  # 入口已解析並複核同意，dispatch 不再重查（✅ 庚-12）
         )
         chunk_count = outcome.chunk_count if outcome else 0
-        return ok(
-            {
-                "text": collector.text,
-                "audio_url": collector.audio_url,
-                "duration_ms": collector.duration_ms,
-                # 分段串流（2026-07-26 延遲優化）：>1 代表 audio_url 只是第一段，
-                # App 應依序取 1..chunk_count-1 接著播；0／1 代表就這一段、不必再拉。
-                "chunk_count": chunk_count,
-                "reply_digest": outcome.reply_digest if outcome else "",
-            }
-        )
+        return {
+            "text": collector.text,
+            "audio_url": collector.audio_url,
+            "duration_ms": collector.duration_ms,
+            # 分段串流（2026-07-26 延遲優化）：>1 代表 audio_url 只是第一段，
+            # App 應依序取 1..chunk_count-1 接著播；0／1 代表就這一段、不必再拉。
+            "chunk_count": chunk_count,
+            "reply_digest": outcome.reply_digest if outcome else "",
+        }
 
     @router.get("/turns/chunks/{index}")
     def get_turn_chunk(
