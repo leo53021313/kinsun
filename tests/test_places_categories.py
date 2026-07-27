@@ -31,13 +31,28 @@ def test_category_names_are_the_enum_for_the_tool_spec():
         "龍飛國術館",
         "不二堂正骨整復",
         "陳師父推拿",
-        "南華經絡養生館 Nanhua SPA",
     ],
 )
 def test_chiropractic_accepts_real_legitimate_shops(name):
     assert matches("chiropractic", name, overture_category=None)
 
 
+# ⚠️ 「南華經絡養生館 Nanhua SPA」（2026-07-28 審查發現，Leo 待確認）：原本列在上面
+# 的必收清單，但複審指出它與下面 `test_chiropractic_會館_排除詞...` 擋的「艾沐經絡
+# 美學會館」是同一種店（對正式庫查證：taxonomy.primary='spa'，Overture 自己就把它歸
+# 類成 spa），兩條測試對同一類店立場相反，故先移出必收清單。
+# 但**沒有跟著移進必擋清單**：試過用「SPA」（英文）當排除詞會連帶擋掉一筆真正的
+# 整復店——「Rock專業整復推拿 SPA」（taxonomy.primary='chiropractic'，Overture 自己
+# 標成合法整復），代表店名含「SPA」不是乾淨信號，會誤殺；試過用「養生館」當排除詞
+# collateral 更大——53 筆含「養生館」仍會通過現有規則，其中「張師父整復養生館」
+# 「老裕元整復中心國術館養生館」都是 Overture 標成 chiropractic 的合法整復館。
+# 兩種文字關鍵字都會製造新的假陰性，與本檔既有先例（「會館」全台 40 家絕大多數
+# 係誤配才收）不符——這筆的「壞」佔比只有約六成，不到「絕大多數」的門檻。
+# 真正乾淨的做法會是用 Overture 分類本身當排除信號（例如 taxonomy_primary in
+# {"spa","beauty_salon","personal_or_beauty_service","aromatherapy",
+# "skin_care_and_makeup","hair_removal"} 時一票否決），但那是 `matches()` 目前沒有
+# 的新機制（現有排除只認店名關鍵字），屬於比這輪修復更大的變更，故本輪不做、
+# 留給下一個人接手；此店暫不進兩份清單。
 @pytest.mark.parametrize(
     "name",
     [
@@ -96,6 +111,35 @@ def test_temple_matches_buddhist_place_of_worship_but_not_church():
     # 只收佛教這一個值：christian_place_of_worship 是教會，長輩問廟答非所問。
     assert matches("temple", "濟緣堂", overture_category="buddhist_place_of_worship")
     assert not matches("temple", "主愛教會", overture_category="christian_place_of_worship")
+
+
+def test_temple_excludes_huatan_township_name():
+    # 「壇」這個單字關鍵字會把彰化縣花壇鄉整個地名收進來（實測 251 筆），
+    # 例如「三媽臭臭鍋花壇店」「CJ E-bike 電動車 花壇店」——與宗教場所無關。
+    assert not matches("temple", "三媽臭臭鍋花壇店", overture_category=None)
+
+
+def test_pharmacy_requires_keyword_even_when_overture_category_matches():
+    """⚠️ 這條守住 C-2 的 Critical：Overture 的 pharmacy 分類單獨不可信。
+
+    實測「附近有藥局嗎」第一名查到「元大銀行中和分行」（overture_category='pharmacy'，
+    距長輩僅 106 公尺）。改成 require_keyword=True 後，Overture 分類命中但店名沒有
+    藥局關鍵字的店必須被擋下，不能再靠分類單軌進榜。
+    """
+    assert not matches("pharmacy", "元大銀行中和分行", overture_category="pharmacy")
+    # 有關鍵字的藥局，Overture 分類命中與否都應該收。
+    assert matches("pharmacy", "力賀藥局", overture_category="pharmacy")
+    assert matches("pharmacy", "力賀藥局", overture_category=None)
+
+
+def test_convenience_matches_fullwidth_and_halfwidth_hyphen_variant():
+    """⚠️ NFKC 正規化是承重的，但一直沒有測試守住（2026-07-28 補）。
+
+    正式庫真實存在「7－11萬芳門市」這種用全形連字號（U+FF0D）的店名，靠 NFKC
+    轉半形才能命中「7-11」關鍵字。拿掉 `_normalized` 裡的 NFKC 正規化，只做
+    去空白，這條會變紅——已手動驗證過。
+    """
+    assert matches("convenience", "７－１１萬芳門市", overture_category=None)
 
 
 @pytest.mark.parametrize("name", ["全家旅店", "全家眼鏡公司-中和店"])

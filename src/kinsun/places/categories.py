@@ -36,6 +36,10 @@ class CategorySpec:
     overture: tuple[str, ...] = ()  # 命中即納入的 Overture 分類值
     keywords: tuple[str, ...] = ()  # 命中即納入的中文店名關鍵字
     exclude: tuple[str, ...] = ()  # 命中即排除，優先於上面兩者
+    # True＝就算 Overture 分類命中，仍要求店名含關鍵字才收（見 pharmacy 的理由）。
+    # 預設 False：多數類別的 Overture 分類已夠可信，靠它就能收到店名不含關鍵字的
+    # 合法店家（如英文招牌）；只有實測證明該分類本身不可信時才開啟。
+    require_keyword: bool = False
     label_note: str = ""  # 給維護者的備註，不進提示詞
 
 
@@ -50,8 +54,20 @@ CATEGORIES: dict[str, CategorySpec] = {
         label="小吃",
         overture=("delicatessen", "food_truck_stand", "diner"),
         keywords=(
-            "小吃", "滷味", "臭豆腐", "水餃", "鹹酥雞", "鹽酥雞", "肉圓",
-            "碗粿", "米糕", "蚵仔", "麵線", "刈包", "米粉", "擔仔",
+            "小吃",
+            "滷味",
+            "臭豆腐",
+            "水餃",
+            "鹹酥雞",
+            "鹽酥雞",
+            "肉圓",
+            "碗粿",
+            "米糕",
+            "蚵仔",
+            "麵線",
+            "刈包",
+            "米粉",
+            "擔仔",
         ),
         # 「小吃部」在南部是卡拉OK／酒店的代稱，與「小吃」只差一字。
         exclude=("小吃部",),
@@ -91,6 +107,19 @@ CATEGORIES: dict[str, CategorySpec] = {
         # 藥妝店不能調劑處方箋，長輩問「哪裡有藥局」多半是要領慢箋。
         # 實測 5,820 家藥局裡 1,493 家（25.7%）是這類。
         exclude=("屈臣氏", "Watsons", "康是美", "Cosmed", "日藥本舖", "藥妝", "藥粧", "抓漏"),
+        # ⚠️ require_keyword=True（Leo 核定 2026-07-28）：Overture 的 pharmacy 分類
+        # 單獨不可信，實測「附近有藥局嗎」第一名查到「元大銀行中和分行」
+        # （overture_category='pharmacy'，距長輩僅 106 公尺）。對正式庫同版本資料
+        # 查證：taxonomy.primary='pharmacy' 且未被上面 exclude 擋下的 5,777 筆裡，
+        # 1,637 筆（28.3%）店名完全沒有中文藥局關鍵字——「家新鋁門窗」「玖泰機車行」
+        # 「度小月當舖」「雲林縣虎尾科技大學」都在裡面，改成非靠 Overture 分類單軌，
+        # 一律要求店名含關鍵字才收。
+        # 代價已量（2026-07-28）：這 1,637 筆裡僅 9 筆（0.55%）是英文招牌的真藥局
+        # （店名含 "Pharmacy"，如 "Dr Ahmed Ezzat Pharmacy"、"Future Pharmacy"），
+        # 其餘全是中藥行、蔘藥行、醫療器材行、診所與各種不相干行業。漏掉的真藥局
+        # 佔比極低，代價可接受，故未追加英文關鍵字；日後若要補，"pharmacy"／
+        # "drugstore" 是候選詞。
+        require_keyword=True,
     ),
     "clinic": CategorySpec(
         label="診所",
@@ -107,9 +136,23 @@ CATEGORIES: dict[str, CategorySpec] = {
         ),
         keywords=("診所", "醫療社團法人", "聯合診所"),
         exclude=(
-            "牙醫", "牙科", "齒科", "Dental", "dental",
-            "整形", "美學", "醫學美容", "醫美", "減重", "瘦身", "植髮", "微整",
-            "Aesthetic", "動物", "獸醫", "Veterinary",
+            "牙醫",
+            "牙科",
+            "齒科",
+            "Dental",
+            "dental",
+            "整形",
+            "美學",
+            "醫學美容",
+            "醫美",
+            "減重",
+            "瘦身",
+            "植髮",
+            "微整",
+            "Aesthetic",
+            "動物",
+            "獸醫",
+            "Veterinary",
         ),
         # 不加「寵物」（2026-07-27 實測）：全台店名含「診所」且含「寵物」僅 2 家。
         # 其中「保成中醫診所」只因標榜寵物友善會被誤殺——它是合法人類中醫診所。
@@ -140,11 +183,33 @@ CATEGORIES: dict[str, CategorySpec] = {
         # 「會館」保留（2026-07-27 實測）：命中整復關鍵字且含「會館」、不含舒壓油壓者
         # 全台 40 家，絕大多數（艾沐經絡美學會館、瑞樂思芳香經絡會館等）正是要擋的
         # 美容 SPA 足體按摩。審查員提議移除，但用真資料查過「永和國術會館」不存在。
+        # ⚠️ 補「美學」「紓壓」（Leo 核定 2026-07-28）：clinic／chinese_medicine 兩類
+        # 早就有「美學」擋醫美招牌，這一類漏了。實測 72/2,607 家（2.8%）帶美容 SPA
+        # 招牌，例如「Annie House經絡美學SPA工作室」「紓心經絡美學/spa精油按摩」
+        # 「月澄肌境 Spa｜…｜私密處保養」；「紓壓」是「舒壓」的常見異體寫法，實測
+        # 3 筆漏網。這一類的性質是寧可少推幾家、不可推錯，故從寬排除。
         label_note="長輩問「附近哪裡可以按摩」時用這一類",
         keywords=("整復", "整骨", "國術館", "推拿", "經絡", "筋絡", "傷科"),
         exclude=(
-            "舒壓", "油壓", "指壓", "美容", "美顏", "美體", "美睫", "除毛", "寵物",
-            "做臉", "美甲", "會館", "護膚", "半套", "全套", "茶室", "阿公店",
+            "舒壓",
+            "紓壓",
+            "油壓",
+            "指壓",
+            "美容",
+            "美學",
+            "美顏",
+            "美體",
+            "美睫",
+            "除毛",
+            "寵物",
+            "做臉",
+            "美甲",
+            "會館",
+            "護膚",
+            "半套",
+            "全套",
+            "茶室",
+            "阿公店",
         ),
     ),
     "hairdresser": CategorySpec(
@@ -170,6 +235,10 @@ CATEGORIES: dict[str, CategorySpec] = {
         # ⚠️ **只收佛教那一個值，不可把所有 *_worship 都加進來**：新 schema 裡最大宗是
         # christian_place_of_worship（14,898 家），那是教會不是廟。長輩問「附近有廟可以
         # 拜嗎」被回一堆教會，是答非所問。教會屬另一個類別（本輪未開放）。
+        # ⚠️ 已知未解的誤配（2026-07-28 審查發現，本輪不做）：983 筆 temple 的
+        # overture_category 其實是各種 *_restaurant（例如「勝博殿」是日式豬排連鎖，
+        # 命中單字關鍵字「殿」）。這類需要新機制（例如把 *_restaurant 直接排除在
+        # overture 命中之外）才能解，留給下一個人接手。
         overture=("buddhist_place_of_worship",),
         keywords=("宮", "寺", "廟", "壇", "殿"),
         # exclude 沿用 2026-07-27 稍早的實測結果：單字關鍵字全台命中 29,501 筆，其中
@@ -177,7 +246,23 @@ CATEGORIES: dict[str, CategorySpec] = {
         # 「漢宮大飯店」「白宮大飯店」。這條是 overture_category 不吻合時的關鍵字後援，
         # 與本次校準 overture 值無關，仍然需要防——任務書草稿曾把這裡簡化回只留
         # ("廟口",)，那是舊草稿沒跟上這道排除詞的既有修正，本檔刻意不採用。
-        exclude=("廟口", "飯店", "酒店", "婚紗", "百貨", "餐廳", "小吃", "美食", "咖啡"),
+        # 「咖啡」有實測依據（2026-07-28）：全表店名同時含（宮/寺/廟/壇/殿）與「咖啡」
+        # 共 31 筆，全是咖啡店，如「Cama現烘咖啡專門店 台北行天宮店」「北港武德宮樂咖啡」。
+        # 「花壇」（2026-07-28 新增）：單字關鍵字「壇」會把彰化縣花壇鄉整個地名收進來，
+        # 實測 251 筆含「花壇」，例如「CJ E-bike 電動車 花壇店」「三媽臭臭鍋花壇店」
+        # 「SeSA洗衣吧-花壇成功店」——這些店名剛好含「壇」字純屬地名巧合，與宗教場所無關。
+        exclude=(
+            "廟口",
+            "飯店",
+            "酒店",
+            "婚紗",
+            "百貨",
+            "餐廳",
+            "小吃",
+            "美食",
+            "咖啡",
+            "花壇",
+        ),
     ),
 }
 
@@ -199,6 +284,6 @@ def matches(category: str, name: str, *, overture_category: str | None) -> bool:
     normalized = _normalized(name)
     if any(_normalized(bad) in normalized for bad in spec.exclude):
         return False
-    if overture_category and overture_category in spec.overture:
+    if overture_category and overture_category in spec.overture and not spec.require_keyword:
         return True
     return any(_normalized(good) in normalized for good in spec.keywords)
