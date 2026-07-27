@@ -324,6 +324,27 @@ NEWS_MENTIONS_DDL = (
     "PRIMARY KEY (elder_id, news_item_id));"
 )
 
+# 台灣店家 POI（Overture Maps，2026-07-27 spec 附近地點搜尋）。約 20–30 萬列、
+# 佔用約 19 MB——Supabase 免費方案的 500 MB 是共用預算，這一項要記在帳上。
+#
+# 刻意不用 PostGIS：查詢走「矩形粗篩 ＋ Haversine」，少一個擴充相依就少一個
+# 「託管環境有沒有裝」的外部變數。
+#
+# 兩支索引各有其查詢：主查詢帶 category（找附近的藥局），行政區指紋查詢不帶
+# category（統計鄰域郵遞區號分布），後者吃不到前者那支複合索引。
+PLACES_DDL = (
+    "CREATE TABLE IF NOT EXISTS places ("
+    "place_id TEXT PRIMARY KEY, name TEXT NOT NULL, "
+    "latitude DOUBLE PRECISION NOT NULL, longitude DOUBLE PRECISION NOT NULL, "
+    "category TEXT NOT NULL, overture_category TEXT, confidence DOUBLE PRECISION, "
+    "address TEXT, postcode TEXT, city TEXT, phone TEXT, "
+    "ingested_at DOUBLE PRECISION NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS places_category_lat_lon_idx "
+    "ON places (category, latitude, longitude);"
+    "CREATE INDEX IF NOT EXISTS places_lat_lon_idx "
+    "ON places (latitude, longitude);"
+)
+
 # 觀測五表以 external_id＋channel 記來源（✅ 庚-07／A-8）：欄位承載任一通道的外部
 # 識別碼（非僅 LINE），故正名為 external_id 並加 channel 標明來源通道。
 #
@@ -508,6 +529,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(CONVERSATION_SUMMARIES_DDL)
         conn.execute(NEWS_ITEMS_DDL)
         conn.execute(NEWS_MENTIONS_DDL)
+        conn.execute(PLACES_DDL)
         # 三段順序不可調換：建表（既有庫 no-op）→ 舊欄改名／補 channel → 建索引。
         # 索引引用 external_id，既有庫要先改完名才建得起來。
         conn.execute(OBSERVABILITY_TABLES_DDL)
