@@ -217,6 +217,10 @@ def build_tool_registry(
     # 附近地點（spec 2026-07-27）：兩個 store 都有才註冊——沒有位置就查不了「附近」，
     # 註冊一個永遠回「不知道你在哪」的工具只會浪費模型的迭代。
     if places is not None and locations is not None:
+        # 地名 → 座標沿用 transport.py 既有的 Nominatim 路徑，不另接服務；比照
+        # build_route_handler 的慣例只在組裝時建一次 HttpxTransport，不讓每次呼叫
+        # 都新建、浪費連線池。
+        places_transport = HttpxTransport()
         registry.register(
             NEARBY_SPEC,
             build_nearby_handler(
@@ -224,8 +228,7 @@ def build_tool_registry(
                 locations,
                 clock=lambda: clock().timestamp(),
                 stale_after_hours=location_stale_after_hours,
-                # 地名 → 座標沿用 transport.py 既有的 Nominatim 路徑，不另接服務。
-                resolve_place=lambda q: geocode(HttpxTransport(), q),
+                resolve_place=lambda q: geocode(places_transport, q),
             ),
         )
     # 金鑰未設＝跳過註冊（優雅降級）：金孫少一個上網查證能力，其餘功能照常運作。
