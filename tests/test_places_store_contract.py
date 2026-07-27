@@ -184,6 +184,36 @@ def test_list_postcodes_near_counts_all_categories(store, ns):
     assert counts[f"{ns}112"] == 1
 
 
+def test_purge_older_than_removes_only_stale_rows(store, ns):
+    """每月重跑時清掉「上個月符合分類、這個月不符合」的殘留列。
+
+    沒有這個方法的後果：ingest 只 upsert 從不刪除，修了分類規則再重跑時，錯的列
+    （例如被誤判成超商的「全家旅店」）會永遠留著。
+
+    ⚠️ `purge_older_than` 依規格是全表操作、不吃 ns 過濾（對齊 ingest.py 的用法：
+    整批重新灌入後清掉「這一輪沒寫到」的舊列，本來就該是全域的）。`pg_database`
+    是 session 級 fixture、不逐測試清空，本檔其他測試一律用 1753600000.0 這個共用
+    預設值（見 `_place()`）；若本測試也沿用同一個時間戳當「舊列」，cutoff 會連帶
+    清掉其他測試留下的列，讓 `removed == 1` 的斷言在共用測試庫上失敗。故本測試改用
+    遠低於共用預設值、不會被其他測試撞到的極小 epoch 值。
+    """
+    cat = f"{ns}restaurant"
+    store.save_many(
+        [Place(place_id=f"{ns}old", name="上個月的", latitude=25.001, longitude=121.5,
+               category=cat, ingested_at=1.0)]
+    )
+    store.save_many(
+        [Place(place_id=f"{ns}new", name="這個月的", latitude=25.001, longitude=121.5,
+               category=cat, ingested_at=2.0)]
+    )
+    removed = store.purge_older_than(1.5)
+    assert removed == 1
+    got = store.list_near(
+        latitude=ELDER_LAT, longitude=ELDER_LON, category=cat, radius_meters=1500
+    )
+    assert [n.place.name for n in got] == ["這個月的"]
+
+
 def test_list_postcodes_near_ignores_rows_without_postcode(store, ns):
     store.save_many([_place(ns, "a", 25.001, 121.5, f"{ns}restaurant")])
     counts = dict(

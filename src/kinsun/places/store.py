@@ -78,6 +78,7 @@ class PlaceStore(Protocol):
     def list_postcodes_near(
         self, *, latitude: float, longitude: float, radius_meters: float
     ) -> list[tuple[str, int]]: ...
+    def purge_older_than(self, cutoff: float) -> int: ...
 
 
 # SQL 內聯 Haversine：與 geo.distance_meters 同一條公式。放在 SQL 而非撈回 Python 再算，
@@ -163,6 +164,21 @@ class PgPlaceStore:
         )
         return [(row[0], row[1]) for row in rows]
 
+    def purge_older_than(self, cutoff: float) -> int:
+        """刪掉 `ingested_at` 早於 cutoff 的列，回傳刪除筆數。
+
+        供每月重跑 ingest 時清除「上個月符合分類、這個月不符合」的殘留列——
+        `ingest.py` 只 upsert 從不刪除，修了 `categories.py` 的規則再重跑時，
+        錯誤分類的舊列（例如被誤判成超商的「全家旅店」）不會自動消失。
+        動詞用 `purge_older_than` 是照全庫既有慣例（見其他 store 的同名方法）。
+        """
+        row = self._db.query_one(
+            "WITH removed AS (DELETE FROM places WHERE ingested_at < %s RETURNING 1) "
+            "SELECT count(*) FROM removed",
+            (cutoff,),
+        )
+        return row[0] if row else 0
+
 
 class FakePlaceStore:
     """PlaceStore 的記憶體替身（測試用，不碰 DB）。"""
@@ -202,3 +218,9 @@ class FakePlaceStore:
             if place.postcode:
                 counts[place.postcode] = counts.get(place.postcode, 0) + 1
         return list(counts.items())
+
+    def purge_older_than(self, cutoff: float) -> int:
+        stale = [place_id for place_id, place in self._places.items() if place.ingested_at < cutoff]
+        for place_id in stale:
+            del self._places[place_id]
+        return len(stale)
