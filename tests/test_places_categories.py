@@ -119,6 +119,48 @@ def test_temple_excludes_huatan_township_name():
     assert not matches("temple", "三媽臭臭鍋花壇店", overture_category=None)
 
 
+def test_temple_exclude_overture_vetoes_japanese_restaurant_chain():
+    """勝博殿是全台連鎖日式豬排店，店名關鍵字「殿」擋不住（殿本身是納入詞）。
+
+    2026-07-28 對正式庫查證：taxonomy_primary='japanese_restaurant' 的 97 筆命中
+    裡，category_alternate 查無任何一筆帶宗教／古蹟殘留信號，判斷安全可排除。
+    """
+    assert not matches("temple", "勝博殿", overture_category="japanese_restaurant")
+    # 沒有 Overture 分類佐證時（例如查詢端沒帶分類），仍靠關鍵字後援收進來。
+    assert matches("temple", "勝博殿", overture_category=None)
+
+
+def test_temple_exclude_overture_vetoes_food_truck_and_beauty_salon():
+    """真店名：「深夜冷宮」是滷味攤（food_truck_stand），「美睫殿の小屋」是美睫店
+    （beauty_salon）。兩者都不含既有的店名排除詞（廟口／飯店／酒店…），只能靠
+    Overture 分類本身擋下。
+    """
+    assert not matches("temple", "深夜冷宮｜冷盤｜涼拌小菜", overture_category="food_truck_stand")
+    assert not matches("temple", "美睫殿の小屋", overture_category="beauty_salon")
+
+
+def test_temple_exclude_overture_does_not_veto_ambiguous_categories():
+    """historic_site／palace 等分類是歧義的（龍山寺、行天宮本來就同時是古蹟），
+    2026-07-28 審查刻意不放進 exclude_overture，這裡守住「不可誤加」的界線。
+    """
+    assert matches("temple", "龍山寺", overture_category="historic_site")
+    assert matches("temple", "行天宮", overture_category="palace")
+
+
+def test_temple_exclude_overture_does_not_veto_lodging_despite_task_brief():
+    """⚠️ 這條測試守的是本輪最重要的修正：不可依原任務書把 lodging 加進排除清單。
+
+    對正式庫查證：taxonomy_primary='lodging' 且命中廟關鍵字的 244 筆裡，236 筆
+    （96.7%）店名完全沒有任何旅宿字樣、是純廟名；其中「北港朝天宮 厚生大樓」
+    （北港朝天宮本尊的附屬建物）category_alternate 直接帶 religious_organization，
+    confidence 0.90。若把 lodging 加進 exclude_overture，這座全台知名度數一數二
+    的媽祖廟會從「附近有廟」查詢中消失——代價遠高於漏擋幾家旅宿，故拒絕加入。
+    """
+    assert matches("temple", "北港朝天宮 厚生大樓", overture_category="lodging")
+    assert matches("temple", "宜蘭東嶽廟", overture_category="restaurant")
+    assert matches("temple", "埔心武聖宮", overture_category="delicatessen")
+
+
 def test_pharmacy_requires_keyword_even_when_overture_category_matches():
     """⚠️ 這條守住 C-2 的 Critical：Overture 的 pharmacy 分類單獨不可信。
 
