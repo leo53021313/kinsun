@@ -9,14 +9,22 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from kinsun.config import load_dotenv, load_rag_worker_settings
+from kinsun.cron.registry import rag_refresh_spec
+from kinsun.cron.scheduler import Job, Scheduler
+from kinsun.cron.state import PgScheduleStateStore
 from kinsun.db import Database, ensure_schema
+from kinsun.logging_setup import setup_logging
 from kinsun.rag.refresh import refresh_known_urls
 from kinsun.rag.schemas import ContentPolicy
-from kinsun.scheduler.scheduler import Job, Scheduler
-from kinsun.scheduler.state import PgScheduleStateStore
 
 
 def main() -> int:
+    # ⚠️ 第三個常駐行程（`scripts/kinsun.sh` 的 START_ORDER：webhook／scheduler／rag_worker）。
+    # 2026-07-27 補上——先前只有前兩個裝了日誌設定，這一支的 `logger.exception`（含
+    # `cron/scheduler.py` 的 job 失敗與 `rag/crawler.py` 的抓取警告）走 `logging.lastResort`：
+    # 無時間戳、無 logger 名、INFO 全數丟棄。RAG 週更每週才跑一次、無人看著，
+    # 靜默失敗的偵測成本最高（`logging_setup` docstring 引的「反思靜默失敗六天」即同型）。
+    setup_logging()
     load_dotenv()
     args = _parse_args()
     settings = load_rag_worker_settings(os.environ)
@@ -54,7 +62,11 @@ def main() -> int:
             return 0
         jobs = []
         if settings.rag_refresh_enabled:
-            jobs.append(Job("rag-weekly-refresh", settings.rag_refresh_cron, run_refresh))
+            # 名稱與 cron 一律由 cron/registry.py 給（2026-07-27）：後台
+            # `GET /admin/jobs` 以 job 名去 scheduler_state 查上次執行時間，名稱只要
+            # 對不上，這支就會被那一頁誤報成「從未執行」——而它其實跑得好好的。
+            spec = rag_refresh_spec(cron=settings.rag_refresh_cron)
+            jobs.append(Job(spec.name, spec.cron, run_refresh))
         scheduler = Scheduler(
             jobs,
             lambda: datetime.now(timezone),

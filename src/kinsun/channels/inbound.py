@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 
 from kinsun import tracing
 from kinsun.accounts.models import Channel
-from kinsun.agent import FALLBACK_REPLY
+from kinsun.agent import SYSTEM_TROUBLE_REPLY
 from kinsun.llm import LLMError
 from kinsun.memory.shortterm import MemoryStoreError
 from kinsun.observability.store import TraceStore, safe_record
@@ -20,8 +20,10 @@ from kinsun.speech.tts import TtsResult
 logger = logging.getLogger("kinsun.inbound")
 
 NON_AUDIO_PROMPT = "金孫現在聽得懂語音喔，您可以按住麥克風跟我說說話。"
-# 回退話術與 agent 層共用單一出處（✅ 庚-37：FALLBACK_PROMPT／FALLBACK_REPLY 合併）。
-FALLBACK_PROMPT = FALLBACK_REPLY
+# 回退話術與 agent 層共用單一出處（✅ 庚-37）。這裡走的是**系統故障**那一句：
+# 觸發點是 ASRError／LLMError／MemoryStoreError，也就是服務出錯，不是長輩講不清楚
+# ——叫他再說一次只會讓他一再重試、一再失敗（2026-07-26 實測 M4）。
+FALLBACK_PROMPT = SYSTEM_TROUBLE_REPLY
 BIND_FIRST_PROMPT = (
     "金孫需要先完成綁定才能陪您聊天喔。請把家人給您的邀請碼貼到這裡，或回覆「設定」開始。"
 )

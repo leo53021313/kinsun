@@ -9,8 +9,9 @@ from contextlib import contextmanager
 from dataclasses import replace
 
 from kinsun import background, tracing
-from kinsun.agent import FALLBACK_REPLY, CareAgent
+from kinsun.agent import NOT_HEARD_REPLY, CareAgent
 from kinsun.llm import LLMUsage, collect_llm_usage
+from kinsun.logging_setup import log_trace
 from kinsun.observability.models import (
     LLM_CALL_KIND_AGENT,
     LLM_CALL_KIND_MODERATION,
@@ -80,7 +81,11 @@ class VoicePipeline:
         self._chunked_channels = chunked_channels
 
     @tracing.track(
-        name="care_turn_voice", type="general", capture_input=False, capture_output=False
+        name="care_turn_voice",
+        type="general",
+        capture_input=True,
+        capture_output=False,  # 回傳 TtsResult 含音檔 bytes
+        ignore_arguments=["audio"],
     )
     def process(
         self,
@@ -94,23 +99,27 @@ class VoicePipeline:
         audio_url: str = "",
     ) -> TtsResult:
         tracing.tag_current_trace(trace_id=trace_id, channel=channel, elder_id=elder_id)
-        user_text = self._transcribe(
-            audio,
-            content_type=content_type,
-            external_id=external_id,
-            channel=channel,
-            trace_id=trace_id,
-            audio_url=audio_url,
-        )
-        return self._process_transcribed(
-            user_text,
-            elder_id=elder_id,
-            external_id=external_id,
-            channel=channel,
-            trace_id=trace_id,
-        )
+        # 本輪的 log 全部蓋上 trace_id（2026-07-27）：logs 只記「發生什麼事」，
+        # 內容去 Opik 看，trace_id 是兩邊之間唯一的橋。
+        with log_trace(trace_id):
+            user_text = self._transcribe(
+                audio,
+                content_type=content_type,
+                external_id=external_id,
+                channel=channel,
+                trace_id=trace_id,
+                audio_url=audio_url,
+            )
+            return self._process_transcribed(
+                user_text,
+                elder_id=elder_id,
+                external_id=external_id,
+                channel=channel,
+                trace_id=trace_id,
+            )
 
-    @tracing.track(name="care_turn_text", type="general", capture_input=False, capture_output=False)
+    # 輸出維持關閉：回傳 TtsResult 含音檔 bytes。
+    @tracing.track(name="care_turn_text", type="general", capture_input=True, capture_output=False)
     def process_text(
         self,
         text: str,
@@ -122,9 +131,10 @@ class VoicePipeline:
     ) -> TtsResult:
         """文字輸入路徑（✅ D-11 正式）：跳過 ASR，其餘與語音同管線（危急偵測＋回覆＋記憶）。"""
         tracing.tag_current_trace(trace_id=trace_id, channel=channel, elder_id=elder_id)
-        return self._process_transcribed(
-            text, elder_id=elder_id, external_id=external_id, channel=channel, trace_id=trace_id
-        )
+        with log_trace(trace_id):
+            return self._process_transcribed(
+                text, elder_id=elder_id, external_id=external_id, channel=channel, trace_id=trace_id
+            )
 
     def _process_transcribed(
         self, user_text: str, *, elder_id: str, external_id: str, channel: str, trace_id: str
@@ -134,10 +144,13 @@ class VoicePipeline:
         # 對近無聲短檔的確定性幻覺，實錄「? ? ?」），去標點後皆無內容可分級、可回應也不
         # 該進記憶，直接以回退話術（仍走 TTS）請長輩再說一次。
         if not _has_recognizable_speech(user_text):
+            # ⚠️ 這是唯一真的「沒聽清楚」的情形，故用 NOT_HEARD_REPLY 而非系統故障話術：
+            # 這裡叫長輩再說一次是對的（他再說一次真的會成功）。其他回退點都是我們自己
+            # 壞掉，叫他重試只會讓他一再失敗（2026-07-26 實測 M4）。
             tracing.update_trace_metadata(fallback="empty_speech")
-            tracing.set_current_trace_io(user_input=user_text, assistant_output=FALLBACK_REPLY)
+            tracing.set_current_trace_io(user_input=user_text, assistant_output=NOT_HEARD_REPLY)
             result = self._synthesize(
-                FALLBACK_REPLY, external_id=external_id, channel=channel, trace_id=trace_id
+                NOT_HEARD_REPLY, external_id=external_id, channel=channel, trace_id=trace_id
             )
             return replace(result, transcript=user_text)
         # 情境組裝先行啟動（2026-07-26 延遲實測）：它是本輪最慢的一段（長期記憶檢索
@@ -240,7 +253,7 @@ class VoicePipeline:
     def _latency_ms(self, started: float) -> int:
         return int((self._timer() - started) * 1000)
 
-    @tracing.track(name="risk_assess", type="general", capture_input=False, capture_output=False)
+    @tracing.track(name="risk_assess", type="general", capture_input=True, capture_output=True)
     def _assess(
         self, user_text: str, *, external_id: str, channel: str, trace_id: str
     ) -> RiskAssessment:
@@ -274,7 +287,7 @@ class VoicePipeline:
             )
         return assessment
 
-    @tracing.track(name="abuse_moderate", type="general", capture_input=False, capture_output=False)
+    @tracing.track(name="abuse_moderate", type="general", capture_input=True, capture_output=True)
     def _moderate(
         self, user_text: str, *, external_id: str, channel: str, trace_id: str
     ) -> ModerationResult:
@@ -334,7 +347,13 @@ class VoicePipeline:
                 latency_ms = self._latency_ms(started)
                 safe_record(lambda: record(traces, status, latency_ms, error_message))
 
-    @tracing.track(name="asr", type="general", capture_input=False, capture_output=False)
+    @tracing.track(
+        name="asr",
+        type="general",
+        capture_input=True,
+        capture_output=True,
+        ignore_arguments=["audio"],  # 整包音檔 bytes，塞進 span 只會讓它讀不動
+    )
     def _transcribe(
         self,
         audio: bytes,
@@ -361,7 +380,13 @@ class VoicePipeline:
             text = self._asr.transcribe(audio, content_type=content_type)
         return text
 
-    @tracing.track(name="agent_generate", type="llm", capture_input=False, capture_output=False)
+    @tracing.track(
+        name="agent_generate",
+        type="llm",
+        capture_input=True,
+        capture_output=True,
+        ignore_arguments=["prepared"],  # PreparedTurn 物件，序列化沒有意義
+    )
     def _generate(
         self,
         elder_id: str,
@@ -403,7 +428,8 @@ class VoicePipeline:
                 )
         return reply
 
-    @tracing.track(name="tts", type="general", capture_input=False, capture_output=False)
+    # 輸出維持關閉：回傳 TtsResult 含音檔 bytes；輸入（要唸的文字）才是要看的東西。
+    @tracing.track(name="tts", type="general", capture_input=True, capture_output=False)
     def _synthesize(
         self, reply_text: str, *, external_id: str, channel: str, trace_id: str
     ) -> TtsResult:

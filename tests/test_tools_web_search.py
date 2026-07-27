@@ -147,3 +147,35 @@ def test_lookup_store_failure_does_not_break_reply():
         {"query": "流感疫苗", "topic": "health"}
     )
     assert json.loads(out)["results"][0]["site"] == "cdc.gov.tw"
+
+
+# --- 本輪來源登記（2026-07-26 實測 S4：出站冒名防線的上游）---
+
+
+def test_registers_the_result_sites_to_the_turn_ledger():
+    from kinsun.turn_context import turn_sources
+
+    http = _transport(_HIT)
+    with turn_sources() as sources:
+        build_web_search_handler("k", transport=http)({"query": "流感疫苗", "topic": "health"})
+    assert sources == ["cdc.gov.tw"]
+
+
+def test_registers_nothing_when_the_search_comes_back_empty():
+    """查不到就是沒有來源——防線必須保持武裝。"""
+    from kinsun.turn_context import turn_sources
+
+    http = _transport({"results": []})
+    with turn_sources() as sources:
+        build_web_search_handler("k", transport=http)({"query": "沒有的東西", "topic": "health"})
+    assert sources == []
+
+
+def test_registers_nothing_when_the_search_fails():
+    from kinsun.turn_context import turn_sources
+
+    http = FakeTransport([])
+    http.error = TransportError("boom")
+    with turn_sources() as sources:
+        build_web_search_handler("k", transport=http)({"query": "流感疫苗", "topic": "health"})
+    assert sources == []

@@ -62,6 +62,8 @@ _SECONDS_PER_DAY = 86400.0  # 台灣無日光節約，一天固定 86400 秒。
 
 _REQUIRED_FIELDS = ("content", "category", "evidence", "observed_days")
 
+_ROLE_LABELS = {"user": "長輩", "assistant": "金孫"}
+
 # 受控生成 schema：把回傳約束成合法的守則陣列，減少「格式故障→整批丟棄」的空轉夜。
 # schema 只管結構，語意（四類守則、禁醫療詞、跨多天證據等）仍靠 REFLECTION_PROMPT。
 # supersedes 設 nullable optional：模型輸出整數 id 會被 _to_candidate 判型別錯而整批丟棄，
@@ -143,7 +145,8 @@ class Reflector(Protocol):
     ) -> str: ...
 
 
-@tracing.track(name="nightly_reflection", type="general", capture_input=False, capture_output=False)
+# 同 daily_summary：輸入全是 store 與 callable，只開輸出（學到的守則）。
+@tracing.track(name="nightly_reflection", type="general", capture_input=False, capture_output=True)
 def reflect_days(
     elder_id: str,
     *,
@@ -181,13 +184,18 @@ def reflect_days(
     system_prompt = _build_prompt(logs, adopted, lookback_days, min_observed_days, max_strategies)
     tracing.attach_prompt("nightly_reflection", REFLECTION_PROMPT)
     reply = reflector.generate(
-        system_prompt=system_prompt, messages=turns, response_schema=_REFLECTION_SCHEMA
+        system_prompt=system_prompt,
+        messages=[_transcript_message(turns)],
+        response_schema=_REFLECTION_SCHEMA,
     )
 
     candidates = _parse(reply)
     if candidates is None:
         # 整批丟棄：格式壞掉代表這份回應的來源不可信，挑得出來的那幾條同樣不可信。
-        logger.warning("反思回傳格式不合，整批丟棄 elder=%s 回應=%r", elder_id, reply[:200])
+        # ⚠️ 刻意不印模型回應原文（2026-07-27 政策，Leo 定案）：logs 只記「發生了什麼事」，
+        # 對話內容一律去 Opik 看（`nightly_reflection` span 的輸出）。印出長度供判斷
+        # 「是空回應還是格式跑掉」——那是純粹的系統事實，不含長輩的話。
+        logger.warning("反思回傳格式不合，整批丟棄 elder=%s 回應長度=%d", elder_id, len(reply))
         return
 
     plausible, forged = _split_forged_evidence(candidates, lookback_days)
@@ -263,13 +271,30 @@ def _record(strategies: StrategyStore, elder_id: str, candidate: Candidate) -> N
         )
     except StrategyError as exc:
         # 最常見的來源：反思讀完生效中守則後、寫入前，家屬在後台撤銷了取代對象。
+        # ⚠️ 不印 candidate.content（2026-07-27 政策）：守則是從長輩的對話推導出來的
+        # 描述（「阿嬤心情低落時先聊孫子」），屬對話內容，只進 Opik 與 strategies 表。
         logger.warning(
-            "守則寫入失敗，跳過此條 elder=%s 取代對象=%s 內容=%r 原因=%s",
+            "守則寫入失敗，跳過此條 elder=%s 取代對象=%s 原因=%s",
             elder_id,
             candidate.supersedes,
-            candidate.content,
             exc,
         )
+
+
+def _transcript_message(turns: list[Message]) -> Message:
+    """把過去幾天的對話組成單一 user 文字稿。
+
+    不可直接把 user/assistant 歷史當 messages 餵給模型：對話必然以金孫的回覆結尾，
+    而 Gemini 3.5 拒收「以模型回合結尾」的請求（400 INVALID_ARGUMENT，
+    "Requests ending with a model turn are not supported"）。此路徑每晚對每位長輩
+    各跑一次，整批失敗只留一行 warning——2026-07-26 全流程模擬實測即由此發現：
+    正式庫最後一條守則停在 2026-07-20，此後每晚空轉。
+
+    文字稿同時解決另一個老問題：把歷史直接餵進去，模型會把自己當成對話中的人去
+    「接話」而不是旁觀分析（同 `reports/summaries.py::_transcript_message` 的理由）。
+    """
+    lines = "\n".join(f"{_ROLE_LABELS.get(m.role, '金孫')}：{m.content}" for m in turns)
+    return Message("user", f"以下是這段期間的對話紀錄：\n{lines}")
 
 
 def _build_prompt(

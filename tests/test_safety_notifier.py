@@ -14,16 +14,24 @@ def test_log_notifier_logs_warning(caplog):
 
 
 class _SpyRouter:
-    """ChannelRouter 替身：記錄 (principal_type, principal_id, text)，可指定失敗對象。"""
+    """ChannelRouter 替身：記錄 (principal_type, principal_id, text)。
 
-    def __init__(self, fail_on=None, channels=("line",)):
+    `fail_on`＝有綁通道但送出全數失敗；`no_route_on`＝根本沒綁任何通道。兩者在
+    `send_text_channels` 的回傳上無法區分（都是空清單），這正是本模組要分流的東西。
+    """
+
+    def __init__(self, fail_on=None, channels=("line",), no_route_on=()):
         self.sent = []
         self._fail_on = fail_on
         self._channels = list(channels)
+        self._no_route_on = set(no_route_on)
+
+    def has_route(self, principal_type, principal_id):
+        return principal_id not in self._no_route_on
 
     def send_text_channels(self, principal_type, principal_id, text):
-        if principal_id == self._fail_on:
-            return []  # 該家屬無可達通道／全數失敗
+        if principal_id == self._fail_on or principal_id in self._no_route_on:
+            return []
         self.sent.append((principal_type, principal_id, text))
         return list(self._channels)
 
@@ -82,6 +90,54 @@ def test_delivery_log_records_channels():
         "e-elder", RiskAssessment(RiskTier.L2, 0.8, "胸口悶", [])
     )
     assert deliveries2.recorded[0].channels == "line,app"
+
+
+# ── 未綁通道 vs 真的送失敗（2026-07-27）──
+#
+# 兩者先前都被記成 delivered=False，而 admin 的投遞失敗告警是全域
+# `WHERE delivered = FALSE` —— 家屬還沒綁 LINE 這種常態情形會持續灌進告警，
+# 把真正的送達失敗淹掉。分流之後告警只算真的失敗。
+
+
+def test_unbound_guardian_is_recorded_as_no_route_not_failure():
+    router = _SpyRouter(no_route_on={"g2"})
+    deliveries = FakeRiskNotificationLogStore()
+    notifier = GuardianNotifier(_StubDirectory(["g1", "g2"]), router, deliveries=deliveries)
+    notifier.notify("e-elder", RiskAssessment(RiskTier.L2, 0.8, "胸口悶", ["symptom"]))
+    assert [(d.guardian_id, d.delivered, d.outcome) for d in deliveries.recorded] == [
+        ("g1", True, "sent"),
+        ("g2", False, "no_route"),
+    ]
+
+
+def test_send_failure_is_still_recorded_as_failed():
+    router = _SpyRouter(fail_on="g1")
+    deliveries = FakeRiskNotificationLogStore()
+    notifier = GuardianNotifier(_StubDirectory(["g1"]), router, deliveries=deliveries)
+    notifier.notify("e-elder", RiskAssessment(RiskTier.L2, 0.8, "胸口悶", []))
+    assert deliveries.recorded[0].outcome == "failed"
+    assert deliveries.recorded[0].delivered is False
+
+
+def test_unbound_guardian_is_not_counted_by_the_failure_alert():
+    """告警只算真的失敗——這是本次分流的目的。"""
+    deliveries = FakeRiskNotificationLogStore(clock=lambda: 100.0)
+    GuardianNotifier(
+        _StubDirectory(["g1", "g2"]),
+        _SpyRouter(fail_on="g1", no_route_on={"g2"}),
+        deliveries=deliveries,
+    ).notify("e-elder", RiskAssessment(RiskTier.L2, 0.8, "胸口悶", []))
+    assert len(deliveries.recorded) == 2  # 兩筆都有留痕（稽核不可少）
+    assert deliveries.count_failed_since(0.0) == 1  # 但只有一筆算失敗
+
+
+def test_unbound_guardian_is_not_sent_to():
+    """沒有可達通道就不必白呼叫一次出站——但仍要留痕。"""
+    router = _SpyRouter(no_route_on={"g1"})
+    GuardianNotifier(_StubDirectory(["g1"]), router).notify(
+        "e-elder", RiskAssessment(RiskTier.L2, 0.8, "胸口悶", [])
+    )
+    assert router.sent == []
 
 
 def test_delivery_log_failure_does_not_break_notify():

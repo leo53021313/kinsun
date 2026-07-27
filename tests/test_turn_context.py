@@ -32,3 +32,42 @@ def test_nested_scopes_restore_outer():
         with elder_utterance("內層"):
             assert current_utterance() == "內層"
         assert current_utterance() == "外層"
+
+
+# --- 本輪來源登記簿（2026-07-26 實測 S4：出站冒名防線的事實來源）---
+
+
+def test_record_source_is_a_noop_without_a_ledger():
+    """沒開帳本時完全 no-op：排程端與既有工具測試一字都不必改。"""
+    from kinsun.turn_context import record_source
+
+    record_source("hpa.gov.tw")  # 不該拋
+
+
+def test_the_ledger_collects_what_tools_register():
+    from kinsun.turn_context import record_source, turn_sources
+
+    with turn_sources() as sources:
+        record_source("hpa.gov.tw")
+        record_source("tfc-taiwan.org.tw")
+        assert sources == ["hpa.gov.tw", "tfc-taiwan.org.tw"]
+
+
+def test_an_empty_name_is_not_recorded():
+    """publisher 可能是空字串（爬蟲沒抓到），空的不算來源。"""
+    from kinsun.turn_context import record_source, turn_sources
+
+    with turn_sources() as sources:
+        record_source("")
+        assert sources == []
+
+
+def test_the_ledger_is_reset_between_turns():
+    """上一輪查到的來源不可以讓下一輪的冒名回覆過關。"""
+    from kinsun.turn_context import record_source, turn_sources
+
+    with turn_sources() as first:
+        record_source("hpa.gov.tw")
+        assert first
+    with turn_sources() as second:
+        assert second == []

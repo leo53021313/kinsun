@@ -31,7 +31,7 @@ from kinsun.rag.source_validator import SourceValidator
 from kinsun.rag.vector_store import PgVectorStore
 
 
-@tracing.track(name="rag_ingest", type="general", capture_input=False, capture_output=False)
+@tracing.track(name="rag_ingest", type="general", capture_input=False, capture_output=True)
 def main() -> None:
     _load_dotenv(Path(".env"))
     args = _parse_args()

@@ -1,6 +1,6 @@
 # API 設計規範 - 金孫 KinSun
 
-> **版本:** v1.6 | **更新:** 2026-07-26 | **狀態:** ✅ 定稿（新增 `GET /turns/chunks/{index}` 分段語音串流＋三個錯誤碼，`POST /turns` 回應加 `chunk_count`／`reply_digest`；契約已拍板 D-23～D-29；/v1 已全面落地；`traces/{trace_id}` 回應加 `opik_url` 深連結）
+> **版本:** v1.10 | **更新:** 2026-07-27 | **狀態:** ✅ 定稿（`GET /admin/jobs` **母體改為全系統排程宣告**（`cron/registry.py`，含跑在 RAG Worker 程序的 `rag-weekly-refresh`）並加 `owner`／`can_run_now` 兩欄，手動觸發對本程序跑不了的排程回 409 `job_not_runnable_here`——原本這一頁只看得到 webhook 程序綁得出來的 job，RAG 週更停擺或從未執行一律顯示全綠；`GET /admin/jobs` 加逾期偵測欄位（`is_overdue`／`late_seconds`／`due_at`／`never_ran`／`meta.overdue`／`meta.never_ran`／`meta.warnings`），**逾期容許量改逐 job**（`schedule-dispatch` 用自己的 90 秒判定窗，預設仍 300 秒）——`never_ran` 為 2026-07-26 補：沒有 `last_run_at` 就算不出 `due_at`、`is_overdue` 恆為 False，從沒被排程器碰過的 job 原本顯示成全綠；新增 `GET /turns/chunks/{index}` 分段語音串流＋三個錯誤碼，`POST /turns` 回應加 `chunk_count`／`reply_digest`；契約已拍板 D-23～D-29；/v1 已全面落地；`traces/{trace_id}` 回應加 `opik_url` 深連結）
 > **基準:** as-is（現行 23 端點實證）＋ to-be（/v1 契約）。命名規則以 AGENTS.md 為準。
 > DGX 服務認證與速率限制 → 13_安全循環；`admin api disabled` 503 措辭一併列 13。
 
@@ -93,6 +93,7 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | `unsupported_media_type` | 415 | 對講機收到非音訊 content-type（✅ D-61 丙-11） |
 | `too_many_requests` | 429 | 認證節流（✅ D-20 甲-3；跨進程共享，✅ 庚-08） |
 | `job_not_found` | 404 | admin 手動觸發：查無此排程任務（spec 2026-07-12） |
+| `job_not_runnable_here` | 409 | admin 手動觸發：這支排程存在，但由別的程序執行（如 `rag-weekly-refresh` 住在 rag_worker），後台無法就地觸發。與 404 分開是刻意的——「按不動」與「查無此 job」混成同一個碼，值班的人會以為後台壞了 |
 | `chunk_not_found` | 404 | 分段語音：這位長輩今天還沒有回覆，或 index 超出段數（2026-07-26） |
 | `chunk_superseded` | 409 | 分段語音：那一輪已被新的一輪取代，前端應停止續播（2026-07-26） |
 | `speech_unavailable` | 502／503 | 分段語音：合成或上傳失敗、或伺服器未接語音相依（2026-07-26） |
@@ -154,6 +155,8 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | :--- | :--- | :--- |
 | `GET /api/admin/overview`／`elders`／`messages`／`elders/{elder_id}/timeline`／`traces/{trace_id}` | 同路徑掛 `/api/v1/admin/` | messages 加 `before` 回翻（D-29）；`traces/{trace_id}` 回應加 `opik_url`（工程觀測開啟且捕捉到 Opik trace id 時＝直達 Opik 的深連結，否則空字串，前端據此隱藏連結）|
 | —（新增） | `GET /api/v1/admin/elders/{elder_id}/reminders`／`memory`／`account`／`risk-notifications`、`GET /api/v1/admin/jobs` | 內測基礎建設（spec 2026-07-12）：長輩詳情四分頁＋排程狀態，唯讀、`X-Admin-Key` 守門 |
+| —（加欄位＋母體變更） | `GET /api/v1/admin/jobs` | 跨程序監控（2026-07-27）：母體由「本程序綁得出執行體的 job」改為 `cron/registry.py` 的全系統宣告，每列加 `owner`（負責執行的程序，字面＝`kinsun.sh` 服務名）與 `can_run_now`（後台能否就地觸發）。**加法**：既有欄位與狀態碼不變，但清單會多出 `rag-weekly-refresh`（`RAG_REFRESH_ENABLED=true` 時）。⚠ 前端若對每列都畫「立即執行」按鈕，需改看 `can_run_now`，否則按下去會拿到 409 |
+| —（加欄位） | `GET /api/v1/admin/jobs` | 逾期偵測（2026-07-26 全流程模擬實測）：每列加 `due_at`／`late_seconds`／`is_overdue`，`meta` 加 `overdue`（逾期的 job 名陣列）與 `warnings`（人話告警）。判定＝`croniter(cron, last_run).get_next()` 早於現在超過 5 分鐘；`last_run_at` 為 null（從未跑過）者不判逾期。**加法**，舊前端忽略即維持原行為 |
 | `/elders/{id}/medications`、`/elders/{id}/appointments`（**移除**） | `GET/POST/PUT/DELETE /api/v1/elders/{elder_id}/schedules[/{group_id}]` | 統一排程（D-76 P3）：用藥、回診與長輩自訂三類合成單一資源。**操作單位為 group（一件事）而非單一鬧鐘**——家屬按刪除時想刪的是「這個藥」，不是「這個藥的早上那次」。`kind` query 可篩類型；PUT 走 replace_group（先驗證再動手，失敗時原組原封不動）；DELETE 為軟刪（寫 `cancelled_at`，永久保留）。 |
 | `POST .../reminders/dispatch`（body 改） | 同路徑，body 由 `{kind, slot}` 改為 `{kind}`（medication／appointment／custom） | 改接統一派送（D-76 P5）。⚠ 手動觸發**不寫** `fired_at`／`settled_at`——測試動作不可吃掉長輩當天真正該收到的那一則。 |
 | `GET .../admin/elders/{id}/reminders`（回應改） | 同路徑，`medications`＋`appointments` 兩份清單合成 `schedules` 一份 | kind 欄位保留分類，另有 `created_by` 區分家屬設的與長輩自己交代的。 |

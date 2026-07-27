@@ -122,3 +122,28 @@ def test_rag_tool_records_full_evidence_only_in_admin_trace():
     assert traces.rag_calls[0].latency_ms == 250
     assert traces.rag_calls[0].hits[0]["retrieval_method"] == "vector"
     assert traces.rag_calls[0].citations[0]["publisher"] == "衛生福利部國民健康署"
+
+
+# --- 本輪來源登記（2026-07-26 實測 S4：出站冒名防線的上游）---
+
+
+def test_rag_tool_registers_citation_publishers():
+    from kinsun.turn_context import turn_sources
+
+    service = HealthEducationRagService(
+        _FakeRetriever((_result("高血壓照護包含規律量血壓。"),)),
+    )
+    with turn_sources() as sources:
+        build_health_rag_handler(service)({"query": "高血壓"})
+    assert sources  # 有 citation ⇒ 有來源 ⇒ 金孫可以講出處
+
+
+def test_rag_tool_registers_nothing_when_there_is_no_evidence():
+    """⚠️ 對應今天的正式庫現實：沒有 active release ⇒ 零 citation ⇒ 帳本必須是空的，
+    出站冒名防線因此保持武裝，模型不能靠「查過了」就冒用機關名義。"""
+    from kinsun.turn_context import turn_sources
+
+    service = HealthEducationRagService(_FakeRetriever(()))
+    with turn_sources() as sources:
+        build_health_rag_handler(service)({"query": "高血壓"})
+    assert sources == []
