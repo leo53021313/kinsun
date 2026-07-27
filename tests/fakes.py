@@ -17,6 +17,7 @@ from kinsun.locations.store import FakeLocationStore as FakeLocationStore
 from kinsun.memory.models import MemoryItem
 from kinsun.memory.shortterm import FakeMemoryStore as FakeMemoryStore
 from kinsun.observability.store import FakeTraceStore as FakeTraceStore
+from kinsun.places.store import FakePlaceStore as FakePlaceStore
 from kinsun.proactive.preferences import (
     FakeGreetingPreferenceStore as FakeGreetingPreferenceStore,
 )
