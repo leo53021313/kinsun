@@ -8,13 +8,15 @@ from __future__ import annotations
 
 import inspect
 import logging
+import signal
+import time
 from datetime import datetime
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
 
-import kinsun.scheduler.worker as worker
+import kinsun.cron.worker as worker
 from kinsun.accounts.models import PrincipalType
 from kinsun.agent import Recall
 from kinsun.config import load_settings
@@ -47,6 +49,17 @@ _BASE_JOB_NAMES = [
     "news-crawl",
     "news-cleanup",
 ]
+
+
+@pytest.fixture(autouse=True)
+def _block_dotenv(monkeypatch):
+    """擋掉 `worker.main()` 內的 load_dotenv（2026-07-27）。
+
+    它會把正式 .env 的鍵灌回**整個測試行程**、汙染後面所有測試（與 test_app.py、
+    test_safety_evaluation.py 同型）。用 autouse 而不是逐個測試加——本檔有三個測試
+    呼叫 main()，逐個加就是等著漏掉第四個。由 conftest 的 pytest_sessionfinish 守住。
+    """
+    monkeypatch.setattr(worker, "load_dotenv", lambda *a, **k: None)
 
 
 class _FakeDb:
@@ -868,7 +881,8 @@ def test_serve_ticks_until_interrupted(monkeypatch):
 
     monkeypatch.setattr(worker.time, "sleep", _sleep)
     with pytest.raises(KeyboardInterrupt):
-        worker.serve(scheduler, tick_seconds=30)
+        # watchdog=False：看門狗也會呼叫 time.sleep，開著會污染這條測試的計數
+        worker.serve(scheduler, tick_seconds=30, watchdog=False)
     assert len(ran) == 2
     assert slept == [30, 30]
 
@@ -881,7 +895,11 @@ def test_main_builds_serves_and_closes_db(monkeypatch, capsys):
     monkeypatch.setattr(worker, "build_scheduler", lambda settings, *, clock: (scheduler, db))
     served: list[tuple] = []
     monkeypatch.setattr(
-        worker, "serve", lambda s, *, tick_seconds: served.append((s, tick_seconds))
+        worker,
+        "serve",
+        lambda s, *, tick_seconds, heartbeat=None, heartbeat_path=None: served.append(
+            (s, tick_seconds)
+        ),
     )
     assert worker.main() == 0
     assert served == [(scheduler, 60)] or served[0][0] is scheduler
@@ -922,3 +940,195 @@ def test_interest_lookup_failure_does_not_block_greeting(monkeypatch, caplog):
         _job(scheduler, "daily-greeting").run()  # 不應拋出
     assert [(pt, pid) for pt, pid, _ in router.sent] == [(PrincipalType.ELDER, "e1")]
     assert "興趣可能包含" not in router.sent[0][2]
+
+
+# --- 看門狗（2026-07-26 全流程模擬實測：排程器活著但停止推進）---
+
+
+def test_the_watchdog_kills_a_stalled_scheduler():
+    """tick 停止推進超過門檻就自殺，交給 systemd 的 Restart=always 撿起來。
+
+    ⚠️ 這一層刻意不賭任何一種診斷：不論卡在 DB、mem0 還是別處，只看「有沒有在動」。
+    實測那次假死，程序活著、日誌零成長、狀態頁顯示 RUNNING，七小時沒有人發現。
+    """
+    exits: list[int] = []
+    stale = [time.monotonic() - 9999]  # 上次推進是很久以前
+    with pytest.raises(RuntimeError):  # 用例外代替 os._exit，測試才停得下來
+
+        def _exit(code: int) -> None:
+            exits.append(code)
+            raise RuntimeError("stop")
+
+        worker._watchdog(stale, stall_seconds=0.4, exit_now=_exit)
+    assert exits == [1]
+
+
+def test_the_watchdog_covers_startup_not_just_the_tick_loop(monkeypatch):
+    """看門狗必須在 build_scheduler **之前**就開始計時。
+
+    2026-07-26 23:00 現場：排程器當天重啟六次全部卡在啟動階段（啟動橫幅一次都沒印出來，
+    `schedule-dispatch` 停在 14:05 不動）。看門狗若只包在 serve() 裡，這一整類假死一次
+    也攔不到——因為 tick 迴圈根本還沒開始跑。
+    """
+    for key, value in _BASE_ENV.items():
+        monkeypatch.setenv(key, value)
+    order: list[str] = []
+    monkeypatch.setattr(
+        worker,
+        "start_watchdog",
+        lambda *, stall_seconds: (order.append("watchdog"), [time.monotonic()])[1],
+    )
+
+    def _build(settings, *, clock):
+        order.append("build_scheduler")
+        return SimpleNamespace(run_due=lambda: None), _FakeDb()
+
+    monkeypatch.setattr(worker, "build_scheduler", _build)
+    monkeypatch.setattr(
+        worker, "serve", lambda s, *, tick_seconds, heartbeat=None, heartbeat_path=None: None
+    )
+    assert worker.main() == 0
+    assert order == ["watchdog", "build_scheduler"], (
+        "看門狗晚於 build_scheduler 啟動＝對啟動階段的假死失明"
+    )
+
+
+def test_main_registers_a_stack_dump_signal(monkeypatch):
+    """`kill -USR1` 要能把全執行緒堆疊倒進日誌。
+
+    ⚠️ 沒有這條，假死時就只能靠 py-spy——而 DGX 的 ptrace_scope=1 讓 py-spy 需要 root，
+    2026-07-26 現場就是因此拿不到任何 Python 堆疊，只知道它卡住、不知道卡在哪。
+    """
+    if not hasattr(signal, "SIGUSR1"):
+        pytest.skip("此平台沒有 SIGUSR1")
+    for key, value in _BASE_ENV.items():
+        monkeypatch.setenv(key, value)
+    registered: list[int] = []
+    monkeypatch.setattr(
+        worker.faulthandler,
+        "register",
+        lambda sig, all_threads=True, chain=True: registered.append(sig),
+    )
+    monkeypatch.setattr(
+        worker, "build_scheduler", lambda settings, *, clock: (SimpleNamespace(), _FakeDb())
+    )
+    monkeypatch.setattr(
+        worker, "serve", lambda s, *, tick_seconds, heartbeat=None, heartbeat_path=None: None
+    )
+    assert worker.main() == 0
+    assert registered == [signal.SIGUSR1]
+
+
+def test_heartbeat_file_lets_status_tell_frozen_from_alive(tmp_path):
+    """心跳檔＝狀態頁分辨「行程活著」與「迴圈凍住」的唯一依據（假死七小時全程 RUNNING）。"""
+    path = tmp_path / "run" / "scheduler.heartbeat"
+    worker.write_heartbeat(path)
+    written = float(path.read_text(encoding="utf-8").strip())
+    assert abs(written - time.time()) < 5
+    assert not (tmp_path / "run" / "scheduler.heartbeat.tmp").exists(), "暫存檔沒清掉"
+
+
+def test_heartbeat_failure_never_stops_the_tick_loop(tmp_path, caplog):
+    """心跳只是觀測。寫不進去要照跑，而且不可以每分鐘刷一行把真錯誤淹掉。"""
+    worker._heartbeat_warned[0] = False
+    blocked = tmp_path / "not-a-dir"
+    blocked.write_text("我是檔案不是目錄", encoding="utf-8")
+    target = blocked / "scheduler.heartbeat"
+    with caplog.at_level(logging.WARNING):
+        worker.write_heartbeat(target)  # 不應拋出
+        worker.write_heartbeat(target)
+        worker.write_heartbeat(target)
+    assert sum("心跳檔寫入失敗" in r.message for r in caplog.records) == 1, "重複警告會變成雜訊"
+    worker._heartbeat_warned[0] = False
+
+
+def test_the_watchdog_leaves_a_healthy_scheduler_alone():
+    exits: list[int] = []
+    fresh = [time.monotonic()]
+    stop = []
+
+    def _exit(code: int) -> None:  # pragma: no cover - 不該被呼叫
+        exits.append(code)
+
+    def _sleep(_seconds: float) -> None:
+        stop.append(1)
+        if len(stop) >= 2:
+            raise RuntimeError("測試結束")
+
+    original = worker.time.sleep
+    worker.time.sleep = _sleep
+    try:
+        with pytest.raises(RuntimeError):
+            worker._watchdog(fresh, stall_seconds=0.4, exit_now=_exit)
+    finally:
+        worker.time.sleep = original
+    assert exits == []
+
+
+def test_jobs_that_fan_out_over_every_elder_run_in_the_background(monkeypatch):
+    """遍歷全部長輩的 job 必須標成背景，清理類的必須不標。
+
+    ⚠️ 判準是「耗時會不會隨長輩人數成長」。2026-07-26 實測：39 位長輩的夜間批次
+    讓每分鐘該派送的 `schedule-dispatch` 停了兩分鐘——同步跑會把整輪掃描卡住，
+    而卡住的是長輩的吃藥提醒。清理類的 job 只是幾句 SQL，丟背景只是多開執行緒。
+    """
+    scheduler, _core = _build(monkeypatch, _settings())
+    background = {j.name for j in scheduler._jobs if j.background}
+    assert background == {"daily-consolidation", "daily-greeting", "inactivity-care"}
+    assert _job(scheduler, "schedule-dispatch").background is False, (
+        "每分鐘的提醒派送丟到背景，就失去『這一輪一定跑完』的保證"
+    )
+
+
+# --- 排程宣告漂移守門（2026-07-27）---
+#
+# registry 是「全系統有哪些排程」的唯一真實來源，而唯一真實來源只有在沒有人能繞過
+# 它的時候才成立。以下三條確保 build_jobs 完全依 registry 而生：宣告了卻沒綁＝那支
+# 排程靜默消失（後台只會顯示「從未執行」，最難查的一種）；綁了卻與宣告的時刻不同
+# ＝後台會在錯的時間點喊逾期，或在提醒已經掉了的時候顯示健康。
+
+
+def _full_settings():
+    """讓條件註冊的 job 全部成立，守門才涵蓋得到它們。"""
+    return _settings(
+        TTS_BACKEND="dgx",
+        SUPABASE_URL="https://demo.supabase.co",
+        SUPABASE_SERVICE_KEY="service-key",
+        RAG_REFRESH_ENABLED="true",
+    )
+
+
+def test_every_scheduler_owned_spec_is_actually_bound(monkeypatch):
+    """registry 宣告由排程器負責的每一支，build_jobs 都要綁得出執行體。"""
+    from kinsun.cron.registry import OWNER_SCHEDULER, job_specs
+
+    settings = _full_settings()
+    scheduler, _core = _build(monkeypatch, settings)
+    declared = {s.name for s in job_specs(settings) if s.owner == OWNER_SCHEDULER}
+    assert {j.name for j in scheduler._jobs} == declared
+
+
+def test_bound_jobs_use_exactly_the_declared_schedule(monkeypatch):
+    """cron、逾期容許量、背景旗標一律以 registry 為準，工廠不得自己算第二份。"""
+    from kinsun.cron.registry import OWNER_SCHEDULER, job_specs
+
+    settings = _full_settings()
+    scheduler, _core = _build(monkeypatch, settings)
+    declared = {s.name: s for s in job_specs(settings) if s.owner == OWNER_SCHEDULER}
+    for job in scheduler._jobs:
+        spec = declared[job.name]
+        assert job.cron == spec.cron, job.name
+        assert job.max_lateness_seconds == spec.max_lateness_seconds, job.name
+        assert job.background == spec.background, job.name
+
+
+def test_a_spec_nobody_binds_fails_at_startup(monkeypatch):
+    """宣告了卻沒人綁，寧可啟動就炸——安靜地少跑一支排程沒有任何地方會叫。"""
+    from kinsun.cron import registry
+
+    settings = _settings()
+    real_specs = registry.job_specs(settings)
+    ghost = registry.JobSpec("ghost-job", "0 4 * * *", registry.OWNER_SCHEDULER)
+    monkeypatch.setattr(worker, "job_specs", lambda s: [*real_specs, ghost])
+    with pytest.raises(RuntimeError, match="ghost-job"):
+        worker.build_jobs(settings, _fake_core(settings), clock=_clock)

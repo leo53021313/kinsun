@@ -39,7 +39,7 @@ def test_crawl_job_saves_items_from_every_fetcher():
     job = build_news_crawl_job(
         fetchers=[_Fetcher([_item("a1")]), _Fetcher([_item("a2")], source_id="news_api")],
         store=store,
-        hour=0,
+        cron="15 0 * * *",
     )
     job.run()
     saved = {i.news_item_id for i in store.list_recent(since=-1.0)}
@@ -51,21 +51,21 @@ def test_crawl_job_isolates_a_failing_source():
     job = build_news_crawl_job(
         fetchers=[_ExplodingFetcher(), _Fetcher([_item("a1")])],
         store=store,
-        hour=0,
+        cron="15 0 * * *",
     )
     job.run()  # 不應拋出
     assert {i.news_item_id for i in store.list_recent(since=-1.0)} == {"a1"}
 
 
 def test_crawl_job_cron_and_name():
-    job = build_news_crawl_job(fetchers=[], store=FakeNewsStore(), hour=0, minute=15)
+    job = build_news_crawl_job(fetchers=[], store=FakeNewsStore(), cron="15 0 * * *")
     assert job.name == "news-crawl"
     assert job.cron == "15 0 * * *"
 
 
 def test_cleanup_job_runs_purge():
     ran = []
-    job = build_news_cleanup_job(purge=lambda: ran.append(True), hour=0, minute=50)
+    job = build_news_cleanup_job(purge=lambda: ran.append(True), cron="50 0 * * *")
     assert job.name == "news-cleanup"
     assert job.cron == "50 0 * * *"
     job.run()

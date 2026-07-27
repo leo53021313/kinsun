@@ -6,9 +6,9 @@ import logging
 from collections.abc import Callable, Sequence
 from datetime import datetime
 
+from kinsun.cron.fanout import fanout_job
+from kinsun.cron.scheduler import Job
 from kinsun.proactive.preferences import GreetingPreferenceStore
-from kinsun.scheduler.fanout import fanout_job
-from kinsun.scheduler.scheduler import Job
 
 logger = logging.getLogger("kinsun.proactive")
 
@@ -51,9 +51,17 @@ def greeting_intent(now: datetime, *, interests: Sequence[str] = ()) -> str:
     )
 
 
-# 每半小時掃描一次；偏好時間對齊半點（見 proactive/constants.py 的 SLOT_MINUTES），
-# 兩者必須一致。
-GREETING_SCAN_CRON = "0,30 * * * *"
+# 補問候的時限（分鐘）。四小時是推導來的：既有契約要求「時段錯過仍要補」
+# （test_it_still_greets_late_when_her_slot_was_missed：8:00 的長輩在 10:30 仍要收到），
+# 所以下界至少要涵蓋 2.5 小時；上界則要擋掉實測踩到的情形——排程停擺一整天後
+# 在晚上重啟，對全體長輩補送「早安」。四小時讓「早上恢復服務」照樣補得到，
+# 「下午之後才恢復」則安靜跳過。
+_GREETING_MAX_DELAY_MINUTES = 240
+
+# 主動推播的可送時段（含頭不含尾）。長輩的作息不是我們的部署時間表——
+# 排程器什麼時候被重啟是我們的事，不該變成她手機在半夜響。
+_QUIET_START_HOUR = 7
+_QUIET_END_HOUR = 21
 
 
 def build_greeting_job(
@@ -64,13 +72,21 @@ def build_greeting_job(
     prefs: GreetingPreferenceStore | None,
     greeted_today: Callable[[str], bool],
     clock: Callable[[], datetime],
+    cron: str,
     name: str = "daily-greeting",
+    max_delay_minutes: int = _GREETING_MAX_DELAY_MINUTES,
 ) -> Job:
     """每半小時掃描：已過她的偏好時間、且今天還沒問候過她，才問候（spec 2026-07-16）。
 
     為什麼是「已過且今天沒問候過」而非「精確比對時段」：worker 半夜當機重啟後，
     Scheduler 的補跨語意只會補跑一次，精確比對會讓該時段的長輩整天被漏掉。
     冪等由 greeted_today（讀 reminder_logs）保證。
+
+    但「已過」不能沒有上界（2026-07-26 全流程模擬實測）：排程器停擺整天後，
+    晚上九點半重新啟動，這條規則會對**當天所有沒被問候過的長輩**送出一句「早安」。
+    實測當下正式環境有 64 位長輩、排程停擺十三天——重啟等於半夜集體吵醒。
+    故補問候有時限：晚超過 `max_delay_minutes` 就當今天沒問候（明天照常），
+    不是把早安留到深夜。
 
     prefs=None ＝ 一列偏好都不讀，全體回退 default_hour；這是
     PROACTIVE_GREETING_ADAPTIVE_ENABLED 這個緊急關閉開關的下游語意。只擋住夜間
@@ -90,8 +106,13 @@ def build_greeting_job(
                 # 早問候一次——比整批長輩沒人理她好。
                 logger.warning("問候偏好讀取失敗，改用全域時間 elder=%s", elder_id)
         target = pref.hour * 60 + pref.minute if pref else default_hour * 60
-        if now.hour * 60 + now.minute < target:
+        minutes_now = now.hour * 60 + now.minute
+        if minutes_now < target:
             return  # 還沒到她的時間
+        if minutes_now - target > max_delay_minutes:
+            # 晚太多就別問了：一句遲到十小時的「早安」比沒有更糟。
+            logger.info("已超過補問候時限，今天不問候 elder=%s", elder_id)
+            return
         # 刻意不接例外：讓它冒到 fanout 的 per-item try/except ＝ 跳過這位長輩。
         # 查不到「今天問候過沒」時寧可漏一次問候，也不可能重複轟炸長輩。
         if greeted_today(elder_id):
@@ -100,7 +121,7 @@ def build_greeting_job(
 
     return fanout_job(
         name=name,
-        cron=GREETING_SCAN_CRON,
+        cron=cron,
         population=sessions,
         action=action,
         logger=logger,
@@ -114,15 +135,30 @@ def build_inactivity_job(
     clock: Callable[[], datetime],
     threshold_seconds: float,
     care_one: Callable[[str], object],
-    hour: int,
-    minute: int = 0,
+    cron: str,
     name: str = "inactivity-care",
 ) -> Job:
+    """久未互動的關懷推播；只在可推播時段送出。
+
+    ⚠️ 理由與 `build_greeting_job` 的補跑時限同源（2026-07-26 全流程模擬實測）：
+    排程器停擺後重啟，Scheduler 的補跨語意會讓這支排在早上十點的 job 立刻執行，
+    夜裡重啟就在夜裡推播。這支沒有「每位長輩各自的時間」可比，故用固定的可送時段。
+    """
+
     def action(elder_id: str) -> None:  # 會話主鍵已通道中立（✅ 庚-41 正名）
+        now = clock()
+        # ⚠️ 安靜時段（2026-07-26 全流程模擬實測）：排程器停擺後重啟時，補跨語意會讓
+        # 這支排在早上十點的 job 立刻執行——晚上九點半重啟就在晚上推播，凌晨一點半
+        # 重啟就在凌晨推播。關懷訊息晚幾小時沒關係，半夜送出去就是打擾。
+        #
+        # 用「時段」而不是「延遲多久」是刻意的：延遲要拿時分做減法，跨午夜會變成負數
+        # 而恆通過（1:30 減 10:00 等於 -570），恰恰漏掉最該擋的那一格；時段判斷沒有這個坑，
+        # 也不會讓後台的「立即執行」在上班時間變成無聲空轉。
+        if not _QUIET_START_HOUR <= now.hour < _QUIET_END_HOUR:
+            logger.warning("目前不在可推播時段，跳過失聯關心 elder=%s 時=%s", elder_id, now.hour)
+            return
         last = last_active(elder_id)
-        if last is not None and clock().timestamp() - last >= threshold_seconds:
+        if last is not None and now.timestamp() - last >= threshold_seconds:
             care_one(elder_id)
 
-    return fanout_job(
-        name=name, hour=hour, minute=minute, population=sessions, action=action, logger=logger
-    )
+    return fanout_job(name=name, cron=cron, population=sessions, action=action, logger=logger)

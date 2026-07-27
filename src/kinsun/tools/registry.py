@@ -12,6 +12,12 @@ from kinsun.llm import ToolSpec
 
 logger = logging.getLogger("kinsun.tools")
 
+# 工具回傳長度上限（字）。工具回傳的字串會整段進模型的 context——一則長文或一份文件
+# 就能把當輪的 context 灌爆、拖慢整輪，而模型真正要的通常只是前面那幾句。
+# 截斷處明講被截斷，模型才不會把半句話當成完整答案。
+TOOL_OUTPUT_MAX_CHARS = 2000
+_TRUNCATED_SUFFIX = "…（內容過長已截斷）"
+
 
 @dataclass(frozen=True)
 class ToolInvocationContext:
@@ -46,8 +52,25 @@ class ToolRegistry:
         handler = self._handlers.get(name)
         if handler is None:
             return f"（找不到工具：{name}）"
+        # 參數型別守門（2026-07-27）：模型偶爾會把整包參數送成字串或清單。讓 handler
+        # 自己去炸，得到的是 `'str' object has no attribute 'get'` 這種對模型毫無幫助的
+        # 英文例外——先擋在門口，回一句它看得懂的話。
+        if not isinstance(arguments, dict):
+            logger.warning("工具參數不是物件：%s（%s）", name, type(arguments).__name__)
+            return "（工具參數格式不對，要用物件。請重新組一次參數。）"
         try:
-            return handler(arguments, context)
-        except Exception:  # noqa: BLE001 - 工具失敗不可中斷對話
+            output = handler(arguments, context)
+        except Exception as exc:  # noqa: BLE001 - 工具失敗不可中斷對話
             logger.exception("工具執行失敗：%s", name)
-            return "（工具執行失敗，請稍後再試）"
+            # ⚠️ 只回**例外類型名**，不回訊息（2026-07-27）：訊息可能是 Python 的英文原文
+            # （實測 `'<=' not supported between instances of 'int' and 'str'`），它會整段
+            # 進模型 context，最壞的情況是金孫照著唸給長輩聽。類型名對排查夠用，
+            # 完整訊息去 logger.exception 與 Opik 查。
+            #
+            # 也不再說「請稍後再試」——工具迴圈沒有重複偵測，那句話等於在教模型原封
+            # 重打同樣的參數，白燒一輪迭代。
+            return f"（工具執行失敗：{type(exc).__name__}。不要用同樣參數再試一次。）"
+        if len(output) > TOOL_OUTPUT_MAX_CHARS:
+            logger.warning("工具回傳過長已截斷：%s（%d 字）", name, len(output))
+            return output[:TOOL_OUTPUT_MAX_CHARS] + _TRUNCATED_SUFFIX
+        return output

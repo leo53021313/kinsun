@@ -39,6 +39,12 @@ class _FakeLLM:
 
 
 def _build_app(monkeypatch):
+    # ⚠️ 擋掉 build_app 內的 load_dotenv（2026-07-27）：它會把正式 .env 的 106 個鍵灌回
+    # **整個測試行程**，而且汙染後面所有測試——conftest 的密封在這一行前功盡棄。
+    # 這正是 ASR_BACKEND 洩漏的機制：`_REQUIRED_ENV` 覆寫了 TTS_BACKEND 卻沒覆寫
+    # ASR_BACKEND，於是 .env 的 `dgx` 生效，單元測試真的建出指向正式 DGX 的
+    # DgxAsrClient。守門的是 test_conftest_hermetic.py 與 conftest 的 pytest_sessionfinish。
+    monkeypatch.setattr(app_module, "load_dotenv", lambda: None)
     for key, value in _REQUIRED_ENV.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setattr(

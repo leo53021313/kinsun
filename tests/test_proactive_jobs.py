@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
+from kinsun.cron.registry import GREETING_SCAN_CRON
 from kinsun.proactive.jobs import build_greeting_job, build_inactivity_job
 from kinsun.proactive.preferences import FakeGreetingPreferenceStore, GreetingPreference
 
@@ -31,6 +32,7 @@ def _greeting_job(
         prefs=FakeGreetingPreferenceStore() if prefs is _DEFAULT_PREFS else prefs,
         greeted_today=greeted_today,
         clock=lambda: datetime(2026, 7, 16, at[0], at[1], tzinfo=TPE),
+        cron=GREETING_SCAN_CRON,
     )
 
 
@@ -67,12 +69,6 @@ def test_greeting_isolates_failure():
 
     _greeting_job(sessions=lambda: ["u1", "u2"], greet_one=greet_one).run()
     assert greeted == ["u2"]
-
-
-def test_the_greeting_job_scans_every_half_hour():
-    """每位長輩的問候時間對齊半點（spec 2026-07-16），故掃描頻率必須是半小時。"""
-    job = _greeting_job(sessions=lambda: [], greet_one=lambda _e: None)
-    assert job.cron == "0,30 * * * *"
 
 
 def test_it_greets_once_her_preferred_time_has_passed():
@@ -207,7 +203,7 @@ def test_inactivity_only_cares_for_stale():
         clock=lambda: NOW,
         threshold_seconds=2 * 86400,
         care_one=cared.append,
-        hour=10,
+        cron="0 10 * * *",
     )
     job.run()
     assert cared == ["u1"]
@@ -228,7 +224,7 @@ def test_inactivity_isolates_failure():
         clock=lambda: NOW,
         threshold_seconds=2 * 86400,
         care_one=care_one,
-        hour=10,
+        cron="0 10 * * *",
     ).run()
     assert cared == ["u2"]
 
@@ -302,3 +298,94 @@ def test_greeting_intent_caps_interests_at_three():
         interests=("一", "二", "三", "第四筆不該出現"),
     )
     assert "第四筆不該出現" not in intent
+
+
+# --- 補問候的時限（2026-07-26 全流程模擬實測：排程停擺一天後在夜裡重啟）---
+
+
+def test_it_does_not_greet_at_night_after_a_whole_day_of_downtime():
+    """⚠️ 這是實測踩到的傷害：排程器停擺整天，晚上九點半重新啟動。
+
+    「已過她的時間且今天沒問候過」這條規則，會對當天所有沒被問候的長輩送出
+    一句「早安」——正式環境當時有 64 位長輩。一句遲到十三小時的早安比沒有更糟。
+    """
+    greeted = []
+    _greeting_job(
+        sessions=lambda: ["e1"],
+        greet_one=greeted.append,
+        prefs=_prefs_at("e1", 8, 0),
+        at=(21, 30),
+    ).run()
+    assert greeted == []
+
+
+def test_a_morning_restart_still_catches_up():
+    """時限不可以把既有的補問候能力關掉：上午恢復服務照樣補得到。"""
+    greeted = []
+    _greeting_job(
+        sessions=lambda: ["e1"],
+        greet_one=greeted.append,
+        prefs=_prefs_at("e1", 8, 0),
+        at=(11, 45),
+    ).run()
+    assert greeted == ["e1"]
+
+
+def test_the_delay_limit_is_measured_from_her_own_time_not_the_clock():
+    """時限是相對她自己的時間算的：偏好 6:00 的長輩在 10:30 已經超過四小時。"""
+    greeted = []
+    _greeting_job(
+        sessions=lambda: ["e1"],
+        greet_one=greeted.append,
+        prefs=_prefs_at("e1", 6, 0),
+        at=(10, 30),
+    ).run()
+    assert greeted == []
+
+
+def test_inactivity_care_is_not_pushed_at_night_after_downtime():
+    """⚠️ 同一個實測情境：排在早上十點的關懷，補跑時不可以在夜裡送出去。"""
+    cared = []
+    night = NOW.replace(hour=21, minute=30)
+    build_inactivity_job(
+        sessions=lambda: ["u1"],
+        last_active=lambda _s: (NOW - timedelta(days=3)).timestamp(),
+        clock=lambda: night,
+        threshold_seconds=2 * 86400,
+        care_one=cared.append,
+        cron="0 10 * * *",
+    ).run()
+    assert cared == []
+
+
+def test_inactivity_care_still_goes_out_during_the_day():
+    """白天恢復服務照樣關心得到——安靜時段擋的是夜裡，不是「晚了」。"""
+    cared = []
+    noon = NOW.replace(hour=13, minute=0)
+    build_inactivity_job(
+        sessions=lambda: ["u1"],
+        last_active=lambda _s: (NOW - timedelta(days=3)).timestamp(),
+        clock=lambda: noon,
+        threshold_seconds=2 * 86400,
+        care_one=cared.append,
+        cron="0 10 * * *",
+    ).run()
+    assert cared == ["u1"]
+
+
+def test_inactivity_care_survives_midnight():
+    """⚠️ 跨午夜的坑：早期寫法拿時分做減法，凌晨 01:30 減 10:00 得到 -570，
+    小於任何上限都會被判成「還在時限內」→ 長輩凌晨收到「我很想你」。
+    夜間重啟正是最常見的重啟時段，這一格才是護欄最該擋住的。
+    """
+    cared = []
+    after_midnight = (NOW + timedelta(days=1)).replace(hour=1, minute=30)
+    build_inactivity_job(
+        sessions=lambda: ["u1"],
+        last_active=lambda _s: (NOW - timedelta(days=3)).timestamp(),
+        clock=lambda: after_midnight,
+        threshold_seconds=2 * 86400,
+        care_one=cared.append,
+        cron="0 10 * * *",
+    ).run()
+    assert cared == []

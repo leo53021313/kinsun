@@ -25,6 +25,7 @@ from kinsun.news.mentions import NewsMentionStore
 from kinsun.news.models import NewsItem
 from kinsun.news.store import NewsError, NewsStore
 from kinsun.tools.registry import ToolInvocationContext
+from kinsun.turn_context import record_source
 
 logger = logging.getLogger("kinsun.tools.news")
 
@@ -148,6 +149,19 @@ class LocationStoreLike(Protocol):
     def get_for_elder(self, elder_id: str) -> object | None: ...
 
 
+def _as_text(value) -> str:
+    """把模型送來的文字參數轉成字串。
+
+    ⚠️ 實測：模型偶爾把 `topic` 送成清單（`["健康"]`），原本的 `(value or "").strip()`
+    會拋 `AttributeError: 'list' object has no attribute 'strip'`，被 registry 的
+    except 吞成一句「工具執行失敗」——長輩問了新聞卻拿不到，而且查不出原因。
+    非字串一律 `str()` 後再 strip，能救的就救。
+    """
+    if value is None:
+        return ""
+    return (value if isinstance(value, str) else str(value)).strip()
+
+
 def build_news_handler(
     store: NewsStore,
     *,
@@ -168,7 +182,7 @@ def build_news_handler(
         if items is None:
             return _FAILURE_REPLY
         items = _drop_blocked(items, blocked)
-        topic = (arguments.get("topic") or "").strip()
+        topic = _as_text(arguments.get("topic"))
         if topic:
             items = [i for i in items if topic in i.title or topic in i.content]
         elder_id = context.elder_id if context else ""
@@ -190,6 +204,10 @@ def build_news_handler(
             picked = pool
         chosen = sorted(local_hits + picked, key=_freshness, reverse=True)
         _record_mentions(mentions, elder_id, chosen, clock=clock)
+        # 本輪來源登記（2026-07-26 實測 S4）：媒體名是真的來源，金孫轉述時講出來
+        # 屬合法引用，出站的冒名防線不該攔它。
+        for item in chosen:
+            record_source(item.publisher)
         lines = [f"（{_sanitize(i.publisher, 30)}）{_sanitize(i.title, 100)}" for i in chosen]
         return "最近的新聞有：" + "；".join(lines) + "。"
 
@@ -208,7 +226,7 @@ def build_news_detail_handler(
     blocked = _parse_blocked(blocked_keywords)
 
     def handler(arguments: dict, context: ToolInvocationContext | None = None) -> str:
-        query = (arguments.get("title") or "").strip()
+        query = _as_text(arguments.get("title"))
         if not query:
             return "（請告訴我想聽哪一則新聞的標題）"
         items = _load_recent(store, clock=clock, window_days=window_days)
@@ -221,6 +239,7 @@ def build_news_detail_handler(
             return f"（找不到標題有「{shown}」的新聞，可以先用 get_news 看看最近有哪些）"
         elder_id = context.elder_id if context else ""
         _record_mentions(mentions, elder_id, [match], clock=clock)
+        record_source(match.publisher)
         title = _sanitize(match.title, 100)
         publisher = _sanitize(match.publisher, 30)
         content = _sanitize(match.content, max_chars)

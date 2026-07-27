@@ -67,7 +67,11 @@ BINDING_DDL = (
 
 SCHEDULER_DDL = (
     "CREATE TABLE IF NOT EXISTS scheduler_state ("
-    "job_name TEXT PRIMARY KEY, last_run_at DOUBLE PRECISION NOT NULL);"
+    "job_name TEXT PRIMARY KEY, last_run_at DOUBLE PRECISION NOT NULL, "
+    "last_success_at DOUBLE PRECISION);"
+    # last_success_at 可為 NULL＝「還沒成功過」，與「失敗」是兩回事——舊列升級後一律
+    # 為 NULL，後台必須顯示成「未知」而不是紅字，否則第一次部署整排變紅。
+    "ALTER TABLE scheduler_state ADD COLUMN IF NOT EXISTS last_success_at DOUBLE PRECISION;"
 )
 
 # 認證節流共享計數（✅ 庚-08／A-54）：多 worker 共用同一滑動視窗，避免 per-process
@@ -251,15 +255,21 @@ REMINDER_LOGS_RESPONDED_MIGRATION_DDL = (
 
 # 危急通知送達紀錄（✅ D-36，丙-7）：每位家屬成功／失敗獨立留痕。
 # channels 記實際走的通道（✅ 庚-16，逗號串接）；App＝落庫待拉取、非真送達。
+# outcome 記「為什麼沒送到」（2026-07-27）：sent／no_route／failed。`delivered` 答不出
+# 這件事，而未綁通道（常態）與送出失敗（故障）的處置完全不同——見 deliveries.py。
+# 舊列的 outcome 為 ''（未分類），失敗告警保守計入。
 RISK_NOTIFICATION_LOGS_DDL = (
     "CREATE TABLE IF NOT EXISTS risk_notification_logs ("
     "risk_notification_log_id TEXT PRIMARY KEY, elder_id TEXT NOT NULL, "
     "guardian_id TEXT NOT NULL, tier INTEGER NOT NULL, delivered BOOLEAN NOT NULL, "
-    "created_at DOUBLE PRECISION NOT NULL, channels TEXT NOT NULL DEFAULT '');"
+    "created_at DOUBLE PRECISION NOT NULL, channels TEXT NOT NULL DEFAULT '', "
+    "outcome TEXT NOT NULL DEFAULT '');"
     "CREATE INDEX IF NOT EXISTS idx_risk_notification_logs_elder_created "
     "ON risk_notification_logs (elder_id, created_at);"
     "ALTER TABLE risk_notification_logs "
     "ADD COLUMN IF NOT EXISTS channels TEXT NOT NULL DEFAULT '';"
+    "ALTER TABLE risk_notification_logs "
+    "ADD COLUMN IF NOT EXISTS outcome TEXT NOT NULL DEFAULT '';"
 )
 
 # App 內通知（✅ D-12，甲-6）：App 出站 adapter 落地訊息，登入後拉取。
@@ -442,8 +452,31 @@ ELDER_GUARDIANS_TRANSCRIPT_COLUMN_RETIRE_DDL = (
 SCHEMA_MIGRATION_LOCK_KEY = 4_242_001
 
 
+# 連線層存活設定（2026-07-26 全流程模擬實測抓到的排程器假死）──
+#
+# 現場：排程程序活著、CPU 幾乎零、日誌零成長，但每分鐘該跑的 job 停在七小時前；
+# `ss -tnp` 顯示它與 Supabase 的連線 `Recv-Q=11988`——收到資料卻沒有人讀。
+# 那是一條對端已經不在、而本地毫不知情的 TCP 連線；沒有 keepalive，作業系統
+# 永遠不會告訴我們，psycopg 就一直等下去。整個排程（含用藥提醒）因此靜默停擺。
+#
+# ⚠️ 伺服器端的 statement_timeout 救不了這種情形——回應根本到不了，不是查詢跑太久。
+# （實測附帶結論：Supabase 的 Supavisor 會把連線的 statement_timeout 覆寫成自己的
+# 2 分鐘，`options="-c statement_timeout=..."` 送過去不會報錯但也不會生效，故不設。）
+#
+# keepalives_idle=30＋interval=10＋count=3：閒置 30 秒開始探測，最多 3 次、每次
+# 間隔 10 秒——約一分鐘內就會讓死連線變成一個**看得見的錯誤**，而不是無限期的等待。
+# 錯誤有人接（排程器每個 job 各自 try／except 並記 log），下一個 tick 就會重試。
+_KEEPALIVE_KWARGS: dict[str, int] = {
+    "connect_timeout": 10,
+    "keepalives": 1,
+    "keepalives_idle": 30,
+    "keepalives_interval": 10,
+    "keepalives_count": 3,
+}
+
+
 def connect(database_url: str) -> psycopg.Connection:
-    return psycopg.connect(database_url)
+    return psycopg.connect(database_url, **_KEEPALIVE_KWARGS)
 
 
 def ensure_schema(database_url: str) -> None:
@@ -533,7 +566,18 @@ class Database:
 
     @classmethod
     def open(cls, url: str, *, min_size: int = 1, max_size: int = 5) -> Database:
-        return cls(ConnectionPool(url, min_size=min_size, max_size=max_size, open=True))
+        # kwargs：每條池內連線都開 TCP keepalive（見 _KEEPALIVE_KWARGS 的實測來由）。
+        # 沒有它，對端消失的連線會讓借到它的人無限期等待——排程器就是這樣靜默停擺
+        # 七小時而狀態頁還顯示 RUNNING。
+        return cls(
+            ConnectionPool(
+                url,
+                min_size=min_size,
+                max_size=max_size,
+                open=True,
+                kwargs=_KEEPALIVE_KWARGS,
+            )
+        )
 
     def close(self) -> None:
         self._pool.close()

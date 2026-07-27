@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from kinsun.agent import FALLBACK_REPLY, CareAgent
+from kinsun.agent import NOT_HEARD_REPLY, CareAgent
 from kinsun.llm import LLMError, Message, report_llm_usage
 from kinsun.pipeline import VoicePipeline
 from kinsun.reports.reminders import REMINDER_KIND_MEDICATION
@@ -121,7 +121,7 @@ def test_pipeline_empty_transcript_short_circuits_to_fallback():
         risk_events=FakeRiskEventStore(),
     )
     result = pipeline.process(b"\x00", elder_id="u1")
-    assert result.text == FALLBACK_REPLY
+    assert result.text == NOT_HEARD_REPLY
     assert result.transcript == ""
 
 
@@ -138,7 +138,7 @@ def test_pipeline_punctuation_only_transcript_short_circuits_to_fallback():
         risk_events=FakeRiskEventStore(),
     )
     result = pipeline.process(b"\x00", elder_id="u1")
-    assert result.text == FALLBACK_REPLY
+    assert result.text == NOT_HEARD_REPLY
     assert result.transcript == " ? ? ? ? ? ? ? ?"
 
 
@@ -211,7 +211,7 @@ def test_pipeline_writes_trace_io_on_empty_speech_fallback(monkeypatch):
     calls: list[dict] = []
     monkeypatch.setattr(tracing, "set_current_trace_io", lambda **kw: calls.append(kw))
     _pipeline(StubDetector(RiskTier.L0), SpyNotifier()).process_text("", elder_id="u1")
-    assert calls == [{"user_input": "", "assistant_output": FALLBACK_REPLY}]
+    assert calls == [{"user_input": "", "assistant_output": NOT_HEARD_REPLY}]
 
 
 class BoomLLM:

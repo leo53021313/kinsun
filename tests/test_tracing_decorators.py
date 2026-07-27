@@ -1,5 +1,6 @@
 from kinsun import tracing
 from kinsun.tracing import client as tracing_client
+from kinsun.tracing import decorators as tracing_decorators
 
 
 def test_track_is_identity_when_disabled():
@@ -30,6 +31,50 @@ def test_track_defers_enable_check_to_call_time(monkeypatch):
     monkeypatch.setattr(opik, "track", lambda **kw: lambda f: f)
     monkeypatch.setattr(tracing_client, "is_enabled", lambda: True)
     assert g(41) == 42
+
+
+def test_track_forwards_ignore_arguments_to_opik(monkeypatch):
+    """⚠ 沒有這條轉出，含金鑰的 span 就只能整個關掉輸入（見 tools/web_search.py）。
+
+    opik 的 `extract_inputs` 會自動 pop 掉 `self`／`cls`，但**不會**認得 api_key
+    這種一般參數——實測 `extract_inputs(f, ("HTTP", "SECRET", "天氣"), {})` 原樣回傳
+    `api_key`。要一邊看得到 query、一邊不把金鑰送進 Opik，只能靠 ignore_arguments。
+    """
+    tracing_client.reset_for_test()
+    seen: list[dict] = []
+
+    import opik
+
+    monkeypatch.setattr(opik, "track", lambda **kw: (seen.append(kw), lambda f: f)[1])
+    # ⚠ 打在 decorators 上，不是 client：decorators.py 是 `from ... import is_enabled`，
+    # 名字已經綁進該模組，patch client 上的同名函式對它無效。
+    monkeypatch.setattr(tracing_decorators, "is_enabled", lambda: True)
+
+    @tracing.track(name="z", capture_input=True, ignore_arguments=["api_key"])
+    def h(http, api_key, query):
+        return query
+
+    assert h("HTTP", "SECRET", "天氣") == "天氣"
+    assert seen[0]["ignore_arguments"] == ["api_key"]
+    assert seen[0]["capture_input"] is True
+
+
+def test_track_omits_ignore_arguments_when_not_given(monkeypatch):
+    """未指定時不可傳 `ignore_arguments=None` 以外的東西進去，維持既有行為。"""
+    tracing_client.reset_for_test()
+    seen: list[dict] = []
+
+    import opik
+
+    monkeypatch.setattr(opik, "track", lambda **kw: (seen.append(kw), lambda f: f)[1])
+    monkeypatch.setattr(tracing_decorators, "is_enabled", lambda: True)
+
+    @tracing.track(name="z2")
+    def h2(a):
+        return a
+
+    h2(1)
+    assert seen[0]["ignore_arguments"] is None
 
 
 def test_tag_current_trace_noop_when_disabled():
