@@ -21,6 +21,7 @@ from kinsun.schedules.models import ScheduleKind
 from kinsun.strategies.facts import StrategyFacts
 from kinsun.tools.health_rag import HEALTH_RAG_SPEC
 from kinsun.tools.news import NEWS_DETAIL_SPEC, NEWS_SPEC
+from kinsun.tools.places import NEARBY_SPEC
 from kinsun.tools.schedules import CANCEL_SPEC, CREATE_SPEC, LIST_SPEC
 from kinsun.tools.transport import (
     BUS_ARRIVAL_SPEC,
@@ -57,6 +58,8 @@ def test_assemble_core_agent_has_baseline_tools():
     # 最近新聞（get_news 讀自家 news_items 表，免金鑰一律註冊——D-74 後續）。
     # web_search（Tavily）與 TDX 三工具需金鑰，預設環境未設，故不在內。
     # 時間不在工具集（2026-07-25）：已改為每輪注入情境，見下一則測試。
+    # 附近地點（spec 2026-07-27）：places／locations 兩個 store 在 assemble_core
+    # 一律建構（不像 Tavily／TDX 需要金鑰），故也在無金鑰基線裡。
     core = _core()
     names = {spec.name for spec in core.agent._tools.specs()}
     assert names == {
@@ -69,6 +72,7 @@ def test_assemble_core_agent_has_baseline_tools():
         CREATE_SPEC.name,
         LIST_SPEC.name,
         CANCEL_SPEC.name,
+        NEARBY_SPEC.name,
     }
 
 
@@ -139,6 +143,25 @@ def test_build_tool_registry_skips_web_search_without_key():
     # 優雅降級（spec 2026-07-14）：金鑰未設時金孫少一個工具，其餘功能照常運作。
     registry = build_tool_registry(clock=_clock, rag_service=object(), tavily_api_key="")
     assert WEB_SEARCH_SPEC.name not in {spec.name for spec in registry.specs()}
+
+
+def test_nearby_tool_registered_when_stores_present():
+    from kinsun.locations.store import FakeLocationStore
+    from kinsun.places.store import FakePlaceStore
+
+    registry = build_tool_registry(
+        clock=_clock,
+        rag_service=object(),
+        places=FakePlaceStore(),
+        locations=FakeLocationStore(),
+    )
+    assert NEARBY_SPEC.name in {spec.name for spec in registry.specs()}
+
+
+def test_nearby_tool_skipped_without_stores():
+    # 優雅降級：沒有 store 就不註冊，其餘工具照常運作。
+    registry = build_tool_registry(clock=_clock, rag_service=object())
+    assert NEARBY_SPEC.name not in {spec.name for spec in registry.specs()}
 
 
 def test_care_agent_constructed_only_in_composition():

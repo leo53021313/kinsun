@@ -29,7 +29,7 @@ from kinsun.config import Settings
 from kinsun.db import Database, ensure_schema
 from kinsun.llm import GeminiClient, LLMClient
 from kinsun.locations.facts import LocationFacts
-from kinsun.locations.store import PgLocationStore
+from kinsun.locations.store import LocationStore, PgLocationStore
 from kinsun.memory.longterm.mem0_factory import build_mem0_memory
 from kinsun.memory.longterm.store import Mem0LongTermStore
 from kinsun.memory.recall import SessionMemory
@@ -38,6 +38,7 @@ from kinsun.news.mentions import NewsMentionStore, PgNewsMentionStore
 from kinsun.news.store import NewsStore, PgNewsStore
 from kinsun.notifications.store import PgAppNotificationStore
 from kinsun.observability.store import PgTraceStore
+from kinsun.places.store import PgPlaceStore, PlaceStore
 from kinsun.proactive.preferences import PgGreetingPreferenceStore
 from kinsun.rag.embeddings import GeminiEmbeddingModel
 from kinsun.rag.retriever import HealthEducationRetriever
@@ -60,6 +61,7 @@ from kinsun.tools.news import (
     build_news_detail_handler,
     build_news_handler,
 )
+from kinsun.tools.places import NEARBY_SPEC, build_nearby_handler
 from kinsun.tools.registry import ToolRegistry
 from kinsun.tools.schedules import (
     CANCEL_SPEC,
@@ -78,9 +80,11 @@ from kinsun.tools.transport import (
     build_mrt_line_handler,
     build_parking_handler,
     build_route_handler,
+    geocode,
 )
 from kinsun.tools.weather import WEATHER_SPEC, build_weather_handler
 from kinsun.tools.web_search import WEB_SEARCH_SPEC, build_web_search_handler
+from kinsun.transport import HttpxTransport
 
 
 @dataclass(frozen=True)
@@ -165,6 +169,11 @@ def build_tool_registry(
     news_locations: PgLocationStore | None = None,
     news_blocked_keywords: str = "",
     schedules: ScheduleService | None = None,
+    places: PlaceStore | None = None,
+    locations: LocationStore | None = None,
+    # 與 LocationFacts 共用同一個設定值；此預設鏡射 .env.example 的
+    # LOCATION_STALE_AFTER_HOURS=2，正式組裝一律由 settings 明確傳入。
+    location_stale_after_hours: int = 2,
 ) -> ToolRegistry:
     """集中組工具：日後新增工具只改這裡，兩個組裝根自動都有。"""
     registry = ToolRegistry()
@@ -205,6 +214,20 @@ def build_tool_registry(
     )
     # 路線走免金鑰的 OSRM，永遠註冊。
     registry.register(ROUTE_SPEC, build_route_handler())
+    # 附近地點（spec 2026-07-27）：兩個 store 都有才註冊——沒有位置就查不了「附近」，
+    # 註冊一個永遠回「不知道你在哪」的工具只會浪費模型的迭代。
+    if places is not None and locations is not None:
+        registry.register(
+            NEARBY_SPEC,
+            build_nearby_handler(
+                places,
+                locations,
+                clock=lambda: clock().timestamp(),
+                stale_after_hours=location_stale_after_hours,
+                # 地名 → 座標沿用 transport.py 既有的 Nominatim 路徑，不另接服務。
+                resolve_place=lambda q: geocode(HttpxTransport(), q),
+            ),
+        )
     # 金鑰未設＝跳過註冊（優雅降級）：金孫少一個上網查證能力，其餘功能照常運作。
     if tavily_api_key:
         registry.register(WEB_SEARCH_SPEC, build_web_search_handler(tavily_api_key, lookups))
@@ -245,6 +268,9 @@ def assemble_core(
     )
     strategies = PgStrategyStore(db, clock=clock, new_id=new_id)
     locations = PgLocationStore(db)
+    # 附近地點（spec 2026-07-27）：search_nearby_places 工具讀，與 LocationFacts
+    # 共用同一個 locations、不另開連線。
+    places = PgPlaceStore(db)
     session = SessionMemory(
         memory,
         externals.long_term,
@@ -306,6 +332,9 @@ def assemble_core(
             news_locations=locations,
             news_blocked_keywords=settings.news_blocked_keywords,
             schedules=schedules,
+            places=places,
+            locations=locations,
+            location_stale_after_hours=settings.location_stale_after_hours,
         ),
     )
     notifications = PgAppNotificationStore(db, clock=clock, new_id=new_id)
