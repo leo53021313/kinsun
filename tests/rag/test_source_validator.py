@@ -13,7 +13,7 @@ def test_approved_government_source_can_ingest():
 
 
 def test_conditional_source_can_ingest_for_noncommercial_demo():
-    source = SourceRegistry().get("health99")
+    source = SourceRegistry().get("cmuh")
 
     result = SourceValidator(content_policy=ContentPolicy.CLASSROOM_DEMO).validate(source)
 
