@@ -55,6 +55,33 @@ def test_chiropractic_rejects_real_unwanted_shops(name):
     assert not matches("chiropractic", name, overture_category=None)
 
 
+def test_chiropractic_會館_排除詞_必須_攔住_美容spa():
+    """艾沐經絡美學會館是真實案例（全台 40 家類似店）。
+
+    含納入詞「經絡」✓、不含「舒壓」「油壓」「美容」⚠️ 都不含，只有「美學」（不是「美容」）。
+    但排除詞「會館」必須一票否決——她是美容／SPA 會館，不是長輩要的推拿館。
+
+    這條測試駁斥審查員的異議「永和國術會館」不存在——實測全台 40 家命中者絕大多數正是要擋的。
+    """
+    assert not matches("chiropractic", "艾沐經絡美學會館", overture_category=None)
+
+
+def test_chiropractic_正規化_全形與夾空格():
+    """排除詞能被全形字與夾空格繞過，是安全漏洞。
+
+    `str.lower()` 不處理全形字元，也擋不住「舒 壓」這種夾空格的寫法。
+    正規化後須能擋住：全形舒壓、夾空格舒壓、全形加空格的組合。
+    """
+    # 全形舒壓（實測真的有店用全形）
+    assert not matches("chiropractic", "半天堂推拿舒壓院", overture_category=None)
+
+    # 夾空格舒壓
+    assert not matches("chiropractic", "半天堂推拿舒 壓院", overture_category=None)
+
+    # 混合全形空格與全形標點（常見於商家名）
+    assert not matches("chiropractic", "半天堂推拿　舒壓　院", overture_category=None)
+
+
 def test_restaurant_accepts_by_overture_category_without_keywords():
     # 餐廳靠 Overture 分類就夠，店名不必含「餐廳」二字。
     assert matches("restaurant", "佐野拉麵", overture_category="restaurant")

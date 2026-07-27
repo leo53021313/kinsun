@@ -12,7 +12,22 @@
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from dataclasses import dataclass
+
+_SPACES = re.compile(r"\s+")
+
+
+def _normalized(text: str) -> str:
+    """比對用的正規化字串：全形轉半形、去空白、轉小寫。
+
+    ⚠️ 這不是美化，是安全需求。chiropractic 的排除詞擋的是性產業招牌，而
+    `str.lower()` 不處理全形字元、也擋不住「舒 壓」這種夾空格的寫法。
+    中文商家名用全形標點與空白極為常見，不正規化等於把防線留一道門。
+    回傳值只用於比對，不改動 `name` 原值——那是要唸給長輩聽的。
+    """
+    return _SPACES.sub("", unicodedata.normalize("NFKC", text)).lower()
 
 
 @dataclass(frozen=True)
@@ -86,11 +101,13 @@ CATEGORIES: dict[str, CategorySpec] = {
             "整形", "美學", "醫學美容", "醫美", "減重", "瘦身", "植髮", "微整",
             "Aesthetic", "動物", "獸醫", "Veterinary",
         ),
+        # 不加「寵物」（2026-07-27 實測）：全台店名含「診所」且含「寵物」僅 2 家。
+        # 其中「保成中醫診所」只因標榜寵物友善會被誤殺——它是合法人類中醫診所。
     ),
     "chinese_medicine": CategorySpec(
         label="中醫",
         keywords=("中醫",),
-        exclude=("美學", "美容", "瘦小臉"),
+        exclude=("美學", "美容", "瘦小臉", "動物", "獸醫"),
     ),
     "dentist": CategorySpec(
         label="牙醫",
@@ -106,6 +123,10 @@ CATEGORIES: dict[str, CategorySpec] = {
         # 「男女時尚舒壓會館」——台灣性產業的常用招牌。全台掃描：油壓 227 筆、
         # 舒壓 460 筆、茶室 88 筆、阿公店 25 筆。
         # 改用整復類配方後五地全部 ≥11 家，且回傳長相乾淨。
+        #
+        # 「會館」保留（2026-07-27 實測）：命中整復關鍵字且含「會館」、不含舒壓油壓者
+        # 全台 40 家，絕大多數（艾沐經絡美學會館、瑞樂思芳香經絡會館等）正是要擋的
+        # 美容 SPA 足體按摩。審查員提議移除，但用真資料查過「永和國術會館」不存在。
         label_note="長輩問「附近哪裡可以按摩」時用這一類",
         keywords=("整復", "整骨", "國術館", "推拿", "經絡", "筋絡", "傷科"),
         exclude=(
@@ -127,7 +148,10 @@ CATEGORIES: dict[str, CategorySpec] = {
         label="廟",
         overture=("temple", "buddhist_temple", "taoist_temple"),
         keywords=("宮", "寺", "廟", "壇", "殿"),
-        exclude=("廟口",),
+        # 2026-07-27 實測，單字關鍵字全台命中 29,501 筆。其中誤配：
+        # 飯店 13、酒店 6、婚紗 4、百貨 9、餐廳 34、小吃 46、美食 41。
+        # 真例如「漢宮大飯店」「白宮大飯店」「宮賞藝術大飯店」。
+        exclude=("廟口", "飯店", "酒店", "婚紗", "百貨", "餐廳", "小吃", "美食", "咖啡"),
     ),
 }
 
@@ -146,9 +170,9 @@ def matches(category: str, name: str, *, overture_category: str | None) -> bool:
     spec = CATEGORIES.get(category)
     if spec is None:
         return False
-    lowered = name.lower()
-    if any(bad.lower() in lowered for bad in spec.exclude):
+    normalized = _normalized(name)
+    if any(_normalized(bad) in normalized for bad in spec.exclude):
         return False
     if overture_category and overture_category in spec.overture:
         return True
-    return any(good.lower() in lowered for good in spec.keywords)
+    return any(_normalized(good) in normalized for good in spec.keywords)
