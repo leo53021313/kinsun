@@ -13,7 +13,6 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
 
 from kinsun.llm import ToolSpec
@@ -22,8 +21,6 @@ from kinsun.places.categories import CATEGORIES, category_names
 from kinsun.places.refine import refine
 from kinsun.places.store import PlaceStore
 from kinsun.tools.registry import ToolInvocationContext
-
-logger = logging.getLogger("kinsun.tools.places")
 
 # 搜尋半徑。長輩座標在手機端已模糊到 0.01 度（約 1.1 公里），300 點蒙地卡羅實測
 # 顯示 1,200 公尺可找回真實 800 公尺內店家的 97%、1,600 公尺可找回 100%。

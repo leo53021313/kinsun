@@ -140,6 +140,54 @@ def test_unknown_category_is_rejected_without_echoing_input():
     assert "沒有這一類" in out
 
 
+def test_blank_elder_id_in_context_means_no_query():
+    """context 在但 elder_id 是空字串——與 context=None 同樣不可查。
+
+    這條與下面那條合起來封住「不知道是誰在講話卻仍去查位置」的兩種入口。
+
+    ⚠️ 位置刻意註冊在空字串這個 key 底下，而非沿用 `_wire()` 預設的 ELDER
+    （2026-07-27 覆核時發現並修正）：若沿用 `_wire()`，`locations.get_for_elder("")`
+    本來就查無此人、落回「不知道長輩在哪裡」，就算把 elder_id 的守門條件整段拿掉，
+    這條測試依然通過——測不出守門條件到底有沒有生效。位置準備在同一把 key 下，
+    才是真的在單獨測「拿掉 elder_id 守門」這件事。
+    """
+    place_store = FakePlaceStore()
+    place_store.save_many([_place("余宗益調理整復所", 25.0025, 121.5)])
+    locations = FakeLocationStore()
+    locations.save(ElderLocation("", "中和區", NOW, 25.0, 121.5))
+    handler = build_nearby_handler(
+        place_store,
+        locations,
+        clock=lambda: NOW,
+        stale_after_hours=2,
+        resolve_place=lambda q: None,
+    )
+    out = handler({"category": "chiropractic"}, ToolInvocationContext("t", "", False))
+    assert "余宗益調理整復所" not in out
+
+
+def test_location_without_coordinates_asks_instead_of_guessing():
+    """位置有地名但沒有座標——這是正式資料裡真實存在的情形。
+
+    `locations/store.py` 檔頭載明：PR #55 寫入的既有列沒有座標（ALTER 後為 NULL）。
+    那些列的 `place` 有值、`latitude`／`longitude` 是 None。此時必須開口問，
+    絕不可拿地名去猜座標——猜錯會把長輩指到別的城市。
+    """
+    place_store = FakePlaceStore()
+    place_store.save_many([_place("余宗益調理整復所", 25.0025, 121.5)])
+    locations = FakeLocationStore()
+    locations.save(ElderLocation(ELDER, "中和區", 1753600000.0))  # 只有地名，無座標
+    handler = build_nearby_handler(
+        place_store,
+        locations,
+        clock=lambda: NOW,
+        stale_after_hours=2,
+        resolve_place=lambda q: None,
+    )
+    out = handler({"category": "chiropractic"}, ToolInvocationContext("t", ELDER, False))
+    assert "余宗益調理整復所" not in out
+
+
 def test_no_context_means_no_query():
     handler = _wire([_place("余宗益調理整復所", 25.0025, 121.5)])
     out = handler({"category": "chiropractic"}, None)
