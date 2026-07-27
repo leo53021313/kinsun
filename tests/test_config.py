@@ -107,6 +107,31 @@ def test_load_settings_rejects_unknown_rag_content_policy():
         load_settings({**BASE_ENV, "RAG_CONTENT_POLICY": "public_demo"})
 
 
+# ── 語音後端白名單：打錯字必須啟動失敗，不可靜默降級 ──
+#
+# `build_asr_client` 對任何非 "dgx" 的值一律回 MockAsrClient，而它對任何音檔都回傳寫死的
+# 「今天天氣真好」。少打一個字母＝長輩每一句話都被聽成那句，金孫照著回，而且一行錯誤
+# 都不印。fail-fast 的門檻與 GEMINI_API_KEY 缺漏同級。
+
+
+@pytest.mark.parametrize("value", ["dgxx", "DGX2", "真的", " "])
+def test_load_settings_rejects_unknown_asr_backend(value):
+    with pytest.raises(ConfigError, match="ASR_BACKEND"):
+        load_settings({**BASE_ENV, "ASR_BACKEND": value})
+
+
+@pytest.mark.parametrize("value", ["bubbles", "dgx_", "真的"])
+def test_load_settings_rejects_unknown_tts_backend(value):
+    with pytest.raises(ConfigError, match="TTS_BACKEND"):
+        load_settings({**BASE_ENV, "TTS_BACKEND": value})
+
+
+@pytest.mark.parametrize(("raw", "expected"), [("DGX", "dgx"), (" dgx ", "dgx"), ("Mock", "mock")])
+def test_asr_backend_is_normalised_not_rejected(raw, expected):
+    """大小寫與前後空白是無害的變體，正規化即可——真正要擋的是拼錯的值。"""
+    assert load_settings({**BASE_ENV, "ASR_BACKEND": raw}).asr_backend == expected
+
+
 @pytest.mark.parametrize("value", ["不是 cron", "0 25 * * *", "* * *"])
 def test_load_settings_rejects_invalid_rag_refresh_cron(value):
     with pytest.raises(ConfigError, match="RAG_REFRESH_CRON"):

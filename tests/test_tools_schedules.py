@@ -16,6 +16,7 @@ from kinsun.tools.schedules import (
     build_create_handler,
     build_list_handler,
 )
+from kinsun.turn_context import elder_utterance
 
 TZ = ZoneInfo("Asia/Taipei")
 NOW = datetime(2026, 7, 25, 20, 0, tzinfo=TZ)
@@ -42,6 +43,16 @@ def service_and_store():
         return f"g{counter['n']}"
 
     return ScheduleService(store, clock=lambda: NOW, new_id=new_id), store
+
+
+@pytest.fixture(autouse=True)
+def _elder_spoke():
+    """本模組預設都在「長輩剛開口」的情境下跑——那是寫入型工具的前提（安全界線 4）。
+
+    要測沒開口的那一輪（主動關懷路徑），在測試裡自己用 `elder_utterance("")` 蓋掉。
+    """
+    with elder_utterance("阿嬤剛剛講的話"):
+        yield
 
 
 @pytest.fixture
@@ -188,6 +199,39 @@ def test_without_a_context_nothing_is_written(create, service_and_store):
     assert service.groups_for_elder("e1") == []
 
 
+# ── 安全界線 4：長輩沒開口的那一輪不得寫入 ──
+#
+# 主動關懷（`CareAgent.proactive`）也走工具迴圈，且把原話明確設為空字串。那一輪長輩
+# 根本沒說話，任何寫入都不可能得到他的同意。比照 `weather._is_from_elder` 的做法，
+# 防線放在工具內、以 `current_utterance()` 判定。
+
+
+def test_create_refuses_when_the_elder_never_spoke(create, service_and_store):
+    service, _ = service_and_store
+    with elder_utterance(""):  # 主動關懷路徑：agent.proactive 就是這樣設的
+        reply = create(_once_args("長輩沒答應的事"), CTX)
+    assert "沒有開口" in reply
+    assert service.groups_for_elder("e1") == []
+
+
+def test_cancel_refuses_when_the_elder_never_spoke(create, service_and_store):
+    service, _ = service_and_store
+    create(_once_args("去吃飯"), CTX)  # 長輩自己設的（autouse fixture 供原話）
+    with elder_utterance(""):
+        reply = build_cancel_handler(service)({"group_id": "g1"}, CTX)
+    assert "沒有開口" in reply
+    assert service.groups_for_elder("e1")[0].title == "去吃飯"  # 沒被取消
+
+
+def test_list_is_allowed_without_an_utterance(create, service_and_store):
+    """唯讀工具不受此界線約束——問候要看得到今天有什麼事才講得出話。"""
+    service, _ = service_and_store
+    create(_once_args("去吃飯"), CTX)
+    with elder_utterance(""):
+        reply = build_list_handler(service, clock=lambda: NOW)({}, CTX)
+    assert "去吃飯" in reply
+
+
 # ── 查詢 ──
 
 
@@ -250,3 +294,56 @@ def test_cannot_cancel_another_elders_schedule(create, service_and_store):
 def test_cancel_unknown_id_is_explained(create, service_and_store):
     service, _ = service_and_store
     assert "找不到" in build_cancel_handler(service)({"group_id": "nope"}, CTX)
+
+
+# ── 參數型別守衛（2026-07-27）──
+#
+# 實測：模型送 weekday="3"（字串）時，`timeparse` 的 `0 <= weekday <= 6` 會拋
+# TypeError，訊息是 Python 的英文原文 `'<=' not supported between instances of
+# 'int' and 'str'`——它會被包進工具回傳字串、餵回模型 context，最壞的情況是金孫
+# 照著唸給長輩聽。
+
+
+def test_string_weekday_is_coerced_not_exploded(create, service_and_store):
+    """模型送字串數字是常見行為，能轉就轉，不該讓長輩付代價。"""
+    service, _ = service_and_store
+    reply = create(
+        {"title": "上課", "kind": "custom", "repeat": "weekly", "time": "14:00", "weekday": "3"},
+        CTX,
+    )
+    assert "複誦" in reply
+    assert service.groups_for_elder("e1")[0].title == "上課"
+
+
+def test_unparseable_weekday_is_refused_in_plain_chinese(create, service_and_store):
+    """轉不動時要用白話拒絕，**不可**讓 Python 的英文例外原文流進模型 context。"""
+    service, _ = service_and_store
+    reply = create(
+        {
+            "title": "上課",
+            "kind": "custom",
+            "repeat": "weekly",
+            "time": "14:00",
+            "weekday": "禮拜三",
+        },
+        CTX,
+    )
+    assert "not supported" not in reply  # 英文例外原文
+    assert "instances of" not in reply
+    assert service.groups_for_elder("e1") == []
+
+
+def test_non_string_title_does_not_explode(create, service_and_store):
+    """模型偶爾把 title 送成清單；str() 已能吸收，這條守住不回歸。"""
+    service, _ = service_and_store
+    reply = create(
+        {
+            "title": ["去吃飯"],
+            "kind": "custom",
+            "repeat": "once",
+            "date": "2026-07-25",
+            "time": "21:00",
+        },
+        CTX,
+    )
+    assert "not supported" not in reply and "AttributeError" not in reply

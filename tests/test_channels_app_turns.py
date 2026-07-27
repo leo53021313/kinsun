@@ -1,5 +1,6 @@
 """App 對講機通道測試：POST /api/app/turns 收音檔、回文字＋語音 URL。"""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from itertools import count
 
@@ -404,3 +405,61 @@ def test_index_out_of_range_is_not_found():
 def test_chunk_endpoint_requires_an_elder_token():
     client, _, _, _ = _chunk_setup()
     assert client.get("/api/v1/turns/chunks/1").status_code == 401
+
+
+class _LoopWatchingAsr:
+    """記下自己是不是跑在事件迴圈的執行緒上。
+
+    `asyncio.get_running_loop()` 只有在「事件迴圈所在的執行緒」上才回傳得到迴圈；
+    在工作執行緒呼叫會丟 RuntimeError。這是「這段阻塞工作有沒有佔住事件迴圈」最
+    直接的判準——不依賴計時，不會偶爾紅一次。
+    """
+
+    def __init__(self) -> None:
+        self.on_event_loop: bool | None = None
+
+    def transcribe(self, audio: bytes, *, content_type: str) -> str:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            self.on_event_loop = False
+        else:
+            self.on_event_loop = True
+        return "阿公早安"
+
+
+def test_the_blocking_work_never_runs_on_the_event_loop():
+    """一輪對話的同步工作必須交給執行緒池，不可佔住事件迴圈。
+
+    這支端點是 async handler，但底下整段（進站上傳、ASR、Gemini、TTS、落庫）都是
+    同步阻塞呼叫。留在事件迴圈裡跑，整台後端一次就只服務得了一位長輩——2026-07-26
+    全流程模擬實測：一輪對話進行中，連 GET /healthz 都要等 2.89 秒，第二位長輩開口
+    得排隊，家屬 App 與觀測後台也一起卡住。
+    """
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    asr = _LoopWatchingAsr()
+    pipeline = VoicePipeline(
+        asr=asr,
+        agent=CareAgent(_EchoLLM(), _NullSession()),
+        tts=TextBubbleTts(),
+        detector=RiskDetector(_NullClassifier()),
+        notifier=_NullNotifier(),
+        risk_events=FakeRiskEventStore(),
+    )
+    app = FastAPI()
+    install_error_envelope(app)
+    app.include_router(
+        create_app_turns_router(
+            accounts=svc,
+            pipeline=pipeline,
+            gate=ConsentGate(svc),
+            voice=VoiceReplyDelivery(None, include_text=True),
+            new_id=lambda: "trace-1",
+            clock=lambda: NOW,
+        ),
+        prefix="/api/v1",
+    )
+
+    assert _post_audio(TestClient(app), token).status_code == 201
+    assert asr.on_event_loop is False, "對話管線跑在事件迴圈上，會把整台後端佔住"

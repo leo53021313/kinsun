@@ -26,7 +26,11 @@ from kinsun.channels.inbound import VoiceReplyDelivery
 from kinsun.channels.line.webhook import create_app
 from kinsun.composition import assemble_core, build_externals
 from kinsun.config import load_dotenv, load_settings
+from kinsun.cron.registry import job_specs
+from kinsun.cron.state import PgScheduleStateStore
+from kinsun.cron.worker import build_jobs
 from kinsun.llm import build_gemini_for
+from kinsun.logging_setup import setup_logging
 from kinsun.pipeline import VoicePipeline
 from kinsun.rag.releases import PgRagReleaseStore
 from kinsun.safety.classifier import LlmRiskClassifier
@@ -34,8 +38,6 @@ from kinsun.safety.deliveries import PgRiskNotificationLogStore
 from kinsun.safety.detector import RiskDetector
 from kinsun.safety.moderation import AbuseModerator, LlmAbuseClassifier
 from kinsun.safety.notifier import GuardianNotifier
-from kinsun.scheduler.state import PgScheduleStateStore
-from kinsun.scheduler.worker import build_jobs
 from kinsun.schedules.flow import ScheduleMenu
 from kinsun.speech.asr import build_asr_client
 from kinsun.speech.tts import build_tts_client
@@ -54,6 +56,10 @@ from kinsun.web.security import install_security_headers
 
 
 def build_app() -> FastAPI:
+    # ⚠️ 必須是第一行：在此之前發生的任何事（設定載入失敗、建表卡住）都印不出來。
+    # 這個行程原本完全沒有日誌設定，39 個 kinsun.* logger 的 INFO 全數丟棄——見
+    # logging_setup 的模組 docstring。
+    setup_logging()
     load_dotenv()
     settings = load_settings(os.environ)
     tz = ZoneInfo(settings.timezone)
@@ -235,10 +241,13 @@ def build_app() -> FastAPI:
         prefix="/api/v1/admin",
     )
     # 內測操作面（spec 2026-07-12 §3.4）：與 worker 共用同一份 job 清單。
+    # specs 是**全系統**的排程宣告（含跑在別的程序的 RAG 週更），jobs 只有本程序
+    # 綁得出執行體的那些——監控要看得到全部，手動觸發只能動得了自己這一份。
     app.include_router(
         create_admin_jobs_router(
             admin_api_key=settings.admin_api_key,
             internal_testing_enabled=settings.internal_testing_enabled,
+            specs=job_specs(settings),
             jobs=build_jobs(settings, core, clock=clock),
             schedule_state=PgScheduleStateStore(db, tz),
             accounts=core.accounts,

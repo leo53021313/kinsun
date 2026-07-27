@@ -257,3 +257,6 @@ data/mem0/
 evals/redteam/redteam.yaml
 evals/redteam/output.json
 evals/redteam/.promptfoo/
+
+# 外部參考用原始碼（clone 下來研究，不進版控）
+/ref/

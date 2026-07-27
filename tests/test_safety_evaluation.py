@@ -145,6 +145,18 @@ def test_shipped_dataset_loads_and_covers_all_tiers():
     assert tiers == {RiskTier.L0, RiskTier.L1, RiskTier.L2}
 
 
+def _block_dotenv(monkeypatch) -> None:
+    """擋掉 `_build_detector_assess` 內的 load_dotenv（2026-07-27）。
+
+    它是**函式內 import**，故要打在 `kinsun.config` 上而不是本模組屬性。不擋的話會把
+    正式 .env 的 106 個鍵灌回**整個測試行程**、汙染後面所有測試——與 test_app.py 同型，
+    由 conftest 的 pytest_sessionfinish 守住。
+    """
+    import kinsun.config
+
+    monkeypatch.setattr(kinsun.config, "load_dotenv", lambda *a, **k: None)
+
+
 def _set_required_env(monkeypatch) -> None:
     """`_build_detector_assess` 會跑 `load_settings`，缺任何一個必要鍵就拋 ConfigError。
 
@@ -177,6 +189,7 @@ def test_detector_builder_honours_model_override(monkeypatch):
             return ""
 
     monkeypatch.setattr("kinsun.llm.GeminiClient", _SpyGeminiClient)
+    _block_dotenv(monkeypatch)
     _set_required_env(monkeypatch)
 
     evaluation._build_detector_assess("gemini-3.5-pro")
@@ -197,6 +210,7 @@ def test_detector_builder_defaults_to_configured_safety_model(monkeypatch):
             return ""
 
     monkeypatch.setattr("kinsun.llm.GeminiClient", _SpyGeminiClient)
+    _block_dotenv(monkeypatch)
     _set_required_env(monkeypatch)
     monkeypatch.setenv("GEMINI_MODEL_SAFETY", "gemini-from-env")
 
