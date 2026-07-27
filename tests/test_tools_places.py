@@ -32,8 +32,13 @@ def _wire(places: list[Place], *, located: bool = True, recorded_at: float = 175
 
 def _place(name: str, lat: float, lon: float, category="chiropractic", **kw) -> Place:
     return Place(
-        place_id=f"{name}", name=name, latitude=lat, longitude=lon,
-        category=category, ingested_at=1753600000.0, **kw
+        place_id=f"{name}",
+        name=name,
+        latitude=lat,
+        longitude=lon,
+        category=category,
+        ingested_at=1753600000.0,
+        **kw,
     )
 
 
@@ -77,9 +82,7 @@ def test_asks_when_location_is_stale():
 
     門檻 2 小時＝LOCATION_STALE_AFTER_HOURS，與 LocationFacts 共用同一個設定。
     """
-    handler = _wire(
-        [_place("余宗益調理整復所", 25.0025, 121.5)], recorded_at=NOW - 3 * 3600
-    )
+    handler = _wire([_place("余宗益調理整復所", 25.0025, 121.5)], recorded_at=NOW - 3 * 3600)
     out = handler({"category": "chiropractic"}, ToolInvocationContext("t", ELDER, False))
     assert "余宗益調理整復所" not in out
 
@@ -172,7 +175,9 @@ def test_output_is_cleaned_and_warns_about_opening_hours():
         [
             _place(
                 "好安心藥局｜糖尿病照護、銀髮營養、健保特約藥局",
-                25.0025, 121.5, category="pharmacy",
+                25.0025,
+                121.5,
+                category="pharmacy",
             )
         ]
     )
@@ -248,3 +253,54 @@ def test_no_context_means_no_query():
     handler = _wire([_place("余宗益調理整復所", 25.0025, 121.5)])
     out = handler({"category": "chiropractic"}, None)
     assert "余宗益調理整復所" not in out
+
+
+def test_unresolvable_place_echo_is_truncated_and_has_no_newlines():
+    """⚠️ 工具回傳原封回顯模型傳來的 place，無長度上限（2026-07-28 審查發現）。
+
+    實測傳一個含換行、300 字的 place，整串原封出現在工具回傳開頭，會把真正的店家
+    清單擠出 registry.py 的 2000 字截斷視窗。修法是限長＋去換行，不是不回顯。
+    """
+    handler = _wire([_place("余宗益調理整復所", 25.0025, 121.5)])
+    long_place = ("壞\n心\n地\n名" * 100) + "但西門沒有出現在這裡"
+    out = handler(
+        {"category": "chiropractic", "place": long_place},
+        ToolInvocationContext("t", ELDER, False),
+    )
+    assert "\n" not in out
+    assert len(out) < 100
+
+
+def test_place_too_far_echo_is_truncated_and_has_no_newlines():
+    place_store = FakePlaceStore()
+    place_store.save_many([_place("台南的店", 23.047, 120.188, category="restaurant")])
+    locations = FakeLocationStore()
+    locations.save(ElderLocation(ELDER, "中和區", NOW, 25.0, 121.5))
+    handler = build_nearby_handler(
+        place_store,
+        locations,
+        clock=lambda: NOW,
+        stale_after_hours=2,
+        resolve_place=lambda q: (23.047, 120.188),  # 台南
+    )
+    long_place = "麥當勞" * 100 + "\n換行還在這裡"
+    out = handler(
+        {"category": "restaurant", "place": long_place},
+        ToolInvocationContext("t", ELDER, False),
+    )
+    assert "太遠" in out
+    assert "\n" not in out
+    assert len(out) < 150
+
+
+def test_place_center_label_echo_is_truncated_in_success_message():
+    """中心點仍要講出來（不可拿掉），但回顯的地名本身要限長。"""
+    handler = _wire([_place("西門町的店", 25.0425, 121.507, category="restaurant")])
+    long_place = "西門" + "很長的地名描述" * 50 + "\n多一行也不該出現"
+    out = handler(
+        {"category": "restaurant", "place": long_place},
+        ToolInvocationContext("t", ELDER, False),
+    )
+    assert "\n" not in out
+    assert "西門町的店" in out
+    assert len(out) < 200

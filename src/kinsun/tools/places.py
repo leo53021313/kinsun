@@ -49,6 +49,20 @@ _MAX_RESULTS = 5
 # 中心點」那道防線——所以那一道不可省。
 _MAX_PLACE_METERS = 50_000.0
 
+# `place` 回顯時的限長（2026-07-28 實測）：模型傳來的 place 沒有長度上限，也可能
+# 夾帶換行。這段字串會原封不動出現在工具回傳開頭，而 registry.py 對整段工具回傳只
+# 截 2000 字——實測傳一個含換行、300 字的 place，整串佔掉開頭，會把後面真正的店家
+# 清單擠出截斷視窗。限長不是不回顯：中心點仍要講出來（見 `_format` 的 docstring，
+# 那是先前一條 Critical 的修法），只是回顯的內容本身要有界。
+_PLACE_ECHO_MAX_CHARS = 20
+
+
+def _sanitize_place_echo(text: str) -> str:
+    """把要塞回工具回傳字串裡的 `place` 原文變安全：去換行＋限長。"""
+    collapsed = " ".join(text.split())
+    return collapsed[:_PLACE_ECHO_MAX_CHARS]
+
+
 _NO_ELDER = "（目前不知道是誰在講話，沒辦法查他附近有什麼）"
 _NO_LOCATION = "（不知道長輩現在在哪裡。請開口問他人在哪附近，不要自己猜。）"
 # ⚠️ 這一句是功能本體不是文案：Overture 的 operating_status 實測 923,241/923,297 為
@@ -152,7 +166,8 @@ def build_nearby_handler(
         if asked_place:
             resolved = resolve_place(asked_place)
             if resolved is None:
-                return f"（查不到「{asked_place}」這個地方，請問長輩是指哪裡。）"
+                echoed = _sanitize_place_echo(asked_place)
+                return f"（查不到「{echoed}」這個地方，請問長輩是指哪裡。）"
             center_lat, center_lon = resolved
             # 距離護欄：模型很容易把店名當地名傳進來，而地理編碼會照單全收
             # （實測「麥當勞」→ 台南，離中和 254 公里）。理由詳見 _MAX_PLACE_METERS。
@@ -161,8 +176,8 @@ def build_nearby_handler(
                 and distance_meters(location.latitude, location.longitude, center_lat, center_lon)
                 > _MAX_PLACE_METERS
             ):
-                return _PLACE_TOO_FAR.format(place=asked_place)
-            center_label = asked_place
+                return _PLACE_TOO_FAR.format(place=_sanitize_place_echo(asked_place))
+            center_label = _sanitize_place_echo(asked_place)
         else:
             # 界線 2：座標自己去取，取不到就開口問。
             if not has_fix:
