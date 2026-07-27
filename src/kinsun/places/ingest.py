@@ -18,10 +18,9 @@ release 2026-07-22.0 實測確認：`taxonomy.primary` 與舊 `categories.primar
     `taxonomy.primary`——代表 `categories.py` 原本就是照新欄位的粒度校準的。
   - `dentist` 在新欄位下已重新命名為 `dental_clinic`；`buddhist_temple` 重新
     命名為 `buddhist_place_of_worship`；`doctor`（舊欄位 1,006 筆）在新欄位下
-    完全沒有對應值（新欄位為 NULL）。這三類目前仍用舊值比對，實際上退化成
-    完全依賴中文店名關鍵字比對（`categories.py` 的 exclude／keywords 機制本來
-    就是主防線，見該檔案開頭說明），本次驗證未觀察到功能性缺口，但下次改版
-    複驗時應一併確認這幾個值是否有更新。
+    完全沒有對應值（新欄位為 NULL）。`categories.py` 已於 2026-07-27 校準為
+    新值（`clinic`／`dentist`／`temple` 三類），下次改版複驗時仍應一併確認
+    這幾個值是否再變動。
   - `basic_category` 是更粗的分類（全庫僅 243 種值），會讓 hair_salon／barber
     這類已校準的細分類全部併入 `personal_or_beauty_service`，故不採用。
 """
@@ -75,6 +74,19 @@ def _fetch_rows(release: str) -> list[tuple]:
     ).fetchall()
 
 
+def _require_env(key: str) -> str:
+    """比照 `rag/release_cli.py` 的既有慣例：缺環境變數就立刻用白話講清楚。
+
+    ⚠️ 為什麼要提早檢查（2026-07-27 審查）：原本直接寫 `os.environ["DATABASE_URL"]`，
+    而它在 `_fetch_rows()` **之後**才執行——操作者要等完整一趟 S3 全球掃描（實測 4.5
+    分鐘）跑完，才在最後一步吃到一個裸的 KeyError。
+    """
+    value = os.environ.get(key, "").strip()
+    if not value:
+        raise RuntimeError(f"缺少必要環境變數：{key}")
+    return value
+
+
 def _classify(name: str, overture_category: str | None) -> list[str]:
     """一家店可能同時屬於多類（拉麵店既是 restaurant 也是 noodles），故回傳清單。"""
     return [code for code in CATEGORIES if matches(code, name, overture_category=overture_category)]
@@ -87,6 +99,8 @@ def main() -> None:
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    # 先驗環境變數再開始抓（--dry-run 不寫庫，故不需要）。
+    database_url = "" if args.dry_run else _require_env("DATABASE_URL")
     logger.info("開始抽取 Overture release=%s", args.release)
     rows = _fetch_rows(args.release)
     logger.info("台灣範圍內共 %d 筆有店名的 POI", len(rows))
@@ -125,11 +139,23 @@ def main() -> None:
         return
 
     # Database.open 是全庫取得連線池的唯一入口（見 db.py 的 keepalive 說明）。
-    database = Database.open(os.environ["DATABASE_URL"])
+    database = Database.open(database_url)
     store = PgPlaceStore(database)
     for start in range(0, len(places), _BATCH):
         store.save_many(places[start : start + _BATCH])
         logger.info("已寫入 %d/%d", min(start + _BATCH, len(places)), len(places))
+
+    # 清掉這一輪沒有被寫到的舊列（2026-07-27 審查發現）。
+    #
+    # ⚠️ 沒有這一段的後果：本腳本只 upsert、從不刪除，於是「上個月符合分類、這個月
+    # 不符合」的店會永遠留在表裡。當我們修 categories.py 的規則（例如把誤配的
+    # 「全家旅店」從超商類拿掉）再重跑時，那些錯的列不會消失——長輩照樣被回一家旅館。
+    #
+    # ⚠️ 用「刪掉比本輪時間戳舊的」而不是先清空再寫：先 TRUNCATE 會有數分鐘的空窗，
+    # 期間長輩查什麼都查不到。這個做法沒有空窗，且只在全部寫入成功後才執行——
+    # 中途失敗就不刪，舊資料維持可用。
+    deleted = store.purge_older_than(now)
+    logger.info("清除本輪未涵蓋的舊列 %d 筆", deleted)
     logger.info("完成")
 
 
