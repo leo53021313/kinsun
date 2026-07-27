@@ -95,8 +95,30 @@ class PgPlaceStore:
         self._db = _Errors(db, lambda m: PlaceError(f"地點資料存取失敗：{m}"))
 
     def save_many(self, places: list[Place]) -> None:
+        """寫入（upsert）多筆地點。
+
+        ⚠️ 送進 Postgres 前先以 place_id 為鍵收斂成 last-wins，理由不是「避免
+        報錯」，是兩件更根本的事：
+
+        1. 合約等價性——本檔開頭明訂「Fake 與 Pg 兩個 adapter 必須對同一情境
+           給出相同結果」。FakePlaceStore.save_many 用 dict 賦值，同一次呼叫
+           內重複 place_id 天生就是 last-wins；若讓 Postgres 原生處理同一批
+           次的重複 place_id，ON CONFLICT DO UPDATE 在單一語句內不能對同一列
+           生效兩次，會丟 CardinalityViolation——兩個 adapter 對同一輸入給出
+           不同結果，就是違反合約，不是「效能規格外」的邊角案例。
+        2. 行為不得隨內部分塊大小飄移——會不會撞上這個錯誤，原本取決於兩筆
+           重複 place_id 是否剛好落在同一個 _SAVE_MANY_CHUNK_SIZE 分塊裡；
+           那是純內部實作細節，外部行為不該被它決定。
+           （這不是新增品質判斷：ON CONFLICT DO UPDATE 的「後者覆蓋前者」
+           語意，在分兩次呼叫 save_many() 時舊程式碼就已經在做——見
+           test_save_many_is_upsert_on_place_id。在同一批次內沿用同一套
+           語意只是把既有語意講完整；真正屬於 refine.py 的是「兩個不同
+           place_id 但語意上是同一家店該留誰」那種決策，層次不同。）
+        """
         if not places:
             return
+        # dict 保序（Python 3.7+），故同時保住「後者勝」與「其餘順序不變」。
+        places = list({place.place_id: place for place in places}.values())
         with self._db.transaction() as tx:
             for start in range(0, len(places), _SAVE_MANY_CHUNK_SIZE):
                 chunk = places[start : start + _SAVE_MANY_CHUNK_SIZE]
@@ -149,6 +171,8 @@ class FakePlaceStore:
         self._places: dict[str, Place] = {}
 
     def save_many(self, places: list[Place]) -> None:
+        # dict 賦值天生 last-wins：同一次呼叫內重複 place_id 時，後者覆蓋前者，
+        # 與 PgPlaceStore.save_many 收斂後的語意等價，無需另外處理。
         for place in places:
             self._places[place.place_id] = place
 

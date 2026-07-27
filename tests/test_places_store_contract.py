@@ -119,6 +119,26 @@ def test_save_many_is_upsert_on_place_id(store, ns):
     assert [n.place.name for n in got] == ["新名"]
 
 
+def test_save_many_last_wins_on_duplicate_place_id_within_one_call(store, ns):
+    # 同一次 save_many() 呼叫內傳入兩筆相同 place_id：FakePlaceStore 用 dict
+    # 賦值，天生 last-wins、不會出錯；PgPlaceStore 若讓 Postgres 原生處理同批次
+    # 重複 place_id，ON CONFLICT DO UPDATE 在單一語句內對同一列生效兩次會丟
+    # CardinalityViolation。兩個 adapter 對同一輸入必須給出相同結果（本檔開頭
+    # 合約），故 store 層須自行以 place_id 收斂成 last-wins，且不得受內部分塊
+    # 大小影響。
+    cat = f"{ns}restaurant"
+    store.save_many(
+        [
+            _place(ns, "a", 25.001, 121.5, cat, name="舊名"),
+            _place(ns, "a", 25.001, 121.5, cat, name="新名"),
+        ]
+    )
+    got = store.list_near(
+        latitude=ELDER_LAT, longitude=ELDER_LON, category=cat, radius_meters=1500
+    )
+    assert [n.place.name for n in got] == ["新名"]
+
+
 def test_optional_fields_round_trip(store, ns):
     cat = f"{ns}pharmacy"
     # ⚠️ postcode 帶 ns 前綴（不可用裸的 "235"）：這支測試曾是「兇手」——裸值
