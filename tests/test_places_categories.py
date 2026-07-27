@@ -82,6 +82,32 @@ def test_chiropractic_正規化_全形與夾空格():
     assert not matches("chiropractic", "半天堂推拿　舒壓　院", overture_category=None)
 
 
+def test_clinic_matches_new_taxonomy_overture_values():
+    # 2026-07-27 對正式庫查證：舊值 doctor／medical_clinic 是死碼（0 筆）。
+    assert matches("clinic", "隨便診所", overture_category="doctors_office")
+
+
+def test_dentist_matches_dental_clinic_overture_value():
+    # 舊值 dentist 在正式庫 0 筆，新 taxonomy 已更名為 dental_clinic。
+    assert matches("dentist", "TISS Dental Implant", overture_category="dental_clinic")
+
+
+def test_temple_matches_buddhist_place_of_worship_but_not_church():
+    # 只收佛教這一個值：christian_place_of_worship 是教會，長輩問廟答非所問。
+    assert matches("temple", "濟緣堂", overture_category="buddhist_place_of_worship")
+    assert not matches("temple", "主愛教會", overture_category="christian_place_of_worship")
+
+
+@pytest.mark.parametrize("name", ["全家旅店", "全家眼鏡公司-中和店"])
+def test_convenience_rejects_同名非超商行業(name):
+    # 「全家」太寬：2026-07-27 灌入後實查撈到旅館與眼鏡行，長輩問超商被回一家旅館。
+    assert not matches("convenience", name, overture_category=None)
+
+
+def test_convenience_accepts_full_brand_name():
+    assert matches("convenience", "全家便利商店-中和莒光店", overture_category=None)
+
+
 def test_restaurant_accepts_by_overture_category_without_keywords():
     # 餐廳靠 Overture 分類就夠，店名不必含「餐廳」二字。
     assert matches("restaurant", "佐野拉麵", overture_category="restaurant")

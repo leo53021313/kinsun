@@ -94,7 +94,17 @@ CATEGORIES: dict[str, CategorySpec] = {
     ),
     "clinic": CategorySpec(
         label="診所",
-        overture=("doctor", "medical_clinic"),
+        # ⚠️ 2026-07-27 對正式庫查證：舊值 doctor 與 medical_clinic 在新的
+        # taxonomy.primary 下**都是 0 筆**，等於這一軌是死碼、13,327 筆全靠中文關鍵字。
+        # 以下為新 schema 實際存在的值（dental_clinic 刻意不收——那是 dentist 這一類，
+        # 且本類的 exclude 本來就擋牙醫）。
+        overture=(
+            "doctors_office",
+            "pediatric_clinic",
+            "behavioral_or_mental_health_clinic",
+            "vision_or_eye_care_clinic",
+            "dialysis_clinic",
+        ),
         keywords=("診所", "醫療社團法人", "聯合診所"),
         exclude=(
             "牙醫", "牙科", "齒科", "Dental", "dental",
@@ -111,7 +121,10 @@ CATEGORIES: dict[str, CategorySpec] = {
     ),
     "dentist": CategorySpec(
         label="牙醫",
-        overture=("dentist",),
+        # ⚠️ 舊值 dentist 在新 schema 下 0 筆，已更名為 dental_clinic（實際 5,620 家）。
+        # 反向檢查：其中 242 家（4%）店名不含中文關鍵字，補上這個值才收得到——
+        # 例如「TISS Dental Implant」「謝尚廷植牙團隊」「Dada Dental」。
+        overture=("dental_clinic",),
         keywords=("牙醫", "牙科", "齒科"),
         exclude=("動物", "獸醫"),
     ),
@@ -130,7 +143,7 @@ CATEGORIES: dict[str, CategorySpec] = {
         label_note="長輩問「附近哪裡可以按摩」時用這一類",
         keywords=("整復", "整骨", "國術館", "推拿", "經絡", "筋絡", "傷科"),
         exclude=(
-            "舒壓", "油壓", "指壓", "美容", "美睫", "除毛", "寵物",
+            "舒壓", "油壓", "指壓", "美容", "美顏", "美體", "美睫", "除毛", "寵物",
             "做臉", "美甲", "會館", "護膚", "半套", "全套", "茶室", "阿公店",
         ),
     ),
@@ -142,15 +155,28 @@ CATEGORIES: dict[str, CategorySpec] = {
     "convenience": CategorySpec(
         label="超商",
         overture=("convenience_store",),
-        keywords=("7-ELEVEN", "統一超商", "全家", "萊爾富", "OK超商"),
+        # ⚠️ 「全家」不可單獨當關鍵字（2026-07-27 灌入後實查）：它是台灣很常見的店名開頭，
+        # 實際撈到「全家旅店」（旅館）與「全家眼鏡公司-中和店」（眼鏡行）。長輩問
+        # 「附近有超商嗎」被回一家旅館。改用全名，並補排除詞擋住其餘同名行業。
+        keywords=("7-ELEVEN", "7-11", "統一超商", "全家便利商店", "萊爾富", "OK超商", "OK MART"),
+        exclude=("旅店", "眼鏡", "旅館", "民宿", "診所", "餐廳", "牙醫"),
     ),
     "temple": CategorySpec(
         label="廟",
-        overture=("temple", "buddhist_temple", "taoist_temple"),
+        # ⚠️ 舊的三個值（temple／buddhist_temple／taoist_temple）在新 schema 下全是 0 筆。
+        # 反向檢查：宗教類分類命中 19,846 家，其中 8,371 家（42%）店名不含我們的關鍵字
+        # 而被靜默漏掉——「濟緣堂」「茄萣明悟堂」「大湖擇善佛堂」「唯心聖教湖內道場」。
+        #
+        # ⚠️ **只收佛教那一個值，不可把所有 *_worship 都加進來**：新 schema 裡最大宗是
+        # christian_place_of_worship（14,898 家），那是教會不是廟。長輩問「附近有廟可以
+        # 拜嗎」被回一堆教會，是答非所問。教會屬另一個類別（本輪未開放）。
+        overture=("buddhist_place_of_worship",),
         keywords=("宮", "寺", "廟", "壇", "殿"),
-        # 2026-07-27 實測，單字關鍵字全台命中 29,501 筆。其中誤配：
-        # 飯店 13、酒店 6、婚紗 4、百貨 9、餐廳 34、小吃 46、美食 41。
-        # 真例如「漢宮大飯店」「白宮大飯店」「宮賞藝術大飯店」。
+        # exclude 沿用 2026-07-27 稍早的實測結果：單字關鍵字全台命中 29,501 筆，其中
+        # 飯店 13、酒店 6、婚紗 4、百貨 9、餐廳 34、小吃 46、美食 41 家係誤配，真例如
+        # 「漢宮大飯店」「白宮大飯店」。這條是 overture_category 不吻合時的關鍵字後援，
+        # 與本次校準 overture 值無關，仍然需要防——任務書草稿曾把這裡簡化回只留
+        # ("廟口",)，那是舊草稿沒跟上這道排除詞的既有修正，本檔刻意不採用。
         exclude=("廟口", "飯店", "酒店", "婚紗", "百貨", "餐廳", "小吃", "美食", "咖啡"),
     ),
 }
