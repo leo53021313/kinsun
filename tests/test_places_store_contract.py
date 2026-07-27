@@ -123,18 +123,24 @@ def test_optional_fields_round_trip(store, ns):
 def test_list_postcodes_near_counts_all_categories(store, ns):
     # 行政區指紋的核心：母體是鄰域「全類別」POI，不受 category 過濾影響。
     # 只用候選集算佔比會讓 2% 門檻失效（一筆就可能超過 2%）。
+    #
+    # ⚠️ postcode 也必須帶 ns 前綴，不可用裸的 "235"。本檔其他測試在同一組座標寫入
+    # 過 postcode="235"，而 pg_database 是 session 級 fixture、不逐測試清空——
+    # 由於本方法**刻意不過濾 category**，靠 category 帶 ns 擋不住那些殘留列，
+    # 裸值會讓 counts["235"] 變成 3。真實環境的 postcode 是 3 碼，但那是 ingest 端的
+    # 產出慣例，資料表沒有長度限制，測試只需要值彼此不撞。
     store.save_many(
         [
-            _place(ns, "a", 25.001, 121.5, f"{ns}restaurant", postcode="235"),
-            _place(ns, "b", 25.002, 121.5, f"{ns}pharmacy", postcode="235"),
-            _place(ns, "c", 25.003, 121.5, f"{ns}restaurant", postcode="112"),
+            _place(ns, "a", 25.001, 121.5, f"{ns}restaurant", postcode=f"{ns}235"),
+            _place(ns, "b", 25.002, 121.5, f"{ns}pharmacy", postcode=f"{ns}235"),
+            _place(ns, "c", 25.003, 121.5, f"{ns}restaurant", postcode=f"{ns}112"),
         ]
     )
     counts = dict(
         store.list_postcodes_near(latitude=ELDER_LAT, longitude=ELDER_LON, radius_meters=1500)
     )
-    assert counts["235"] == 2
-    assert counts["112"] == 1
+    assert counts[f"{ns}235"] == 2
+    assert counts[f"{ns}112"] == 1
 
 
 def test_list_postcodes_near_ignores_rows_without_postcode(store, ns):
