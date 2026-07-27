@@ -35,7 +35,18 @@ _SPEAK_CUT = re.compile(
     r"[|｜/／,，、(（【\[★☆✦✧♡♥※◆◇▲△●○]|(?<![0-9A-Za-z])[-—–]|[-—–](?![0-9A-Za-z])"
 )
 _STEM_CUT = re.compile(r"[|｜/／,，、(（【\[]")
-_LINE_ID = re.compile(r"LINE\s*[:：]?\s*@?\w+", re.IGNORECASE)
+# ⚠️ 必須要求命中片段帶 `@` 或冒號，不可無條件吃掉「LINE」開頭的英文字（2026-07-28
+# 審查發現）：舊版 `r"LINE\s*[:：]?\s*@?\w+"` 沒有詞界，`\w+` 會吃進同一個英文單字裡
+# LINE 之後的字母——「Skyline Cafe」被切成「Sky」、「Online Cafe」被切成「On」、
+# 「Shopline Cafe」被切成「Shop」、「Celine Hair」被切成「Ce」。更嚴重的是真實店名
+# 「LINE Cafe」「Line Tea」「Line Up綫髮藝」會被整串清成空字串，接著在 `refine()`
+# 的 `if not name: continue` 被靜默丟棄——這是先前那條「回空字串等於把店抹掉」的
+# Critical 換一條路重演。新版只吃「LINE」／「LINE ID」後面接冒號的那一段（真正的
+# LINE 帳號都長這樣），或是獨立的 `@帳號`（前面不能接英數字，避免咬到品牌名裡的字）。
+# 對既有案例「力賀藥局LINE:@553oyqwx中和體重管理諮詢藥局」仍剝得乾淨。
+_LINE_ID = re.compile(
+    r"LINE\s*(?:ID)?\s*[:：]\s*@?\w+|(?<![A-Za-z0-9])@[A-Za-z0-9_]{3,}", re.IGNORECASE
+)
 _SEO_SYMBOLS = re.compile(r"[★☆✦✧♡♥※◆◇▲△●○]")
 # 只在 speakable_name 的 fallback 用（見該函式）：正常路徑切在左括號處，右括號本來
 # 就不會留下；fallback 是整串清理，不一起去掉會留下孤兒右括號。

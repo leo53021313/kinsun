@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from kinsun.places.models import NearbyPlace, Place
 from kinsun.places.refine import (
+    _stem,
     dedupe,
     drop_suspicious_coordinates,
     refine,
@@ -42,6 +43,28 @@ def test_speakable_name_strips_line_id():
     raw = "力賀藥局LINE:@553oyqwx中和體重管理諮詢藥局"
     assert "LINE" not in speakable_name(raw)
     assert "553oyqwx" not in speakable_name(raw)
+
+
+def test_speakable_name_does_not_mangle_english_names_containing_line():
+    """⚠️ 舊版 `_LINE_ID` 沒有詞界，`\\w+` 會吃進同一個英文單字裡「LINE」之後的字母。
+
+    實測：「Skyline Cafe」被切成「Sky」、「Online Cafe」被切成「On」、
+    「Shopline Cafe」被切成「Shop」、「Celine Hair」被切成「Ce」。
+    """
+    assert speakable_name("Skyline Cafe") == "Skyline Cafe"
+    assert speakable_name("Online Cafe") == "Online Cafe"
+    assert speakable_name("Shopline Cafe") == "Shopline Cafe"
+    assert speakable_name("Celine Hair") == "Celine Hair"
+
+
+def test_speakable_name_does_not_empty_out_real_line_branded_shops():
+    """⚠️ 更嚴重的舊版行為：真實店名「LINE Cafe」「Line Tea」「Line Up綫髮藝」
+    會被整串清成空字串，接著在 `refine()` 被靜默丟棄——長輩問附近有什麼，
+    這幾家真實存在的手搖飲／髮廊會直接從答案裡消失。
+    """
+    assert speakable_name("LINE Cafe") == "LINE Cafe"
+    assert speakable_name("Line Tea") == "Line Tea"
+    assert speakable_name("Line Up綫髮藝") == "Line Up綫髮藝"
 
 
 def test_speakable_name_cuts_parenthetical_notice():
@@ -110,9 +133,7 @@ def test_drop_suspicious_keeps_boundary_districts():
 def test_drop_suspicious_keeps_rows_without_postcode():
     # 已知漏網率約 8.6%：沒有郵遞區號就無從判斷，此時保留而非剔除——
     # 誤殺合法結果的代價高於放行一筆可能錯位的。
-    got = drop_suspicious_coordinates(
-        [_n("沒有郵遞區號的店", 300, postcode=None)], [("235", 600)]
-    )
+    got = drop_suspicious_coordinates([_n("沒有郵遞區號的店", 300, postcode=None)], [("235", 600)])
     assert len(got) == 1
 
 
@@ -134,11 +155,15 @@ def test_speakable_name_never_returns_empty_for_separator_leading_names():
 
 
 def test_dedupe_does_not_let_separator_leading_name_swallow_everything():
-    """⚠️ 這條守的是一個會讓長輩收到空答案的 Critical。
+    """⚠️ 這條守的是一個會讓長輩收到空答案的 Critical，但**真正擋住它的不是這條測試**。
 
-    店名以分隔符開頭時，主幹若切成空字串，而空字串是**任何字串的子字串**——
-    那一筆就變成萬用比對，把四十公尺內所有不相干的合法店家全部當成重複刪掉。
-    實測全台有 705 筆這種店名。
+    2026-07-28 複審以突變證明：同時拿掉 `_stem` 的 fallback 與 `_same_shop` 的
+    空字串守門，本檔 20 條測試照樣全綠——因為 `_MIN_STEM_FOR_CONTAINMENT` 的
+    `shorter < 4` 早已擋下空主幹（長度 0 永遠過不了門檻），這條測試測到的其實是
+    「短主幹去重門檻」而非「空主幹 fallback」。真正守住 fallback 的是
+    `test_stem_never_returns_empty_for_separator_leading_names`（見下）。
+    本測試仍保留：它守的是 dedupe 的最終行為（不因分隔符開頭的店名而誤刪鄰居），
+    即使原因是門檻而非 fallback，這個行為本身仍值得測。
     """
     got = dedupe(
         [
@@ -148,6 +173,15 @@ def test_dedupe_does_not_let_separator_leading_name_swallow_everything():
         ]
     )
     assert len(got) == 3
+
+
+def test_stem_never_returns_empty_for_separator_leading_names():
+    """真正守住 `_stem` 空字串 fallback 的測試（2026-07-28 補）。
+
+    拿掉 `_stem` 的 fallback（`head or _STEM_CUT.sub("", cleaned).strip()` 改回
+    只回傳 `head`）會讓這條測試變紅——已手動驗證過。
+    """
+    assert _stem("【麵匠】麵食堂-彌陀總店") != ""
 
 
 def test_dedupe_keeps_short_name_and_longer_unrelated_shop():
