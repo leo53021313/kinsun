@@ -20,6 +20,50 @@ _COLUMNS = (
     "place_id, name, latitude, longitude, category, overture_category, "
     "confidence, address, postcode, city, phone, ingested_at"
 )
+_COLUMN_COUNT = len(_COLUMNS.split(","))
+
+_UPSERT_SET_CLAUSE = (
+    "name = EXCLUDED.name, latitude = EXCLUDED.latitude, "
+    "longitude = EXCLUDED.longitude, category = EXCLUDED.category, "
+    "overture_category = EXCLUDED.overture_category, "
+    "confidence = EXCLUDED.confidence, address = EXCLUDED.address, "
+    "postcode = EXCLUDED.postcode, city = EXCLUDED.city, "
+    "phone = EXCLUDED.phone, ingested_at = EXCLUDED.ingested_at"
+)
+
+# PostgreSQL 單一語句的參數上限是 65535；本表 12 欄，理論上限每句 5461 列。
+# 取遠低於上限的保守值分塊——後續任務要把 20～30 萬筆 Overture 資料灌進遠端
+# Supabase，逐筆 execute（原寫法）等於 20～30 萬次網路往返＋20～30 萬次 commit，
+# 慢到不能用；改成單一交易內、每塊一句多列 INSERT，才把往返與 commit 次數
+# 從「列數」降到「列數 / 塊大小」。
+_SAVE_MANY_CHUNK_SIZE = 1000
+
+
+def _upsert_sql(row_count: int) -> str:
+    """依實際列數產生多列 VALUES 佔位符（值一律走參數化，不把資料拼進 SQL）。"""
+    row_placeholder = f"({', '.join(['%s'] * _COLUMN_COUNT)})"
+    values_clause = ", ".join([row_placeholder] * row_count)
+    return (
+        f"INSERT INTO places ({_COLUMNS}) VALUES {values_clause} "
+        f"ON CONFLICT (place_id) DO UPDATE SET {_UPSERT_SET_CLAUSE}"
+    )
+
+
+def _place_params(place: Place) -> tuple:
+    return (
+        place.place_id,
+        place.name,
+        place.latitude,
+        place.longitude,
+        place.category,
+        place.overture_category,
+        place.confidence,
+        place.address,
+        place.postcode,
+        place.city,
+        place.phone,
+        place.ingested_at,
+    )
 
 
 class PlaceError(Exception):
@@ -51,32 +95,13 @@ class PgPlaceStore:
         self._db = _Errors(db, lambda m: PlaceError(f"地點資料存取失敗：{m}"))
 
     def save_many(self, places: list[Place]) -> None:
-        for place in places:
-            self._db.execute(
-                f"INSERT INTO places ({_COLUMNS}) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
-                "ON CONFLICT (place_id) DO UPDATE SET "
-                "name = EXCLUDED.name, latitude = EXCLUDED.latitude, "
-                "longitude = EXCLUDED.longitude, category = EXCLUDED.category, "
-                "overture_category = EXCLUDED.overture_category, "
-                "confidence = EXCLUDED.confidence, address = EXCLUDED.address, "
-                "postcode = EXCLUDED.postcode, city = EXCLUDED.city, "
-                "phone = EXCLUDED.phone, ingested_at = EXCLUDED.ingested_at",
-                (
-                    place.place_id,
-                    place.name,
-                    place.latitude,
-                    place.longitude,
-                    place.category,
-                    place.overture_category,
-                    place.confidence,
-                    place.address,
-                    place.postcode,
-                    place.city,
-                    place.phone,
-                    place.ingested_at,
-                ),
-            )
+        if not places:
+            return
+        with self._db.transaction() as tx:
+            for start in range(0, len(places), _SAVE_MANY_CHUNK_SIZE):
+                chunk = places[start : start + _SAVE_MANY_CHUNK_SIZE]
+                params = tuple(value for place in chunk for value in _place_params(place))
+                tx.execute(_upsert_sql(len(chunk)), params)
 
     def list_near(
         self, *, latitude: float, longitude: float, category: str, radius_meters: float
@@ -86,7 +111,9 @@ class PgPlaceStore:
             f"SELECT * FROM (SELECT {_COLUMNS}, {_HAVERSINE_SQL} AS meters FROM places "
             "WHERE category = %s AND latitude BETWEEN %s AND %s "
             "AND longitude BETWEEN %s AND %s) t "
-            "WHERE meters <= %s ORDER BY meters",
+            # place_id 當 tie-breaker：PostgreSQL 對 meters 相同的列不保證穩定順序，
+            # 與 FakePlaceStore（Python 穩定排序＋同一組 key）維持合約等價。
+            "WHERE meters <= %s ORDER BY meters, place_id",
             (
                 latitude,
                 latitude,
@@ -139,7 +166,9 @@ class FakePlaceStore:
             for place, meters in self._within(latitude, longitude, radius_meters)
             if place.category == category
         ]
-        return sorted(found, key=lambda n: n.distance_meters)
+        # place_id 當 tie-breaker：與 PgPlaceStore 的 ORDER BY meters, place_id 對齊，
+        # 兩個 adapter 在距離相同時才會給出一致的順序（合約要求的等價性）。
+        return sorted(found, key=lambda n: (n.distance_meters, n.place.place_id))
 
     def list_postcodes_near(
         self, *, latitude: float, longitude: float, radius_meters: float

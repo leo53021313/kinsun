@@ -68,6 +68,24 @@ def test_list_near_sorts_by_distance(store, ns):
     assert [n.place.name for n in got] == ["近的", "遠的"]
 
 
+def test_list_near_breaks_distance_ties_by_place_id(store, ns):
+    # 兩筆座標完全相同，distance_meters 必然相等：Pg 對相同 meters 的列不保證
+    # 順序穩定，Fake 的 sorted() 雖穩定但只保留插入順序——兩者都得靠 place_id
+    # 當 tie-breaker 才會給出一致的順序。刻意先插入字母序較大的 "z"，
+    # 若實作退化成只依插入順序，這條會先抓到。
+    cat = f"{ns}restaurant"
+    store.save_many(
+        [
+            _place(ns, "z", 25.001, 121.5, cat, name="Z店"),
+            _place(ns, "a", 25.001, 121.5, cat, name="A店"),
+        ]
+    )
+    got = store.list_near(
+        latitude=ELDER_LAT, longitude=ELDER_LON, category=cat, radius_meters=1500
+    )
+    assert [n.place.place_id for n in got] == [f"{ns}a", f"{ns}z"]
+
+
 def test_list_near_excludes_beyond_radius(store, ns):
     cat = f"{ns}restaurant"
     # 約 2.2 公里外——超過 1500 公尺半徑。這條同時守住「不因查無結果而放大半徑」
@@ -103,11 +121,14 @@ def test_save_many_is_upsert_on_place_id(store, ns):
 
 def test_optional_fields_round_trip(store, ns):
     cat = f"{ns}pharmacy"
+    # ⚠️ postcode 帶 ns 前綴（不可用裸的 "235"）：這支測試曾是「兇手」——裸值
+    # postcode 在同一組座標寫入後，於連庫 session 內不會被清空，會讓
+    # test_list_postcodes_near_counts_all_categories 的精確計數斷言誤算進來。
     store.save_many(
         [
             _place(
                 ns, "a", 25.001, 121.5, cat,
-                name="芳碩藥局", postcode="235", city="新北市",
+                name="芳碩藥局", postcode=f"{ns}235", city="新北市",
                 phone="02-12345678", confidence=0.93, address="連城路100號",
                 overture_category="pharmacy",
             )
@@ -116,7 +137,7 @@ def test_optional_fields_round_trip(store, ns):
     got = store.list_near(
         latitude=ELDER_LAT, longitude=ELDER_LON, category=cat, radius_meters=1500
     )[0].place
-    assert (got.postcode, got.city, got.phone) == ("235", "新北市", "02-12345678")
+    assert (got.postcode, got.city, got.phone) == (f"{ns}235", "新北市", "02-12345678")
     assert got.confidence == pytest.approx(0.93)
 
 
