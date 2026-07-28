@@ -140,10 +140,24 @@ export function createTalkSocket(options: TalkSocketOptions) {
       queued.push(audio);
       flush();
     },
-    /** 更新「下一輪要用的位置」。null＝這輪沒有位置，不送（不是「他不在任何地方」）。 */
+    /**
+     * 更新「下一輪要用的位置」。null＝這輪沒有位置，不送（不是「他不在任何地方」）。
+     *
+     * ⚠️ 地名的鍵名是 `location` 而非本地型別的 `place`：線路契約由後端與
+     * `POST /turns` 的表單欄位定義（見 docs/dev/06_API設計規範.md），不可直接
+     * `JSON.stringify(place)` 把本地欄位名送上去——那正是 2026-07-28 的故障：
+     * 後端 `_parse_location` 讀不到 `location`，位置一列都沒寫進庫，金孫從此
+     * 每次問地點都反問「您人在哪裡」。
+     */
     sendLocation(place: ElderPlace | null) {
       if (!place) return;
-      queued.push(JSON.stringify(place));
+      queued.push(
+        JSON.stringify({
+          location: place.place,
+          latitude: place.latitude,
+          longitude: place.longitude,
+        }),
+      );
       flush();
     },
     close() {

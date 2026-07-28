@@ -122,14 +122,18 @@ describe("talkSocket 送出", () => {
     expect(socket.pendingCount()).toBe(0);
   });
 
-  test("位置以 JSON 送出；null＝這輪沒有位置，不送", () => {
+  // ⚠️ 斷言的是**線路上的鍵名**，不是本地型別的欄位名。原本這裡照抄 ElderPlace 的
+  // `place`，於是它與後端讀的 `location` 對不起來也全綠——2026-07-28 對講機改走
+  // WebSocket 後位置整整幾小時沒寫進庫，金孫每次都反問「您人在哪裡」，就是這條測試
+  // 斷言錯了東西放過去的。鍵名見 docs/dev/06_API設計規範.md 的 WS 上行契約。
+  test("位置以 JSON 送出，鍵名照 WS 契約用 location；null＝這輪沒有位置，不送", () => {
     const { socket, sockets } = setup();
     sockets[0].open();
     socket.sendLocation(null);
     expect(sockets[0].sent).toEqual([]);
     socket.sendLocation({ place: "台南市", latitude: 22.99, longitude: 120.21 });
     expect(JSON.parse(sockets[0].sent[0] as string)).toEqual({
-      place: "台南市",
+      location: "台南市",
       latitude: 22.99,
       longitude: 120.21,
     });
