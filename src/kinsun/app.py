@@ -22,6 +22,7 @@ from kinsun.binding.flow import BindingFlow
 from kinsun.binding.gate import AllowAllGate, ConsentGate
 from kinsun.binding.session import PgBindingSessionStore
 from kinsun.channels.app.turns import create_app_turns_router
+from kinsun.channels.app.ws import create_app_ws_router
 from kinsun.channels.inbound import VoiceReplyDelivery
 from kinsun.channels.line.webhook import create_app
 from kinsun.composition import assemble_core, build_externals
@@ -39,6 +40,7 @@ from kinsun.safety.detector import RiskDetector
 from kinsun.safety.moderation import AbuseModerator, LlmAbuseClassifier
 from kinsun.safety.notifier import GuardianNotifier
 from kinsun.schedules.flow import ScheduleMenu
+from kinsun.speech.ack_audio import AckAudioCache, start_prewarm
 from kinsun.speech.asr import build_asr_client
 from kinsun.speech.tts import build_tts_client
 from kinsun.web.auth import LineIdTokenVerifier
@@ -178,6 +180,21 @@ def build_app() -> FastAPI:
     voice = VoiceReplyDelivery(
         publisher, settings.tts_reply_text, show_transcript=settings.asr_debug_show_transcript
     )
+    # 安撫話音檔（spec 2026-07-28 P2）：啟動時把語庫的十幾句合成上傳好，對話中只查表。
+    # ⚠️ 用**獨立的 prefix**（`acks/`）：`publisher` 的 `cleanup(retention_days)` 會依
+    # 日期資料夾刪除 `tts/` 下的音檔，安撫話被掃到就得重新合成。它們也沒有個資
+    # （都是我們自己寫的通用句），故與長輩的回覆音檔區隔對待是合理的。
+    ack_audio = None
+    if publisher is not None:
+        ack_audio = AckAudioCache(
+            tts_client,
+            build_audio_publisher(
+                settings, clock=clock, new_id=lambda: uuid.uuid4().hex, prefix="acks"
+            ),
+            signed_url_ttl_seconds=settings.audio_signed_url_expires_seconds,
+        )
+        # 非阻塞：十幾段 × 約 1.9 秒 ≈ 半分鐘，同步跑會把服務啟動整整擋住那麼久。
+        start_prewarm(ack_audio)
 
     def _shutdown() -> None:
         # ⚠️ 順序有意義：背景落庫必須先排空，否則佇列裡的觀測寫入會撞上已關閉的
@@ -306,6 +323,30 @@ def build_app() -> FastAPI:
             memory=core.memory,
             tts=tts_client,
             audio_publisher=publisher,
+        ),
+        prefix="/api/v1",
+    )
+    # App 對講機的 WebSocket 通道（spec 2026-07-28 P2）：與上面的 POST /turns 平行，
+    # 差別在後端可以主動送第二則訊息——先「好，我幫您查一下喔」，答案好了再送。
+    # ⚠️ 整輪走同一條連線是刻意的：後端跑兩個 worker，只加下行通道會讓「算出答案的
+    # worker 推不到長輩的連線」。POST /turns 保留為降級路徑，兩者共存。
+    app.include_router(
+        create_app_ws_router(
+            accounts=core.accounts,
+            pipeline=pipeline,
+            gate=gate,
+            voice=VoiceReplyDelivery(
+                publisher,
+                include_text=True,
+                show_transcript=settings.asr_debug_show_transcript,
+            ),
+            traces=core.traces,
+            inbound_audio=inbound_audio,
+            ack_audio=ack_audio,
+            locations=core.locations,
+            new_id=lambda: uuid.uuid4().hex,
+            clock=clock,
+            max_audio_bytes=settings.audio_max_upload_bytes,
         ),
         prefix="/api/v1",
     )

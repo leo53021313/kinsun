@@ -17,7 +17,7 @@ from kinsun.memory.models import FactSection, InjectedContext, format_injected_c
 from kinsun.memory.recall import SessionMemory
 from kinsun.memory.shortterm import MemoryStoreError
 from kinsun.tools.registry import ToolInvocationContext
-from kinsun.turn_context import elder_utterance, turn_actions, turn_sources
+from kinsun.turn_context import announce_tools, elder_utterance, turn_actions, turn_sources
 
 logger = logging.getLogger("kinsun.agent")
 
@@ -598,6 +598,7 @@ class CareAgent:
         context: ToolInvocationContext | None = None,
     ) -> str:
         results: list[ToolResult] = []
+        announced = False
         for _ in range(self._max_tool_iters):
             turn = self._llm.generate_tool_turn(
                 system_prompt=system_prompt,
@@ -607,6 +608,14 @@ class CareAgent:
             )
             if not turn.tool_calls:
                 return turn.text or FALLBACK_REPLY
+            # 安撫話的觸發點（spec 2026-07-28 P2）：此刻已經知道要查什麼、工具卻還沒跑，
+            # 正是讓長輩聽到「好，我幫您查一下喔」的最佳時機。
+            # ⚠️ **只在第一輪通知**：工具迴圈最多跑三輪，每輪都講就變成長輩連聽三次
+            # 「我幫您查一下」，而他要的是答案。沒有人在聽時整段 no-op（LINE、
+            # `POST /turns`、排程端皆然）。
+            if not announced:
+                announced = True
+                announce_tools([call.name for call in turn.tool_calls])
             results.extend(self._dispatch_tools(turn.tool_calls, context=context))
         # 末輪修復（✅ 庚-35／A-14）：迭代上限用盡但工具結果已在手——再讓模型
         # 消化一次產出文字，不把成功的工具工作丟掉；仍堅持要工具（無文字）才回退。

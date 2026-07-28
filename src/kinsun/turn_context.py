@@ -40,8 +40,11 @@ context 彼此隔離，併發回合不會互相污染。
 from __future__ import annotations
 
 import contextvars
-from collections.abc import Iterator
+import logging
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+
+logger = logging.getLogger("kinsun.turn_context")
 
 _utterance: contextvars.ContextVar[str] = contextvars.ContextVar(
     "kinsun_elder_utterance", default=""
@@ -128,3 +131,45 @@ def record_action(name: str) -> None:
     ledger = _actions.get()
     if ledger is not None and name:
         ledger.append(name)
+
+
+_announcer: contextvars.ContextVar[Callable[[list[str]], None] | None] = contextvars.ContextVar(
+    "kinsun_tool_announcer", default=None
+)
+
+
+@contextmanager
+def tool_announcer(callback: Callable[[list[str]], None]) -> Iterator[None]:
+    """在範圍內接收「這一輪要呼叫哪些工具」的通知（spec 2026-07-28 P2）。
+
+    ⚠️ 這是安撫話的觸發點，而它的時機**非常關鍵**：非同步回覆要在模型決定查什麼之後、
+    工具真的跑之前，立刻讓長輩聽到一句「好，我幫您查一下喔」。那個時刻只存在於
+    `CareAgent._run_tool_loop` 裡拿到 `tool_calls` 的那一瞬間——早一點還不知道要查
+    什麼（挑不到貼合工具的句子），晚一點長輩已經多等了工具的時間。
+
+    走 contextvars 而非改協定，理由與本模組其餘幾個一模一樣：只有 WebSocket 通道
+    需要這個訊號，改 `CareAgent.handle` 的簽章會波及管線、排程端與所有測試替身。
+
+    `default=None`＝沒有人在聽時 `announce_tools` 完全 no-op：LINE 通道、
+    `POST /turns`、排程端與既有測試一字都不必改。
+    """
+    token = _announcer.set(callback)
+    try:
+        yield
+    finally:
+        _announcer.reset(token)
+
+
+def announce_tools(tool_names: list[str]) -> None:
+    """通知「這一輪要呼叫這些工具」；沒有人在聽時 no-op。
+
+    ⚠️ 通知失敗**絕不可**中斷對話：安撫話是加分項，而這裡的呼叫端是長輩回覆路徑的
+    正中央。callback 拋出的任何例外就地吞掉——最壞的情況只是這一輪沒有安撫話。
+    """
+    callback = _announcer.get()
+    if callback is None or not tool_names:
+        return
+    try:
+        callback(tool_names)
+    except Exception:  # noqa: BLE001 - 安撫話失敗不可中斷長輩的回覆
+        logger.warning("安撫話通知失敗，本輪不講安撫話")
