@@ -497,6 +497,10 @@ _KEEPALIVE_KWARGS: dict[str, int] = {
     "keepalives_count": 3,
 }
 
+# 一次性 CLI 的連線池上限。連線天花板是 Supabase pooler（session mode）15 條，
+# 常駐服務已佔去大半，CLI 只能拿零頭；批次作業是單執行緒，2 條夠用。見 14 §3.5。
+CLI_POOL_MAX_SIZE = 2
+
 
 def connect(database_url: str) -> psycopg.Connection:
     return psycopg.connect(database_url, **_KEEPALIVE_KWARGS)
@@ -587,6 +591,17 @@ class Database:
 
     def __init__(self, pool: ConnectionPool) -> None:
         self._pool = pool
+
+    @classmethod
+    def open_for_cli(cls, url: str) -> Database:
+        """一次性 CLI 專用的小連線池。
+
+        連線總量的天花板是 Supabase pooler（session mode）的 15 條，常駐服務
+        （webhook 兩個 worker＋排程器＋rag_worker）已吃掉大部分；CLI 沿用預設 5
+        會借不到連線而整個起不來（2026-07-28 實證：ingest 每次連線立即
+        EMAXCONNSESSION）。CLI 是單執行緒批次作業，2 條足夠。見 14 §3.5。
+        """
+        return cls.open(url, max_size=CLI_POOL_MAX_SIZE)
 
     @classmethod
     def open(cls, url: str, *, min_size: int = 1, max_size: int = 5) -> Database:

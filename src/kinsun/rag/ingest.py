@@ -40,7 +40,7 @@ def main() -> None:
     embedding_model = os.environ.get("RAG_EMBEDDING_MODEL", "gemini-embedding-001")
     content_policy = ContentPolicy(os.environ.get("RAG_CONTENT_POLICY", "allowed_only"))
     ensure_schema(database_url)
-    db = Database.open(database_url)
+    db = Database.open_for_cli(database_url)
     try:
         store = PgVectorStore(db)
         if args.reset:

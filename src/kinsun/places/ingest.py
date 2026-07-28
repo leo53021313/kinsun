@@ -139,7 +139,7 @@ def main() -> None:
         return
 
     # Database.open 是全庫取得連線池的唯一入口（見 db.py 的 keepalive 說明）。
-    database = Database.open(database_url)
+    database = Database.open_for_cli(database_url)
     store = PgPlaceStore(database)
     for start in range(0, len(places), _BATCH):
         store.save_many(places[start : start + _BATCH])

@@ -2,7 +2,7 @@ from contextlib import contextmanager
 
 import pytest
 
-from kinsun.db import Database, StoreError, _Errors
+from kinsun.db import CLI_POOL_MAX_SIZE, Database, StoreError, _Errors
 
 
 class _FakeCursor:
@@ -126,3 +126,25 @@ def test_errors_translates_store_error():
     with pytest.raises(ValueError, match="translated:boom"):
         with wrapped.transaction():
             pass
+
+
+def test_open_for_cli_uses_a_small_pool(monkeypatch):
+    """CLI（ingest／migrate／consolidation…）只借最小額度，不與線上服務搶連線。
+
+    2026-07-28 實證：Supabase pooler session mode 上限 15，常駐服務齊跑時
+    CLI 用預設 5 條會借不到連線（EMAXCONNSESSION），整個 ingest 起不來。
+    """
+    captured: dict[str, int] = {}
+
+    class _FakePool:
+        def __init__(self, url, *, min_size, max_size, open, kwargs):
+            captured["min_size"] = min_size
+            captured["max_size"] = max_size
+
+    monkeypatch.setattr("kinsun.db.ConnectionPool", _FakePool)
+
+    Database.open_for_cli("postgresql://x/y")
+
+    assert captured["max_size"] == CLI_POOL_MAX_SIZE
+    # 上限 15、常駐服務 4 進程各 DATABASE_POOL_MAX_SIZE(3)＝12，CLI 只剩 3 條可用。
+    assert captured["max_size"] <= 3
