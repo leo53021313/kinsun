@@ -844,3 +844,147 @@ def test_when_the_repair_round_still_does_nothing_the_original_reply_survives(ca
     with caplog.at_level(logging.WARNING):
         assert agent.handle("u1", "我明天下午兩點四十五要去繳水電費") == _PROMISE
     assert any("仍未建立排程" in r.getMessage() for r in caplog.records)
+
+
+# ── 工具並行 dispatch（spec 2026-07-28 P0）────────────────────────────────
+#
+# ⚠️ 這幾條測試的第一版全部「通過」但**沒有偵測力**（2026-07-28）：
+# `ToolRegistry.dispatch` 永不拋例外，柵欄逾時的 BrokenBarrierError 被它吞成
+# 一句錯誤字串，於是序列 dispatch 也一樣「通過」。斷言必須落在**工具的輸出**
+# 上，不能只看整輪有沒有跑完。
+
+
+class _ResultCapturingLLM(ScriptedToolLLM):
+    """在 ScriptedToolLLM 之上記下每一次拿到的 tool_results（名稱與輸出）。"""
+
+    def __init__(self, turns):
+        super().__init__(turns)
+        self.results_seen: list[list[tuple[str, str]]] = []
+
+    def generate_tool_turn(self, *, system_prompt, messages, tools, tool_results):
+        self.results_seen.append([(r.call.name, r.output) for r in tool_results])
+        return super().generate_tool_turn(
+            system_prompt=system_prompt, messages=messages, tools=tools, tool_results=tool_results
+        )
+
+
+def _registry_of(handlers: dict):
+    reg = ToolRegistry()
+    for name, handler in handlers.items():
+        reg.register(
+            ToolSpec(name=name, description=name, parameters={"type": "object", "properties": {}}),
+            handler,
+        )
+    return reg
+
+
+def test_tools_in_one_turn_dispatch_concurrently():
+    """兩個工具卡在同一道柵欄：序列跑必然逾時、並行跑才雙雙通過。
+
+    柵欄是本專案唯一確定性的並行證明——量時間會在 CI 上偶發假紅燈，而柵欄
+    要嘛兩邊都到、要嘛壞掉，沒有第三種結果。⚠️ 斷言必須看**工具輸出是不是
+    「到齊」**：dispatch 會把 BrokenBarrierError 吞成錯誤字串，只斷言整輪跑完
+    的話，序列實作也會過。
+    """
+    barrier = threading.Barrier(2, timeout=3)
+
+    def wait(_args):
+        barrier.wait()
+        return "到齊"
+
+    llm = _ResultCapturingLLM(
+        [
+            ToolTurn(text=None, tool_calls=[ToolCall("tool_a", {}), ToolCall("tool_b", {})]),
+            ToolTurn(text="兩個都查好了", tool_calls=[]),
+        ]
+    )
+    agent = CareAgent(llm, SpySession(), tools=_registry_of({"tool_a": wait, "tool_b": wait}))
+    assert agent.handle("u1", "查兩件事") == "兩個都查好了"
+    assert llm.results_seen[-1] == [("tool_a", "到齊"), ("tool_b", "到齊")]
+
+
+def test_parallel_dispatch_keeps_tool_results_in_call_order():
+    """結果順序必須與 tool_calls 一致：`llm.py` 是靠**位置**把 function_call 與
+    function_response 配對回帶的，誰先跑完就先排會讓模型收到張冠李戴的結果。
+
+    讓後呼叫的工具先完成（前者等後者放行），再斷言順序仍是呼叫序。
+    """
+    released = threading.Event()
+
+    def slow(_args):
+        assert released.wait(timeout=3), "fast 沒有先跑完——並行沒生效"
+        return "慢的"
+
+    def fast(_args):
+        released.set()
+        return "快的"
+
+    llm = _ResultCapturingLLM(
+        [
+            ToolTurn(text=None, tool_calls=[ToolCall("slow", {}), ToolCall("fast", {})]),
+            ToolTurn(text="好了", tool_calls=[]),
+        ]
+    )
+    agent = CareAgent(llm, SpySession(), tools=_registry_of({"slow": slow, "fast": fast}))
+    agent.handle("u1", "查兩件事")
+    assert llm.results_seen[-1] == [("slow", "慢的"), ("fast", "快的")]
+
+
+def test_parallel_dispatch_carries_the_source_ledger_into_worker_threads():
+    """並行後工具仍要登記得到來源——帳本走 contextvars，沒有 `copy_context()`
+    帶進工作執行緒就會變成 no-op（`record_source` 拿到 None 直接返回）。
+
+    以**出站冒名防線的實際行為**當探針，而不是去偷看帳本內容：工具登記了
+    「衛生福利部」的來源，回覆才可以說「衛福部說」。帳本沒帶進去 → 防線判定
+    冒名 → 那句話被剝掉。這條測試因此同時守住並行與防線的接縫。
+    """
+    from kinsun.turn_context import record_source
+
+    def cited(_args):
+        record_source("mohw.gov.tw")
+        return "衛福部建議每天走路三十分鐘"
+
+    def plain(_args):
+        return "今天天氣晴"
+
+    reply = "衛福部說，每天走路三十分鐘對身體好喔"
+    llm = ScriptedToolLLM(
+        [
+            ToolTurn(text=None, tool_calls=[ToolCall("cited", {}), ToolCall("plain", {})]),
+            ToolTurn(text=reply, tool_calls=[]),
+        ]
+    )
+    agent = CareAgent(llm, SpySession(), tools=_registry_of({"cited": cited, "plain": plain}))
+    assert agent.handle("u1", "走路有什麼好處") == reply
+
+
+def test_parallel_dispatch_carries_the_action_ledger_into_worker_threads():
+    """動作帳本同理：`create_schedule` 在工作執行緒裡登記，空頭承諾防線才看得到。
+
+    回覆是一句肯定的提醒承諾（`_is_empty_promise` 的三個條件全中），若帳本沒有
+    被帶進工作執行緒，防線會誤判成空頭承諾而觸發補救重跑——腳本只有兩回合，
+    重跑會 IndexError。測試通過即代表帳本完好。
+    """
+    from kinsun.turn_context import record_action
+
+    def create_schedule(_args):
+        record_action("create_schedule")
+        return "已建立"
+
+    def other(_args):
+        return "好"
+
+    reply = "好，我明天下午兩點四十五提醒您去繳水電費"
+    llm = ScriptedToolLLM(
+        [
+            ToolTurn(
+                text=None,
+                tool_calls=[ToolCall("create_schedule", {}), ToolCall("other", {})],
+            ),
+            ToolTurn(text=reply, tool_calls=[]),
+        ]
+    )
+    agent = CareAgent(
+        llm, SpySession(), tools=_registry_of({"create_schedule": create_schedule, "other": other})
+    )
+    assert agent.handle("u1", "明天下午兩點四十五要繳水電費") == reply

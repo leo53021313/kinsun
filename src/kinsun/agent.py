@@ -8,10 +8,11 @@ import logging
 import re
 import threading
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from kinsun import tracing
-from kinsun.llm import LLMClient, Message, ToolResult
+from kinsun.llm import LLMClient, Message, ToolCall, ToolResult
 from kinsun.memory.models import FactSection, InjectedContext, format_injected_context
 from kinsun.memory.recall import SessionMemory
 from kinsun.memory.shortterm import MemoryStoreError
@@ -341,6 +342,14 @@ def _no_fake_source(reply: str, sources: list[str]) -> str:
 # 先看 `context_assembly_timeout` 這個 trace 標記的實際發生率再決定。
 CONTEXT_ASSEMBLY_TIMEOUT_SECONDS = 15.0
 
+# 同一輪工具並行的執行緒上限（spec 2026-07-28 P0）。
+#
+# 4 是「夠用且不失控」：實測模型一輪最多要兩個工具，4 有一倍餘裕；而上限的意義是
+# 擋住模型異常時一次要求十幾個工具——那會在每位長輩的每一輪憑空生出十幾條執行緒，
+# 而它們大多在等同一批跨網 API，開再多也不會更快。超出上限的呼叫排隊執行，
+# 結果順序不受影響（回填依 calls 的順序，不是完成順序）。
+_MAX_PARALLEL_TOOLS = 4
+
 
 class PreparedTurn:
     """已在背景開始組裝的本輪情境（2026-07-26 延遲實測）。
@@ -531,6 +540,56 @@ class CareAgent:
         tracing.update_trace_metadata(empty_promise_unresolved=True)
         return reply
 
+    def _dispatch_tools(
+        self,
+        calls: list[ToolCall],
+        *,
+        context: ToolInvocationContext | None,
+    ) -> list[ToolResult]:
+        """並行 dispatch 同一輪的多個工具（spec 2026-07-28 P0）。
+
+        模型一次要兩個工具時，序列跑等於白等最慢的那個以外的全部時間——而工具彼此
+        沒有依賴（同一輪的呼叫由模型一次決定，不是接力）。實測一輪工具約 2.25 秒，
+        兩個序列就是 4.5 秒，全程加在長輩的等待上。
+
+        ⚠️ **回傳順序必須與 `calls` 一致**：`llm.py` 是靠**位置**把 function_call 與
+        function_response 配對回帶的（見 `generate_tool_turn` 的 contents 組裝），
+        誰先跑完就先排會讓模型收到張冠李戴的工具結果。故以 `calls` 的順序回填，
+        不用 `as_completed`。
+
+        ⚠️ 每條工作執行緒各帶一份 `contextvars.copy_context()`：
+        `elder_utterance`（天氣工具據此拒絕模型自己猜的地名）與兩本帳本
+        （`turn_sources`／`turn_actions`，出站防線的判斷依據）都走 contextvars，
+        不帶進去就整組變成 no-op——天氣工具會失去防線、冒名防線會把合法引用誤判成
+        冒名。帳本的值是**同一個 list 物件**（copy_context 複製的是對映不是內容），
+        多執行緒 append 靠 CPython 的原子性，這正是它能跨執行緒累積的原因。
+        每條執行緒要**各自一份 Context**：同一個 Context 物件不可同時被兩處 `run`。
+        Opik 的 span 巢狀同樣靠這份 context 才不會憑空消失（同 `background.run`）。
+
+        單一工具維持就地執行，不開執行緒池：那是最常見的情形，而少一層排程就少一種
+        出錯的可能——行為與本功能之前**一字不差**。
+        """
+        if len(calls) == 1:
+            call = calls[0]
+            return [
+                ToolResult(call, self._tools.dispatch(call.name, call.arguments, context=context))
+            ]
+        contexts = [contextvars.copy_context() for _ in calls]
+
+        def run(call: ToolCall) -> str:
+            return self._tools.dispatch(call.name, call.arguments, context=context)
+
+        with ThreadPoolExecutor(
+            max_workers=min(len(calls), _MAX_PARALLEL_TOOLS), thread_name_prefix="kinsun-tool"
+        ) as pool:
+            futures = [
+                pool.submit(ctx.run, run, call) for ctx, call in zip(contexts, calls, strict=True)
+            ]
+            return [
+                ToolResult(call, future.result())
+                for call, future in zip(calls, futures, strict=True)
+            ]
+
     def _run_tool_loop(
         self,
         system_prompt: str,
@@ -548,13 +607,7 @@ class CareAgent:
             )
             if not turn.tool_calls:
                 return turn.text or FALLBACK_REPLY
-            for call in turn.tool_calls:
-                results.append(
-                    ToolResult(
-                        call,
-                        self._tools.dispatch(call.name, call.arguments, context=context),
-                    )
-                )
+            results.extend(self._dispatch_tools(turn.tool_calls, context=context))
         # 末輪修復（✅ 庚-35／A-14）：迭代上限用盡但工具結果已在手——再讓模型
         # 消化一次產出文字，不把成功的工具工作丟掉；仍堅持要工具（無文字）才回退。
         turn = self._llm.generate_tool_turn(
