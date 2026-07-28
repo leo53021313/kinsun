@@ -62,7 +62,7 @@ class _NullSession:
 
         return SimpleNamespace(system_suffix="", history=[])
 
-    def record_turn(self, elder_id, *messages):
+    def record_turn(self, elder_id, *messages, at=None):
         pass
 
 
@@ -383,3 +383,130 @@ def test_oversized_audio_is_rejected_without_closing_the_connection():
         assert frame["type"] == "error"
         ws.send_bytes(b"\x00fake-audio")
         assert ws.receive_json()["type"] == "reply"
+
+
+# ── 併發輪（spec 2026-07-28 P3）────────────────────────────────────────
+
+
+class _SlowLLM:
+    """卡在 gate 上的 LLM——用來把一輪留在「進行中」的狀態。"""
+
+    def __init__(self, gate, reply: str = "答案來了") -> None:
+        self._gate = gate
+        self._reply = reply
+
+    def generate(self, *, system_prompt: str, messages: list[Message]) -> str:
+        self._gate.wait(timeout=5)
+        return self._reply
+
+
+class _RecordingSession:
+    """記下每一輪 assemble 拿到的 history，用來驗在途上下文有沒有進去。"""
+
+    def __init__(self) -> None:
+        self.histories: list[list[str]] = []
+        self.prompts: list[str] = []
+
+    def assemble(self, elder_id, query):
+        from types import SimpleNamespace
+
+        from kinsun.turn_context import current_pending_utterances
+
+        history = [Message("user", t) for t in current_pending_utterances()]
+        self.histories.append([m.content for m in history])
+        return SimpleNamespace(system_suffix="", history=history)
+
+    def record_turn(self, elder_id, *messages, at=None):
+        pass
+
+
+def test_too_many_concurrent_turns_gets_a_busy_reply_not_silence():
+    """長輩連按會開出無限多輪。婉拒要**講出來**——靜默丟掉他會以為金孫壞了。"""
+    import threading as _t
+
+    gate = _t.Event()
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    ids = (f"turn-{i}" for i in count(1))
+    pipeline = VoicePipeline(
+        asr=MockAsrClient("阿公早安"),
+        agent=CareAgent(_SlowLLM(gate), _NullSession()),
+        tts=_VoiceTts(),
+        detector=RiskDetector(_NullClassifier()),
+        notifier=_NullNotifier(),
+        risk_events=FakeRiskEventStore(),
+    )
+    app = FastAPI()
+    app.include_router(
+        create_app_ws_router(
+            accounts=svc,
+            pipeline=pipeline,
+            gate=ConsentGate(svc),
+            voice=VoiceReplyDelivery(_FakePublisher(), include_text=True),
+            new_id=lambda: next(ids),
+            clock=lambda: NOW,
+        ),
+        prefix="/api/v1",
+    )
+    client = TestClient(app)
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        for _ in range(4):  # 上限 3，第四次應被婉拒
+            ws.send_bytes(b"\x00fake-audio")
+        busy = ws.receive_json()
+        assert busy["type"] == "error"
+        assert "還在忙" in busy["text"]
+        gate.set()
+        # 前三輪照樣各自回答，沒有被第四次影響。
+        replies = [ws.receive_json() for _ in range(3)]
+    assert [r["type"] for r in replies] == ["reply"] * 3
+
+
+def test_a_second_question_sees_the_first_one_still_in_flight():
+    """⭐ 併發對話的核心：長輩問完新聞、接著問「那天氣呢」，第二輪組裝情境時
+    必須看得到第一句——否則「那」沒有指涉對象，模型只能反問。"""
+    import threading as _t
+
+    gate = _t.Event()
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    session = _RecordingSession()
+    ids = (f"turn-{i}" for i in count(1))
+    pipeline = VoicePipeline(
+        asr=MockAsrClient("今天有什麼新消息"),
+        agent=CareAgent(_SlowLLM(gate), session),
+        tts=_VoiceTts(),
+        detector=RiskDetector(_NullClassifier()),
+        notifier=_NullNotifier(),
+        risk_events=FakeRiskEventStore(),
+    )
+    app = FastAPI()
+    app.include_router(
+        create_app_ws_router(
+            accounts=svc,
+            pipeline=pipeline,
+            gate=ConsentGate(svc),
+            voice=VoiceReplyDelivery(_FakePublisher(), include_text=True),
+            new_id=lambda: next(ids),
+            clock=lambda: NOW,
+        ),
+        prefix="/api/v1",
+    )
+    client = TestClient(app)
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_bytes(b"\x00first")
+        # 等第一輪確實登記進在途清單（它卡在 gate 上）。
+        for _ in range(500):
+            if session.histories:
+                break
+            _t.Event().wait(0.01)
+        ws.send_bytes(b"\x00second")
+        for _ in range(500):
+            if len(session.histories) >= 2:
+                break
+            _t.Event().wait(0.01)
+        gate.set()
+        [ws.receive_json() for _ in range(2)]
+    assert session.histories[0] == [], "第一輪不該看到自己"
+    assert session.histories[1] == ["今天有什麼新消息"], (
+        f"第二輪沒看到在途的第一句：{session.histories}"
+    )

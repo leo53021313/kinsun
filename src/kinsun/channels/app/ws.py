@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -53,7 +54,12 @@ from kinsun.accounts.service import AccountService
 from kinsun.agent import SYSTEM_TROUBLE_REPLY
 from kinsun.channels.inbound import InboundMessage, dispatch
 from kinsun.locations.store import ElderLocation
-from kinsun.turn_context import tool_announcer
+from kinsun.turn_context import (
+    pending_utterances,
+    tool_announcer,
+    transcript_listener,
+    turn_directive,
+)
 
 logger = logging.getLogger("kinsun.channels.app.ws")
 
@@ -61,6 +67,23 @@ _DEFAULT_MAX_AUDIO_BYTES = 10 * 1024 * 1024
 
 # 關閉碼。1008＝policy violation，用於認證與同意複核失敗。
 _CLOSE_UNAUTHORIZED = 1008
+
+# 同時在跑的輪數上限（spec 2026-07-28 P3）。
+#
+# 長輩連按麥克風會開出無限多輪，每一輪都佔一條執行緒、一組 Gemini 呼叫與一次 TTS。
+# 無上限的代價與 `background.py` 的佇列上限同源：撐爆行程比少回一句嚴重得多。
+# 3 是「連問三件事還撐得住」與「不失控」之間的取捨——實測長輩的自然節奏是一次一件，
+# 併發兩輪已經是少見情形。
+_MAX_CONCURRENT_TURNS = 3
+_BUSY_REPLY = "金孫還在忙前面那幾句，等一下下再跟您說好嗎？"
+
+# 晚到答案的回指指示。⚠️ 走系統提示而不是程式層硬前綴——拼接出來的句子 TTS 唸起來
+# 會斷裂，而這句話要讓長輩覺得是金孫自己想起來的。
+_LATE_REPLY_DIRECTIVE = (
+    "（系統提示）長輩問完這句之後又講了別的，所以這個答案是慢了幾句才回來的。"
+    "開頭請自然帶一句回指，讓他知道你在回哪一個問題"
+    "（例如「對了，您剛剛問的那個喔」），不要突兀地直接講答案。"
+)
 
 
 class _NullBinding:
@@ -86,6 +109,56 @@ class _TurnCollector:
         self.duration_ms = duration_ms
         if text:
             self.text = text
+
+
+class _InFlight:
+    """這條連線上還在跑的輪（spec 2026-07-28 P3）。
+
+    ⚠️ 掛在**連線**上而不是全域：整輪走同一條 WebSocket，所以同一位長輩的所有併發輪
+    必然在同一條連線、同一個 worker 底下——這正是「整輪走 WebSocket」換來的紅利，
+    不需要任何跨進程機制。
+
+    只存在記憶體、被濫用審核攔下的輪直接丟棄，故不違反「被攔的輪不進記憶」的安全契約。
+    """
+
+    def __init__(self) -> None:
+        self._turns: dict[str, str] = {}  # turn_id → 長輩的原話（ASR 之後才有）
+        self._order: list[str] = []  # 依開口順序，用來判斷誰是最新的一輪
+        self._lock = threading.Lock()
+
+    def start(self, turn_id: str) -> bool:
+        """登記一輪；超過上限回 False（呼叫端據此回一句「還在忙」）。"""
+        with self._lock:
+            if len(self._order) >= _MAX_CONCURRENT_TURNS:
+                return False
+            self._turns[turn_id] = ""
+            self._order.append(turn_id)
+            return True
+
+    def set_utterance(self, turn_id: str, text: str) -> None:
+        with self._lock:
+            if turn_id in self._turns:
+                self._turns[turn_id] = text
+
+    def finish(self, turn_id: str) -> None:
+        with self._lock:
+            self._turns.pop(turn_id, None)
+            if turn_id in self._order:
+                self._order.remove(turn_id)
+
+    def others(self, turn_id: str) -> list[str]:
+        """其他還在跑的輪，長輩講過的話（依開口順序，排除自己與尚未辨識完的）。"""
+        with self._lock:
+            return [
+                self._turns[other]
+                for other in self._order
+                if other != turn_id and self._turns.get(other)
+            ]
+
+    def is_latest(self, turn_id: str) -> bool:
+        """這一輪是不是長輩最後講的那一句——不是就代表答案晚到了，回覆要帶回指。"""
+        with self._lock:
+            return not self._order or self._order[-1] == turn_id
 
 
 class _Sender:
@@ -193,6 +266,7 @@ def create_app_ws_router(
     def _run_turn(
         *,
         sender: _Sender,
+        in_flight: _InFlight,
         audio: bytes,
         elder_id: str,
         external_id: str,
@@ -217,8 +291,17 @@ def create_app_ws_router(
             audio_url=_publish_inbound(audio),
             received_at=received_at,
         )
+        # 晚到回指（spec P3）：長輩在這一輪還沒回來之前又講了別的，答案回去時
+        # 要讓他知道在回哪一個問題。判斷點在**開跑前**——那時已經知道自己是不是
+        # 最新的一輪，而系統提示必須在 LLM 呼叫之前就備好。
+        directive = "" if in_flight.is_latest(turn_id) else _LATE_REPLY_DIRECTIVE
         try:
-            with tool_announcer(_ack_sender(sender, turn_id)):
+            with (
+                tool_announcer(_ack_sender(sender, turn_id)),
+                transcript_listener(lambda text: in_flight.set_utterance(turn_id, text)),
+                pending_utterances(lambda: in_flight.others(turn_id)),
+                turn_directive(directive),
+            ):
                 outcome = dispatch(
                     msg,
                     pipeline=pipeline,
@@ -232,6 +315,10 @@ def create_app_ws_router(
             logger.exception("WebSocket 對話輪失敗 turn=%s", turn_id)
             sender.send({"type": "error", "turn_id": turn_id, "text": SYSTEM_TROUBLE_REPLY})
             return
+        finally:
+            # ⚠️ 一定要在 finally：這一輪失敗時若沒有解除登記，名額會一直被佔著，
+            # 長輩問滿三次之後就再也得不到回應。
+            in_flight.finish(turn_id)
         chunk_count = outcome.chunk_count if outcome else 0
         sender.send(
             {
@@ -260,6 +347,7 @@ def create_app_ws_router(
         await websocket.accept()
         loop = asyncio.get_running_loop()
         sender = _Sender(websocket, loop)
+        in_flight = _InFlight()
         pending: dict = {}  # 下一輪要用的位置（由 JSON 訊息帶入）
         try:
             while True:
@@ -285,6 +373,11 @@ def create_app_ws_router(
                     pending.get("longitude"),
                 )
                 turn_id = make_id()
+                if not in_flight.start(turn_id):
+                    # 連按太多次：回一句「還在忙」而不是靜默丟掉，長輩才知道發生什麼事。
+                    logger.warning("併發輪達上限，婉拒這一輪 elder=%s", elder_id)
+                    sender.send({"type": "error", "turn_id": turn_id, "text": _BUSY_REPLY})
+                    continue
                 # ⚠️ 一定要丟執行緒池：整輪是同步阻塞的，留在讀迴圈裡就讀不到
                 # 長輩等待期間的第二次發話——P3 的併發對話會直接失效。
                 # 不 await：這正是「等待中還能繼續講話」的實作方式。
@@ -292,6 +385,7 @@ def create_app_ws_router(
                     None,
                     lambda a=audio, t=turn_id, r=received_at: _run_turn(
                         sender=sender,
+                        in_flight=in_flight,
                         audio=a,
                         elder_id=elder_id,
                         external_id=external_id,

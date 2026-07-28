@@ -160,6 +160,106 @@ def tool_announcer(callback: Callable[[list[str]], None]) -> Iterator[None]:
         _announcer.reset(token)
 
 
+_pending: contextvars.ContextVar[Callable[[], list[str]] | None] = contextvars.ContextVar(
+    "kinsun_pending_utterances", default=None
+)
+
+
+@contextmanager
+def pending_utterances(provider: Callable[[], list[str]]) -> Iterator[None]:
+    """在範圍內提供「這位長輩還有哪些話正在處理中」（spec 2026-07-28 P3）。
+
+    ⚠️ 為什麼需要（併發對話的核心難題）：長輩問完新聞（要查、慢），三秒後接著問
+    「**那**天氣呢」——「那」是指代，需要上文。但新聞那一輪還沒寫進 `turns` 表
+    （記憶只在回覆產生後才寫），天氣這一輪組裝情境時**看不到他剛問過新聞**，
+    模型只好反問「您是說哪個的天氣」。
+
+    刻意**不採**「長輩的話先寫 DB、回覆後再補」：那會違反既有安全契約——被濫用審核
+    攔下的那一輪不寫進記憶（`pipeline.py` 的順序守門，綁架企圖不該變成明天的對話
+    脈絡）。在途清單只活在記憶體、被攔的輪直接丟棄，契約完好。
+
+    傳的是 **provider 而不是清單**：在途集合隨時在變，要在組裝的那一刻才取值，
+    不是進入 context 的那一刻。
+    """
+    token = _pending.set(provider)
+    try:
+        yield
+    finally:
+        _pending.reset(token)
+
+
+def current_pending_utterances() -> list[str]:
+    """這位長輩還在處理中的其他問句；沒有人提供時為空清單。
+
+    取值失敗一律當成沒有——情境是加分項，不可讓它擋住長輩的回覆。
+    """
+    provider = _pending.get()
+    if provider is None:
+        return []
+    try:
+        return list(provider())
+    except Exception:  # noqa: BLE001 - 在途清單失敗不可中斷對話
+        logger.warning("在途清單讀取失敗，本輪不注入")
+        return []
+
+
+_directive: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "kinsun_turn_directive", default=""
+)
+
+
+@contextmanager
+def turn_directive(text: str) -> Iterator[None]:
+    """在範圍內追加一句只對這一輪生效的系統指示（spec 2026-07-28 P3）。
+
+    用途是「晚到答案的回指」：長輩連問幾個問題時，慢的那個答案回來時他早就在講
+    別的了，開頭要自然帶一句「對了，您剛剛問的新聞喔……」。
+
+    ⚠️ 走系統提示而不是在程式層硬前綴：拼接出來的句子 TTS 唸起來會斷裂，而這句話
+    要讓長輩覺得是金孫自己想起來的。模型不聽時不做補救——為了這件事把對話弄壞是
+    更差的結果（同 `_repair_empty_promise` 的「只補救一次」）。
+    """
+    token = _directive.set(text)
+    try:
+        yield
+    finally:
+        _directive.reset(token)
+
+
+def current_turn_directive() -> str:
+    return _directive.get()
+
+
+_transcript_listener: contextvars.ContextVar[Callable[[str], None] | None] = contextvars.ContextVar(
+    "kinsun_transcript_listener", default=None
+)
+
+
+@contextmanager
+def transcript_listener(callback: Callable[[str], None]) -> Iterator[None]:
+    """在範圍內接收「這一輪長輩說了什麼」（spec 2026-07-28 P3）。
+
+    通知時機是 `CareAgent.prepare`——ASR 剛完成、情境還沒組完的那一刻。這正是
+    在途清單需要的時間點：下一輪（長輩緊接著問的那句）組裝情境時就看得到這一句。
+    """
+    token = _transcript_listener.set(callback)
+    try:
+        yield
+    finally:
+        _transcript_listener.reset(token)
+
+
+def announce_transcript(text: str) -> None:
+    """通知本輪長輩的原話；沒有人在聽時 no-op、失敗就地吞掉。"""
+    callback = _transcript_listener.get()
+    if callback is None or not text:
+        return
+    try:
+        callback(text)
+    except Exception:  # noqa: BLE001 - 在途登記失敗不可中斷對話
+        logger.warning("在途原話登記失敗")
+
+
 def announce_tools(tool_names: list[str]) -> None:
     """通知「這一輪要呼叫這些工具」；沒有人在聽時 no-op。
 

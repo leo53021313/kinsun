@@ -10,6 +10,7 @@ import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from kinsun import tracing
 from kinsun.llm import LLMClient, Message, ToolCall, ToolResult
@@ -17,7 +18,14 @@ from kinsun.memory.models import FactSection, InjectedContext, format_injected_c
 from kinsun.memory.recall import SessionMemory
 from kinsun.memory.shortterm import MemoryStoreError
 from kinsun.tools.registry import ToolInvocationContext
-from kinsun.turn_context import announce_tools, elder_utterance, turn_actions, turn_sources
+from kinsun.turn_context import (
+    announce_tools,
+    announce_transcript,
+    current_turn_directive,
+    elder_utterance,
+    turn_actions,
+    turn_sources,
+)
 
 logger = logging.getLogger("kinsun.agent")
 
@@ -364,9 +372,21 @@ class PreparedTurn:
     才會掛在本輪的 trace 下、而不是憑空消失。
     """
 
-    def __init__(self, assemble: Callable[[], object], *, timeout: float | None = None) -> None:
+    def __init__(
+        self,
+        assemble: Callable[[], object],
+        *,
+        timeout: float | None = None,
+        spoke_at: datetime | None = None,
+    ) -> None:
         self._context: object | None = None
         self._error: BaseException | None = None
+        # 這一輪長輩開口的時刻，供記憶寫入當排序鍵（spec 2026-07-28 P3）。
+        # ⚠️ 掛在這裡而不是加 `handle` 的參數，是因為 `prepare` 本來就在本輪最開頭
+        # 被呼叫——那正是最接近「長輩開口」的時間點，且 `handle(prepared=…)` 已經
+        # 拿得到它，管線與排程端的簽章一律不必動。
+        # None＝當場取（單輪路徑的行為與本功能之前一字不差）。
+        self.spoke_at = spoke_at or datetime.now(UTC)
         # 在此解析而非寫成預設引數：預設引數在類別定義時就綁死，測試改不動模組常數。
         self._timeout = CONTEXT_ASSEMBLY_TIMEOUT_SECONDS if timeout is None else timeout
         context = contextvars.copy_context()
@@ -423,17 +443,22 @@ class CareAgent:
         self._tools = tools
         self._max_tool_iters = max_tool_iters
 
-    def prepare(self, elder_id: str, user_text: str) -> PreparedTurn:
+    def prepare(
+        self, elder_id: str, user_text: str, *, spoke_at: datetime | None = None
+    ) -> PreparedTurn:
         """非阻塞地開始組裝本輪情境，回傳的 handle 交給 `handle(prepared=…)`。
 
         只讀不寫，故被濫用審核攔下的那一輪雖然白做一次組裝，仍不違反「被攔的輪
         不進記憶」——記憶寫入只由 `handle` 的 `record_turn` 觸發。
         """
-        return PreparedTurn(lambda: self._session.assemble(elder_id, user_text))
+        # 登記在途原話（spec P3）：ASR 剛完成、情境還沒組完的這一刻，正是下一輪
+        # 需要看到這句話的時間點。沒有人在聽時 no-op。
+        announce_transcript(user_text)
+        return PreparedTurn(lambda: self._session.assemble(elder_id, user_text), spoke_at=spoke_at)
 
     def _envelope(
         self, elder_id: str, query: str, *, prepared: PreparedTurn | None = None
-    ) -> tuple[str, list[Message]]:
+    ) -> tuple[str, list[Message], datetime]:
         """沒有預取時當場組——但同樣走 `PreparedTurn`，為的是那道等待上限。
 
         ⚠️ 這條路徑主要是主動關懷（`proactive`）在走，而它跑在排程的**序列**扇出裡
@@ -442,12 +467,14 @@ class CareAgent:
         改走 PreparedTurn 之後逾時會變成一個 MemoryStoreError，由 fanout 的逐筆隔離
         接住、記一筆 log 然後換下一位。多開一條執行緒的代價，換整批問候不被一個人拖垮。
         """
-        ctx = (
-            prepared.context()
-            if prepared is not None
-            else PreparedTurn(lambda: self._session.assemble(elder_id, query)).context()
+        turn = prepared or PreparedTurn(lambda: self._session.assemble(elder_id, query))
+        ctx = turn.context()
+        # 只對這一輪生效的追加指示（spec P3 的晚到回指）；沒有人設定時為空字串。
+        return (
+            SYSTEM_PROMPT + ctx.system_suffix + current_turn_directive(),
+            ctx.history,
+            turn.spoke_at,
         )
-        return SYSTEM_PROMPT + ctx.system_suffix, ctx.history
 
     @tracing.track(
         name="care_agent",
@@ -467,7 +494,7 @@ class CareAgent:
     ) -> str:
         """prepared＝管線在本輪開頭以 `prepare` 先行組裝的情境；None＝當場組（原行為）。"""
         tracing.attach_prompt("care_system", SYSTEM_PROMPT)
-        system_prompt, history = self._envelope(elder_id, user_text, prepared=prepared)
+        system_prompt, history, spoke_at = self._envelope(elder_id, user_text, prepared=prepared)
         user_msg = Message("user", user_text)
         base = [*history, user_msg]
         # 來源登記簿（2026-07-26 實測 S4）：工具真的拿到出處才會登記，出站防線據此
@@ -498,7 +525,8 @@ class CareAgent:
         # 被 JSON 綁架時中文是 \uXXXX escape，順序寫反就整句放行。
         # 兩道都跑完才寫進記憶，隔天 recall 讀到的就不會是冒名內容。
         reply = _no_fake_source(_speakable(reply), found)
-        self._session.record_turn(elder_id, user_msg, Message("assistant", reply))
+        # 以**長輩開口的時刻**當排序鍵，併發輪的對話順序才不會顛倒（spec P3）。
+        self._session.record_turn(elder_id, user_msg, Message("assistant", reply), at=spoke_at)
         return reply
 
     def _repair_empty_promise(
@@ -643,7 +671,9 @@ class CareAgent:
         # 主動問候也是對話的一部分：掛進該長輩的 thread，與其他回合串起來（E1）。
         tracing.tag_current_trace(elder_id=elder_id, channel="proactive")
         tracing.attach_prompt("care_system", SYSTEM_PROMPT)
-        system_prompt, history = self._envelope(elder_id, recall.content if recall else intent)
+        system_prompt, history, _spoke_at = self._envelope(
+            elder_id, recall.content if recall else intent
+        )
         if recall:
             # 重用既有的事實段排版，不另立 prompt 拼裝路徑。
             system_prompt += format_injected_context(

@@ -28,7 +28,7 @@ class NullSession:
     def assemble(self, elder_id: str, query: str) -> _NullCtx:
         return _NullCtx()
 
-    def record_turn(self, elder_id: str, *messages: Message) -> None:
+    def record_turn(self, elder_id: str, *messages: Message, at=None) -> None:
         pass
 
 
@@ -690,7 +690,7 @@ class _SlowSession:
         time.sleep(self.delay)
         return _NullCtx()
 
-    def record_turn(self, elder_id: str, *messages) -> None:
+    def record_turn(self, elder_id: str, *messages, at=None) -> None:
         return None
 
 
@@ -765,7 +765,7 @@ class _RecordingSession:
         self.assembled.append(query)
         return _NullCtx()
 
-    def record_turn(self, elder_id: str, *messages) -> None:
+    def record_turn(self, elder_id: str, *messages, at=None) -> None:
         self.recorded.append((elder_id, messages))
 
 

@@ -37,7 +37,7 @@ class _NullSession:
 
         return SimpleNamespace(system_suffix="", history=[])
 
-    def record_turn(self, elder_id, *messages):
+    def record_turn(self, elder_id, *messages, at=None):
         pass
 
 
@@ -297,7 +297,7 @@ class _RecordingMemory:
 
         return SimpleNamespace(system_suffix="", history=[])
 
-    def record_turn(self, elder_id, *messages):
+    def record_turn(self, elder_id, *messages, at=None):
         self.messages.extend(messages)
 
     def recent(self, elder_id):

@@ -41,7 +41,7 @@ class SpySession:
         self.queries.append(query)  # 檢索關鍵字是本次的受測對象，必須留痕
         return _Ctx(self._suffix, list(self._history))
 
-    def record_turn(self, line_user_id: str, *messages: Message) -> None:
+    def record_turn(self, line_user_id: str, *messages: Message, at=None) -> None:
         self.recorded.append((line_user_id, messages))
 
 
