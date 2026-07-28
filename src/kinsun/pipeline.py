@@ -5,10 +5,10 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 
-from kinsun import background, tracing
+from kinsun import background, tracing, turn_context
 from kinsun.agent import NOT_HEARD_REPLY, CareAgent
 from kinsun.llm import LLMUsage, collect_llm_usage
 from kinsun.logging_setup import log_trace
@@ -58,6 +58,7 @@ class VoicePipeline:
         response_window_seconds: int = 3600,
         moderator: AbuseModerator | None = None,
         chunked_channels: frozenset[str] = frozenset(),
+        turn_budget_seconds: float = 0.0,
     ) -> None:
         self._asr = asr
         self._agent = agent
@@ -79,6 +80,21 @@ class VoicePipeline:
         # App 拿得到段數、會逐段拉並接著播；LINE 只能收一則語音訊息，給它第一句
         # 等於把後面的話吞掉。故 app.py 只把 "app" 放進來。
         self._chunked_channels = chunked_channels
+        # 這一輪從長輩開口到必須交出回覆的總時間（秒）；0＝不限制，回到逐次逾時的
+        # 舊行為。⚠️ 它管的是**相加**：一輪會依序打三次 Gemini（分級→審核→生成），
+        # 各自的 30 秒逾時攔得住一次呼叫，攔不住三次疊起來——2026-07-28 Gemini 3.5
+        # 過載那晚，三次各卡滿 30 秒，長輩等了 96.6 秒才聽到回退話術。
+        self._turn_budget_seconds = turn_budget_seconds
+
+    def _budgeted(self):
+        """本輪的預算範圍；未設定（0）時回不做事的空範圍。
+
+        ⚠️ 預算從**收到長輩的音檔**就開始跑，ASR 也算在裡面：長輩等的是「按完到聽見」，
+        不是「模型開工到聽見」。把 ASR 排除在外會讓上限說的 30 秒實際變成 37 秒。
+        """
+        if self._turn_budget_seconds <= 0:
+            return nullcontext()
+        return turn_context.turn_budget(self._turn_budget_seconds)
 
     @tracing.track(
         name="care_turn_voice",
@@ -101,7 +117,7 @@ class VoicePipeline:
         tracing.tag_current_trace(trace_id=trace_id, channel=channel, elder_id=elder_id)
         # 本輪的 log 全部蓋上 trace_id（2026-07-27）：logs 只記「發生什麼事」，
         # 內容去 Opik 看，trace_id 是兩邊之間唯一的橋。
-        with log_trace(trace_id):
+        with log_trace(trace_id), self._budgeted():
             user_text = self._transcribe(
                 audio,
                 content_type=content_type,
@@ -131,7 +147,7 @@ class VoicePipeline:
     ) -> TtsResult:
         """文字輸入路徑（✅ D-11 正式）：跳過 ASR，其餘與語音同管線（危急偵測＋回覆＋記憶）。"""
         tracing.tag_current_trace(trace_id=trace_id, channel=channel, elder_id=elder_id)
-        with log_trace(trace_id):
+        with log_trace(trace_id), self._budgeted():
             return self._process_transcribed(
                 text, elder_id=elder_id, external_id=external_id, channel=channel, trace_id=trace_id
             )

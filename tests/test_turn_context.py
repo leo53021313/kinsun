@@ -71,3 +71,53 @@ def test_the_ledger_is_reset_between_turns():
         assert first
     with turn_sources() as second:
         assert second == []
+
+
+# --- 一輪的總時間預算（辛-21）---
+
+
+def test_no_budget_means_no_limit():
+    """沒開預算＝不限制：排程端與既有呼叫端一字不必改，行為與加這個功能之前相同。"""
+    from kinsun.turn_context import remaining_budget
+
+    assert remaining_budget() is None
+
+
+def test_budget_counts_down_as_the_turn_burns_time(monkeypatch):
+    """剩餘＝總預算減去已經花掉的。用 monotonic 而非 wall clock：校時不可影響一輪的預算。"""
+    import kinsun.turn_context as tc
+
+    clock = [1000.0]
+    monkeypatch.setattr(tc.time, "monotonic", lambda: clock[0])
+
+    with tc.turn_budget(30.0):
+        assert tc.remaining_budget() == 30.0
+        clock[0] += 25.0
+        assert tc.remaining_budget() == 5.0
+
+
+def test_budget_goes_negative_rather_than_clamping(monkeypatch):
+    """超支要看得出來是超支：夾在 0 會讓「剛好用完」與「超支 60 秒」長得一樣。"""
+    import kinsun.turn_context as tc
+
+    clock = [1000.0]
+    monkeypatch.setattr(tc.time, "monotonic", lambda: clock[0])
+
+    with tc.turn_budget(30.0):
+        clock[0] += 90.0
+        assert tc.remaining_budget() == -60.0
+
+
+def test_budget_is_reset_between_turns(monkeypatch):
+    """上一輪燒光預算，不可以讓下一輪一開口就被判出局。"""
+    import kinsun.turn_context as tc
+
+    clock = [1000.0]
+    monkeypatch.setattr(tc.time, "monotonic", lambda: clock[0])
+
+    with tc.turn_budget(30.0):
+        clock[0] += 40.0
+        assert tc.remaining_budget() < 0
+    with tc.turn_budget(30.0):
+        assert tc.remaining_budget() == 30.0
+    assert tc.remaining_budget() is None

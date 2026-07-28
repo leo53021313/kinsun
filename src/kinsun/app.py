@@ -136,6 +136,8 @@ def build_app() -> FastAPI:
         # 長輩開口即標記時間窗內的提醒為已回應：反思的行為訊號來源（✅ Task 4）。
         reminder_logs=core.reminder_logs,
         response_window_seconds=settings.reflection_response_window_minutes * 60,
+        # 一輪的總時間上限（辛-21）：逐次逾時攔不住三次呼叫相加。
+        turn_budget_seconds=settings.turn_budget_seconds,
         moderator=moderator,
     )
     binding_sessions = PgBindingSessionStore(db)

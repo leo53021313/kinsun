@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
@@ -273,3 +274,44 @@ def announce_tools(tool_names: list[str]) -> None:
         callback(tool_names)
     except Exception:  # noqa: BLE001 - 安撫話失敗不可中斷長輩的回覆
         logger.warning("安撫話通知失敗，本輪不講安撫話")
+
+
+_deadline: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "kinsun_turn_deadline", default=None
+)
+
+
+@contextmanager
+def turn_budget(seconds: float) -> Iterator[None]:
+    """在範圍內給這一輪一個總時間預算。由 `pipeline` 在收到長輩這句話時設定。
+
+    ⚠️ 為什麼需要它（2026-07-28 實錄逼出來的）：一輪對話會依序打三次 Gemini
+    （危急分級→濫用審核→生成回覆），每一次各有自己的 30 秒逾時。Gemini 3.5 過載
+    那晚，三次**各自**卡滿 30 秒才放棄，長輩按完對講機盯著螢幕 **96.6 秒**才聽到
+    「我現在有點狀況」——逐次逾時管得住單一次呼叫，管不住它們相加。
+
+    走 contextvars 而非把 deadline 一路當參數傳下去，理由與本檔其餘機制相同：
+    明式傳遞要改 `RiskDetector.assess`／`AbuseModerator.moderate`／`CareAgent.handle`
+    等六七個簽名與其全部測試替身，而真正需要這個資訊的只有 `llm.py` 一處出口。
+
+    用 `time.monotonic` 而非 wall clock：系統校時（NTP 跳秒、夏令時間）不該讓
+    長輩這一輪突然被判出局。
+    """
+    token = _deadline.set(time.monotonic() + seconds)
+    try:
+        yield
+    finally:
+        _deadline.reset(token)
+
+
+def remaining_budget() -> float | None:
+    """本輪還剩幾秒；`None`＝沒開預算（排程端、主動關懷、既有測試）＝不限制。
+
+    ⚠️ 超支時回**負數**而不夾在 0：呼叫端要分得出「剛好用完」與「已經超支 60 秒」，
+    後者是要記進日誌追的異常。`None` 與 `0` 也絕不可混為一談——前者是「沒有預算
+    這回事」，後者是「預算用完了」，兩者的正確行為完全相反。
+    """
+    deadline = _deadline.get()
+    if deadline is None:
+        return None
+    return deadline - time.monotonic()

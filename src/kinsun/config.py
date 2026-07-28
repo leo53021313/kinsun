@@ -225,6 +225,12 @@ class Settings(_BaseEnvSettings):
     asr_api_key: str = ""
     asr_timeout_seconds: float = 15.0
     gemini_timeout_seconds: float = 30.0
+    # 一輪對話從長輩開口到必須交出回覆的總時間上限（秒）；0＝不限制。
+    # ⚠️ 與 GEMINI_TIMEOUT_SECONDS 是兩件事：後者管**一次**呼叫，前者管一輪裡三次
+    # 呼叫**相加**（分級→審核→生成）。2026-07-28 Gemini 3.5 過載時三次各卡滿 30 秒，
+    # 長輩等了 96.6 秒才聽到回退話術；歷史 68 輪的 p95 是 19.8 秒，故 30 秒砍不到
+    # 正常對話，只砍已經壞掉的那種。
+    turn_budget_seconds: float = 30.0
     memory_max_turns: int = 200
     timezone: str = "Asia/Taipei"
     longterm_embedding_model: str = "gemini-embedding-001"

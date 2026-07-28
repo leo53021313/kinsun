@@ -859,3 +859,117 @@ class _FixedLLM:
 
     def generate(self, *, system_prompt: str, messages: list[Message]) -> str:
         return self._reply
+
+
+# --- 一輪的總時間預算（辛-21）---
+
+
+class _BudgetPeekingLLM:
+    """把每次被呼叫時「本輪還剩幾秒」記下來，供斷言檢查預算確實傳到了 LLM 層。"""
+
+    def __init__(self) -> None:
+        self.seen: list[float | None] = []
+
+    def generate(self, *, system_prompt: str, messages: list[Message]) -> str:
+        from kinsun.turn_context import remaining_budget
+
+        self.seen.append(remaining_budget())
+        return "好"
+
+
+class _SlowAsr:
+    """假 ASR：辨識本身要花掉一段預算（真實情況 2～7 秒，那晚是 7.0 秒）。"""
+
+    def __init__(self, clock: list[float], seconds: float, text: str = "阿公早安") -> None:
+        self._clock = clock
+        self._seconds = seconds
+        self._text = text
+
+    def transcribe(self, audio: bytes, *, content_type: str = "audio/m4a") -> str:
+        self._clock[0] += self._seconds
+        return self._text
+
+
+def test_a_turn_gets_a_budget(monkeypatch):
+    """長輩開口的那一刻預算就開始跑——沒有預算，三道呼叫會各自等滿逾時。"""
+    import kinsun.turn_context as tc
+
+    monkeypatch.setattr(tc.time, "monotonic", lambda: 1000.0)
+    llm = _BudgetPeekingLLM()
+    pipeline = VoicePipeline(
+        asr=MockAsrClient("阿公早安"),
+        agent=CareAgent(llm, NullSession()),
+        tts=TextBubbleTts(),
+        detector=StubDetector(RiskTier.L0),
+        notifier=SpyNotifier(),
+        risk_events=FakeRiskEventStore(),
+        turn_budget_seconds=30.0,
+    )
+
+    pipeline.process(b"\x00", elder_id="u1")
+
+    assert llm.seen == [30.0]
+
+
+def test_the_budget_covers_speech_recognition_too(monkeypatch):
+    """ASR 花掉的時間算在預算裡：長輩等的是從按完到聽見，不是從模型開工到聽見。"""
+    import kinsun.turn_context as tc
+
+    clock = [1000.0]
+    monkeypatch.setattr(tc.time, "monotonic", lambda: clock[0])
+    llm = _BudgetPeekingLLM()
+    pipeline = VoicePipeline(
+        asr=_SlowAsr(clock, 7.0),
+        agent=CareAgent(llm, NullSession()),
+        tts=TextBubbleTts(),
+        detector=StubDetector(RiskTier.L0),
+        notifier=SpyNotifier(),
+        risk_events=FakeRiskEventStore(),
+        turn_budget_seconds=30.0,
+    )
+
+    pipeline.process(b"\x00", elder_id="u1")
+
+    assert llm.seen == [23.0]
+
+
+def test_the_text_path_gets_a_budget_as_well(monkeypatch):
+    """LINE 文字路徑同樣要有上限——它跑的是同一條管線、同一批 LLM 呼叫。"""
+    import kinsun.turn_context as tc
+
+    monkeypatch.setattr(tc.time, "monotonic", lambda: 1000.0)
+    llm = _BudgetPeekingLLM()
+    pipeline = VoicePipeline(
+        asr=MockAsrClient("不會用到"),
+        agent=CareAgent(llm, NullSession()),
+        tts=TextBubbleTts(),
+        detector=StubDetector(RiskTier.L0),
+        notifier=SpyNotifier(),
+        risk_events=FakeRiskEventStore(),
+        turn_budget_seconds=30.0,
+    )
+
+    pipeline.process_text("阿公早安", elder_id="u1")
+
+    assert llm.seen == [30.0]
+
+
+def test_no_budget_configured_means_no_limit(monkeypatch):
+    """0＝關掉這個功能（回到逐次逾時）。既有呼叫端與測試一字不必改。"""
+    import kinsun.turn_context as tc
+
+    monkeypatch.setattr(tc.time, "monotonic", lambda: 1000.0)
+    llm = _BudgetPeekingLLM()
+    pipeline = VoicePipeline(
+        asr=MockAsrClient("阿公早安"),
+        agent=CareAgent(llm, NullSession()),
+        tts=TextBubbleTts(),
+        detector=StubDetector(RiskTier.L0),
+        notifier=SpyNotifier(),
+        risk_events=FakeRiskEventStore(),
+        turn_budget_seconds=0.0,
+    )
+
+    pipeline.process(b"\x00", elder_id="u1")
+
+    assert llm.seen == [None]
