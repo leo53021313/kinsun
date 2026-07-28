@@ -5,7 +5,13 @@ import time
 import pytest
 
 from kinsun import agent as agent_module
-from kinsun.agent import FALLBACK_REPLY, SYSTEM_PROMPT, CareAgent, Recall
+from kinsun.agent import (
+    FALLBACK_REPLY,
+    SYSTEM_PROMPT,
+    SYSTEM_TROUBLE_REPLY,
+    CareAgent,
+    Recall,
+)
 from kinsun.llm import Message, ToolCall, ToolSpec, ToolTurn
 from kinsun.memory.shortterm import MemoryStoreError
 from kinsun.tools.registry import ToolRegistry
@@ -384,6 +390,73 @@ def test_tool_loop_reply_is_guarded():
 def test_system_prompt_refuses_format_hijack_explicitly():
     # 實測：只寫「不要用 Markdown」擋不住「被要求改格式」——必須明講被要求也不行
     assert "JSON" in SYSTEM_PROMPT
+
+
+# --- 退化輸出護欄（2026-07-26 延遲優化報告 §7 順帶發現，2026-07-28 補修）---
+#
+# 提示詞點名的工具若沒註冊（`TAVILY_API_KEY` 未設時的 `web_search`），模型不會說
+# 「我沒有這個工具」，而是**假裝呼叫**：吐出 `tool_code\n{...}` 並無限重複，
+# 實測單則 186,514 字。既有防線全數放行（不以 `{` 開頭），這坨東西一路送進 TTS，
+# 唸不完撞 30 秒逾時 → `pipeline._synthesize` 退化成無音檔 → 長輩按下對講機等
+# 三十秒、完全沒有聲音，而完整回覆照樣寫進字幕、記憶與觀測。
+
+
+def test_handle_rejects_leaked_tool_call_syntax():
+    """假裝呼叫工具的輸出直接回退，不打撈——撈出來的是工具參數，不是給長輩的答案。"""
+    degenerate = 'tool_code\n{"name": "web_search", "args": {"query": "新聞"}}\n' * 40
+    agent = CareAgent(_FixedLLM(degenerate), SpySession())
+    assert agent.handle("u1", "最近有什麼新聞") == SYSTEM_TROUBLE_REPLY
+
+
+def test_handle_rejects_fenced_tool_call_syntax():
+    """同一種退化也會包在 code fence 裡出現，拆殼之後仍要認得。"""
+    fenced = '```tool_code\n{"name": "web_search", "args": {"query": "詐騙"}}\n```'
+    agent = CareAgent(_FixedLLM(fenced), SpySession())
+    assert agent.handle("u1", "這是詐騙嗎") == SYSTEM_TROUBLE_REPLY
+
+
+def test_handle_rejects_runaway_repetition():
+    """長度上限是通用網：未來換一種鬼打牆形式（不以 tool_code 開頭）同樣擋得住。"""
+    agent = CareAgent(_FixedLLM("阿公我幫您查一下喔。" * 200), SpySession())
+    assert agent.handle("u1", "查一下") == SYSTEM_TROUBLE_REPLY
+
+
+def test_memory_does_not_store_runaway_output():
+    """護欄擺在 `_speakable`（而非 TTS 前）的理由：記憶存的是回退話術，不是那 18 萬字。
+
+    存進去下一輪會被 `recent()` 原封不動帶回上下文，一次退化污染後續每一輪。
+    """
+    session = SpySession()
+    degenerate = 'tool_code\n{"name": "web_search", "args": {"query": "新聞"}}\n' * 40
+    agent = CareAgent(_FixedLLM(degenerate), session)
+    agent.handle("u1", "最近有什麼新聞")
+    assert session.recorded[-1][1][-1] == Message("assistant", SYSTEM_TROUBLE_REPLY)
+
+
+def test_guard_keeps_long_but_plausible_reply():
+    """⚠️ 誤殺防線：上限要落在「TTS 本來就唸不完」之外，正常轉述不可被殺。
+
+    TTS 是 0.9 秒固定成本＋每字 0.10 秒（2026-07-26 實測），30 秒逾時換算約 291 字；
+    分段通道只合成第一段，所以上限訂在 500 字——那已經是任何正常回覆的兩倍以上。
+    """
+    long_reply = "阿公，今天的新聞說最近天氣變冷，出門記得多穿一件衣服喔。" * 5
+    assert 100 < len(long_reply) < 500
+    agent = CareAgent(_FixedLLM(long_reply), SpySession())
+    assert agent.handle("u1", "有什麼新聞") == long_reply
+
+
+def test_guard_does_not_kill_replies_merely_mentioning_tool_words():
+    """只在**開頭**認工具語法：長輩的話題裡出現這些字不該觸發回退。"""
+    text = "阿嬤，您說的那個 print 是印表機的意思嗎？我幫您問問看孫女喔。"
+    agent = CareAgent(_FixedLLM(text), SpySession())
+    assert agent.handle("u1", "print 是什麼") == text
+
+
+def test_proactive_is_guarded_against_tool_call_leak():
+    """主動問候同樣會撞到未註冊工具，兩條路徑的防線必須對稱。"""
+    degenerate = 'tool_code\n{"name": "get_news", "args": {}}\n' * 40
+    agent = CareAgent(_FixedLLM(degenerate), SpySession())
+    assert agent.proactive("u1", "早安問候") == SYSTEM_TROUBLE_REPLY
 
 
 # --- 主動問候走工具迴圈（2026-07-17：問候也要會查天氣等工具）---

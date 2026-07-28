@@ -102,8 +102,12 @@ SYSTEM_PROMPT = (
     "沒有查、或工具查不到，就不可以講出任何機關、網站或查核單位的名字，"
     "也不要用「某某網站說」這種講法；"
     "絕不唸出網址；查不到就保守回覆、建議長輩問家人或醫師，不可自行編答案。"
-    # 交通工具（transport.py）：路線一律可用；公車／捷運／停車視 TDX 金鑰而定，
-    # 未註冊時模型自然看不到該工具，故 prompt 提及也無妨。
+    # 交通工具（transport.py）：路線一律可用；公車／捷運／停車視 TDX 金鑰而定。
+    # ⚠️ 這裡原本寫「未註冊時模型自然看不到該工具，故 prompt 提及也無妨」——2026-07-26
+    # 實測推翻：工具沒註冊時模型不會安靜跳過，而是**假裝呼叫**、吐出無限重複的
+    # `tool_code {...}`（單則 186,514 字）。提及仍然無妨，但靠的是兩道後補的防線，
+    # 不是模型自己會處理：出站 `_speakable` 攔成回退話術，組裝時 composition 的
+    # 提示詞／註冊表對帳會 warning。憑證未齊的部署要看得到那行 warning。
     "長輩問怎麼去某地、要開多久，用 get_route 查路線（起點用他目前的位置，沒有就先開口問）；"
     "問公車到站、捷運在哪條線、哪裡有停車位時，用對應的交通工具查詢，查到再口語轉述，不要自己編。"
     # 話題新聞（D-74 消費端）：get_news 讀的是自家爬好的新聞表，與 web_search 分工——
@@ -172,7 +176,9 @@ FALLBACK_REPLY = SYSTEM_TROUBLE_REPLY
 # 回覆會進 TTS 唸給長輩聽，大括號引號唸出來就是亂碼，故出站前打撈：模型的慣性
 # 是把真正想講的話包在字串值裡（{"response": "阿公…"}），拆包零成本、不必重生成。
 
-_CODE_FENCE = re.compile(r"^```[^\n]*\n(.*?)\n?```\s*$", re.DOTALL)
+# 語言標籤要捕捉起來（group 1），不能只當雜訊跳過：模型假裝呼叫工具時，「tool_code」
+# 正是寫在標籤位置，內容則是一般的 JSON——只看拆殼後的內容會把它當合法 JSON 打撈。
+_CODE_FENCE = re.compile(r"^```([^\n]*)\n(.*?)\n?```\s*$", re.DOTALL)
 _QUOTED_STRING = re.compile(r'"((?:[^"\\]|\\.)+)"')
 _CJK = re.compile(r"[一-鿿]")
 
@@ -197,16 +203,54 @@ def _salvage_from_json(text: str) -> str:
     return max(candidates, key=len) if candidates else ""
 
 
+# ── 退化輸出護欄（2026-07-26 延遲優化報告 §7 順帶發現，2026-07-28 補修）──
+#
+# 提示詞點名的工具若沒註冊（`TAVILY_API_KEY` 未設時的 `web_search`），模型不會說
+# 「我沒有這個工具」，而是**假裝呼叫**：吐出 `tool_code\n{...}` 並無限重複，實測
+# 單則 186,514 字。它不以 `{` 開頭，上面那套 JSON 打撈整段放行。
+#
+# 為什麼護欄擺在這裡而不是 TTS 前：`handle()` 拿 `_speakable` 的結果寫進記憶，
+# 擺這裡才能同時擋住「長輩聽到亂碼」與「這坨東西被 recent() 帶回下一輪上下文」。
+#
+# 兩道網分工，缺一不可：
+#   ① `_TOOL_CALL_LEAK` 認已知形狀，直接回退、**不打撈**——撈出來的是工具參數
+#      （「新聞」「詐騙」），單獨唸給長輩聽比回退話術更莫名其妙。
+#   ② 長度上限是通用網，接住未來換一種形式的鬼打牆。
+#
+# 上限 500 字怎麼來的：TTS 是 0.9 秒固定成本＋每字 0.10 秒（2026-07-26 實測），
+# 30 秒逾時換算約 291 字——超過就唸不完，`pipeline._synthesize` 退化成無音檔，
+# 長輩等三十秒得到一片安靜。也就是說這道網殺掉的回覆**本來就已經是壞的**，
+# 換成一句聽得懂的話只會更好。分段通道只合成第一段，故再留兩倍餘裕才落在 500。
+_MAX_SPEAKABLE_CHARS = 500
+_TOOL_CALL_LEAK = re.compile(
+    r"^(?:tool_code|tool_outputs?|print\s*\(|default_api\.)", re.IGNORECASE
+)
+
+
 def _speakable(reply: str) -> str:
     """格式綁架防線：code fence 拆殼、JSON 打撈；撈不到可唸文字才回退話術。
+    另擋兩種退化輸出：假裝呼叫工具的語法、以及長到 TTS 唸不完的鬼打牆。
     正常口語回覆原樣通過——防線寧可放過、不可誤殺（英文品牌名等屬合法內容）。"""
     text = reply.strip()
     fence = _CODE_FENCE.match(text)
+    tag = ""
     if fence:
-        text = fence.group(1).strip()
+        tag, text = fence.group(1).strip(), fence.group(2).strip()
+    if _TOOL_CALL_LEAK.match(tag) or _TOOL_CALL_LEAK.match(text):
+        logger.warning(
+            "模型假裝呼叫工具（該工具很可能未註冊），回覆長度=%d，退化為回退話術", len(reply)
+        )
+        return SYSTEM_TROUBLE_REPLY
     if not text.startswith(("{", "[")):
-        return text if fence else reply
-    return _salvage_from_json(text) or FALLBACK_REPLY
+        spoken = text if fence else reply
+    else:
+        spoken = _salvage_from_json(text) or FALLBACK_REPLY
+    if len(spoken) > _MAX_SPEAKABLE_CHARS:
+        logger.warning(
+            "回覆長度異常（%d 字，上限 %d），退化為回退話術", len(spoken), _MAX_SPEAKABLE_CHARS
+        )
+        return SYSTEM_TROUBLE_REPLY
+    return spoken
 
 
 # ── 出站冒名防線（2026-07-26 全流程模擬實測）──
