@@ -36,6 +36,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from kinsun import tracing
 from kinsun.speech import acks
 from kinsun.speech.tts import TTSClient, TTSError, TtsPriority, tts_priority
 
@@ -124,11 +125,25 @@ class AckAudioCache:
 
     # ── 預熱與補寫（跑在背景，最低優先權）──────────────────────────
 
+    @tracing.track(
+        name="ack_prewarm",
+        type="general",
+        capture_input=False,  # 首參是 self，其餘無參數
+        capture_output=False,  # 回傳 None
+    )
     def prewarm(self) -> None:
         """把語庫裡每一句都合成上傳。啟動時由組裝根丟到背景執行緒。
 
         ⚠️ 逐句獨立處理：一句失敗不可讓其餘的都沒有音檔（TTS 服務實測會偶發 400
         與瞬斷）。失敗的那句下次被抽中時會走 `clip_for` 的自癒路徑。
+
+        ⚠️ **這個 `@tracing.track` 不是為了觀測，是為了不污染觀測**（2026-07-28 實測）：
+        `SupabaseAudioPublisher.publish` 掛著 `audio_upload` span，而預熱跑在自己的
+        執行緒上、沒有父 trace——十九句就是**十九個孤兒 root trace**，而且每次 worker
+        重啟、每次簽章過期重暖都會再來一輪（兩個 worker 雙倍）。實測那批孤兒把
+        `care_conversation`（真正要看的東西）從列表上洗掉：探針時窗 43 筆 root trace
+        裡有 26 筆是它們。掛一個 root 之後，那十九次上傳收斂成這一個 trace 底下的
+        十九個 span——既看得到預熱有沒有成功，也不再洗版。
         """
         phrases = acks.all_phrases()
         ok = sum(1 for phrase in phrases if self._publish(phrase))

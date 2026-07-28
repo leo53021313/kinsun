@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
+from kinsun import tracing
 from kinsun.accounts.models import Channel, PrincipalType
 from kinsun.accounts.service import AccountService
 from kinsun.channels.inbound import InboundMessage, dispatch
@@ -200,6 +201,12 @@ def create_app_turns_router(
         }
 
     @router.get("/turns/chunks/{index}")
+    @tracing.track(
+        name="turn_chunk",
+        type="general",
+        capture_input=True,
+        capture_output=True,
+    )
     def get_turn_chunk(
         index: int,
         digest: str = "",
@@ -211,6 +218,12 @@ def create_app_turns_router(
         同步寫入），故不必另建一張表，也不存在「任意文字丟進來合成」的濫用面——
         長輩只合成得到自己剛聽到的那句話。`digest` 不符即 409（那輪已被新的一輪取代），
         App 收到就該停止續拉，否則會把新回覆的句子接在舊回覆後面播。
+
+        ⚠️ `@tracing.track` 是 2026-07-28 補的，修一個既有缺陷：本函式會呼叫
+        `audio_publisher.publish`，而後者掛著 `audio_upload` span——這支端點原本沒有
+        任何 trace root，於是**每一次續拉都在 Opik 生出一個孤兒 root trace**
+        （實測 07-27 一天 25 筆，時間與分段串流 07-26 上線吻合），把
+        `care_conversation` 從列表上洗掉。
         """
         if memory is None or tts is None or audio_publisher is None:
             raise HTTPException(status_code=503, detail=ErrorCode.SPEECH_UNAVAILABLE)
