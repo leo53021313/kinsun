@@ -24,6 +24,7 @@ import { createTalkGesture } from "@/lib/talkGesture";
 import {
   createPlaybackQueue,
   createTalkSocket,
+  playAndWait,
   type PlaybackItem,
   type TalkFrame,
 } from "@/lib/talkSocket";
@@ -121,12 +122,15 @@ export default function ElderTalk() {
     }
     const queue = createPlaybackQueue(async (item: PlaybackItem) => {
       setAvatar("speaking");
-      player.replace({ uri: item.audioUrl });
-      player.play();
-      // ⚠️ 以 duration_ms 等待而不是監聽播放結束事件：時長由 TTS 服務量測後隨訊框
-      // 帶回來，是可信的；而播放狀態事件在 iOS 與 Android 的時機不一致，等錯了會
-      // 讓下一則被砍頭。多留 250ms 尾巴，避免兩則之間黏在一起。
-      await new Promise((resolve) => setTimeout(resolve, item.durationMs + 250));
+      // 等 didJustFinish 事件，時長只當保險（見 playAndWait 的 docstring）：
+      // 「音檔多長」不等於「播完了」——載入、緩衝、音訊工作階段被錄音搶走都會讓
+      // 實際播放時間長於時長，估短了下一則會蓋掉還在講的這一則。
+      const outcome = await playAndWait(player, item);
+      if (outcome === "timeout") {
+        // 事件沒來就靠保險放行了。留 log 而不是靜默——真的常發生的話，代表音訊
+        // 工作階段有問題，那是另一個要查的東西。
+        console.warn("[talk] 播放結束事件沒來，靠保險逾時放行", item.turnId);
+      }
     });
     playQueueRef.current = queue;
 

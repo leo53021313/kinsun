@@ -1,4 +1,9 @@
-import { createPlaybackQueue, createTalkSocket, type TalkFrame } from "./talkSocket";
+import {
+  createPlaybackQueue,
+  createTalkSocket,
+  playAndWait,
+  type TalkFrame,
+} from "./talkSocket";
 
 /** 假的 WebSocket：手動控制開、收、關，不碰網路。 */
 class FakeSocket {
@@ -226,5 +231,106 @@ describe("playbackQueue 播放佇列", () => {
     await new Promise((r) => setTimeout(r, 30));
     expect(played).toEqual(["a"]);
     expect(queue.size()).toBe(0);
+  });
+});
+
+describe("playAndWait 等一則播完", () => {
+  const item = { turnId: "t1", audioUrl: "a.m4a", text: "好", durationMs: 1000 };
+
+  function fakePlayer() {
+    const listeners: ((s: { didJustFinish: boolean }) => void)[] = [];
+    let removed = 0;
+    return {
+      calls: [] as string[],
+      removedCount: () => removed,
+      listenerCount: () => listeners.length,
+      emit(didJustFinish: boolean) {
+        for (const l of [...listeners]) l({ didJustFinish });
+      },
+      addListener(_event: "playbackStatusUpdate", cb: (s: { didJustFinish: boolean }) => void) {
+        listeners.push(cb);
+        return {
+          remove: () => {
+            removed += 1;
+            const i = listeners.indexOf(cb);
+            if (i >= 0) listeners.splice(i, 1);
+          },
+        };
+      },
+      replace(source: { uri: string }) {
+        this.calls.push(`replace:${source.uri}`);
+      },
+      play() {
+        this.calls.push("play");
+      },
+    };
+  }
+
+  test("⭐ 監聽在 replace／play 之前註冊——安撫話短到可能先播完", () => {
+    const player = fakePlayer();
+    const order: string[] = [];
+    const spy = {
+      ...player,
+      addListener(e: "playbackStatusUpdate", cb: (s: { didJustFinish: boolean }) => void) {
+        order.push("listen");
+        return player.addListener(e, cb);
+      },
+      replace(source: { uri: string }) {
+        order.push("replace");
+        player.replace(source);
+      },
+      play() {
+        order.push("play");
+        player.play();
+      },
+    };
+    void playAndWait(spy, item, { setTimeoutFn: () => 0 as never, clearTimeoutFn: () => {} });
+    expect(order).toEqual(["listen", "replace", "play"]);
+  });
+
+  test("didJustFinish 才算播完；中途的狀態更新不放行", async () => {
+    const player = fakePlayer();
+    let resolved: string | null = null;
+    const p = playAndWait(player, item, {
+      setTimeoutFn: () => 0 as never,
+      clearTimeoutFn: () => {},
+    }).then((o) => (resolved = o));
+    player.emit(false);
+    await Promise.resolve();
+    expect(resolved).toBeNull();
+    player.emit(true);
+    await p;
+    expect(resolved).toBe("finished");
+  });
+
+  test("⭐ 事件沒來時保險逾時放行——否則整條佇列永遠卡死", async () => {
+    const player = fakePlayer();
+    const delays: number[] = [];
+    let fire: (() => void) | null = null;
+    const promise = playAndWait(player, item, {
+      setTimeoutFn: (fn, ms) => {
+        delays.push(ms);
+        fire = fn;
+        return 0 as never;
+      },
+      clearTimeoutFn: () => {},
+      guardMs: 3000,
+    });
+    expect(delays).toEqual([4000]); // 該段時長 1000 ＋ 保險 3000
+    fire!(); // 保險到期
+    await expect(promise).resolves.toBe("timeout");
+  });
+
+  test("播完後一定解除訂閱，且只解除一次", async () => {
+    const player = fakePlayer();
+    const p = playAndWait(player, item, {
+      setTimeoutFn: () => 0 as never,
+      clearTimeoutFn: () => {},
+    });
+    player.emit(true);
+    player.emit(true); // 重複事件不該重複解除
+    await p;
+    expect(player.removedCount()).toBe(1);
+    expect(player.listenerCount()).toBe(0);
   });
 });

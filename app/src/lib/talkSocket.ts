@@ -167,6 +167,75 @@ export type PlaybackItem = {
 };
 
 /**
+ * 播放器的最小介面（只取本模組真的用到的三個方法）。
+ *
+ * 對 `expo-audio` 的 `AudioPlayer` 結構相容，但不 import 它——這樣等待邏輯可以
+ * 完全離線單元測試，不必在測試裡拉起音訊模組。
+ */
+export type PlayerLike = {
+  addListener(
+    event: "playbackStatusUpdate",
+    listener: (status: { didJustFinish: boolean }) => void,
+  ): { remove(): void };
+  replace(source: { uri: string }): void;
+  play(): void;
+};
+
+/** 一則播完的原因：正常結束，或保險逾時（事件沒來）。 */
+export type PlaybackOutcome = "finished" | "timeout";
+
+/** 事件沒來時的保險額度（毫秒）：在該段時長之外再等這麼久就放行。 */
+const PLAYBACK_GUARD_MS = 3000;
+
+/**
+ * 播一則並等它真的播完。
+ *
+ * ⚠️ **以 `didJustFinish` 事件為準，不用時長估算**（2026-07-28 修正）：時長雖然由
+ * TTS 服務量測後隨訊框帶回來、數字本身可信，但「音檔多長」不等於「播完了」——
+ * 載入、緩衝、iOS 音訊工作階段被搶走都會讓實際播放時間長於時長。估短了會讓下一則
+ * 蓋掉還在講的這一則，長輩聽到的話會被砍頭。
+ *
+ * ⚠️ **監聽必須在 `replace`／`play` 之前註冊**：安撫話只有九到十個字，短到可能在
+ * 註冊完成之前就播完，那一則的 `didJustFinish` 就永遠等不到。
+ *
+ * ⚠️ **保險逾時不可省**：事件真的沒來時（格式壞掉、音訊工作階段被錄音搶走），
+ * 沒有保險就是整條佇列永遠卡死、長輩後面問的每一句都不會有回應。故以「該段時長
+ * ＋三秒」為上限強制放行——寧可提早一點點，不可完全不動。
+ */
+export function playAndWait(
+  player: PlayerLike,
+  item: PlaybackItem,
+  options: {
+    setTimeoutFn?: (fn: () => void, ms: number) => RetryHandle;
+    clearTimeoutFn?: (handle: RetryHandle) => void;
+    guardMs?: number;
+  } = {},
+): Promise<PlaybackOutcome> {
+  const {
+    setTimeoutFn = setTimeout,
+    clearTimeoutFn = clearTimeout,
+    guardMs = PLAYBACK_GUARD_MS,
+  } = options;
+  return new Promise<PlaybackOutcome>((resolve) => {
+    let settled = false;
+    let guard: RetryHandle | null = null;
+    const finish = (outcome: PlaybackOutcome) => {
+      if (settled) return;
+      settled = true;
+      subscription.remove();
+      if (guard !== null) clearTimeoutFn(guard);
+      resolve(outcome);
+    };
+    const subscription = player.addListener("playbackStatusUpdate", (status) => {
+      if (status.didJustFinish) finish("finished");
+    });
+    guard = setTimeoutFn(() => finish("timeout"), item.durationMs + guardMs);
+    player.replace({ uri: item.audioUrl });
+    player.play();
+  });
+}
+
+/**
  * 播放佇列：一次只播一則，先到先播。
  *
  * ⚠️ 為什麼需要它（spec 2026-07-28）：非同步回覆下，一輪會產生兩則語音（安撫話、
