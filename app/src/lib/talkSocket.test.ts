@@ -174,7 +174,12 @@ describe("talkSocket 重連", () => {
 });
 
 describe("playbackQueue 播放佇列", () => {
-  const item = (turnId: string) => ({ turnId, audioUrl: `${turnId}.m4a`, text: turnId });
+  const item = (turnId: string) => ({
+    turnId,
+    audioUrl: `${turnId}.m4a`,
+    text: turnId,
+    durationMs: 0,
+  });
 
   test("⭐ 一次只播一則，先到先播——聲音是線性的，同時播長輩什麼都聽不懂", async () => {
     const played: string[] = [];

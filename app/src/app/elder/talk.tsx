@@ -21,6 +21,12 @@ import { type ElderPlace, currentPlace } from "@/lib/location";
 import { useSession } from "@/lib/SessionProvider";
 import { strings } from "@/lib/strings";
 import { createTalkGesture } from "@/lib/talkGesture";
+import {
+  createPlaybackQueue,
+  createTalkSocket,
+  type PlaybackItem,
+  type TalkFrame,
+} from "@/lib/talkSocket";
 import { colors, elder, spacing } from "@/lib/theme";
 
 /**
@@ -70,6 +76,13 @@ export default function ElderTalk() {
   // 用 ref 而非 state——它的變動不該觸發重繪，而且 playbackStatusUpdate 的回呼要讀到
   // 最新值（state 會被閉包鎖在註冊當下的那一版）。
   const queueRef = useRef<ChunkQueue | null>(null);
+  // 對講機長連線（spec 2026-07-28）：後端在模型決定要查東西時會先送一則安撫話，
+  // 答案好了再送第二則。連不上時 stopAndSend 自動退回 POST /turns（降級路徑仍在）。
+  const socketRef = useRef<ReturnType<typeof createTalkSocket> | null>(null);
+  const socketOpenRef = useRef(false);
+  // 播放佇列：一輪會有兩則語音（安撫話、答案），長輩連問兩件事時還會交錯回來。
+  // 聲音是線性的，同時播長輩什麼都聽不懂——故一次只播一則、先到先播。
+  const playQueueRef = useRef<ReturnType<typeof createPlaybackQueue> | null>(null);
 
   const { loading: sessionLoading, session, signOut, internalTesting } = useSession();
 
@@ -101,6 +114,70 @@ export default function ElderTalk() {
     };
   }, [router, sessionLoading, session]);
 
+  // 建立長連線與播放佇列。session 換人（登出重綁）就整組重建。
+  useEffect(() => {
+    if (sessionLoading || !session || session.role !== "elder") {
+      return;
+    }
+    const queue = createPlaybackQueue(async (item: PlaybackItem) => {
+      setAvatar("speaking");
+      player.replace({ uri: item.audioUrl });
+      player.play();
+      // ⚠️ 以 duration_ms 等待而不是監聽播放結束事件：時長由 TTS 服務量測後隨訊框
+      // 帶回來，是可信的；而播放狀態事件在 iOS 與 Android 的時機不一致，等錯了會
+      // 讓下一則被砍頭。多留 250ms 尾巴，避免兩則之間黏在一起。
+      await new Promise((resolve) => setTimeout(resolve, item.durationMs + 250));
+    });
+    playQueueRef.current = queue;
+
+    const socket = createTalkSocket({
+      baseUrl: process.env.EXPO_PUBLIC_API_URL ?? "",
+      token: session.token,
+      onStatus: (status) => {
+        socketOpenRef.current = status === "open";
+      },
+      onFrame: (frame: TalkFrame) => {
+        if (frame.type === "error") {
+          setReplyText(frame.text);
+          setAvatar("idle");
+          return;
+        }
+        setReplyText(frame.text);
+        if (frame.type === "reply") {
+          // 上一輪的續播就此作廢（同 POST 路徑的處理）。
+          queueRef.current = null;
+          if (frame.chunk_count > 1 && frame.reply_digest) {
+            const chunks: ChunkQueue = {
+              digest: frame.reply_digest,
+              token: session.token,
+              total: frame.chunk_count,
+              nextIndex: 1,
+              pending: null,
+            };
+            queueRef.current = chunks;
+            prefetchNext(chunks);
+          }
+        }
+        if (frame.audio_url) {
+          queue.push({
+            turnId: frame.turn_id,
+            audioUrl: frame.audio_url,
+            text: frame.text,
+            durationMs: frame.duration_ms ?? 0,
+          });
+        }
+      },
+    });
+    socketRef.current = socket;
+    return () => {
+      socket.close();
+      socketRef.current = null;
+      playQueueRef.current = null;
+    };
+    // player 與 prefetchNext 在本元件生命週期內恆定，不列入相依以免重建連線。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionLoading, session]);
+
   /** 開始聆聽；回傳錄音是否真的開始（供 stopAndSend 與手勢復位判斷）。 */
   async function startRecording(): Promise<boolean> {
     if (!micReady || avatar === "thinking") {
@@ -109,6 +186,8 @@ export default function ElderTalk() {
     try {
       // 觸覺回饋（✅ D-48 丁-2）：長輩按住有「開始了」的體感；失敗不影響錄音。
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+      // ⚠️ 按下去就是要講話：不清空還沒播的，金孫的聲音會被錄進去。
+      playQueueRef.current?.clear();
       player.pause();
       // 錄音前重新宣告錄音模式：上一輪 TTS 回覆播放會把音訊工作階段留在播放類別，
       // 不重設就直接 record() 會收不到聲音（iOS AVAudioSession 類別衝突，2026-07-18 診斷）。
@@ -148,6 +227,14 @@ export default function ElderTalk() {
         throw new Error("no recording");
       }
       const place = await (placeRef.current ?? Promise.resolve(null));
+      // 走長連線（spec 2026-07-28）：後端會先送一則安撫話、答案好了再送第二則，
+      // 兩則都由 onFrame 接手，這裡送完就結束。連線沒開就退回 POST——降級路徑仍在，
+      // 長輩不會因為網路狀況不好就完全講不了話。
+      if (socketRef.current && socketOpenRef.current) {
+        socketRef.current.sendLocation(place);
+        socketRef.current.sendAudio(await (await fetch(uri)).arrayBuffer());
+        return;
+      }
       const reply = await postTurn(uri, session?.token ?? "", place);
       setReplyText(reply.text);
       // 上一輪的續播就此作廢：advanceQueue 以物件識別比對，舊佇列的取回會自行退場。

@@ -162,6 +162,8 @@ export type PlaybackItem = {
   turnId: string;
   audioUrl: string;
   text: string;
+  /** 這一段語音多長（毫秒）。播放端據此知道何時可以放下一則。 */
+  durationMs: number;
 };
 
 /**
