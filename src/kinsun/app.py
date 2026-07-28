@@ -183,6 +183,12 @@ def build_app() -> FastAPI:
         # ⚠️ 順序有意義：背景落庫必須先排空，否則佇列裡的觀測寫入會撞上已關閉的
         # 連線池，部署重啟就吃掉最後幾筆稽核。
         background.shutdown()
+        # TTS 佇列同理先排空（spec 2026-07-28 P1）：關機時佇列裡可能還有長輩的回覆
+        # 等著合成，直接關掉等於讓那一輪永遠沒有聲音。`close` 對未包裝的客戶端
+        # （文字泡泡）不存在，故以 getattr 取用——組裝根不該假設後端型別。
+        close_tts = getattr(tts_client, "close", None)
+        if close_tts is not None:
+            close_tts()
         db.close()
 
     parser = WebhookParser(settings.line_channel_secret)

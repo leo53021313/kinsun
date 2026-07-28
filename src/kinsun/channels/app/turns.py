@@ -24,7 +24,7 @@ from kinsun.accounts.service import AccountService
 from kinsun.channels.inbound import InboundMessage, dispatch
 from kinsun.locations.store import ElderLocation
 from kinsun.speech.chunking import reply_digest, split_for_speech
-from kinsun.speech.tts import TTSError
+from kinsun.speech.tts import TTSError, TtsPriority, tts_priority
 from kinsun.web.envelope import ok
 from kinsun.web.errors import ErrorCode
 
@@ -224,7 +224,11 @@ def create_app_turns_router(
         if index < 1 or index >= len(chunks):
             raise HTTPException(status_code=404, detail=ErrorCode.CHUNK_NOT_FOUND)
         try:
-            result = tts.synthesize(chunks[index])
+            # 續段的優先權低於「長輩正在等的第一段」（spec 2026-07-28 P1）：這一段還在
+            # 播前一段的時候取，有餘裕；讓它排在別位長輩的第一段之後，才不會把
+            # 「多快聽到第一個聲音」這件事賠掉。
+            with tts_priority(TtsPriority.CHUNK):
+                result = tts.synthesize(chunks[index])
         except TTSError:
             # 合成失敗不給假資料：App 收到 502 就停止續播，長輩至少聽完前面幾段。
             logger.warning("分段語音合成失敗 index=%s", index)
