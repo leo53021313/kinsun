@@ -28,6 +28,7 @@ from kinsun.web.routers.admin_jobs import create_admin_jobs_router
 from kinsun.web.routers.admin_strategies import create_admin_strategies_router
 from kinsun.web.routers.deps import (
     GuardianScope,
+    build_current_app_elder,
     build_current_app_guardian,
     build_current_guardian,
 )
@@ -100,6 +101,7 @@ def create_app_auth_router(
     """App 帳號面聚合：註冊／登入／裝置綁定共用同一節流器（各端點獨立計數）。"""
     limiter = rate_limiter or SlidingWindowRateLimiter(10, 300.0)
     current_app_guardian = build_current_app_guardian(accounts)
+    current_app_elder = build_current_app_elder(accounts)
     router = APIRouter()
     router.include_router(create_guardians_router(accounts=accounts, rate_limiter=limiter))
     router.include_router(create_sessions_router(accounts=accounts, rate_limiter=limiter))
@@ -109,6 +111,7 @@ def create_app_auth_router(
             accounts=accounts,
             notifications=notifications,
             current_app_guardian=current_app_guardian,
+            current_app_elder=current_app_elder,
         )
     )
     return router

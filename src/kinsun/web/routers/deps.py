@@ -59,6 +59,25 @@ def build_current_app_guardian(accounts: AccountService) -> Callable[..., str]:
     return current_app_guardian
 
 
+def build_current_app_elder(accounts: AccountService) -> Callable[..., str]:
+    """App token（長輩）認證依賴：回 elder_id；非長輩 token 一律 401。
+
+    與 `build_current_app_guardian` 對稱。`channels/app/turns.py` 另有一份同語意的
+    區域 `current_elder`（該處還要複核同意閘門），兩者刻意不合併：對講機每一輪都
+    新產生資料流，必須複核同意；本依賴只服務唯讀端點，且長輩解綁時 token 一併撤銷
+    （`accounts/service.py:405-410`），認證這一關就已擋下。
+    """
+
+    def current_app_elder(authorization: str = Header(default="")) -> str:
+        token = authorization.removeprefix("Bearer ").strip()
+        auth = accounts.authenticate_token(token) if token else None
+        if auth is None or auth.principal_type is not PrincipalType.ELDER:
+            raise HTTPException(status_code=401, detail=ErrorCode.INVALID_TOKEN)
+        return auth.principal_id
+
+    return current_app_elder
+
+
 class GuardianScope:
     """家屬可及範圍守門：長輩操作前先確認在管理名單內（否則 404 不洩漏存在性）。"""
 

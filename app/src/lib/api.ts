@@ -106,6 +106,13 @@ export function listNotifications(token: string): Promise<AppNotification[]> {
   return request("/api/v1/notifications", { token });
 }
 
+// --- 長輩端：App 內通知（X-01，2026-07-29） ---
+
+/** 長輩讀自己的用藥／回診提醒與主動關懷。真推播到位後仍是推不到時的補拉路徑。 */
+export function listElderNotifications(token: string): Promise<AppNotification[]> {
+  return request("/api/v1/elder-notifications", { token });
+}
+
 // --- 長輩端：對講機回合 ---
 
 export async function postTurn(
