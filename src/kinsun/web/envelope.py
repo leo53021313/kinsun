@@ -110,6 +110,42 @@ def _code_and_message(exc: StarletteHTTPException) -> tuple[str, str | None]:
     return _FRAMEWORK_CODES.get(exc.status_code, text), None
 
 
+# pydantic 的錯誤型別 → 繁中人話（A-05，2026-07-29）。
+#
+# ⚠️ **絕不回傳 pydantic 自己的 `msg`**：它是英文散文，而且會把驗證用的正規表示式
+# 原樣吐出去（實測 `"String should match pattern '^[^@]+@[^@]+\\.[^@]+$'"`）。那串
+# pattern 是實作細節，對任何呼叫端都沒有用，卻等於把驗證規則公開；英文散文也既不能
+# 直接顯示給家屬看、又不能拿來做程式分支。
+#
+# pydantic 另外給了機器可讀的 `type`，那才是該吐出去的：`code` 給機器分支，
+# `message` 給人看。沒對應到的型別退回**泛用繁中**而不是英文原文——退回原文等於這道
+# 防線在最需要的時候（遇到沒見過的錯）自動失效。
+_FIELD_MESSAGES: dict[str, str] = {
+    "missing": "這個欄位是必填的",
+    "string_too_short": "長度不足",
+    "string_too_long": "長度超過上限",
+    "string_pattern_mismatch": "格式不正確",
+    "string_type": "必須是文字",
+    "int_parsing": "必須是整數",
+    "int_type": "必須是整數",
+    "float_parsing": "必須是數字",
+    "float_type": "必須是數字",
+    "bool_parsing": "必須是是或否",
+    "bool_type": "必須是是或否",
+    "greater_than": "數值太小",
+    "greater_than_equal": "數值太小",
+    "less_than": "數值太大",
+    "less_than_equal": "數值太大",
+    "json_invalid": "資料格式不是有效的 JSON",
+    "value_error": "內容不正確",
+}
+_FIELD_MESSAGE_FALLBACK = "這個欄位填得不正確"
+
+
+def _field_message(error_type: str) -> str:
+    return _FIELD_MESSAGES.get(error_type, _FIELD_MESSAGE_FALLBACK)
+
+
 def install_error_envelope(app: FastAPI) -> None:
     """把 HTTPException／驗證錯誤統一改寫為信封格式（app 與測試的組裝處都要呼叫）。"""
 
@@ -123,7 +159,8 @@ def install_error_envelope(app: FastAPI) -> None:
         fields = [
             {
                 "field": ".".join(str(part) for part in err.get("loc", [])),
-                "message": str(err.get("msg", "")),
+                "code": str(err.get("type", "")),
+                "message": _field_message(str(err.get("type", ""))),
             }
             for err in exc.errors()
         ]

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from kinsun.web.envelope import ERROR_MESSAGES, error_body, install_error_envelope, ok
 
@@ -126,3 +126,65 @@ def test_detail_may_carry_both_a_code_and_a_human_message():
 
     body = TestClient(app).get("/api/v1/boom").json()
     assert body["error"] == {"code": "invalid_schedule", "message": "那個時間已經過去了。"}
+
+
+# ── 422 欄位明細不得外洩實作細節（A-05，2026-07-29）──────────────────────
+
+
+# ⚠️ 這兩個模型必須住在**模組層級**：本檔有 `from __future__ import annotations`，
+# 型別註記會變成字串，FastAPI 只能從模組 globals 解析——定義在函式裡的類別它找不到，
+# 於是把參數當成 query 而回 `missing`，測試會以看似無關的方式紅掉。
+class _PatternIn(BaseModel):
+    email: str = Field(pattern=r"^[^@]+@[^@]+\.[^@]+$")
+    password: str = Field(min_length=8)
+
+
+class _CountIn(BaseModel):
+    count: int
+
+
+def test_field_errors_carry_a_machine_code_and_chinese_message_not_pydantic_prose():
+    """pydantic 的 `msg` 是英文散文，而且**會把正規表示式原樣吐出去**：
+    實測 `"String should match pattern '^[^@]+@[^@]+\\.[^@]+$'"`。
+
+    兩個問題疊在一起：
+    - 那串 pattern 是**實作細節**，對任何呼叫端都沒有用，卻等於把驗證規則公開；
+    - 英文散文既不能直接顯示給家屬看，也不能拿來做程式分支。
+
+    pydantic 另外給了機器可讀的 `type`（`string_pattern_mismatch`／`string_too_short`
+    …），那才是該吐出去的東西。故 `meta.fields` 改成 `{field, code, message}`：
+    code 給機器、message 給人，兩者都不再是英文原文。
+    """
+    app = FastAPI()
+    install_error_envelope(app)
+
+    @app.post("/api/v1/x")
+    def x(body: _PatternIn) -> dict:
+        return ok({})
+
+    body = TestClient(app).post("/api/v1/x", json={"email": "bad", "password": "s"}).json()
+    fields = {f["field"]: f for f in body["meta"]["fields"]}
+    assert fields["body.email"]["code"] == "string_pattern_mismatch"
+    assert fields["body.password"]["code"] == "string_too_short"
+    # 關鍵斷言：pattern 絕不可出現在回應裡的任何一處。
+    raw = str(body)
+    assert "^[^@]" not in raw
+    assert "String should" not in raw
+    # 訊息是繁中人話。
+    assert all(f["message"] and not f["message"].isascii() for f in fields.values())
+
+
+def test_unmapped_field_error_falls_back_to_generic_chinese_not_english():
+    """沒對應到的 pydantic 型別退回**泛用繁中**，而不是退回英文原文——
+    退回原文等於這道防線在最需要的時候（遇到沒見過的錯）自動失效。"""
+    app = FastAPI()
+    install_error_envelope(app)
+
+    @app.post("/api/v1/y")
+    def y(body: _CountIn) -> dict:
+        return ok({})
+
+    body = TestClient(app).post("/api/v1/y", json={"count": "不是數字"}).json()
+    field = body["meta"]["fields"][0]
+    assert field["code"] == "int_parsing"
+    assert not field["message"].isascii()

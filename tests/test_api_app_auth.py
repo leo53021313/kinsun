@@ -415,3 +415,28 @@ def test_garbage_credentials_still_return_invalid_token():
     res = client.delete("/api/v1/sessions", headers={"Authorization": "Bearer not-a-real-token"})
     assert res.status_code == 401
     assert res.json()["error"]["code"] == "invalid_token"
+
+
+def test_register_rejects_a_whitespace_only_name():
+    """全空白的名字不是名字（A-07，2026-07-29）。
+
+    `POST /elders` 早就 strip 後擋下（400 `name_required`），`POST /guardians` 卻只驗
+    `min_length=1`——三個空白照收。收下之後那位家屬在 UI 上**永遠是一片空白**，
+    而且沒有任何地方會提醒他名字沒填好。同一個欄位在同一個產品裡兩種行為，必有一錯。
+    """
+    res = _client().post(
+        "/api/v1/guardians",
+        json={"email": "son@example.com", "password": "correct-horse-8", "name": "   "},
+    )
+    assert res.status_code == 400
+    assert res.json()["error"]["code"] == "name_required"
+
+
+def test_register_trims_the_name_it_stores():
+    """前後空白剝掉再存——不然「 兒子 」與「兒子」會是兩個看起來一樣的家屬。"""
+    res = _client().post(
+        "/api/v1/guardians",
+        json={"email": "son@example.com", "password": "correct-horse-8", "name": "  兒子  "},
+    )
+    assert res.status_code == 201
+    assert res.json()["data"]["name"] == "兒子"
