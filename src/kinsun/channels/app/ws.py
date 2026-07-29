@@ -399,10 +399,30 @@ def create_app_ws_router(
     return router
 
 
+def _is_coordinate(value: object) -> bool:
+    """座標必須是真正的數字。
+
+    ⚠️ `bool` 要單獨排除：它是 `int` 的子型別，`float(True)` 是 1.0——傳 `true`
+    不會報錯，會**安靜地**把長輩記在緯度 1.0（幾內亞灣外海）。實測確認。
+    """
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def _parse_location(raw: str) -> dict:
     """解析上行的位置 JSON；壞掉就當成「這輪沒有位置」。
 
     外部輸入是資料不是指令：解析失敗只丟掉這一筆，不可讓一則畸形訊息切斷長輩的連線。
+
+    ⚠️ 型別必須在這裡擋（V-03，2026-07-29）：`_save_location` 的 `place.strip()`
+    在它自己的 try 之外，地名傳成數字會拋 AttributeError 一路冒到讀迴圈——那裡只接
+    `WebSocketDisconnect`，於是**整條連線被砍、且不送任何 error 訊框**。
+    最陰險的是發作時機：位置訊框只是存進 `pending`，要等長輩**下一次開口**送音檔
+    才會用到，所以症狀是「講完一整句話，連線斷掉，那句話也沒進庫」。只要 App 某個
+    版本把 `location` 送成數字，該版本**所有使用者**的第一句話都會斷線。
+    REST 那條路因 FastAPI 強制轉字串不受影響，只有 WS 這條主路徑中招。
+
+    三者型別任一不合就整筆丟掉，不接受半套——反正 `_save_location` 本來就要求
+    三者齊備，留半筆只是讓「這輪沒有位置」多一種說法。
     """
     import json
 
@@ -413,8 +433,18 @@ def _parse_location(raw: str) -> dict:
         return {}
     if not isinstance(payload, dict):
         return {}
-    return {
-        "location": payload.get("location", ""),
-        "latitude": payload.get("latitude"),
-        "longitude": payload.get("longitude"),
-    }
+    location = payload.get("location", "")
+    latitude = payload.get("latitude")
+    longitude = payload.get("longitude")
+    # ⚠️ 型別不合與「沒帶座標」要分開記：後者是既有的正常語意（只送地名＝這輪沒有
+    # 位置），把它也記成 warning 等於製造誤導性日誌——那正是讓下一個人查錯方向的東西。
+    if (
+        not isinstance(location, str)
+        or (latitude is not None and not _is_coordinate(latitude))
+        or (longitude is not None and not _is_coordinate(longitude))
+    ):
+        logger.warning("WebSocket 位置訊框欄位型別不合，整筆忽略")
+        return {}
+    if latitude is None or longitude is None:
+        return {}
+    return {"location": location, "latitude": latitude, "longitude": longitude}

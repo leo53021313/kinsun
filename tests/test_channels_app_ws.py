@@ -12,6 +12,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from itertools import count
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -510,3 +511,65 @@ def test_a_second_question_sees_the_first_one_still_in_flight():
     assert session.histories[1] == ["今天有什麼新消息"], (
         f"第二輪沒看到在途的第一句：{session.histories}"
     )
+
+
+@pytest.mark.parametrize(
+    ("payload", "why"),
+    [
+        ({"location": 123, "latitude": 22.99, "longitude": 120.21}, "地名是數字"),
+        ({"location": ["台南市"], "latitude": 22.99, "longitude": 120.21}, "地名是陣列"),
+        ({"location": {"n": "台南"}, "latitude": 22.99, "longitude": 120.21}, "地名是物件"),
+        ({"location": "台南市", "latitude": "北緯22", "longitude": 120.21}, "緯度是字串"),
+        ({"location": "台南市", "latitude": 22.99, "longitude": [120.21]}, "經度是陣列"),
+    ],
+)
+def test_wrong_typed_location_frame_does_not_kill_the_connection(payload, why):
+    """型別不合的位置訊框只該被丟掉（V-03，2026-07-29）。
+
+    ⚠️ 這個 bug 的陰險之處是**發作時機**：位置訊框只是存進 pending，直到長輩
+    **下一次開口**送音檔才會用到。所以症狀是「講完一整句話，連線斷掉，那句話也
+    沒進庫」——長輩以為金孫壞了，後台完全查不到原因。而且只要 App 某個版本送錯
+    型別，該版本**所有使用者**的第一句話都會斷線。
+
+    故斷言的是「音檔送得出去、回覆收得到」，不只是「解析函式沒拋例外」。
+    """
+    svc = _service()
+    elder, token = _bound_elder_token(svc)
+    locations = FakeLocationStore()
+    client = _client(svc, locations=locations)
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_text(json.dumps(payload))
+        ws.send_bytes(b"\x00fake-audio")
+        reply = ws.receive_json()
+    assert reply["type"] == "reply", why
+    assert locations.get_for_elder(elder.elder_id) is None, why
+
+
+def test_a_good_location_frame_after_a_bad_one_still_works():
+    """壞訊框不可污染後續：丟掉那一筆之後，下一筆正常的位置仍要寫得進去。"""
+    svc = _service()
+    elder, token = _bound_elder_token(svc)
+    locations = FakeLocationStore()
+    client = _client(svc, locations=locations)
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_text(json.dumps({"location": 123, "latitude": 22.99, "longitude": 120.21}))
+        ws.send_text(json.dumps({"location": "台南市", "latitude": 22.99, "longitude": 120.21}))
+        ws.send_bytes(b"\x00fake-audio")
+        ws.receive_json()
+    assert locations.get_for_elder(elder.elder_id) == ElderLocation(
+        elder.elder_id, "台南市", NOW.timestamp(), 22.99, 120.21
+    )
+
+
+def test_boolean_coordinates_are_rejected_rather_than_coerced_to_one():
+    """bool 是 int 的子型別，float(True)＝1.0——會把長輩寫到外海去，必須擋。"""
+    svc = _service()
+    elder, token = _bound_elder_token(svc)
+    locations = FakeLocationStore()
+    client = _client(svc, locations=locations)
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_text(json.dumps({"location": "台南市", "latitude": True, "longitude": 120.21}))
+        ws.send_bytes(b"\x00fake-audio")
+        reply = ws.receive_json()
+    assert reply["type"] == "reply"
+    assert locations.get_for_elder(elder.elder_id) is None
