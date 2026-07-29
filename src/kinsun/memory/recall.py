@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextvars
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from typing import Protocol
 
 from kinsun import tracing
@@ -12,6 +13,7 @@ from kinsun.llm import Message
 from kinsun.memory.longterm.store import LongTermStore
 from kinsun.memory.models import FactSection, InjectedContext, TurnContext
 from kinsun.memory.shortterm import MemoryStore
+from kinsun.turn_context import current_pending_utterances
 
 logger = logging.getLogger("kinsun.memory.recall")
 
@@ -42,14 +44,21 @@ class SessionMemory:
     # 攤在 span 上可直接看到模型當輪被餵了什麼記憶與事實。input 仍關（首參是 self）。
     @tracing.track(name="memory_assemble", type="general", capture_input=True, capture_output=True)
     def assemble(self, elder_id: str, query: str) -> TurnContext:
+        history = self._short_term.recent(elder_id)
+        # 併發輪的在途問句（spec 2026-07-28 P3）：長輩問完新聞、接著問「那天氣呢」時，
+        # 新聞那一輪還沒寫進 turns 表（記憶只在回覆產生後才寫），少了它「那」就沒有
+        # 指涉對象。補在歷史尾巴＝時序上正好在這一輪的問句之前。
+        # 沒有人提供在途清單時（LINE、POST /turns、排程端）整段為空，行為不變。
+        history = [*history, *(Message("user", text) for text in current_pending_utterances())]
         return TurnContext(
             injected=self._inject(elder_id, query),
-            history=self._short_term.recent(elder_id),
+            history=history,
         )
 
-    def record_turn(self, elder_id: str, *messages: Message) -> None:
+    def record_turn(self, elder_id: str, *messages: Message, at: datetime | None = None) -> None:
+        """`at`＝長輩開口的時刻，供併發輪維持正確的對話順序（見 `shortterm.append`）。"""
         for message in messages:
-            self._short_term.append(elder_id, message)
+            self._short_term.append(elder_id, message, at=at)
 
     def _inject(self, elder_id: str, query: str) -> InjectedContext:
         memories = self._long_term.search(elder_id, query)

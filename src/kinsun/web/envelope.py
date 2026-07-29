@@ -19,6 +19,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 ERROR_MESSAGES: dict[str, str] = {
     "missing_token": "未提供登入憑證",
     "invalid_token": "登入憑證無效，請重新登入",
+    "not_found": "找不到這個頁面",
+    "method_not_allowed": "這個操作不支援",
+    "invalid_schedule": "提醒的設定不正確",
     "invalid_credentials": "帳號或密碼不正確",
     "invalid_admin_key": "管理金鑰錯誤",
     "consent_revoked": "長輩的使用同意已失效",
@@ -43,6 +46,7 @@ ERROR_MESSAGES: dict[str, str] = {
     "slots_required": "請至少選擇一個提醒時段",
     "invalid_slot": "提醒時段格式不正確",
     "invalid_kind": "提醒類型不正確",
+    "kind_not_changeable": "提醒的類型不能修改，請刪掉這筆重新建立",
     "occurrences_required": "請至少設定一個提醒時間",
     "schedule_not_found": "找不到這筆提醒",
     "invalid_date": "日期格式不正確（YYYY-MM-DD）",
@@ -76,19 +80,87 @@ def error_body(code: str, message: str | None = None, meta: dict | None = None) 
     }
 
 
+# 框架自己丟的 HTTPException（打錯網址、方法不對）帶的是英文句子（"Not Found"），
+# 而 `detail` 會原封當成 `error.code`——那是**給機器判斷用的欄位**，塞英文句子等於
+# 前端無從分支；`message` 又因為查無文案退回碼本身，於是使用者也看到英文。
+# 專案規則是「`error.code` 唯一出處為 ErrorCode、每碼必有繁中文案」，框架丟的錯
+# 不該是例外，故依狀態碼補上對應（A-04，2026-07-29）。
+_FRAMEWORK_CODES: dict[int, str] = {
+    404: "not_found",
+    405: "method_not_allowed",
+}
+
+
+def _code_and_message(exc: StarletteHTTPException) -> tuple[str, str | None]:
+    """從 HTTPException 取出 (code, message)。
+
+    三種來源，優先序由具體到籠統：
+    1. `detail` 是 `{"code": ..., "message": ...}`——業務驗證要同時給機器碼與**已經
+       寫好的繁中人話**（A-01）。排程的驗證訊息（「那個時間已經過去了。」）是寫給長輩
+       看的，LINE 流程與 LLM 工具都直接用它；HTTP 這條路原本把整句塞進 `error.code`。
+    2. `detail` 是我們自己註冊過的碼——絕大多數情形，原樣放行。
+    3. 其餘＝框架丟的英文句子，依狀態碼換成註冊過的碼。
+    """
+    detail = exc.detail
+    if isinstance(detail, dict) and "code" in detail:
+        return str(detail["code"]), detail.get("message")
+    text = str(detail)
+    if text in ERROR_MESSAGES:
+        return text, None
+    return _FRAMEWORK_CODES.get(exc.status_code, text), None
+
+
+# pydantic 的錯誤型別 → 繁中人話（A-05，2026-07-29）。
+#
+# ⚠️ **絕不回傳 pydantic 自己的 `msg`**：它是英文散文，而且會把驗證用的正規表示式
+# 原樣吐出去（實測 `"String should match pattern '^[^@]+@[^@]+\\.[^@]+$'"`）。那串
+# pattern 是實作細節，對任何呼叫端都沒有用，卻等於把驗證規則公開；英文散文也既不能
+# 直接顯示給家屬看、又不能拿來做程式分支。
+#
+# pydantic 另外給了機器可讀的 `type`，那才是該吐出去的：`code` 給機器分支，
+# `message` 給人看。沒對應到的型別退回**泛用繁中**而不是英文原文——退回原文等於這道
+# 防線在最需要的時候（遇到沒見過的錯）自動失效。
+_FIELD_MESSAGES: dict[str, str] = {
+    "missing": "這個欄位是必填的",
+    "string_too_short": "長度不足",
+    "string_too_long": "長度超過上限",
+    "string_pattern_mismatch": "格式不正確",
+    "string_type": "必須是文字",
+    "int_parsing": "必須是整數",
+    "int_type": "必須是整數",
+    "float_parsing": "必須是數字",
+    "float_type": "必須是數字",
+    "bool_parsing": "必須是是或否",
+    "bool_type": "必須是是或否",
+    "greater_than": "數值太小",
+    "greater_than_equal": "數值太小",
+    "less_than": "數值太大",
+    "less_than_equal": "數值太大",
+    "json_invalid": "資料格式不是有效的 JSON",
+    "value_error": "內容不正確",
+}
+_FIELD_MESSAGE_FALLBACK = "這個欄位填得不正確"
+
+
+def _field_message(error_type: str) -> str:
+    return _FIELD_MESSAGES.get(error_type, _FIELD_MESSAGE_FALLBACK)
+
+
 def install_error_envelope(app: FastAPI) -> None:
     """把 HTTPException／驗證錯誤統一改寫為信封格式（app 與測試的組裝處都要呼叫）。"""
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_exception_to_envelope(request, exc: StarletteHTTPException):
-        return JSONResponse(status_code=exc.status_code, content=error_body(str(exc.detail)))
+        code, message = _code_and_message(exc)
+        return JSONResponse(status_code=exc.status_code, content=error_body(code, message))
 
     @app.exception_handler(RequestValidationError)
     async def _validation_to_envelope(request, exc: RequestValidationError):
         fields = [
             {
                 "field": ".".join(str(part) for part in err.get("loc", [])),
-                "message": str(err.get("msg", "")),
+                "code": str(err.get("type", "")),
+                "message": _field_message(str(err.get("type", ""))),
             }
             for err in exc.errors()
         ]

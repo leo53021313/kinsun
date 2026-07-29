@@ -161,4 +161,11 @@ export const strings = {
   notifications: {
     empty: "目前沒有通知。金孫有事會第一時間放在這裡。",
   },
+  // 長輩看的提醒（X-01，2026-07-29）：用詞比家屬版更白話，不用「通知」這個詞。
+  elderNotifications: {
+    title: "金孫的提醒",
+    empty: "現在沒有要提醒您的事。時間到了金孫會跟您說。",
+    back: "回去講話",
+    bell: "看金孫的提醒",
+  },
 } as const;

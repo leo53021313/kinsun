@@ -114,8 +114,12 @@ def _city_code(city: str | None) -> str:
     return _CITY_CODES.get((city or "taipei").strip().lower(), "Taipei")
 
 
-def _geocode(http: Transport, place: str) -> tuple[float, float] | None:
-    """地名 → (lat, lon)；查不到回 None。加 countryCode 意義的「台灣」後綴避免命中海外同名。"""
+def geocode(http: Transport, place: str) -> tuple[float, float] | None:
+    """地名 → (lat, lon)；查不到回 None。加 countryCode 意義的「台灣」後綴避免命中海外同名。
+
+    公開函式（spec 2026-07-27-附近地點搜尋跨模組沿用）：`tools/places.py` 的
+    `resolve_place` 借道本函式做「地名 → 座標」，不另接地理編碼服務。
+    """
     url = _NOMINATIM_URL.format(q=urllib.parse.quote(f"{place} 台灣"))
     data = get_json(http, url, timeout=_TIMEOUT, headers={"User-Agent": _USER_AGENT})
     if not data:
@@ -166,8 +170,8 @@ def build_route_handler(transport: Transport | None = None) -> Callable[[dict], 
         if not origin:
             return "請問要從哪裡出發？（可用長輩目前的位置當起點）"
         try:
-            origin_coords = _geocode(http, origin)
-            dest_coords = _geocode(http, destination)
+            origin_coords = geocode(http, origin)
+            dest_coords = geocode(http, destination)
             if origin_coords is None or dest_coords is None:
                 missing = origin if origin_coords is None else destination
                 return f"查不到「{missing}」這個地點。"

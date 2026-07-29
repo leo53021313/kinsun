@@ -1,6 +1,6 @@
 # API 設計規範 - 金孫 KinSun
 
-> **版本:** v1.10 | **更新:** 2026-07-27 | **狀態:** ✅ 定稿（`GET /admin/jobs` **母體改為全系統排程宣告**（`cron/registry.py`，含跑在 RAG Worker 程序的 `rag-weekly-refresh`）並加 `owner`／`can_run_now` 兩欄，手動觸發對本程序跑不了的排程回 409 `job_not_runnable_here`——原本這一頁只看得到 webhook 程序綁得出來的 job，RAG 週更停擺或從未執行一律顯示全綠；`GET /admin/jobs` 加逾期偵測欄位（`is_overdue`／`late_seconds`／`due_at`／`never_ran`／`meta.overdue`／`meta.never_ran`／`meta.warnings`），**逾期容許量改逐 job**（`schedule-dispatch` 用自己的 90 秒判定窗，預設仍 300 秒）——`never_ran` 為 2026-07-26 補：沒有 `last_run_at` 就算不出 `due_at`、`is_overdue` 恆為 False，從沒被排程器碰過的 job 原本顯示成全綠；新增 `GET /turns/chunks/{index}` 分段語音串流＋三個錯誤碼，`POST /turns` 回應加 `chunk_count`／`reply_digest`；契約已拍板 D-23～D-29；/v1 已全面落地；`traces/{trace_id}` 回應加 `opik_url` 深連結）
+> **版本:** v1.19 | **更新:** 2026-07-29 | **狀態:** ✅ 定稿（兩處無界輸入補上限：排程名稱 50 字（A-06，35 萬字實測讓清單回應膨脹到 1 MB／16.7 秒）、地名 100 字（V-05，2 萬字會每輪注入提示詞）；422 欄位明細不再外洩 pydantic 原文與正規表示式，改為 `{field, code, message}`（A-05）；`POST /guardians` 的全空白名稱改與 `/elders` 同調（A-07）；錯誤契約四修：框架層 404／405 補 `not_found`／`method_not_allowed`（A-04）、排程驗證改 `invalid_schedule`＋繁中 message（A-01）、沒帶憑證統一回 `missing_token`（A-08）、`shared` 的 Elder 型別補 `nickname`（A-10）；邊界輸入三修：`Authorization` scheme 大小寫不敏感（A-15）、邀請碼剝前後空白（A-11）、`PUT /schedules` 改 kind 由靜默忽略改為 400 `kind_not_changeable`（A-09）；位置座標補範圍驗證（V-04）：WS 與 REST 兩條路徑共用 `locations.is_valid_coordinate`，REST 刻意忽略而非 422（422 會連長輩那句話一起退掉）；`WS /api/v1/ws/talk` 位置訊框補欄位型別把關（V-03）——型別錯會砍斷整條連線且不送 error 訊框，且發作在長輩下一次開口時；新增 `POST/DELETE /api/v1/push-tokens` 裝置推播 token 註冊（真推播 D-08 階段 5）——主體由 Authorization 決定不由呼叫端宣告；新增 `GET /api/v1/elder-notifications` 長輩讀自己的 App 內通知（X-01，2026-07-29 全面自動化測試）——提醒送出後只有家屬讀得到、且只查家屬自己的 `external_id`，寫給長輩的那一列誰都讀不到，用藥／回診／主動關懷對純 App 家庭等於不存在；真推播 D-08 階段 5 到位後本端點仍是補拉路徑；新增 `WS /api/v1/ws/talk` 對講機長連線（非同步工具調用，spec 2026-07-28）——整輪走同一條連線讓「算出答案的 worker 推不到長輩的連線」這個問題自動消失，`POST /turns` 保留為降級路徑；`GET /admin/jobs` **母體改為全系統排程宣告**（`cron/registry.py`，含跑在 RAG Worker 程序的 `rag-weekly-refresh`）並加 `owner`／`can_run_now` 兩欄，手動觸發對本程序跑不了的排程回 409 `job_not_runnable_here`——原本這一頁只看得到 webhook 程序綁得出來的 job，RAG 週更停擺或從未執行一律顯示全綠；`GET /admin/jobs` 加逾期偵測欄位（`is_overdue`／`late_seconds`／`due_at`／`never_ran`／`meta.overdue`／`meta.never_ran`／`meta.warnings`），**逾期容許量改逐 job**（`schedule-dispatch` 用自己的 90 秒判定窗，預設仍 300 秒）——`never_ran` 為 2026-07-26 補：沒有 `last_run_at` 就算不出 `due_at`、`is_overdue` 恆為 False，從沒被排程器碰過的 job 原本顯示成全綠；新增 `GET /turns/chunks/{index}` 分段語音串流＋三個錯誤碼，`POST /turns` 回應加 `chunk_count`／`reply_digest`；契約已拍板 D-23～D-29；/v1 已全面落地；`traces/{trace_id}` 回應加 `opik_url` 深連結）
 > **基準:** as-is（現行 23 端點實證）＋ to-be（/v1 契約）。命名規則以 AGENTS.md 為準。
 > DGX 服務認證與速率限制 → 13_安全循環；`admin api disabled` 503 措辭一併列 13。
 
@@ -48,7 +48,9 @@
 
 ### 2.3 驗證錯誤統一（✅ D-24）
 
-攔截 FastAPI `RequestValidationError`，改寫為信封格式：`error.code="validation_error"`，`error.message` 取第一個欄位錯誤的人話描述，`meta.fields` 附逐欄位明細。手寫驗證同樣走標準錯誤碼（`name_required`、`invalid_date`…），**不再回自由字串**。
+攔截 FastAPI `RequestValidationError`，改寫為信封格式：`error.code="validation_error"`，`meta.fields` 附逐欄位明細，每筆為 `{field, code, message}`。手寫驗證同樣走標準錯誤碼（`name_required`、`invalid_date`…），**不再回自由字串**。
+
+> ⚠️ **`meta.fields[].message` 絕不回 pydantic 原文**（A-05，2026-07-29）：它是英文散文，而且會把驗證用的正規表示式原樣吐出去（實測 `"String should match pattern '^[^@]+@[^@]+\\.[^@]+$'"`）——那串 pattern 是實作細節，對呼叫端沒有用，卻等於把驗證規則公開。改為 `code`＝pydantic 的機器可讀 `type`（`string_too_short`／`int_parsing`…）供程式分支、`message`＝繁中人話供顯示；沒對應到的型別退回**泛用繁中**而非英文原文（退回原文等於這道防線在遇到沒見過的錯時自動失效）。
 
 ### 2.4 信封豁免清單
 
@@ -71,8 +73,7 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 
 | 錯誤碼 | HTTP | 語意 |
 | :--- | :---: | :--- |
-| `missing_token` | 401 | 未帶 Authorization |
-| `missing_token` | 401 | 未帶 Authorization header |
+| `missing_token` | 401 | **完全沒帶憑證**（無 Authorization 或剝掉 scheme 後為空）。⚠️ 與 `invalid_token` 的分野對 UI 是實質的：前者是「還沒登入」該導去登入頁，後者是「登入失效」該清掉 session 再導。原本全庫只有家屬雙認證回這個碼、其餘九支端點一律回 `invalid_token`，App 的 401 統一處理只能猜（A-08，2026-07-29） |
 | `invalid_token` | 401 | token 無效／型別不符（取代 as-is 的 `"invalid token"`／`"missing bearer token"`） |
 | ~~`token_expired`~~ | — | **作廢**（D-25 修訂：全 token 永久記住，無過期） |
 | `invalid_credentials` | 401 | 帳密錯誤（不洩露帳號存在性，維持現行良好實務） |
@@ -85,7 +86,11 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | `password_too_short` | 409 | 密碼不足 8 字元（服務層驗證，✅ 庚-20） |
 | `not_paired` | 409 | 長輩帳密登入但未掃碼配對（己-6：首次一定掃碼） |
 | `invite_used`／`invite_expired`／`too_many_attempts`／`invite_wrong_role` | 409 | 邀請碼狀態錯誤（wrong_role＝家屬碼誤走裝置綁定，✅ 庚-04） |
+| `name_required` | 400 | 名稱為空或**全空白**。⚠️ `POST /guardians` 原本只驗 `min_length=1`，三個空白照收，那位家屬在 UI 上永遠是一片空白且無人提醒——與 `POST /elders` 早已 strip 後擋下的行為不同調（A-07，2026-07-29）。兩支現在都是 strip 後判空，存入的名稱也一律去頭尾空白 |
 | `name_required`／`label_required`／`slots_required`／`invalid_slot`／`invalid_date`／`invalid_time`／`date_in_past` | 400 | 欄位業務驗證失敗 |
+| `not_found`／`method_not_allowed` | 404／405 | **框架層**（打錯網址、方法不對）的統一出口。原本 FastAPI 自己丟的 `detail` 是英文句子「Not Found」，會被原封當成 `error.code`——那是給機器判斷用的欄位，英文句子等於前端無從分支，而 `message` 又因查無文案退回碼本身，於是使用者也看到英文（A-04，2026-07-29） |
+| `invalid_schedule` | 400 | 排程業務驗證失敗（時間已過去、太遠、事情太多、**名稱超過 50 字**…）。`error.message` 帶服務層寫好的繁中人話——那些句子是寫給長輩看的，LINE 流程與 LLM工具都直接用；原本整句被塞進 `error.code`（A-01，2026-07-29） |
+| `kind_not_changeable` | 400 | `PUT /schedules/{group_id}` 送了與原本不同的 `kind`。**類型不可改是刻意的**（`replace_group` 沿用原 kind：改內容不該讓家屬設的藥變成長輩設的、用藥變成回診），要換類型得刪掉重建。原本是收下必填的 `kind` 卻靜默忽略——家屬改分類拿到 200 與一筆沒變的資料，UI 沒有理由懷疑它（A-09，2026-07-29） |
 | `invalid_status`／`invalid_action` | 400 | admin 守則：查詢狀態不在白名單／動作非 `revoke`（後台不提供採用，守則自動生效） |
 | `strategy_not_found` | 404 | admin 守則：查無此守則，或它已不在生效中（撤銷是條件式 `UPDATE ... RETURNING`，撤不到即回本錯誤——不先查後撤，避免謊報「已撤銷」） |
 | `validation_error` | 422 | pydantic 欄位驗證失敗（統一改寫，§2.3） |
@@ -115,6 +120,10 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | LIFF idToken | `/api/v1/` 家屬面（過渡） | 每請求即時打 LINE verify | 維持（隨 LINE 凍結，退場時移除，ADR-009） |
 | `X-Admin-Key` | `/api/v1/admin/` | 靜態共用金鑰，`hmac.compare_digest` | 維持；輪替機制 → 13 循環 |
 | DGX 服務 | `/transcribe`／`/synthesize` | **無認證** | → 13 循環議 |
+
+> ⚠️ **`Authorization` 的 scheme 大小寫不敏感**（RFC 7235）：`bearer`／`BEARER` 一律認得，單一出處為 `web/routers/deps.strip_bearer`。原本各處寫 `removeprefix("Bearer ")`，小寫進來剝不掉、token 變成 `"bearer xxx"` → 401 `invalid_token`——**症狀跟 token 失效一模一樣**，呼叫端會去查 token 生命週期而不是查大小寫（A-15，2026-07-29）。同檔的 `current_guardian` 早就用 `scheme.lower()` 做對了，其餘幾支沒有：那是漂移不是設計。
+>
+> ⚠️ **邀請碼前後空白一律剝掉**（`redeem_invite`／`preview_invite`，涵蓋 App 綁定與 LINE 流程）：碼是家屬用訊息傳給長輩、長輩再貼進 App 的，這條路上帶到空白或換行是常態。不剝的話長輩看到「查無此邀請碼」而他手上那張碼明明是對的——他會反覆重打然後放棄，而後台查不到任何原因（A-11，2026-07-29）。
 
 ---
 
@@ -146,7 +155,10 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | —（新增） | `PUT /api/v1/elders/{elder_id}/account` | ✅ D-71（己-6）：家屬代辦長輩帳密（帳號＝手機號碼；PUT＝重設）；invalid_phone 400／phone_taken 409 |
 | —（新增） | `POST /api/v1/elder-sessions` | ✅ D-71（己-6）：長輩帳密登入（只管重登；未配對 403 not_paired）；納 D-58 節流 |
 | —（新增） | `GET /api/v1/turns/chunks/{index}` | **分段語音串流**（2026-07-26 延遲優化）：取本輪回覆的第 index 段語音。長輩 Bearer token 認證；query `digest`＝`POST /turns` 回應裡的 `reply_digest`，不符即 409（那輪已被新的一輪取代，前端應停止續播）。回覆全文取自這位長輩**自己**今天最後一則金孫回覆（`turns` 表），故不另建表、也沒有「任意文字丟進來合成」的濫用面。回應：`{audio_url, duration_ms, text}` |
-| `POST /api/app/turns` | `POST /api/v1/turns` | 對講機回合（raw body 音檔；上限 env 化 D-26）。回應自 2026-07-26 起多兩個欄位：`chunk_count`（整段回覆被切成幾段；>1 代表 `audio_url` 只是**第一段**，其餘用 `GET /turns/chunks/{index}` 依序取）與 `reply_digest`（取後續段落時帶上）。分段只對 App 通道啟用——LINE 一輪只能回一則語音，給它第一句等於把後面的話吞掉。選填 query：`location`＋`latitude`＋`longitude`（長輩地名＋模糊座標，App 端已四捨五入至 0.01 度；**三者齊備才寫入** `elder_locations`，寫入排在 dispatch 之前，缺任一即忽略、不清空既有值——spec 2026-07-17 長輩目前地點） |
+| —（新增） | `WS /api/v1/ws/talk` | **對講機長連線**（spec 2026-07-28）：整輪對話走同一條 WebSocket，後端可主動送第二則訊息。認證走 query `token`（WebSocket 握手在 RN 與瀏覽器都不能自訂標頭），並以閘門複核同意，失敗以 close code 1008 關閉。上行：一個 binary 訊息＝一輪完整音檔；一個 JSON 訊息＝更新下一輪要用的位置（`{location, latitude, longitude}`，三者齊備才寫入）。⚠️ **位置訊框的欄位型別由伺服器把關**（V-03，2026-07-29）：`location` 必須是字串、座標必須是數字（`bool` 不算——`float(true)` 是 1.0，會把長輩記在幾內亞灣外海），任一不合就整筆丟掉並記 warning。**座標範圍同時把關**（V-04）：緯度 ±90、經度 ±180，超出即視同這輪沒有位置——原樣落庫不只是一筆髒資料，`LocationFacts` 會把它注入每一輪提示詞、附近地點搜尋會拿它當圓心，長輩問「附近有沒有藥局」會得到北極圈的答案。此處**不可只靠 App 自律**：型別錯會讓 `place.strip()` 拋 `AttributeError` 一路冒到讀迴圈，那裡只接 `WebSocketDisconnect`，於是整條連線被砍且不送 error 訊框——而且發作在長輩**下一次開口**時（位置訊框只是存進 pending），症狀是「講完一整句話連線就斷、那句話也沒進庫」。REST 的 `POST /turns` 因 FastAPI 強制轉型不受影響。下行皆帶 `turn_id`：`ack`（`text`／`audio_url`／`duration_ms`，模型決定要查東西時立刻送、音檔取自預錄語庫不現場合成）、`reply`（同 `POST /turns` 的欄位）、`error`（回退話術，含併發輪達上限時的婉拒）。同時在跑的輪數上限 3。⚠️ `POST /turns` 保留為降級路徑，兩者共存 |
+| `POST /api/app/turns` | `POST /api/v1/turns` | 對講機回合（raw body 音檔；上限 env 化 D-26）。回應自 2026-07-26 起多兩個欄位：`chunk_count`（整段回覆被切成幾段；>1 代表 `audio_url` 只是**第一段**，其餘用 `GET /turns/chunks/{index}` 依序取）與 `reply_digest`（取後續段落時帶上）。分段只對 App 通道啟用——LINE 一輪只能回一則語音，給它第一句等於把後面的話吞掉。選填 query：`location`＋`latitude`＋`longitude`（長輩地名＋模糊座標，App 端已四捨五入至 0.01 度；**三者齊備才寫入** `elder_locations`，寫入排在 dispatch 之前，缺任一即忽略、不清空既有值——spec 2026-07-17 長輩目前地點；座標範圍不合法（緯度 ±90／經度 ±180 之外）同樣**忽略而非 422**，V-04 2026-07-29——422 會連長輩那句話一起退掉，位置是加分項，為了 App 送錯一個參數讓長輩重講一次代價太大；**地名超過 100 字**同樣忽略，V-05 2026-07-29——實測 2 萬字的地名會原樣落庫且**每一輪都注入提示詞**，既燒 token 也是提示注入的入口。⚠️ 這個上限刻意訂得寬：地名被拒是**靜默**失敗，長輩那端的表現是金孫又開始反問「您人在哪裡」而後台查不出原因——App 送的是 `address.city ?? subregion ?? region`，全是短的行政區名） |
+| —（新增） | `GET /api/v1/elder-notifications` | **長輩讀自己的 App 內通知**（X-01，2026-07-29 全面自動化測試）：長輩 Bearer token 認證，回本人 App 綁定 `external_id` 名下的訊息（用藥／回診提醒、主動關懷），形狀與家屬面 `GET /notifications` 相同（`[{content, created_at}]`、最近先、上限 50）。**為什麼補**：提醒送出＝`AppOutboundChannel` 落一筆 `app_notifications`，但先前只有家屬讀得到且只查家屬自己的 `external_id`——寫給長輩的那一列誰都讀不到，用藥／回診／主動關懷對純 App 家庭等於不存在（違反 PRD US-B2、BDD R4）。無 App 綁定回空陣列（非錯誤）；家屬 token 打此端點回 401。⚠️ 真推播（D-08 階段 5）到位後本端點不被取代，仍是推不到（App 未開、token 失效、換機）時的補拉路徑 |
+| —（新增） | `POST /api/v1/push-tokens`／`DELETE /api/v1/push-tokens/{token}` | **裝置推播 token 註冊**（真推播 D-08 階段 5，2026-07-29）：長輩與家屬共用同一支端點——兩邊都要收推播（長輩收用藥提醒、家屬收危急警報），差別只在 token 綁到哪個主體，而**主體一律由 Authorization 決定、不由呼叫端宣告**（讓客戶端自報身分＝開一個「把別人的提醒導到我手機」的破口）。Request `{token, platform}`，platform ∈ `android`／`ios`（大小寫不敏感），其餘 400 `validation_error`；同一個 token 再打一次＝改綁（換人用同一台裝置）。回 201 `{registered}`——`PUSH_ENABLED=false` 的部署收下但不存並回 `registered:false`，讓 App 不必分辨伺服器版本。DELETE 只刪自己名下的（否則知道別人 token 的人可以讓對方從此收不到提醒），一律 204。⚠️ 推播為加分項：訊息一律先落 `app_notifications` 再推，推播失敗不影響落庫，App 開啟時仍讀得到 |
 | `current_app_guardian` 屬性 | **刪除** | 死碼（D-28） |
 
 ### 觀測後台（tags: admin）

@@ -76,7 +76,12 @@ export default function GuardianHome() {
     setBusy(true);
     try {
       const created = await createElder(name, token);
-      setElders((prev) => [...prev, { elder_id: created.elder_id, name: created.name }]);
+      // 帶上 nickname：`created` 一直都有回它，這裡原本丟掉，於是剛新增的那筆在列表上
+      // 少一個稱謂、要重新整理才會出現（A-10，2026-07-29——型別補齊後編譯器抓到的）。
+      setElders((prev) => [
+        ...prev,
+        { elder_id: created.elder_id, name: created.name, nickname: created.nickname },
+      ]);
       setInviteCode(created.invite_code);
       setNewName("");
     } catch (exc) {

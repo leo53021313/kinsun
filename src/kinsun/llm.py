@@ -8,6 +8,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Protocol
 
+from kinsun import turn_context
+
 
 class LLMError(Exception):
     """LLM 呼叫失敗。"""
@@ -224,6 +226,30 @@ class GeminiClient:
         self._model = model
         self._timeout = timeout
 
+    def _budgeted_http_options(self):
+        """這一次呼叫該用多久的逾時：`None`＝沒開預算，沿用掛在 client 上的那把。
+
+        ⚠️ 逐次逾時管得住**一次**呼叫，管不住三次相加（2026-07-28 實錄）：Gemini 3.5
+        過載那晚，一輪裡的分級／審核／生成各自卡滿 30 秒才放棄，長輩等了 96.6 秒才
+        聽到回退話術。故本輪剩餘時間比逐次逾時短時，以剩餘時間為準。
+
+        預算只會把逾時**縮短**不會放寬——`min` 不可寫成 `max`：那會讓一輪的預算變成
+        單次呼叫的**下限**，比沒有這個功能更糟。
+
+        預算已用完就直接拋，連打都不要打出去：那通呼叫的答案不管多好都來不及給長輩
+        聽，而它還會佔著配額與連線。拋 `LLMError` 是刻意的——三個呼叫端
+        （分級器 fail-safe 留痕、審核器 fail-open 放行、生成端回退話術）早就各自備好
+        了 LLM 故障的降級路徑，走同一條即可，不必為預算另闢分支。
+        """
+        from google.genai import types
+
+        remaining = turn_context.remaining_budget()
+        if remaining is None:
+            return None
+        if remaining <= 0:
+            raise LLMError(f"本輪時間已用完（超支 {-remaining:.1f} 秒），不再呼叫 Gemini")
+        return types.HttpOptions(timeout=int(min(self._timeout, remaining) * 1000))
+
     def generate(
         self,
         *,
@@ -240,6 +266,9 @@ class GeminiClient:
             # 同調，讓 app 層呼叫端只傳 dict、不 import google.genai（維持依賴反轉）。
             config_kwargs["response_mime_type"] = "application/json"
             config_kwargs["response_json_schema"] = response_schema
+        http_options = self._budgeted_http_options()
+        if http_options is not None:
+            config_kwargs["http_options"] = http_options
         try:
             response = self._client.models.generate_content(
                 model=self._model,
@@ -307,15 +336,19 @@ class GeminiClient:
                 for t in tools
             ]
         )
+        config_kwargs: dict = {
+            "system_instruction": system_prompt,
+            "tools": [genai_tool],
+            "thinking_config": types.ThinkingConfig(thinking_level=TOOL_TURN_THINKING_LEVEL),
+        }
+        http_options = self._budgeted_http_options()
+        if http_options is not None:
+            config_kwargs["http_options"] = http_options
         try:
             response = self._client.models.generate_content(
                 model=self._model,
                 contents=contents,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_prompt,
-                    tools=[genai_tool],
-                    thinking_config=types.ThinkingConfig(thinking_level=TOOL_TURN_THINKING_LEVEL),
-                ),
+                config=types.GenerateContentConfig(**config_kwargs),
             )
         except Exception as exc:  # noqa: BLE001 - 統一轉成可辨識的 LLMError
             raise LLMError(f"Gemini 工具呼叫失敗：{exc}") from exc

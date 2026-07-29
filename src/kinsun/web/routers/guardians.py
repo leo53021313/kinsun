@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from kinsun.accounts.service import AccountService, AppAccountError
 from kinsun.web.envelope import ok
+from kinsun.web.errors import ErrorCode
 from kinsun.web.ratelimit import RateLimiter, throttle_or_429
 
 
@@ -23,10 +24,13 @@ def create_guardians_router(*, accounts: AccountService, rate_limiter: RateLimit
     @router.post("/guardians", status_code=201)
     def register_guardian(body: RegisterIn, request: Request) -> dict:
         throttle_or_429(rate_limiter, "register", request)
+        # 與 `POST /elders` 同一套規則（A-07，2026-07-29）：`min_length=1` 擋不掉全空白，
+        # 收下之後那位家屬在 UI 上永遠是一片空白，而且沒有任何地方會提醒他名字沒填好。
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail=ErrorCode.NAME_REQUIRED)
         try:
-            guardian, token = accounts.register_guardian_account(
-                body.email, body.password, body.name
-            )
+            guardian, token = accounts.register_guardian_account(body.email, body.password, name)
         except AppAccountError as exc:
             raise HTTPException(status_code=409, detail=exc.reason) from exc
         return ok({"guardian_id": guardian.guardian_id, "name": guardian.name, "token": token})

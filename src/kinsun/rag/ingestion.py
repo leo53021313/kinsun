@@ -106,6 +106,13 @@ class IngestionPipeline:
         self._embedding_model = embedding_model
         self._max_chunk_chars = max_chunk_chars
         self._clock = clock
+        # 本輪已收錄的 canonical URL → 收錄它的 source_id。
+        # deduplicate_documents 只看得到單一來源的批次；同一個網站被切成多個來源
+        # （如 HPA 五個），爬深拉高後都會逛到共用的首頁與導覽頁，同一個 URL 被收
+        # 好幾次——2026-07-29 實測 1,297 份文件只有 597 個不重複 URL、release 的
+        # chunk 有 47% 是重複頁面，白燒嵌入配額且結構閘門直接擋下。
+        # 一個 pipeline 實例＝一輪 ingest，故此狀態的生命週期正好是一輪。
+        self._claimed_urls: dict[str, str] = {}
 
     def ingest_seed_documents(
         self,
@@ -143,6 +150,29 @@ class IngestionPipeline:
         )
         return documents
 
+    def _claim_urls(
+        self,
+        documents: tuple[RagDocument, ...],
+        source: Source,
+    ) -> tuple[tuple[RagDocument, ...], tuple[tuple[RagDocument, str], ...]]:
+        """本輪內同一個 canonical URL 只讓第一個來源收錄，其餘留稽核後跳過。
+
+        先到先得——呼叫端負責讓 ANSWER 來源排在 DISCOVERY 之前（見
+        `source_registry.order_answer_first`），否則衛教內文可能被只留 membership
+        的 discovery 來源搶走、不建回答向量。
+        """
+        kept: list[RagDocument] = []
+        discarded: list[tuple[RagDocument, str]] = []
+        for document in documents:
+            canonical = normalize_url(document.url)
+            owner = self._claimed_urls.get(canonical)
+            if owner is None:
+                self._claimed_urls[canonical] = source.source_id
+                kept.append(document)
+                continue
+            discarded.append((document, f"本輪已由來源 {owner} 收錄同一個 URL。"))
+        return tuple(kept), tuple(discarded)
+
     def ingest_documents(
         self,
         source: Source,
@@ -154,6 +184,8 @@ class IngestionPipeline:
         self._store.upsert_source(source)
         normalized_documents = tuple(_normalize_document(document) for document in documents)
         kept_documents, discarded = deduplicate_documents(normalized_documents)
+        kept_documents, cross_source_discarded = self._claim_urls(kept_documents, source)
+        discarded = discarded + cross_source_discarded
         for document, reason in discarded:
             self._store.log_ingestion(
                 source_id=source.source_id,

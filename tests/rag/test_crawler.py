@@ -1,3 +1,4 @@
+import urllib.request
 from datetime import datetime
 
 import pytest
@@ -252,18 +253,18 @@ def test_fetch_retries_transient_failure_then_succeeds(monkeypatch):
     """_fetch 對可暫時性失敗會重試，成功前每次失敗睡一次 delay_seconds。"""
     attempts = {"n": 0}
 
-    def fake_urlopen(request, timeout):
+    def fake_open(request, timeout=None):
         attempts["n"] += 1
         if attempts["n"] == 1:
             raise OSError("暫時性連線失敗")
         return _FakeUrlopenResponse(url="https://www.hpa.gov.tw/a", body=b"<html>ok</html>")
 
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
     sleeps: list[float] = []
     crawler = HealthEducationCrawler(
         config=CrawlerConfig(retries=2, delay_seconds=0.5),
         sleeper=sleeps.append,
     )
+    monkeypatch.setattr(crawler._opener, "open", fake_open)
 
     page = crawler._fetch("https://www.hpa.gov.tw/a")
 
@@ -273,18 +274,46 @@ def test_fetch_retries_transient_failure_then_succeeds(monkeypatch):
     assert sleeps == [0.5]
 
 
+def test_fetch_carries_cookies_across_pages_of_same_source(monkeypatch):
+    """health99 先發 session cookie 再轉址回同一網址；不帶 cookie 會被判定為無限轉址。
+
+    2026-07-28 實測：無 cookie 首頁即 302 指向自己（84/85 頁全滅），
+    帶 cookie jar 跟隨轉址則 200。cookie 須跨頁沿用，不可每頁重新開瓶。
+    """
+    seen_jars: list[object] = []
+
+    class _Opener:
+        def __init__(self, *handlers):
+            seen_jars.extend(
+                handler.cookiejar
+                for handler in handlers
+                if isinstance(handler, urllib.request.HTTPCookieProcessor)
+            )
+
+        def open(self, request, timeout=None):
+            return _FakeUrlopenResponse(url=request.full_url, body=b"<html>ok</html>")
+
+    monkeypatch.setattr("urllib.request.build_opener", _Opener)
+    crawler = HealthEducationCrawler(config=CrawlerConfig(retries=0, delay_seconds=0))
+
+    crawler._fetch("https://health99.hpa.gov.tw/a")
+    crawler._fetch("https://health99.hpa.gov.tw/b")
+
+    assert len(seen_jars) == 1, "cookie jar 必須是每個 crawler 一份、跨頁沿用"
+
+
 def test_fetch_raises_runtime_error_after_exhausting_retries(monkeypatch):
     """_fetch 重試耗盡後翻成 RuntimeError（保留最後一個錯誤訊息）。"""
 
-    def always_fail(request, timeout):
+    def always_fail(request, timeout=None):
         raise OSError("boom")
 
-    monkeypatch.setattr("urllib.request.urlopen", always_fail)
     sleeps: list[float] = []
     crawler = HealthEducationCrawler(
         config=CrawlerConfig(retries=2, delay_seconds=0.5),
         sleeper=sleeps.append,
     )
+    monkeypatch.setattr(crawler._opener, "open", always_fail)
 
     with pytest.raises(RuntimeError, match="boom"):
         crawler._fetch("https://www.hpa.gov.tw/x")

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import http.cookiejar
 import json
 import logging
 import re
@@ -249,6 +250,11 @@ class HealthEducationCrawler:
         self._parser = parser or DomainParserRegistry()
         self._fetcher = fetcher or self._fetch
         self._sleep = sleeper
+        # 每個 crawler 一份 cookie jar：health99 等站台先發 session cookie 再轉址回
+        # 同一網址，不收 cookie 會被 urllib 判定為無限轉址（2026-07-28 實測 84/85 頁全滅）。
+        self._opener = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())
+        )
 
     def crawl(self, source: Source) -> CrawlResult:
         queue = deque([source.url])
@@ -317,7 +323,7 @@ class HealthEducationCrawler:
                 headers={"User-Agent": self._config.user_agent},
                 method="GET",
             )
-            with urllib.request.urlopen(  # noqa: S310 - URL 已由 source allowlist 限制
+            with self._opener.open(  # noqa: S310 - URL 已由 source allowlist 限制
                 request,
                 timeout=self._config.timeout_seconds,
             ) as response:

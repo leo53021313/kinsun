@@ -314,3 +314,92 @@ def test_tool_results_go_back_with_a_role_gemini_accepts():
 
     roles = [getattr(c, "role", None) or c.get("role") for c in fake.last_contents]
     assert "tool" not in roles, f"工具結果用了 gemini-3.5 不接受的 role：{roles}"
+
+
+# --- 一輪總預算（辛-21）：每次呼叫的逾時不得超過本輪剩下的時間 ---
+
+
+def _ok_resp(text: str = "好"):
+    return SimpleNamespace(text=text, candidates=None, function_calls=None)
+
+
+def test_without_a_turn_budget_the_call_keeps_the_client_timeout():
+    """沒開預算＝行為與加這個功能之前完全相同（排程端、主動關懷走這條）。"""
+    client = GeminiClient(api_key="dummy", model="m", timeout=30.0)
+    fake = _FakeGenAI(_ok_resp())
+    client._client = fake
+
+    client.generate(system_prompt="s", messages=[Message("user", "嗨")])
+
+    assert getattr(fake.last_config, "http_options", None) is None
+
+
+def test_a_call_is_capped_by_what_is_left_of_the_turn(monkeypatch):
+    """剩 8 秒就只准等 8 秒——逐次逾時管得住一次呼叫，管不住三次相加（2026-07-28）。"""
+    import kinsun.turn_context as tc
+
+    clock = [1000.0]
+    monkeypatch.setattr(tc.time, "monotonic", lambda: clock[0])
+    client = GeminiClient(api_key="dummy", model="m", timeout=30.0)
+    fake = _FakeGenAI(_ok_resp())
+    client._client = fake
+
+    with tc.turn_budget(30.0):
+        clock[0] += 22.0
+        client.generate(system_prompt="s", messages=[Message("user", "嗨")])
+
+    assert fake.last_config.http_options.timeout == 8_000
+
+
+def test_a_generous_budget_does_not_extend_the_client_timeout(monkeypatch):
+    """預算只會把逾時**縮短**，不會放寬：30 秒的逾時仍是 30 秒的逾時。"""
+    import kinsun.turn_context as tc
+
+    monkeypatch.setattr(tc.time, "monotonic", lambda: 1000.0)
+    client = GeminiClient(api_key="dummy", model="m", timeout=30.0)
+    fake = _FakeGenAI(_ok_resp())
+    client._client = fake
+
+    with tc.turn_budget(300.0):
+        client.generate(system_prompt="s", messages=[Message("user", "嗨")])
+
+    assert fake.last_config.http_options.timeout == 30_000
+
+
+def test_an_exhausted_budget_fails_immediately_without_calling_gemini(monkeypatch):
+    """預算用完就不要再打出去了——那通呼叫的答案不管多好都已經來不及給長輩聽。"""
+    import kinsun.turn_context as tc
+
+    clock = [1000.0]
+    monkeypatch.setattr(tc.time, "monotonic", lambda: clock[0])
+    client = GeminiClient(api_key="dummy", model="m", timeout=30.0)
+    fake = _FakeGenAI(_ok_resp())
+    client._client = fake
+
+    with tc.turn_budget(30.0), pytest.raises(LLMError):
+        clock[0] += 31.0
+        client.generate(system_prompt="s", messages=[Message("user", "嗨")])
+
+    assert fake.last_config is None  # 完全沒有打出去
+
+
+def test_the_tool_turn_obeys_the_same_budget(monkeypatch):
+    """兩個出口共用同一把預算——漏掉工具回合等於漏掉最慢的那一段。"""
+    import kinsun.turn_context as tc
+
+    clock = [1000.0]
+    monkeypatch.setattr(tc.time, "monotonic", lambda: clock[0])
+    client = GeminiClient(api_key="dummy", model="m", timeout=30.0)
+    fake = _FakeGenAI(_FakeResp(parts=[], text="台北晴"))
+    client._client = fake
+
+    with tc.turn_budget(30.0):
+        clock[0] += 24.0
+        client.generate_tool_turn(
+            system_prompt="s",
+            messages=[Message("user", "天氣")],
+            tools=[_weather_spec()],
+            tool_results=[],
+        )
+
+    assert fake.last_config.http_options.timeout == 6_000

@@ -21,3 +21,49 @@ def test_previous_day_bounds_excludes_today_and_day_before_yesterday():
     assert datetime(2026, 6, 27, 23, 59, tzinfo=TPE).timestamp() < start
     assert start <= datetime(2026, 6, 28, 9, 0, tzinfo=TPE).timestamp() < end
     assert end <= datetime(2026, 6, 29, 0, 0, tzinfo=TPE).timestamp()
+
+
+# ── 併發輪的對話順序（spec 2026-07-28 P3）──────────────────────────────
+
+
+def test_speak_time_keeps_concurrent_turns_in_the_order_the_elder_spoke():
+    """⚠️ 併發輪的寫入時刻是「誰先算完誰先寫」，不是長輩開口的順序。
+
+    情境：長輩先問新聞（要查工具、慢），三秒後又問天氣（快）。天氣先算完先寫，
+    新聞後寫——若以寫入時刻排序，隔天 recall 讀到的對話順序是**顛倒的**，摘要
+    也跟著錯。更糟的是兩輪的 user／assistant 可能交錯寫入，讀起來像被打散的對話。
+
+    以長輩開口的時刻當排序鍵時，`created_at` 主導排序，兩個問題一起消失。
+    """
+    from kinsun.llm import Message
+    from kinsun.memory.shortterm import FakeMemoryStore
+
+    now = datetime(2026, 7, 28, 12, 0, tzinfo=TPE)
+    store = FakeMemoryStore(now=now)
+    spoke_news = now
+    spoke_weather = now + timedelta(seconds=3)
+
+    # 交錯寫入，且天氣（後問）整輪先完成——正是併發時真正會發生的順序。
+    store.append("e1", Message("user", "今天有什麼新消息"), at=spoke_news)
+    store.append("e1", Message("user", "那天氣呢"), at=spoke_weather)
+    store.append("e1", Message("assistant", "今天三十二度"), at=spoke_weather)
+    store.append("e1", Message("assistant", "今天有三則新聞"), at=spoke_news)
+
+    assert [m.content for m in store.recent("e1")] == [
+        "今天有什麼新消息",
+        "今天有三則新聞",
+        "那天氣呢",
+        "今天三十二度",
+    ]
+
+
+def test_append_without_a_speak_time_keeps_the_previous_behaviour():
+    """單輪路徑不傳 `at`＝沿用寫入當下，行為與本功能之前一字不差。"""
+    from kinsun.llm import Message
+    from kinsun.memory.shortterm import FakeMemoryStore
+
+    now = datetime(2026, 7, 28, 12, 0, tzinfo=TPE)
+    store = FakeMemoryStore(now=now)
+    store.append("e1", Message("user", "阿公早安"))
+    store.append("e1", Message("assistant", "早安喔"))
+    assert [m.content for m in store.recent("e1")] == ["阿公早安", "早安喔"]
