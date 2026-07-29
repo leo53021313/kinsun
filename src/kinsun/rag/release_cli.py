@@ -17,7 +17,7 @@ def main() -> None:
     args = _parse_args()
     database_url = _require_env("DATABASE_URL")
     ensure_schema(database_url)
-    db = Database.open(database_url)
+    db = Database.open_for_cli(database_url)
     try:
         store = PgRagReleaseStore(db)
         if args.command == "list":

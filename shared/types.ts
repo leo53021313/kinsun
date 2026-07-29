@@ -1,7 +1,11 @@
 /** 三端共用的 API 資源型別（✅ D-51，乙-5）：與後端 JSON 鍵名完全一致（snake_case）。 */
 
 // --- 家屬面資源 ---
-export type Elder = { elder_id: string; name: string };
+/** nickname＝金孫對長輩的稱謂（如「秀英阿嬤」），空字串＝未設定。
+ *  ⚠️ 後端 `GET /elders` 與 `POST /elders` 一直都有回這個欄位，型別卻沒宣告
+ *  （A-10，2026-07-29）：TS 消費端因此**取不到**一個明明送過來的值，而編譯器不會
+ *  提醒任何人——它只是安靜地不存在。前後端同鍵名是本檔的存在理由。 */
+export type Elder = { elder_id: string; name: string; nickname: string };
 export type CreatedElder = Elder & { invite_code: string };
 /** 統一排程（D-76 P3）：用藥、回診與長輩自訂提醒共用同一個資源。 */
 export type ScheduleKind = "medication" | "appointment" | "custom";

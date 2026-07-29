@@ -225,6 +225,12 @@ class Settings(_BaseEnvSettings):
     asr_api_key: str = ""
     asr_timeout_seconds: float = 15.0
     gemini_timeout_seconds: float = 30.0
+    # 一輪對話從長輩開口到必須交出回覆的總時間上限（秒）；0＝不限制。
+    # ⚠️ 與 GEMINI_TIMEOUT_SECONDS 是兩件事：後者管**一次**呼叫，前者管一輪裡三次
+    # 呼叫**相加**（分級→審核→生成）。2026-07-28 Gemini 3.5 過載時三次各卡滿 30 秒，
+    # 長輩等了 96.6 秒才聽到回退話術；歷史 68 輪的 p95 是 19.8 秒，故 30 秒砍不到
+    # 正常對話，只砍已經壞掉的那種。
+    turn_budget_seconds: float = 30.0
     memory_max_turns: int = 200
     timezone: str = "Asia/Taipei"
     longterm_embedding_model: str = "gemini-embedding-001"
@@ -395,6 +401,14 @@ class Settings(_BaseEnvSettings):
     # 降級後的重探間隔（秒）：連不到之後每隔這麼久重探一次，Opik 起來就自動接回。
     # 預設 60 秒——比 Opik 冷啟（30–60 秒）長一輪即可，不必更密。
     opik_reprobe_interval_seconds: float = 60.0
+    # 裝置推播（PUSH_ 前綴，真推播 D-08 階段 5，2026-07-29）。
+    # 預設 false：推播要能真的送到，前提是 App 已建 development build 並登記
+    # EAS／FCM 憑證——在那之前開著只會每次派送都白打一次 HTTP。
+    push_enabled: Bool = False
+    # Expo Push 的存取權杖（選填）。留空仍可送，但 Expo 建議設以防他人拿到
+    # 你的 push token 後冒名發送；值在 Expo 後台的 Access Tokens 產生。
+    push_expo_access_token: str = ""
+    push_timeout_seconds: float = 10.0
 
     @model_validator(mode="before")
     @classmethod

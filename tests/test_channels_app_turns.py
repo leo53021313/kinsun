@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from itertools import count
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -37,7 +38,7 @@ class _NullSession:
 
         return SimpleNamespace(system_suffix="", history=[])
 
-    def record_turn(self, elder_id, *messages):
+    def record_turn(self, elder_id, *messages, at=None):
         pass
 
 
@@ -49,7 +50,7 @@ class _NullClassifier:
 
 
 class _NullNotifier:
-    def notify(self, elder_id, assessment):
+    def notify(self, elder_id, assessment, user_text):
         pass
 
 
@@ -297,7 +298,7 @@ class _RecordingMemory:
 
         return SimpleNamespace(system_suffix="", history=[])
 
-    def record_turn(self, elder_id, *messages):
+    def record_turn(self, elder_id, *messages, at=None):
         self.messages.extend(messages)
 
     def recent(self, elder_id):
@@ -463,3 +464,39 @@ def test_the_blocking_work_never_runs_on_the_event_loop():
 
     assert _post_audio(TestClient(app), token).status_code == 201
     assert asr.on_event_loop is False, "對話管線跑在事件迴圈上，會把整台後端佔住"
+
+
+@pytest.mark.parametrize(
+    ("lat", "lon", "why"),
+    [
+        (999, 120.21, "緯度 999"),
+        (22.99, -999, "經度 -999"),
+        (90.1, 120.21, "緯度剛好越界"),
+    ],
+)
+def test_out_of_range_coordinates_are_ignored_without_failing_the_turn(lat, lon, why):
+    """座標超出範圍就當這輪沒有位置——**不可回 422**（V-04，2026-07-29）。
+
+    422 會連長輩那句話一起退掉。位置是加分項（`_save_location` 的既有註解：
+    「寫入失敗不可中斷對話」），為了一個 App 送錯的參數而讓長輩重講一次，
+    代價遠大於少一筆位置。故驗證放在 `_save_location`、不放 FastAPI 簽章。
+    """
+    svc = _service()
+    elder, token = _bound_elder_token(svc)
+    locations = FakeLocationStore()
+    res = _post_audio(_client(svc, locations=locations), token, location="台南市", lat=lat, lon=lon)
+    assert res.status_code == 201, why
+    assert locations.get_for_elder(elder.elder_id) is None, why
+
+
+def test_boundary_coordinates_are_accepted_over_rest():
+    svc = _service()
+    elder, token = _bound_elder_token(svc)
+    locations = FakeLocationStore()
+    res = _post_audio(
+        _client(svc, locations=locations), token, location="北極點", lat=90.0, lon=180.0
+    )
+    assert res.status_code == 201
+    assert locations.get_for_elder(elder.elder_id) == ElderLocation(
+        elder.elder_id, "北極點", NOW.timestamp(), 90.0, 180.0
+    )

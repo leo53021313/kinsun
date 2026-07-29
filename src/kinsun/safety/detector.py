@@ -102,7 +102,8 @@ class RiskDetector:
         ):
             final = RiskTier.L1  # llm.tier 已保證 < L2，一律落在留痕層
         # 症狀詞撐住的等級遇分級器故障（✅ 庚-41／A-44）：reason 反映真正觸發原因
-        # ——家屬通知文案取 reason，寫「分級器例外」會誤導。
+        # ——reason 進 risk_events 留痕與每日摘要，寫「分級器例外」會誤導。
+        # （家屬通知文案自 2026-07-29 起只引長輩原話，不再取 reason。）
         if "llm:error" in llm.signals and kw_tier >= final > RiskTier.L0:
             return RiskAssessment(final, llm.confidence, "命中症狀詞（分級器故障期間）", signals)
         # ✅ D-31（甲-5）fail-safe：分級器故障（例外或回傳無法解析）且句子非空時，

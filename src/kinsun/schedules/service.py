@@ -23,6 +23,15 @@ from kinsun.schedules.models import (
 )
 from kinsun.schedules.store import ScheduleStore
 
+# 提醒名稱長度上限（A-06，2026-07-29）。
+#
+# 實測 35 萬字的標題讓清單回應膨脹到 1 MB、耗時 16.7 秒——已認證的家屬就能觸發。
+# ⚠️ 檢查放在**服務層**而非 API 的 pydantic 模型：建排程有三個入口（HTTP、LINE 選單
+# 流程、LLM 工具），後兩者不經過那個模型；擋在只有一個入口走得到的地方等於沒擋。
+# 50 與 `name`／`nickname` 一致。與地名上限（寬鬆）取捨相反是刻意的：這裡被擋下會
+# 當場回 400 給正在看螢幕的家屬，是**大聲**的失敗，改一下就好。
+MAX_TITLE_CHARS = 50
+
 
 class ScheduleValidationError(Exception):
     """排程輸入不合法。
@@ -69,6 +78,8 @@ class ScheduleService:
         cleaned = title.strip()
         if not cleaned:
             raise ScheduleValidationError("要提醒的事情不能是空的。")
+        if len(cleaned) > MAX_TITLE_CHARS:
+            raise ScheduleValidationError("提醒的名稱太長了，請寫短一點。")
         if not occurrences:
             raise ScheduleValidationError("至少要有一個提醒時間。")
         now = self._clock().timestamp()
@@ -142,6 +153,8 @@ class ScheduleService:
         cleaned = title.strip()
         if not cleaned:
             raise ScheduleValidationError("要提醒的事情不能是空的。")
+        if len(cleaned) > MAX_TITLE_CHARS:
+            raise ScheduleValidationError("提醒的名稱太長了，請寫短一點。")
         if not occurrences:
             raise ScheduleValidationError("至少要有一個提醒時間。")
         existing = self._store.list_for_group(group_id)

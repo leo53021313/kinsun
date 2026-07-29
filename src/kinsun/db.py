@@ -281,6 +281,17 @@ APP_NOTIFICATIONS_DDL = (
     "ON app_notifications (external_id, created_at);"
 )
 
+# 裝置推播 token（真推播 D-08 階段 5，2026-07-29）：一人可有多台裝置。
+# token 唯一：同一台裝置換人使用時改綁，不可留兩列——否則提醒會送給前一位使用者。
+PUSH_TOKENS_DDL = (
+    "CREATE TABLE IF NOT EXISTS push_tokens ("
+    "push_token_id TEXT PRIMARY KEY, token TEXT NOT NULL UNIQUE, "
+    "principal_type TEXT NOT NULL, principal_id TEXT NOT NULL, "
+    "platform TEXT NOT NULL, updated_at DOUBLE PRECISION NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS idx_push_tokens_principal "
+    "ON push_tokens (principal_type, principal_id);"
+)
+
 # 整理進度標記（✅ 庚-06／庚-13）：某長輩某日已整理進長期記憶，供冪等與跨多日補齊。
 MEMORY_CONSOLIDATIONS_DDL = (
     "CREATE TABLE IF NOT EXISTS memory_consolidations ("
@@ -322,6 +333,29 @@ NEWS_MENTIONS_DDL = (
     "elder_id TEXT NOT NULL, news_item_id TEXT NOT NULL, "
     "mentioned_at DOUBLE PRECISION NOT NULL, "
     "PRIMARY KEY (elder_id, news_item_id));"
+)
+
+# 台灣店家 POI（Overture Maps，2026-07-27 spec 附近地點搜尋）。2026-07-28 正式庫
+# 實測：285,140 列，佔用 153 MB（heap 76 MB + index 77 MB），整庫 235 MB / 500 MB。
+# spec 原估 19 MB，實際低估近 8 倍——Supabase 免費方案的 500 MB 是共用預算，
+# 這一項要記在帳上。
+#
+# 刻意不用 PostGIS：查詢走「矩形粗篩 ＋ Haversine」，少一個擴充相依就少一個
+# 「託管環境有沒有裝」的外部變數。
+#
+# 兩支索引各有其查詢：主查詢帶 category（找附近的藥局），行政區指紋查詢不帶
+# category（統計鄰域郵遞區號分布），後者吃不到前者那支複合索引。
+PLACES_DDL = (
+    "CREATE TABLE IF NOT EXISTS places ("
+    "place_id TEXT PRIMARY KEY, name TEXT NOT NULL, "
+    "latitude DOUBLE PRECISION NOT NULL, longitude DOUBLE PRECISION NOT NULL, "
+    "category TEXT NOT NULL, overture_category TEXT, confidence DOUBLE PRECISION, "
+    "address TEXT, postcode TEXT, city TEXT, phone TEXT, "
+    "ingested_at DOUBLE PRECISION NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS places_category_lat_lon_idx "
+    "ON places (category, latitude, longitude);"
+    "CREATE INDEX IF NOT EXISTS places_lat_lon_idx "
+    "ON places (latitude, longitude);"
 )
 
 # 觀測五表以 external_id＋channel 記來源（✅ 庚-07／A-8）：欄位承載任一通道的外部
@@ -474,6 +508,10 @@ _KEEPALIVE_KWARGS: dict[str, int] = {
     "keepalives_count": 3,
 }
 
+# 一次性 CLI 的連線池上限。連線天花板是 Supabase pooler（session mode）15 條，
+# 常駐服務已佔去大半，CLI 只能拿零頭；批次作業是單執行緒，2 條夠用。見 14 §3.5。
+CLI_POOL_MAX_SIZE = 2
+
 
 def connect(database_url: str) -> psycopg.Connection:
     return psycopg.connect(database_url, **_KEEPALIVE_KWARGS)
@@ -503,11 +541,13 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(REMINDER_LOGS_RESPONDED_MIGRATION_DDL)
         conn.execute(RISK_NOTIFICATION_LOGS_DDL)
         conn.execute(APP_NOTIFICATIONS_DDL)
+        conn.execute(PUSH_TOKENS_DDL)
         conn.execute(WEB_SEARCH_LOOKUPS_DDL)
         conn.execute(MEMORY_CONSOLIDATIONS_DDL)
         conn.execute(CONVERSATION_SUMMARIES_DDL)
         conn.execute(NEWS_ITEMS_DDL)
         conn.execute(NEWS_MENTIONS_DDL)
+        conn.execute(PLACES_DDL)
         # 三段順序不可調換：建表（既有庫 no-op）→ 舊欄改名／補 channel → 建索引。
         # 索引引用 external_id，既有庫要先改完名才建得起來。
         conn.execute(OBSERVABILITY_TABLES_DDL)
@@ -563,6 +603,17 @@ class Database:
 
     def __init__(self, pool: ConnectionPool) -> None:
         self._pool = pool
+
+    @classmethod
+    def open_for_cli(cls, url: str) -> Database:
+        """一次性 CLI 專用的小連線池。
+
+        連線總量的天花板是 Supabase pooler（session mode）的 15 條，常駐服務
+        （webhook 兩個 worker＋排程器＋rag_worker）已吃掉大部分；CLI 沿用預設 5
+        會借不到連線而整個起不來（2026-07-28 實證：ingest 每次連線立即
+        EMAXCONNSESSION）。CLI 是單執行緒批次作業，2 條足夠。見 14 §3.5。
+        """
+        return cls.open(url, max_size=CLI_POOL_MAX_SIZE)
 
     @classmethod
     def open(cls, url: str, *, min_size: int = 1, max_size: int = 5) -> Database:

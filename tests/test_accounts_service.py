@@ -324,3 +324,54 @@ def test_register_guardian_rejects_short_password():
     with pytest.raises(AppAccountError) as exc:
         svc.register_guardian_account("son@example.com", "short-7", "兒子")
     assert exc.value.reason == "password_too_short"
+
+
+# ── 邀請碼容忍前後空白（A-11，2026-07-29）─────────────────────────────
+
+
+def test_redeem_invite_tolerates_surrounding_whitespace():
+    """複製貼上幾乎一定會帶到空白或換行。
+
+    碼是**家屬用 LINE／訊息傳給長輩、長輩再貼進 App** 的——這條路上帶到尾隨空白
+    或換行是常態，不是例外。不 strip 的話長輩看到的是「查無此邀請碼」，而他手上
+    那張碼明明是對的：他會反覆重打、最後放棄，而後台完全查不到原因。
+    """
+    repo = FakeAccountStore()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    invite = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
+    assert (
+        svc.redeem_invite(
+            f"  {invite.code}\n", "U-elder", consent_by=ConsentBy.SELF, channel=Channel.APP
+        )
+        == elder.elder_id
+    )
+
+
+def test_preview_invite_tolerates_surrounding_whitespace():
+    repo = FakeAccountStore()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    invite = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
+    preview = svc.preview_invite(f"\t{invite.code} ")
+    assert preview is not None
+    assert preview.elder_name == "阿公"
+
+
+def test_bind_elder_device_tolerates_surrounding_whitespace():
+    repo = FakeAccountStore()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "阿公")
+    invite = svc.generate_invite(elder.elder_id, InviteRole.ELDER)
+    bound, token = svc.bind_elder_device(f" {invite.code} ", consent_by=ConsentBy.PROXY)
+    assert bound.elder_id == elder.elder_id
+    assert token
+
+
+def test_whitespace_only_code_is_still_not_found():
+    """strip 之後是空的＝沒有輸入，不可意外命中任何碼。"""
+    repo = FakeAccountStore()
+    svc = _service(repo)
+    with pytest.raises(InviteError):
+        svc.redeem_invite("   ", "U-elder", consent_by=ConsentBy.SELF)
+    assert svc.preview_invite("  \n ") is None

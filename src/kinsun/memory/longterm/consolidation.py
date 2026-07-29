@@ -85,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
     from kinsun.memory.longterm.store import Mem0LongTermStore
     from kinsun.memory.shortterm import PgMemoryStore
 
-    db = Database.open(settings.database_url)
+    db = Database.open_for_cli(settings.database_url)
     try:
         short_term = PgMemoryStore(
             db,
