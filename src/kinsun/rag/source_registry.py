@@ -426,3 +426,19 @@ class SourceRegistry:
             for source in self._sources.values()
             if source.approved_for_rag and source.role == SourceRole.ANSWER
         )
+
+
+def order_answer_first(
+    source_ids: Iterable[str],
+    registry: SourceRegistry | None = None,
+) -> tuple[str, ...]:
+    """ANSWER 來源排在 DISCOVERY 之前，同角色維持原順序（穩定排序）。
+
+    跨來源 URL 去重是「先到先得」（見 `IngestionPipeline._claim_urls`）：多個來源
+    爬同一個網站時會撞到同一頁，若 discovery 來源先收走，該頁只留 membership 與
+    稽核、不建回答向量，衛教內文就查不到了。故收錄順序是正確性的一部分。
+    """
+    registry = registry or SourceRegistry()
+    return tuple(
+        sorted(source_ids, key=lambda sid: registry.get(sid).role != SourceRole.ANSWER)
+    )
