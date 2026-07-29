@@ -190,3 +190,48 @@ def test_another_guardians_elder_is_404(client_and_elder):
     client, elder_id = client_and_elder
     other = {"Authorization": "Bearer U-stranger"}
     assert client.get(f"/api/v1/elders/{elder_id}/schedules", headers=other).status_code == 404
+
+
+def test_update_rejects_a_different_kind_instead_of_silently_ignoring_it(client_and_elder):
+    """改分類不是靜默無效，是明確 400（A-09 修正版，2026-07-29）。
+
+    ⚠️ **`replace_group` 不改 kind 是刻意的**（見其 docstring：「改內容不該讓一筆
+    家屬設的藥變成長輩設的，也不該讓用藥變成回診」），所以正解不是讓 kind 可改。
+
+    真正的缺陷在契約說謊：`ScheduleIn.kind` 是**必填**卻永遠被忽略，家屬把用藥改成
+    回診會拿到 200 OK 與一筆完全沒變的資料——這是「答應了卻沒做」那一類的錯，而
+    UI 沒有任何理由懷疑它。改成 400 讓呼叫端知道要改分類得刪掉重建。
+    """
+    client, elder_id = client_and_elder
+    group_id = _post(client, elder_id).json()["data"]["group_id"]
+    res = client.put(
+        f"/api/v1/elders/{elder_id}/schedules/{group_id}",
+        json={
+            "kind": "appointment",  # 原本是 medication
+            "title": "血壓藥",
+            "occurrences": [{"repeat": "daily", "time": "07:30"}],
+        },
+        headers=AUTH,
+    )
+    assert res.status_code == 400
+    assert res.json()["error"]["code"] == "kind_not_changeable"
+    # 而且原本那組必須原封不動——半套的修改比不修改更難察覺。
+    listed = client.get(f"/api/v1/elders/{elder_id}/schedules", headers=AUTH)
+    assert listed.json()["data"][0]["kind"] == "medication"
+
+
+def test_update_with_the_same_kind_still_works(client_and_elder):
+    """送對的 kind 照舊——這是既有行為，不可被上面那條擋掉。"""
+    client, elder_id = client_and_elder
+    group_id = _post(client, elder_id).json()["data"]["group_id"]
+    res = client.put(
+        f"/api/v1/elders/{elder_id}/schedules/{group_id}",
+        json={
+            "kind": "medication",
+            "title": "血壓藥（新）",
+            "occurrences": [{"repeat": "daily", "time": "07:30"}],
+        },
+        headers=AUTH,
+    )
+    assert res.status_code == 200
+    assert res.json()["data"]["title"] == "血壓藥（新）"

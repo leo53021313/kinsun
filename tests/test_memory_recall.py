@@ -20,7 +20,7 @@ class _ShortTerm:
     def recent(self, line_user_id):
         return list(self._history)
 
-    def append(self, line_user_id, message):
+    def append(self, line_user_id, message, *, at=None):
         self.appended.append((line_user_id, message))
 
 

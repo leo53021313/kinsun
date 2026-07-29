@@ -353,3 +353,90 @@ def test_elder_token_can_logout_self():
     res = client.delete("/api/v1/sessions", headers={"Authorization": f"Bearer {token}"})
     assert res.status_code == 204
     assert svc.authenticate_token(token) is None
+
+
+# ── 認證 scheme 大小寫不敏感（A-15，2026-07-29）──────────────────────────
+
+
+def test_lowercase_bearer_scheme_is_accepted():
+    """RFC 7235 明訂 auth-scheme **大小寫不敏感**，我們只認 `Bearer ` 是錯的。
+
+    症狀最惡劣的地方在於它長得像「token 失效」：呼叫端拿到 401 invalid_token，
+    於是去查 token 生命週期、去查有沒有被撤銷——而真正的原因只是 B 沒有大寫。
+    HTTP 客戶端函式庫（與代理）依標準本來就可以自行決定大小寫。
+    """
+    client = _client(_service())
+    # ⚠️ 每個 scheme 都要用**自己的新 token**：共用一個 token 的話，第一輪就把它撤銷了，
+    # 後面幾輪拿到的 401 是「token 已失效」而不是「scheme 沒認得」——那樣這個測試在
+    # 修好之前也會綠，等於沒驗到任何事。
+    for index, scheme in enumerate(("Bearer", "bearer", "BEARER", "BeArEr")):
+        token = client.post(
+            "/api/v1/guardians",
+            json={
+                "email": f"g{index}@b.invalid",
+                "password": "pw12345678",
+                "name": "兒子",
+            },
+        ).json()["data"]["token"]
+        res = client.delete("/api/v1/sessions", headers={"Authorization": f"{scheme} {token}"})
+        assert res.status_code == 204, scheme
+
+
+def test_bearer_prefix_is_not_stripped_from_the_token_itself():
+    """只剝一次 scheme，不可把 token 內容裡剛好長得像 scheme 的字也吃掉。"""
+    from kinsun.web.routers.deps import strip_bearer
+
+    assert strip_bearer("Bearer abc") == "abc"
+    assert strip_bearer("bearer abc") == "abc"
+    assert strip_bearer("BEARER   abc  ") == "abc"
+    assert strip_bearer("abc") == "abc"  # 沒帶 scheme 的裸 token 維持既有寬容
+    assert strip_bearer("") == ""
+    assert strip_bearer("Bearer Bearer x") == "Bearer x"
+
+
+def test_no_credentials_returns_missing_token_everywhere():
+    """完全沒帶憑證＝`missing_token`，不是 `invalid_token`（A-08，2026-07-29）。
+
+    全庫原本只有家屬雙認證那一支回 `missing_token`，其餘九支端點一律 `invalid_token`
+    ——同一個情形兩種碼，前端要嘛兩個都判、要嘛判錯一半。而兩者對使用者的意義**完全
+    不同**：`missing_token` 是「還沒登入」（該導去登入頁），`invalid_token` 是「登入失效」
+    （該清掉 session 再導）。混在一起，App 的 401 統一處理就只能猜。
+    """
+    client = _client(_service())
+    res = client.delete("/api/v1/sessions")  # 連 Authorization 標頭都沒有
+    assert res.status_code == 401
+    assert res.json()["error"]["code"] == "missing_token"
+
+
+def test_garbage_credentials_still_return_invalid_token():
+    """有帶但不對＝`invalid_token`，這條不可被上面那條蓋掉。"""
+    client = _client(_service())
+    # ⚠️ 標頭值只能是 ASCII（httpx 會直接拋 UnicodeEncodeError），故不可用中文當亂碼。
+    res = client.delete("/api/v1/sessions", headers={"Authorization": "Bearer not-a-real-token"})
+    assert res.status_code == 401
+    assert res.json()["error"]["code"] == "invalid_token"
+
+
+def test_register_rejects_a_whitespace_only_name():
+    """全空白的名字不是名字（A-07，2026-07-29）。
+
+    `POST /elders` 早就 strip 後擋下（400 `name_required`），`POST /guardians` 卻只驗
+    `min_length=1`——三個空白照收。收下之後那位家屬在 UI 上**永遠是一片空白**，
+    而且沒有任何地方會提醒他名字沒填好。同一個欄位在同一個產品裡兩種行為，必有一錯。
+    """
+    res = _client().post(
+        "/api/v1/guardians",
+        json={"email": "son@example.com", "password": "correct-horse-8", "name": "   "},
+    )
+    assert res.status_code == 400
+    assert res.json()["error"]["code"] == "name_required"
+
+
+def test_register_trims_the_name_it_stores():
+    """前後空白剝掉再存——不然「 兒子 」與「兒子」會是兩個看起來一樣的家屬。"""
+    res = _client().post(
+        "/api/v1/guardians",
+        json={"email": "son@example.com", "password": "correct-horse-8", "name": "  兒子  "},
+    )
+    assert res.status_code == 201
+    assert res.json()["data"]["name"] == "兒子"

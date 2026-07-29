@@ -13,7 +13,7 @@ logger = logging.getLogger("kinsun.safety")
 
 
 class Notifier(Protocol):
-    def notify(self, elder_id: str, assessment: RiskAssessment) -> None: ...
+    def notify(self, elder_id: str, assessment: RiskAssessment, user_text: str) -> None: ...
 
 
 class TextSender(Protocol):
@@ -31,8 +31,9 @@ class TextSender(Protocol):
 
 
 class LogNotifier:
-    def notify(self, elder_id: str, assessment: RiskAssessment) -> None:
-        # reason 是分級器對長輩健康狀態的描述＝對話內容，不進 log（2026-07-27 政策）。
+    def notify(self, elder_id: str, assessment: RiskAssessment, user_text: str) -> None:
+        # reason（分級器對長輩健康狀態的描述）與 user_text（長輩原話）都是對話內容，
+        # 不進 log（2026-07-27 政策）。
         logger.warning(
             "危急通知 elder=%s tier=%s confidence=%.2f signals=%s",
             elder_id,
@@ -49,14 +50,14 @@ class GuardianDirectory(Protocol):
 _ALERT_PREFIX = "⚠️【金孫關懷提醒】"
 
 
-def _format_alert(assessment: RiskAssessment) -> str:
-    text = (
-        f"{_ALERT_PREFIX}您關心的長輩可能需要您的注意："
-        f"{assessment.reason}（風險等級 {assessment.tier.name}）。請盡快主動關心一下。"
-    )
+def _format_alert(assessment: RiskAssessment, user_text: str) -> str:
+    # 文案只引長輩原話（2026-07-29 Leo 定案）：緊不緊急由家屬自行判斷，不轉述
+    # 分級器的 reason，也不放家屬看不懂的「風險等級」字樣。語音輪次的原話是
+    # ASR 轉出的文字（可能有錯字），Leo 同日核定不加辨識註記、直接呈現。
+    text = f"{_ALERT_PREFIX}\n您關心的長輩剛剛說：\n「{user_text}」\n請盡快主動關心一下。"
     # L3 刪除後（✅ D-72），119 提示改掛「絕對危急詞命中」訊號——tier 已無法區分。
     if "keyword:absolute" in assessment.signals:
-        text += "（如情況緊急，請自行評估是否撥打 119。金孫不提供醫療診斷。）"
+        text += "\n（如情況緊急，請自行評估是否撥打 119。金孫不提供醫療診斷。）"
     return text
 
 
@@ -115,7 +116,7 @@ class GuardianNotifier:
             logger.warning("送達紀錄寫入失敗 elder=%s guardian=%s", elder_id, guardian_id)
 
     @tracing.track(name="guardian_notify", type="general", capture_input=True, capture_output=True)
-    def notify(self, elder_id: str, assessment: RiskAssessment) -> None:
+    def notify(self, elder_id: str, assessment: RiskAssessment, user_text: str) -> None:
         try:
             targets = [eg.guardian_id for eg in self._directory.guardians_of(elder_id)]
             if not targets:
@@ -129,7 +130,7 @@ class GuardianNotifier:
                     ",".join(assessment.signals),
                 )
                 return
-            text = _format_alert(assessment)
+            text = _format_alert(assessment, user_text)
             sent = 0
             unbound = 0
             for guardian_id in targets:

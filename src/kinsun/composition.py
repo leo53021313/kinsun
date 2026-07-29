@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -20,7 +21,7 @@ from kinsun.accounts.facts import ElderProfileFacts
 from kinsun.accounts.models import Channel
 from kinsun.accounts.service import AccountService
 from kinsun.accounts.store import PgAccountStore
-from kinsun.agent import CareAgent
+from kinsun.agent import SYSTEM_PROMPT, CareAgent
 from kinsun.channels.app.outbound import AppOutboundChannel
 from kinsun.channels.line.messenger import LineApiMessenger, LineOutboundChannel
 from kinsun.channels.router import ChannelRouter
@@ -29,15 +30,19 @@ from kinsun.config import Settings
 from kinsun.db import Database, ensure_schema
 from kinsun.llm import GeminiClient, LLMClient
 from kinsun.locations.facts import LocationFacts
-from kinsun.locations.store import PgLocationStore
+from kinsun.locations.store import LocationStore, PgLocationStore
 from kinsun.memory.longterm.mem0_factory import build_mem0_memory
 from kinsun.memory.longterm.store import Mem0LongTermStore
 from kinsun.memory.recall import SessionMemory
 from kinsun.memory.shortterm import PgMemoryStore
 from kinsun.news.mentions import NewsMentionStore, PgNewsMentionStore
 from kinsun.news.store import NewsStore, PgNewsStore
+from kinsun.notifications.expo_push import ExpoPushClient
+from kinsun.notifications.push_delivery import PushDelivery
+from kinsun.notifications.push_tokens import PgPushTokenStore
 from kinsun.notifications.store import PgAppNotificationStore
 from kinsun.observability.store import PgTraceStore
+from kinsun.places.store import PgPlaceStore, PlaceStore
 from kinsun.proactive.preferences import PgGreetingPreferenceStore
 from kinsun.rag.embeddings import GeminiEmbeddingModel
 from kinsun.rag.retriever import HealthEducationRetriever
@@ -60,6 +65,7 @@ from kinsun.tools.news import (
     build_news_detail_handler,
     build_news_handler,
 )
+from kinsun.tools.places import NEARBY_SPEC, build_nearby_handler
 from kinsun.tools.registry import ToolRegistry
 from kinsun.tools.schedules import (
     CANCEL_SPEC,
@@ -78,9 +84,50 @@ from kinsun.tools.transport import (
     build_mrt_line_handler,
     build_parking_handler,
     build_route_handler,
+    geocode,
 )
 from kinsun.tools.weather import WEATHER_SPEC, build_weather_handler
 from kinsun.tools.web_search import WEB_SEARCH_SPEC, build_web_search_handler
+from kinsun.transport import HttpxTransport
+
+logger = logging.getLogger("kinsun.composition")
+
+# ── 提示詞／註冊表對帳（2026-07-28）──
+#
+# 提示詞點名了工具、工具卻沒註冊時，模型不會說「我沒有這個工具」，而是假裝呼叫、
+# 吐出無限重複的 `tool_code {...}`（2026-07-26 實測單則 186,514 字）。出站護欄
+# （`agent._speakable`）擋得住送出去的那一坨，但長輩那一輪還是白問了——
+# 真正該做的是讓這種組態在**部署當下**就被看見，而不是等長輩踩到。
+#
+# ⚠️ 只警告、不讓啟動失敗：優雅降級是刻意的設計（沒有 TDX 憑證仍要能跑）。
+AUDITED_SPECS = (
+    WEATHER_SPEC,
+    HEALTH_RAG_SPEC,
+    ROUTE_SPEC,
+    BUS_ARRIVAL_SPEC,
+    MRT_LINE_SPEC,
+    PARKING_SPEC,
+    WEB_SEARCH_SPEC,
+    NEWS_SPEC,
+    NEWS_DETAIL_SPEC,
+    NEARBY_SPEC,
+    CREATE_SPEC,
+    LIST_SPEC,
+    CANCEL_SPEC,
+)
+# 提示詞只用文字描述、沒有寫出工具名的那些（「用對應的交通工具查詢」）——字面掃描
+# 掃不到，故明列。它們同樣是條件式註冊（TDX 憑證未齊就跳過），漏掉等於留著同一顆雷。
+_PROMPT_IMPLIED_TOOLS = frozenset({BUS_ARRIVAL_SPEC.name, MRT_LINE_SPEC.name, PARKING_SPEC.name})
+
+
+def list_unregistered_prompt_tools(registry: ToolRegistry) -> list[str]:
+    """提示詞叫模型用、註冊表卻沒有的工具名。
+
+    工具名由 `SYSTEM_PROMPT` 字面掃描得出，不手寫清單——日後改提示詞或加工具都自動跟上。
+    """
+    registered = {spec.name for spec in registry.specs()}
+    named = {spec.name for spec in AUDITED_SPECS if spec.name in SYSTEM_PROMPT}
+    return sorted((named | _PROMPT_IMPLIED_TOOLS) - registered)
 
 
 @dataclass(frozen=True)
@@ -116,6 +163,7 @@ class Core:
     risk_events: PgRiskEventStore
     summaries: PgConversationSummaryStore
     notifications: PgAppNotificationStore
+    push_tokens: PgPushTokenStore
     # 反思寫入（worker）與後台檢視／撤銷都需要同一個 store，故收進 Core。
     strategies: PgStrategyStore
     # 收進 Core 而非讓組裝根各自 new：clock 必須與 LocationFacts 同源，否則寫入
@@ -165,6 +213,11 @@ def build_tool_registry(
     news_locations: PgLocationStore | None = None,
     news_blocked_keywords: str = "",
     schedules: ScheduleService | None = None,
+    places: PlaceStore | None = None,
+    locations: LocationStore | None = None,
+    # 與 LocationFacts 共用同一個設定值；此預設鏡射 .env.example 的
+    # LOCATION_STALE_AFTER_HOURS=2，正式組裝一律由 settings 明確傳入。
+    location_stale_after_hours: int = 2,
 ) -> ToolRegistry:
     """集中組工具：日後新增工具只改這裡，兩個組裝根自動都有。"""
     registry = ToolRegistry()
@@ -205,6 +258,23 @@ def build_tool_registry(
     )
     # 路線走免金鑰的 OSRM，永遠註冊。
     registry.register(ROUTE_SPEC, build_route_handler())
+    # 附近地點（spec 2026-07-27）：兩個 store 都有才註冊——沒有位置就查不了「附近」，
+    # 註冊一個永遠回「不知道你在哪」的工具只會浪費模型的迭代。
+    if places is not None and locations is not None:
+        # 地名 → 座標沿用 transport.py 既有的 Nominatim 路徑，不另接服務；比照
+        # build_route_handler 的慣例只在組裝時建一次 HttpxTransport，不讓每次呼叫
+        # 都新建、浪費連線池。
+        places_transport = HttpxTransport()
+        registry.register(
+            NEARBY_SPEC,
+            build_nearby_handler(
+                places,
+                locations,
+                clock=lambda: clock().timestamp(),
+                stale_after_hours=location_stale_after_hours,
+                resolve_place=lambda q: geocode(places_transport, q),
+            ),
+        )
     # 金鑰未設＝跳過註冊（優雅降級）：金孫少一個上網查證能力，其餘功能照常運作。
     if tavily_api_key:
         registry.register(WEB_SEARCH_SPEC, build_web_search_handler(tavily_api_key, lookups))
@@ -215,6 +285,14 @@ def build_tool_registry(
         )
         registry.register(MRT_LINE_SPEC, build_mrt_line_handler(tdx_client_id, tdx_client_secret))
         registry.register(PARKING_SPEC, build_parking_handler(tdx_client_id, tdx_client_secret))
+    missing = list_unregistered_prompt_tools(registry)
+    if missing:
+        logger.warning(
+            "提示詞叫金孫用這些工具、但它們沒有註冊：%s。"
+            "模型會假裝呼叫並吐出無限重複的工具語法（出站護欄會攔成回退話術，"
+            "但長輩那一輪等於白問）。請補上對應的金鑰或 store。",
+            "、".join(missing),
+        )
     return registry
 
 
@@ -245,6 +323,9 @@ def assemble_core(
     )
     strategies = PgStrategyStore(db, clock=clock, new_id=new_id)
     locations = PgLocationStore(db)
+    # 附近地點（spec 2026-07-27）：search_nearby_places 工具讀，與 LocationFacts
+    # 共用同一個 locations、不另開連線。
+    places = PgPlaceStore(db)
     session = SessionMemory(
         memory,
         externals.long_term,
@@ -306,9 +387,27 @@ def assemble_core(
             news_locations=locations,
             news_blocked_keywords=settings.news_blocked_keywords,
             schedules=schedules,
+            places=places,
+            locations=locations,
+            location_stale_after_hours=settings.location_stale_after_hours,
         ),
     )
     notifications = PgAppNotificationStore(db, clock=clock, new_id=new_id)
+    push_tokens = PgPushTokenStore(db, clock=clock, new_id=new_id)
+    # 真推播（D-08 階段 5）：旗標關閉時 push 為 None，AppOutboundChannel 行為與
+    # 補這段之前完全相同（只落庫）。開啟前提見 config.push_enabled 的註解。
+    push_delivery = (
+        PushDelivery(
+            accounts,
+            push_tokens,
+            ExpoPushClient(
+                access_token=settings.push_expo_access_token,
+                timeout_seconds=settings.push_timeout_seconds,
+            ),
+        )
+        if settings.push_enabled
+        else None
+    )
     risk_events = PgRiskEventStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex)
     summaries = PgConversationSummaryStore(db, clock=clock)
     return Core(
@@ -322,7 +421,7 @@ def assemble_core(
             account_store,
             {
                 Channel.LINE: LineOutboundChannel(externals.messenger),
-                Channel.APP: AppOutboundChannel(notifications),
+                Channel.APP: AppOutboundChannel(notifications, push=push_delivery),
             },
         ),
         account_store=account_store,
@@ -335,6 +434,7 @@ def assemble_core(
         traces=traces,
         reminder_logs=PgReminderLogStore(db, clock=clock, new_id=new_id),
         notifications=notifications,
+        push_tokens=push_tokens,
         strategies=strategies,
         locations=locations,
         greeting_prefs=PgGreetingPreferenceStore(db),

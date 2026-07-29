@@ -18,6 +18,10 @@ class ErrorCode(StrEnum):
     # --- 認證與授權 ---
     MISSING_TOKEN = "missing_token"
     INVALID_TOKEN = "invalid_token"
+    # 框架層（打錯網址／方法不對）與排程業務驗證的統一出口（A-04／A-01，2026-07-29）
+    NOT_FOUND = "not_found"
+    METHOD_NOT_ALLOWED = "method_not_allowed"
+    INVALID_SCHEDULE = "invalid_schedule"
     INVALID_CREDENTIALS = "invalid_credentials"
     INVALID_ADMIN_KEY = "invalid_admin_key"
     CONSENT_REVOKED = "consent_revoked"
@@ -58,6 +62,7 @@ class ErrorCode(StrEnum):
     SLOTS_REQUIRED = "slots_required"
     INVALID_SLOT = "invalid_slot"
     INVALID_KIND = "invalid_kind"
+    KIND_NOT_CHANGEABLE = "kind_not_changeable"
     OCCURRENCES_REQUIRED = "occurrences_required"
     INVALID_DATE = "invalid_date"
     INVALID_TIME = "invalid_time"

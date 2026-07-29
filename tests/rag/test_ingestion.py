@@ -216,3 +216,68 @@ def test_versioned_discovery_document_is_audited_without_embedding():
     assert len(store.documents) == 1
     assert store.chunks == []
     assert store.logs[0]["parser_used"] == "discovery"
+
+
+def test_same_url_from_two_sources_is_ingested_once_per_run():
+    """跨來源同一個 URL 只收一次。
+
+    2026-07-29 實證：五個 HPA 來源爬同一個網站，爬深拉到 100 頁後都逛到共用的
+    首頁／導覽頁，同一個 URL 被收 2～5 次——1,297 份文件只有 597 個不重複網址，
+    release 的 chunk 有 47% 是重複頁面產生的（白燒嵌入配額），且結構閘門直接擋下
+    （「有重複 URL；有重複內容 hash」）。既有的 deduplicate_documents 只在單一
+    來源的批次內去重，看不到跨來源的重複。
+    """
+    registry = SourceRegistry()
+    first = registry.get("hpa_elder_health")
+    second = registry.get("hpa_chronic_disease")
+    shared_url = "https://www.hpa.gov.tw/Home/Index.aspx"
+    store = _FakeStore()
+    pipeline = IngestionPipeline(
+        store=store,
+        embedding_model=CharacterHashEmbedding(dimensions=8),
+        clock=lambda: datetime(2026, 6, 30, 10, 0),
+    )
+
+    for source in (first, second):
+        pipeline.ingest_seed_documents(
+            source,
+            (SeedDocument(source.source_id, shared_url, "共用頁", "", "長者健康促進共用頁內容。"),),
+            operator_or_job_id="cross-source-test",
+        )
+
+    kept = [d for d in store.documents if d.url == shared_url]
+    assert len(kept) == 1, "同一個 URL 跨來源只能收一次"
+    assert kept[0].source_id == first.source_id, "先到的來源保有該頁"
+    assert any(
+        log["status"] == "skipped" and log["source_id"] == second.source_id for log in store.logs
+    ), "被跳過的那次必須留稽核紀錄"
+
+
+def test_cross_source_claim_does_not_block_different_urls():
+    """去重只針對相同 URL，不同頁面照收——別把整個來源誤殺。"""
+    registry = SourceRegistry()
+    first = registry.get("hpa_elder_health")
+    second = registry.get("hpa_chronic_disease")
+    store = _FakeStore()
+    pipeline = IngestionPipeline(
+        store=store,
+        embedding_model=CharacterHashEmbedding(dimensions=8),
+        clock=lambda: datetime(2026, 6, 30, 10, 0),
+    )
+
+    for source, path in ((first, "a"), (second, "b")):
+        pipeline.ingest_seed_documents(
+            source,
+            (
+                SeedDocument(
+                    source.source_id,
+                    f"https://www.hpa.gov.tw/Pages/{path}.aspx",
+                    "頁",
+                    "",
+                    f"這是第 {path} 頁的衛教內容。",
+                ),
+            ),
+            operator_or_job_id="cross-source-test",
+        )
+
+    assert len(store.documents) == 2

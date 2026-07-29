@@ -106,6 +106,36 @@ export function listNotifications(token: string): Promise<AppNotification[]> {
   return request("/api/v1/notifications", { token });
 }
 
+// --- 兩端共用：裝置推播 token（真推播 D-08 階段 5，2026-07-29） ---
+
+/** 登記這台裝置。主體由 token 決定——不送 principal_id，伺服器也不會看。 */
+export function registerPushToken(
+  sessionToken: string,
+  token: string,
+  platform: "android" | "ios",
+): Promise<{ registered: boolean }> {
+  return request("/api/v1/push-tokens", {
+    token: sessionToken,
+    method: "POST",
+    body: JSON.stringify({ token, platform }),
+  });
+}
+
+/** 登出前清掉，避免提醒繼續推到已經不是本人在用的裝置。 */
+export function removePushToken(sessionToken: string, token: string): Promise<void> {
+  return request(`/api/v1/push-tokens/${encodeURIComponent(token)}`, {
+    token: sessionToken,
+    method: "DELETE",
+  });
+}
+
+// --- 長輩端：App 內通知（X-01，2026-07-29） ---
+
+/** 長輩讀自己的用藥／回診提醒與主動關懷。真推播到位後仍是推不到時的補拉路徑。 */
+export function listElderNotifications(token: string): Promise<AppNotification[]> {
+  return request("/api/v1/elder-notifications", { token });
+}
+
 // --- 長輩端：對講機回合 ---
 
 export async function postTurn(
