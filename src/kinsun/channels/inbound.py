@@ -13,6 +13,7 @@ from kinsun.agent import SYSTEM_TROUBLE_REPLY
 from kinsun.llm import LLMError
 from kinsun.memory.shortterm import MemoryStoreError
 from kinsun.observability.store import TraceStore, safe_record
+from kinsun.speech.ack_audio import AckClip
 from kinsun.speech.asr import ASRError
 from kinsun.speech.chunking import reply_digest
 from kinsun.speech.tts import TtsResult
@@ -71,10 +72,18 @@ class VoiceReplyDelivery:
     show_transcript：debug 用，在文字泡泡最前面附上本輪 ASR 辨識到的長者原話
     （只進文字泡泡、不進語音合成）。"""
 
-    def __init__(self, publisher, include_text: bool, show_transcript: bool = False) -> None:
+    def __init__(
+        self,
+        publisher,
+        include_text: bool,
+        show_transcript: bool = False,
+        *,
+        standby_clip: Callable[[str], AckClip | None] | None = None,
+    ) -> None:
         self._publisher = publisher
         self._include_text = include_text
         self._show_transcript = show_transcript
+        self._standby_clip = standby_clip
 
     def _compose_text(self, result: TtsResult, *, include_reply: bool) -> str | None:
         # debug 模式：「辨識：…」空一行「回復：…」；非 debug 就只回覆文字。
@@ -98,6 +107,33 @@ class VoiceReplyDelivery:
         except Exception:  # noqa: BLE001 - 任何失敗都退回文字
             logger.warning("語音回覆失敗，退回文字泡泡")
             msg.reply(self._compose_text(result, include_reply=True) or result.text)
+            return DeliveryOutcome(kind="text")
+
+    def deliver_standby(self, msg: InboundMessage, text: str) -> DeliveryOutcome:
+        """回退話術的投遞（V-02，2026-07-29）：用**啟動時預錄好**的音檔送語音。
+
+        為什麼不能沿用 `deliver`：那條路要一個 `TtsResult`，也就是要當場合成——而走到
+        這裡代表管線已經失敗（ASR／LLM／記憶其中之一），再花 1.9 秒合成一句「有點小
+        狀況」既慢又可能同樣失敗。這裡只查表拿現成的網址。
+
+        取不到音檔就退回文字，與 `deliver` 同一條紀律：回覆絕不消失。對純語音的長輩
+        來說，文字≈沒有回應——但「文字」仍然遠好過「什麼都沒有」，後者跟斷線無法區分。
+        """
+        clip = None
+        if self._standby_clip is not None and msg.reply_voice is not None:
+            try:
+                clip = self._standby_clip(text)
+            except Exception:  # noqa: BLE001 - 查表在對話路徑上，壞掉也只是沒有音檔
+                logger.warning("待命話術查表失敗，退回文字泡泡")
+        if clip is None:
+            msg.reply(text)
+            return DeliveryOutcome(kind="text")
+        try:
+            msg.reply_voice(clip.audio_url, clip.duration_ms, text)
+            return DeliveryOutcome(kind="voice", audio_url=clip.audio_url)
+        except Exception:  # noqa: BLE001 - 送不出語音就送文字
+            logger.warning("待命話術語音回覆失敗，退回文字泡泡")
+            msg.reply(text)
             return DeliveryOutcome(kind="text")
 
 
@@ -183,7 +219,14 @@ def _run_pipeline(
         result = produce()
     except (ASRError, LLMError, MemoryStoreError) as exc:
         logger.warning("對話管線失敗（回退提示）：%s: %s", type(exc).__name__, exc)
-        msg.reply(FALLBACK_PROMPT)
+        # ⚠️ 這裡走 deliver_standby 而不是 msg.reply（V-02，2026-07-29）：原本直接回文字
+        # 就 return，語音投遞在下面永遠到不了，所以就算 TTS 完全健康，回退話術也一律
+        # 無聲。對看不到螢幕的長輩，那一輪＝按下說話鍵、等五秒、什麼都沒有，跟斷線
+        # 分不出來（實測 p7：「伊有時陣攏無聲，干焦有字，我毋知伊有咧應無」）。
+        if voice is not None:
+            voice.deliver_standby(msg, FALLBACK_PROMPT)
+        else:
+            msg.reply(FALLBACK_PROMPT)
         return None
     started = timer()
     if voice is not None:

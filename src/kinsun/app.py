@@ -23,7 +23,7 @@ from kinsun.binding.gate import AllowAllGate, ConsentGate
 from kinsun.binding.session import PgBindingSessionStore
 from kinsun.channels.app.turns import create_app_turns_router
 from kinsun.channels.app.ws import create_app_ws_router
-from kinsun.channels.inbound import VoiceReplyDelivery
+from kinsun.channels.inbound import FALLBACK_PROMPT, VoiceReplyDelivery
 from kinsun.channels.line.webhook import create_app
 from kinsun.composition import assemble_core, build_externals
 from kinsun.config import load_dotenv, load_settings
@@ -179,13 +179,11 @@ def build_app() -> FastAPI:
         if settings.tts_backend == "dgx"
         else None
     )
-    voice = VoiceReplyDelivery(
-        publisher, settings.tts_reply_text, show_transcript=settings.asr_debug_show_transcript
-    )
     # 安撫話音檔（spec 2026-07-28 P2）：啟動時把語庫的十幾句合成上傳好，對話中只查表。
     # ⚠️ 用**獨立的 prefix**（`acks/`）：`publisher` 的 `cleanup(retention_days)` 會依
     # 日期資料夾刪除 `tts/` 下的音檔，安撫話被掃到就得重新合成。它們也沒有個資
     # （都是我們自己寫的通用句），故與長輩的回覆音檔區隔對待是合理的。
+    # ⚠️ 必須排在 voice 之前（V-02，2026-07-29）：回退話術的音檔由這份快取供應。
     ack_audio = None
     if publisher is not None:
         ack_audio = AckAudioCache(
@@ -194,9 +192,19 @@ def build_app() -> FastAPI:
                 settings, clock=clock, new_id=lambda: uuid.uuid4().hex, prefix="acks"
             ),
             signed_url_ttl_seconds=settings.audio_signed_url_expires_seconds,
+            # 管線失敗時唸的那一句也要預錄（V-02）：走到那裡代表 ASR／LLM／記憶已經
+            # 壞了一個，當場合成既慢又可能一起失敗。
+            standby_phrases=(FALLBACK_PROMPT,),
         )
         # 非阻塞：十幾段 × 約 1.9 秒 ≈ 半分鐘，同步跑會把服務啟動整整擋住那麼久。
         start_prewarm(ack_audio)
+    standby_clip = ack_audio.clip_for_text if ack_audio is not None else None
+    voice = VoiceReplyDelivery(
+        publisher,
+        settings.tts_reply_text,
+        show_transcript=settings.asr_debug_show_transcript,
+        standby_clip=standby_clip,
+    )
 
     def _shutdown() -> None:
         # ⚠️ 順序有意義：背景落庫必須先排空，否則佇列裡的觀測寫入會撞上已關閉的
@@ -314,6 +322,7 @@ def build_app() -> FastAPI:
                 publisher,
                 include_text=True,
                 show_transcript=settings.asr_debug_show_transcript,
+                standby_clip=standby_clip,
             ),
             traces=core.traces,
             inbound_audio=inbound_audio,
@@ -342,6 +351,7 @@ def build_app() -> FastAPI:
                 publisher,
                 include_text=True,
                 show_transcript=settings.asr_debug_show_transcript,
+                standby_clip=standby_clip,
             ),
             traces=core.traces,
             inbound_audio=inbound_audio,

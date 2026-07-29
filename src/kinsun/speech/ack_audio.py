@@ -81,12 +81,20 @@ class AckAudioCache:
         signed_url_ttl_seconds: float,
         clock: Callable[[], float] = time.monotonic,
         rng: random.Random | None = None,
+        standby_phrases: tuple[str, ...] = (),
     ) -> None:
+        """`standby_phrases`：語庫以外、也要預錄的句子（如管線失敗的回退話術）。
+
+        為什麼由組裝根注入而不是寫進 `speech/acks.py`：那份語庫的每一句語意都是
+        「我正在查」，且有測試強制它逐工具表態。回退話術不是工具安撫話，塞進去會
+        讓它被隨機抽中唸給正常對話的長輩聽。快取本身只需要知道「這些字要有音檔」。
+        """
         self._tts = tts
         self._publisher = publisher
         self._ttl = signed_url_ttl_seconds
         self._clock = clock
         self._rng = rng or random.Random()
+        self._standby = standby_phrases
         self._entries: dict[str, _Entry] = {}
         self._lock = threading.Lock()
         self._warming = False
@@ -104,6 +112,14 @@ class AckAudioCache:
         phrase = acks.pick(tool_name, persona_name=persona_name, rng=self._rng)
         if not phrase:
             return None
+        return self.clip_for_text(phrase)
+
+    def clip_for_text(self, phrase: str) -> AckClip | None:
+        """指定這一句的音檔（不隨機抽）；還沒暖好或已過期就回 None。
+
+        回退話術用這支：它是固定的一句，不能像工具安撫話那樣輪替。
+        同樣**絕不當場合成**——管線已經失敗了，再讓長輩多等 1.9 秒沒有意義。
+        """
         with self._lock:
             entry = self._entries.get(phrase)
             if entry is not None and self._is_stale(entry):
@@ -145,7 +161,9 @@ class AckAudioCache:
         裡有 26 筆是它們。掛一個 root 之後，那十九次上傳收斂成這一個 trace 底下的
         十九個 span——既看得到預熱有沒有成功，也不再洗版。
         """
-        phrases = acks.all_phrases()
+        # 待命話術一併預錄：它只在管線失敗時用得到，但**正因為那時候什麼都壞了**，
+        # 它更不能依賴當場合成。去重是因為它可能剛好也在語庫裡。
+        phrases = tuple(dict.fromkeys((*acks.all_phrases(), *self._standby)))
         ok = sum(1 for phrase in phrases if self._publish(phrase))
         logger.info("安撫話音檔預熱完成：%d/%d 句", ok, len(phrases))
 

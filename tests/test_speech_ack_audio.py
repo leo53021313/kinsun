@@ -205,3 +205,86 @@ def test_concurrent_misses_only_refresh_a_phrase_once():
         thread.join(timeout=5)
     _drain_background_threads()
     assert tts.calls.count(phrase) == 1, f"同一句被合成了 {tts.calls.count(phrase)} 次"
+
+
+# ── 待命話術（V-02，2026-07-29）──────────────────────────────────────────
+#
+# 回退話術「金孫這邊有點小狀況…」也必須有音檔：管線失敗時走的是它，而看不到螢幕的
+# 長輩只有聲音這一條路。它不屬於工具安撫話語庫（那裡的句子語意是「正在查」），
+# 故以 standby_phrases 從組裝根注入，快取本身不需要知道那句話為什麼重要。
+
+
+def test_standby_phrases_are_prewarmed_alongside_the_ack_library():
+    tts = _FakeTts()
+    cache = AckAudioCache(
+        tts,
+        _FakePublisher(),
+        signed_url_ttl_seconds=86400.0,
+        clock=_Clock(),
+        standby_phrases=("金孫這邊有點小狀況",),
+    )
+    cache.prewarm()
+    assert "金孫這邊有點小狀況" in tts.calls
+    assert cache.warm_count() == len(acks.all_phrases()) + 1
+
+
+def test_clip_for_text_returns_that_exact_phrase():
+    cache = AckAudioCache(
+        _FakeTts(),
+        _FakePublisher(),
+        signed_url_ttl_seconds=86400.0,
+        clock=_Clock(),
+        standby_phrases=("金孫這邊有點小狀況",),
+    )
+    cache.prewarm()
+    clip = cache.clip_for_text("金孫這邊有點小狀況")
+    assert clip is not None
+    assert clip.text == "金孫這邊有點小狀況"
+    assert clip.audio_url.startswith("https://example.test/ack-")
+    assert clip.duration_ms > 0
+
+
+def test_clip_for_text_returns_none_before_prewarm():
+    """還沒暖好＝這輪沒有音檔可用，回 None 讓呼叫端退回文字——不是錯誤。"""
+    cache = _cache()
+    assert cache.clip_for_text("金孫這邊有點小狀況") is None
+
+
+def test_clip_for_text_never_synthesises_on_the_calling_thread():
+    """對話路徑的鐵律：合成要 1.9 秒，絕不可發生在長輩正在等的那條執行緒上。
+
+    查不到會觸發背景整批重暖（既有自癒設計，`clip_for` 同款），所以斷言的不是
+    「完全沒有合成」，而是「**呼叫端這條執行緒**沒有合成」——後者才是延遲的來源。
+    """
+    caller = threading.current_thread()
+    threads: list[threading.Thread] = []
+
+    class _ThreadRecordingTts(_FakeTts):
+        def synthesize(self, text: str) -> TtsResult:
+            threads.append(threading.current_thread())
+            return super().synthesize(text)
+
+    cache = AckAudioCache(
+        _ThreadRecordingTts(), _FakePublisher(), signed_url_ttl_seconds=86400.0, clock=_Clock()
+    )
+    assert cache.clip_for_text("沒暖過的句子") is None
+    _drain_background_threads()
+    assert threads, "背景自癒應該有跑，否則這個測試沒有在驗任何事"
+    assert caller not in threads
+
+
+def test_expired_standby_clip_is_treated_as_missing():
+    """簽章過期的音檔播不出來，等同沒有——寧可退回文字，不可送出播不出的網址。"""
+    clock = _Clock()
+    cache = AckAudioCache(
+        _FakeTts(),
+        _FakePublisher(),
+        signed_url_ttl_seconds=86400.0,
+        clock=clock,
+        standby_phrases=("金孫這邊有點小狀況",),
+    )
+    cache.prewarm()
+    assert cache.clip_for_text("金孫這邊有點小狀況") is not None
+    clock.now += 86400.0
+    assert cache.clip_for_text("金孫這邊有點小狀況") is None
+    _drain_background_threads()
