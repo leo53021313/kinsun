@@ -23,7 +23,7 @@ class _NullDetector:
 
 
 class _NullNotifier:
-    def notify(self, line_user_id: str, assessment: RiskAssessment) -> None:
+    def notify(self, line_user_id: str, assessment: RiskAssessment, user_text: str) -> None:
         pass
 
 

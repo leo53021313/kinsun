@@ -188,7 +188,8 @@ class VoicePipeline:
             except Exception:  # noqa: BLE001 - 落庫失敗不可中斷對話
                 logger.warning("危急事件落庫失敗")
         if assessment.tier >= RiskTier.L2:
-            self._notifier.notify(elder_id, assessment)
+            # 通知文案引長輩原話（2026-07-29 Leo 定案），故把 user_text 一併交給通知端。
+            self._notifier.notify(elder_id, assessment, user_text)
         # ⚠️ 位置有意義，請勿上移：反思的觀測訊號絕不可排在家屬通報之前（見
         # _mark_reminder_responded 的 docstring）。語音（process）與文字（process_text）
         # 都流經此處，故標記一次即涵蓋兩條路徑。

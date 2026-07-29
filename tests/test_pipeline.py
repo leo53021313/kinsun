@@ -43,9 +43,11 @@ class StubDetector:
 class SpyNotifier:
     def __init__(self) -> None:
         self.calls: list[tuple[str, RiskTier]] = []
+        self.texts: list[str] = []
 
-    def notify(self, elder_id: str, assessment: RiskAssessment) -> None:
+    def notify(self, elder_id: str, assessment: RiskAssessment, user_text: str) -> None:
         self.calls.append((elder_id, assessment.tier))
+        self.texts.append(user_text)
 
 
 def _pipeline(detector, notifier, risk_events=None, *, reminder_logs=None):
@@ -72,6 +74,8 @@ def test_pipeline_notifies_on_l2_or_above():
     notifier = SpyNotifier()
     _pipeline(StubDetector(RiskTier.L2), notifier).process(b"\x00", elder_id="u1")
     assert notifier.calls == [("u1", RiskTier.L2)]
+    # 通知端拿到的是長輩原話（2026-07-29 Leo 定案：文案引原話、家屬自行判斷）。
+    assert notifier.texts == ["阿公早安"]
 
 
 class _BoomRiskEvents:
@@ -512,7 +516,7 @@ class _OrderedNotifier:
     def __init__(self, calls: list[str]) -> None:
         self._calls = calls
 
-    def notify(self, elder_id: str, assessment: RiskAssessment) -> None:
+    def notify(self, elder_id: str, assessment: RiskAssessment, user_text: str) -> None:
         self._calls.append("notify")
 
 

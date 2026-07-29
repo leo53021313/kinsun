@@ -50,7 +50,7 @@ class _NullClassifier:
 
 
 class _NullNotifier:
-    def notify(self, elder_id, assessment):
+    def notify(self, elder_id, assessment, user_text):
         pass
 
 
