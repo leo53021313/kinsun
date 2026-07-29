@@ -1,6 +1,6 @@
 # API 設計規範 - 金孫 KinSun
 
-> **版本:** v1.16 | **更新:** 2026-07-29 | **狀態:** ✅ 定稿（邊界輸入三修：`Authorization` scheme 大小寫不敏感（A-15）、邀請碼剝前後空白（A-11）、`PUT /schedules` 改 kind 由靜默忽略改為 400 `kind_not_changeable`（A-09）；位置座標補範圍驗證（V-04）：WS 與 REST 兩條路徑共用 `locations.is_valid_coordinate`，REST 刻意忽略而非 422（422 會連長輩那句話一起退掉）；`WS /api/v1/ws/talk` 位置訊框補欄位型別把關（V-03）——型別錯會砍斷整條連線且不送 error 訊框，且發作在長輩下一次開口時；新增 `POST/DELETE /api/v1/push-tokens` 裝置推播 token 註冊（真推播 D-08 階段 5）——主體由 Authorization 決定不由呼叫端宣告；新增 `GET /api/v1/elder-notifications` 長輩讀自己的 App 內通知（X-01，2026-07-29 全面自動化測試）——提醒送出後只有家屬讀得到、且只查家屬自己的 `external_id`，寫給長輩的那一列誰都讀不到，用藥／回診／主動關懷對純 App 家庭等於不存在；真推播 D-08 階段 5 到位後本端點仍是補拉路徑；新增 `WS /api/v1/ws/talk` 對講機長連線（非同步工具調用，spec 2026-07-28）——整輪走同一條連線讓「算出答案的 worker 推不到長輩的連線」這個問題自動消失，`POST /turns` 保留為降級路徑；`GET /admin/jobs` **母體改為全系統排程宣告**（`cron/registry.py`，含跑在 RAG Worker 程序的 `rag-weekly-refresh`）並加 `owner`／`can_run_now` 兩欄，手動觸發對本程序跑不了的排程回 409 `job_not_runnable_here`——原本這一頁只看得到 webhook 程序綁得出來的 job，RAG 週更停擺或從未執行一律顯示全綠；`GET /admin/jobs` 加逾期偵測欄位（`is_overdue`／`late_seconds`／`due_at`／`never_ran`／`meta.overdue`／`meta.never_ran`／`meta.warnings`），**逾期容許量改逐 job**（`schedule-dispatch` 用自己的 90 秒判定窗，預設仍 300 秒）——`never_ran` 為 2026-07-26 補：沒有 `last_run_at` 就算不出 `due_at`、`is_overdue` 恆為 False，從沒被排程器碰過的 job 原本顯示成全綠；新增 `GET /turns/chunks/{index}` 分段語音串流＋三個錯誤碼，`POST /turns` 回應加 `chunk_count`／`reply_digest`；契約已拍板 D-23～D-29；/v1 已全面落地；`traces/{trace_id}` 回應加 `opik_url` 深連結）
+> **版本:** v1.17 | **更新:** 2026-07-29 | **狀態:** ✅ 定稿（錯誤契約四修：框架層 404／405 補 `not_found`／`method_not_allowed`（A-04）、排程驗證改 `invalid_schedule`＋繁中 message（A-01）、沒帶憑證統一回 `missing_token`（A-08）、`shared` 的 Elder 型別補 `nickname`（A-10）；邊界輸入三修：`Authorization` scheme 大小寫不敏感（A-15）、邀請碼剝前後空白（A-11）、`PUT /schedules` 改 kind 由靜默忽略改為 400 `kind_not_changeable`（A-09）；位置座標補範圍驗證（V-04）：WS 與 REST 兩條路徑共用 `locations.is_valid_coordinate`，REST 刻意忽略而非 422（422 會連長輩那句話一起退掉）；`WS /api/v1/ws/talk` 位置訊框補欄位型別把關（V-03）——型別錯會砍斷整條連線且不送 error 訊框，且發作在長輩下一次開口時；新增 `POST/DELETE /api/v1/push-tokens` 裝置推播 token 註冊（真推播 D-08 階段 5）——主體由 Authorization 決定不由呼叫端宣告；新增 `GET /api/v1/elder-notifications` 長輩讀自己的 App 內通知（X-01，2026-07-29 全面自動化測試）——提醒送出後只有家屬讀得到、且只查家屬自己的 `external_id`，寫給長輩的那一列誰都讀不到，用藥／回診／主動關懷對純 App 家庭等於不存在；真推播 D-08 階段 5 到位後本端點仍是補拉路徑；新增 `WS /api/v1/ws/talk` 對講機長連線（非同步工具調用，spec 2026-07-28）——整輪走同一條連線讓「算出答案的 worker 推不到長輩的連線」這個問題自動消失，`POST /turns` 保留為降級路徑；`GET /admin/jobs` **母體改為全系統排程宣告**（`cron/registry.py`，含跑在 RAG Worker 程序的 `rag-weekly-refresh`）並加 `owner`／`can_run_now` 兩欄，手動觸發對本程序跑不了的排程回 409 `job_not_runnable_here`——原本這一頁只看得到 webhook 程序綁得出來的 job，RAG 週更停擺或從未執行一律顯示全綠；`GET /admin/jobs` 加逾期偵測欄位（`is_overdue`／`late_seconds`／`due_at`／`never_ran`／`meta.overdue`／`meta.never_ran`／`meta.warnings`），**逾期容許量改逐 job**（`schedule-dispatch` 用自己的 90 秒判定窗，預設仍 300 秒）——`never_ran` 為 2026-07-26 補：沒有 `last_run_at` 就算不出 `due_at`、`is_overdue` 恆為 False，從沒被排程器碰過的 job 原本顯示成全綠；新增 `GET /turns/chunks/{index}` 分段語音串流＋三個錯誤碼，`POST /turns` 回應加 `chunk_count`／`reply_digest`；契約已拍板 D-23～D-29；/v1 已全面落地；`traces/{trace_id}` 回應加 `opik_url` 深連結）
 > **基準:** as-is（現行 23 端點實證）＋ to-be（/v1 契約）。命名規則以 AGENTS.md 為準。
 > DGX 服務認證與速率限制 → 13_安全循環；`admin api disabled` 503 措辭一併列 13。
 
@@ -71,8 +71,7 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 
 | 錯誤碼 | HTTP | 語意 |
 | :--- | :---: | :--- |
-| `missing_token` | 401 | 未帶 Authorization |
-| `missing_token` | 401 | 未帶 Authorization header |
+| `missing_token` | 401 | **完全沒帶憑證**（無 Authorization 或剝掉 scheme 後為空）。⚠️ 與 `invalid_token` 的分野對 UI 是實質的：前者是「還沒登入」該導去登入頁，後者是「登入失效」該清掉 session 再導。原本全庫只有家屬雙認證回這個碼、其餘九支端點一律回 `invalid_token`，App 的 401 統一處理只能猜（A-08，2026-07-29） |
 | `invalid_token` | 401 | token 無效／型別不符（取代 as-is 的 `"invalid token"`／`"missing bearer token"`） |
 | ~~`token_expired`~~ | — | **作廢**（D-25 修訂：全 token 永久記住，無過期） |
 | `invalid_credentials` | 401 | 帳密錯誤（不洩露帳號存在性，維持現行良好實務） |
@@ -86,6 +85,8 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | `not_paired` | 409 | 長輩帳密登入但未掃碼配對（己-6：首次一定掃碼） |
 | `invite_used`／`invite_expired`／`too_many_attempts`／`invite_wrong_role` | 409 | 邀請碼狀態錯誤（wrong_role＝家屬碼誤走裝置綁定，✅ 庚-04） |
 | `name_required`／`label_required`／`slots_required`／`invalid_slot`／`invalid_date`／`invalid_time`／`date_in_past` | 400 | 欄位業務驗證失敗 |
+| `not_found`／`method_not_allowed` | 404／405 | **框架層**（打錯網址、方法不對）的統一出口。原本 FastAPI 自己丟的 `detail` 是英文句子「Not Found」，會被原封當成 `error.code`——那是給機器判斷用的欄位，英文句子等於前端無從分支，而 `message` 又因查無文案退回碼本身，於是使用者也看到英文（A-04，2026-07-29） |
+| `invalid_schedule` | 400 | 排程業務驗證失敗（時間已過去、太遠、事情太多…）。`error.message` 帶服務層寫好的繁中人話——那些句子是寫給長輩看的，LINE 流程與 LLM工具都直接用；原本整句被塞進 `error.code`（A-01，2026-07-29） |
 | `kind_not_changeable` | 400 | `PUT /schedules/{group_id}` 送了與原本不同的 `kind`。**類型不可改是刻意的**（`replace_group` 沿用原 kind：改內容不該讓家屬設的藥變成長輩設的、用藥變成回診），要換類型得刪掉重建。原本是收下必填的 `kind` 卻靜默忽略——家屬改分類拿到 200 與一筆沒變的資料，UI 沒有理由懷疑它（A-09，2026-07-29） |
 | `invalid_status`／`invalid_action` | 400 | admin 守則：查詢狀態不在白名單／動作非 `revoke`（後台不提供採用，守則自動生效） |
 | `strategy_not_found` | 404 | admin 守則：查無此守則，或它已不在生效中（撤銷是條件式 `UPDATE ... RETURNING`，撤不到即回本錯誤——不先查後撤，避免謊報「已撤銷」） |

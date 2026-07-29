@@ -106,7 +106,9 @@ def create_app_turns_router(
 
     def current_elder(authorization: str = Header(default="")) -> str:
         token = strip_bearer(authorization)
-        auth = accounts.authenticate_token(token) if token else None
+        if not token:
+            raise HTTPException(status_code=401, detail=ErrorCode.MISSING_TOKEN)
+        auth = accounts.authenticate_token(token)
         if auth is None or auth.principal_type is not PrincipalType.ELDER:
             raise HTTPException(status_code=401, detail=ErrorCode.INVALID_TOKEN)
         return auth.principal_id

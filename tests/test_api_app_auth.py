@@ -392,3 +392,26 @@ def test_bearer_prefix_is_not_stripped_from_the_token_itself():
     assert strip_bearer("abc") == "abc"  # 沒帶 scheme 的裸 token 維持既有寬容
     assert strip_bearer("") == ""
     assert strip_bearer("Bearer Bearer x") == "Bearer x"
+
+
+def test_no_credentials_returns_missing_token_everywhere():
+    """完全沒帶憑證＝`missing_token`，不是 `invalid_token`（A-08，2026-07-29）。
+
+    全庫原本只有家屬雙認證那一支回 `missing_token`，其餘九支端點一律 `invalid_token`
+    ——同一個情形兩種碼，前端要嘛兩個都判、要嘛判錯一半。而兩者對使用者的意義**完全
+    不同**：`missing_token` 是「還沒登入」（該導去登入頁），`invalid_token` 是「登入失效」
+    （該清掉 session 再導）。混在一起，App 的 401 統一處理就只能猜。
+    """
+    client = _client(_service())
+    res = client.delete("/api/v1/sessions")  # 連 Authorization 標頭都沒有
+    assert res.status_code == 401
+    assert res.json()["error"]["code"] == "missing_token"
+
+
+def test_garbage_credentials_still_return_invalid_token():
+    """有帶但不對＝`invalid_token`，這條不可被上面那條蓋掉。"""
+    client = _client(_service())
+    # ⚠️ 標頭值只能是 ASCII（httpx 會直接拋 UnicodeEncodeError），故不可用中文當亂碼。
+    res = client.delete("/api/v1/sessions", headers={"Authorization": "Bearer not-a-real-token"})
+    assert res.status_code == 401
+    assert res.json()["error"]["code"] == "invalid_token"

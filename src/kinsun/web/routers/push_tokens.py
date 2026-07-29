@@ -36,7 +36,9 @@ def create_push_tokens_router(
     def _principal(authorization: str = Header(default="")) -> tuple[PrincipalType, str]:
         """長輩或家屬皆可；主體由 token 決定，不看請求內容。"""
         raw = strip_bearer(authorization)
-        auth = accounts.authenticate_token(raw) if raw else None
+        if not raw:
+            raise HTTPException(status_code=401, detail=ErrorCode.MISSING_TOKEN)
+        auth = accounts.authenticate_token(raw)
         if auth is None:
             raise HTTPException(status_code=401, detail=ErrorCode.INVALID_TOKEN)
         return auth.principal_type, auth.principal_id

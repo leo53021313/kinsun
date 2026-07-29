@@ -129,7 +129,13 @@ def create_schedules_router(
                 event_at=parse_event_at(body),
             )
         except ScheduleValidationError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            # code 給機器判斷、message 用服務層已經寫好的繁中人話（A-01，2026-07-29）。
+            # 原本 detail=str(exc) 把整句中文塞進 error.code，前端無從分支；而那些句子
+            # 是寫給長輩看的（LINE 流程與 LLM 工具都直接用），不能為了 code 而改掉。
+            raise HTTPException(
+                status_code=400,
+                detail={"code": ErrorCode.INVALID_SCHEDULE, "message": str(exc)},
+            ) from exc
         return ok(_group_json(find_group(elder_id, rows[0].group_id)))
 
     @router.put("/elders/{elder_id}/schedules/{group_id}")
@@ -157,7 +163,13 @@ def create_schedules_router(
                 event_at=parse_event_at(body),
             )
         except ScheduleValidationError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            # code 給機器判斷、message 用服務層已經寫好的繁中人話（A-01，2026-07-29）。
+            # 原本 detail=str(exc) 把整句中文塞進 error.code，前端無從分支；而那些句子
+            # 是寫給長輩看的（LINE 流程與 LLM 工具都直接用），不能為了 code 而改掉。
+            raise HTTPException(
+                status_code=400,
+                detail={"code": ErrorCode.INVALID_SCHEDULE, "message": str(exc)},
+            ) from exc
         return ok(_group_json(find_group(elder_id, group_id)))
 
     @router.delete("/elders/{elder_id}/schedules/{group_id}", status_code=204)
