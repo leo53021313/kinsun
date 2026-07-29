@@ -5,19 +5,27 @@ import {
   useAudioPlayer,
   useAudioRecorder,
 } from "expo-audio";
-import { useRouter } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useEffect, useRef, useState } from "react";
 import * as Haptics from "expo-haptics";
 import * as Location from "expo-location";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AvatarPlaceholder, type AvatarState } from "@/components/AvatarPlaceholder";
+import { BellIcon } from "@/components/BellIcon";
 import { MicIcon } from "@/components/MicIcon";
 import { RoleSwitcher } from "@/components/RoleSwitcher";
-import { ApiError, getTurnChunk, logoutSession, postTurn } from "@/lib/api";
+import {
+  ApiError,
+  getTurnChunk,
+  listElderNotifications,
+  logoutSession,
+  postTurn,
+} from "@/lib/api";
 import type { TurnChunk } from "@/lib/api";
 import { type ElderPlace, currentPlace } from "@/lib/location";
+import { loadSeenAt } from "@/lib/notificationsSeen";
 import { useSession } from "@/lib/SessionProvider";
 import { strings } from "@/lib/strings";
 import { createTalkGesture } from "@/lib/talkGesture";
@@ -63,6 +71,9 @@ export default function ElderTalk() {
   const [avatar, setAvatar] = useState<AvatarState>("idle");
   const [replyText, setReplyText] = useState<string>(strings.talk.idleHint);
   const [micReady, setMicReady] = useState(false);
+  // 未讀提醒數（X-01，2026-07-29）：比已讀水位新的提醒數；載入失敗保持 0，
+  // 對講機主功能不受影響——鈴鐺是加分項，不可讓它擋住長輩說話。
+  const [unreadCount, setUnreadCount] = useState(0);
   // 內測權限狀態列用（麥克風狀態沿用 micReady）。
   const [locationGranted, setLocationGranted] = useState(false);
   // 這輪的取位 promise：錄音開始時發動，送出時才 await（見 startRecording）。
@@ -86,6 +97,33 @@ export default function ElderTalk() {
   const playQueueRef = useRef<ReturnType<typeof createPlaybackQueue> | null>(null);
 
   const { loading: sessionLoading, session, signOut, internalTesting } = useSession();
+
+  // 未讀提醒數（X-01）：用 useFocusEffect 而非 useEffect——從提醒頁返回時要重算，
+  // 否則長輩看完提醒回來，鈴鐺上的紅點還掛著。
+  useFocusEffect(
+    useCallback(() => {
+      if (sessionLoading || !session || session.role !== "elder") {
+        return;
+      }
+      let alive = true;
+      (async () => {
+        try {
+          const [items, seenAt] = await Promise.all([
+            listElderNotifications(session.token),
+            loadSeenAt("elder"),
+          ]);
+          if (alive) {
+            setUnreadCount(items.filter((n) => n.created_at > seenAt).length);
+          }
+        } catch {
+          // 提醒載入失敗時未讀數保持原值，對講機不受影響（見 unreadCount 的註解）。
+        }
+      })();
+      return () => {
+        alive = false;
+      };
+    }, [sessionLoading, session]),
+  );
 
   useEffect(() => {
     if (sessionLoading) {
@@ -370,11 +408,32 @@ export default function ElderTalk() {
     <SafeAreaView style={styles.container}>
       <View style={styles.topRow}>
         <RoleSwitcher />
-        <Pressable accessibilityRole="button" onPress={confirmLogout} style={styles.logoutButton}>
-          <Text style={styles.logoutText} maxFontSizeMultiplier={1.6}>
-            {strings.talk.logout}
-          </Text>
-        </Pressable>
+        <View style={styles.topActions}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              unreadCount > 0
+                ? `${strings.elderNotifications.bell}，${unreadCount} 則新的`
+                : strings.elderNotifications.bell
+            }
+            onPress={() => router.push("/elder/notifications")}
+            style={styles.bellButton}
+          >
+            <BellIcon size={30} />
+            {unreadCount > 0 ? (
+              <View style={styles.bellBadge}>
+                <Text style={styles.bellBadgeText} maxFontSizeMultiplier={1.3}>
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </Text>
+              </View>
+            ) : null}
+          </Pressable>
+          <Pressable accessibilityRole="button" onPress={confirmLogout} style={styles.logoutButton}>
+            <Text style={styles.logoutText} maxFontSizeMultiplier={1.6}>
+              {strings.talk.logout}
+            </Text>
+          </Pressable>
+        </View>
       </View>
       {internalTesting ? (
         <Text style={styles.debugPermissions} maxFontSizeMultiplier={1.2}>
@@ -421,6 +480,31 @@ const styles = StyleSheet.create({
     gap: spacing.l,
   },
   topRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  topActions: { flexDirection: "row", alignItems: "center", gap: spacing.s },
+  // 鈴鐺 56dp：長輩手指粗、又常戴老花，48dp 的最小可觸控目標對他們仍偏小。
+  bellButton: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  bellBadge: {
+    position: "absolute",
+    top: 4,
+    right: 4,
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    paddingHorizontal: 5,
+    backgroundColor: colors.danger,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  bellBadgeText: { color: "#FFFFFF", fontSize: 13, fontWeight: "700" },
   debugPermissions: { fontSize: 13, color: colors.textSoft, textAlign: "center" },
   logoutButton: { paddingVertical: 8, paddingHorizontal: spacing.m, minHeight: 48, justifyContent: "center" },
   logoutText: { fontSize: 16, color: colors.textSoft },
