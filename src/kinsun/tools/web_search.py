@@ -55,7 +55,9 @@ WEB_SEARCH_SPEC = ToolSpec(
     name="web_search",
     description=(
         "上網查證即時或可疑資訊，回傳附來源網站的搜尋結果。"
-        "長輩問時事、生活資訊（天氣除外）時用 topic=general；"
+        "長輩問時事、生活資訊（天氣、附近的店家與場所除外）時用 topic=general；"
+        "問附近有什麼餐廳、藥局、哪裡可以推拿這類問題，一律用 search_nearby_places，"
+        "不要用本工具——本工具查到的是全網熱門推薦，地理範圍太廣，給不了長輩家附近的店；"
         "長輩轉述可疑訊息、疑似謠言或詐騙時用 topic=rumor_check，只查事實查核網站；"
         "健康問題一律先用 health_education_rag，"
         "只有在它回報查無資料且非高風險時，才用 topic=health 上官方衛教網站備援。"

@@ -42,6 +42,24 @@ ASR_API_KEY = os.environ.get("ASR_API_KEY", "")
 # Whisper 系模型對靜音會確定性幻覺出重複語句（實錄「來，請坐…」迴圈），
 # 一輪空跑約 10 秒 GPU；正常說話峰值遠高於此，誤殺風險極低。
 ASR_SILENCE_PEAK = float(os.environ.get("ASR_SILENCE_PEAK", "0.001"))
+# 釘死辨識語言（V-01，2026-07-29）——這是幻覺的**根因修正**，不是可有可無的調校。
+#
+# 模型的 generation_config 是 `forced_decoder_ids = [[1, None], [2, 50359]]`：
+# 位置 2 釘住 `<|transcribe|>`（任務有交代），位置 1 的**語言槽卻是 None**（沒交代），
+# 於是每一次請求都先跑一次自動語言偵測。音檔清楚時偵測得準；近無聲、或句尾帶一小段
+# 靜音時偵測結果是垃圾，解碼隨即跑進退化迴圈。
+#
+# 實測（2026-07-29，真模型、同檔各跑 6 次）：
+#   不釘語言 6/6 把 0.76 秒的「早安」辨識成「晴文」重複 60 次
+#     ——同一句截到 0.68 秒反而正常，可見觸發點是**尾端那 0.08 秒的靜音**，不是音檔短
+#   釘住語言 0/6，且白噪音從立陶宛人名「Vytautas」收斂成中文短字
+# 那串幻覺文字會進危急分級器，實錄曾因此**真的送出假警報給家屬**。
+#
+# ⚠️ 空字串＝回到自動偵測（修正前行為），是就地回退的逃生口，不必重新部署程式。
+# ⚠️ 副作用（已實測、判定可接受）：強制中文後，`blood pressure` 這類常見英文詞會被
+# 寫成「血壓」而非保留原文；專有名詞（YouTube）仍保留。對本產品反而更好——危急關鍵詞
+# 表與 LLM 都吃中文。
+ASR_LANGUAGE = os.environ.get("ASR_LANGUAGE", "zh")
 ASR_PRELOAD = os.environ.get("ASR_PRELOAD", "0") not in {"0", "false", "no"}
 
 _model = None
@@ -117,7 +135,14 @@ def _transcribe(audio: bytes) -> str:
     if float(abs(array).max()) < ASR_SILENCE_PEAK:
         logger.info("進站音檔為純靜音（峰值 < %s），跳過辨識", ASR_SILENCE_PEAK)
         return ""
-    result = _get_model()({"raw": array, "sampling_rate": _TARGET_SR})
+    payload = {"raw": array, "sampling_rate": _TARGET_SR}
+    # 語言與任務成對指定：這是官方**非棄用**的作法（相對於直接改 forced_decoder_ids）。
+    kwargs = (
+        {"generate_kwargs": {"language": ASR_LANGUAGE, "task": "transcribe"}}
+        if ASR_LANGUAGE
+        else {}
+    )
+    result = _get_model()(payload, **kwargs)
     return result["text"]
 
 

@@ -413,3 +413,64 @@ def test_replace_unknown_group_raises():
             title="散步",
             occurrences=(Occurrence(RepeatKind.DAILY, repeat_time="17:00"),),
         )
+
+
+# ── 標題長度上限（A-06，2026-07-29）──────────────────────────────────────
+
+
+def _daily(hour: int = 8) -> tuple[Occurrence, ...]:
+    return (Occurrence(RepeatKind.DAILY, repeat_time=f"{hour:02d}:00"),)
+
+
+def test_create_rejects_an_overlong_title():
+    """35 萬字的標題實測讓清單回應膨脹到 1 MB、耗時 16.7 秒——已認證的家屬就能觸發。
+
+    ⚠️ 檢查放**服務層**而非 API 的 pydantic 模型：建排程有三個入口（HTTP、LINE 選單流程、
+    LLM 工具），後兩者不經過那個模型。擋在只有一個入口走得到的地方，等於沒擋。
+    """
+    with pytest.raises(ScheduleValidationError):
+        _service().create(
+            elder_id="e1",
+            kind=ScheduleKind.CUSTOM,
+            title="藥" * 51,
+            created_by=CreatedBy.GUARDIAN,
+            occurrences=_daily(),
+        )
+
+
+def test_create_accepts_a_title_at_the_limit():
+    """邊界值屬合法——上限是為了擋離譜輸入，不是為了為難正常使用。"""
+    rows = _service().create(
+        elder_id="e1",
+        kind=ScheduleKind.CUSTOM,
+        title="藥" * 50,
+        created_by=CreatedBy.GUARDIAN,
+        occurrences=_daily(),
+    )
+    assert len(rows[0].title) == 50
+
+
+def test_title_length_is_measured_after_trimming():
+    """前後空白不算長度——使用者貼上時常帶到空白，因此被擋下會很莫名其妙。"""
+    rows = _service().create(
+        elder_id="e1",
+        kind=ScheduleKind.CUSTOM,
+        title="  " + "藥" * 50 + "  ",
+        created_by=CreatedBy.GUARDIAN,
+        occurrences=_daily(),
+    )
+    assert rows[0].title == "藥" * 50
+
+
+def test_replace_group_also_rejects_an_overlong_title():
+    """改內容這條路同樣要擋——否則建立時擋住的東西可以用「編輯」繞過去。"""
+    svc = _service()
+    rows = svc.create(
+        elder_id="e1",
+        kind=ScheduleKind.CUSTOM,
+        title="血壓藥",
+        created_by=CreatedBy.GUARDIAN,
+        occurrences=_daily(),
+    )
+    with pytest.raises(ScheduleValidationError):
+        svc.replace_group(rows[0].group_id, title="藥" * 51, occurrences=_daily(9))

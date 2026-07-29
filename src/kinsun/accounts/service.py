@@ -161,6 +161,10 @@ class AccountService:
         """expect_role：呼叫端限定碼的角色（✅ 庚-42 併 04）——鎖內驗證、
         不消耗嘗試次數；不符拋 wrong_role。None＝不限定（LINE 綁定雙用途路徑）。
         回傳該碼的 elder_id（呼叫端免重讀 invite）。"""
+        # 前後空白一律剝掉（A-11，2026-07-29）：碼是家屬用訊息傳給長輩、長輩再貼進
+        # App 的，這條路上帶到尾隨空白或換行是常態。不剝的話長輩看到「查無此邀請碼」
+        # 而他手上那張碼明明是對的——他會反覆重打然後放棄，後台查不到任何原因。
+        code = code.strip()
         now = self._clock()
         # 讀碼＋檢查＋寫入同交易並列鎖該碼（✅ 庚-19／A-49）：並發同碼的第二個
         # 請求在 FOR UPDATE 上等待，首個 commit 後看到 used_at → 正確擋下。
@@ -418,6 +422,19 @@ class AccountService:
                 return binding.external_id
         return None
 
+    def bound_principal(
+        self, channel: Channel, external_id: str
+    ) -> tuple[PrincipalType, str] | None:
+        """通道帳號反查主體（真推播用，2026-07-29）：不限角色，長輩與家屬都回。
+
+        與 `bound_elder_id` 的差別在「不限角色」——推播要送給訊息的收件人本人，
+        而 App 內通知的收件人可能是長輩（用藥提醒）也可能是家屬（危急警報）。
+        """
+        binding = self._repo.get_channel_binding(channel, external_id)
+        if binding is None:
+            return None
+        return binding.principal_type, binding.principal_id
+
     def bound_elder_id(self, channel: Channel, external_id: str) -> str | None:
         """查綁定不查同意（✅ D-19，AllowAllGate 旁路用）：綁的是長輩才回 elder_id。"""
         binding = self._repo.get_channel_binding(channel, external_id)
@@ -436,7 +453,7 @@ class AccountService:
         return self._repo.get_elder(elder_id)
 
     def preview_invite(self, code: str) -> InvitePreview | None:
-        invite = self._repo.get_invite(code)
+        invite = self._repo.get_invite(code.strip())
         if invite is None:
             return None
         elder = self._repo.get_elder(invite.elder_id)

@@ -25,6 +25,11 @@ import {
   type Role,
   type Session,
 } from "@/lib/auth";
+import {
+  configureForegroundBehaviour,
+  registerDeviceForPush,
+  unregisterDeviceForPush,
+} from "@/lib/push";
 
 function otherRoleOf(role: Role): Role {
   return role === "guardian" ? "elder" : "guardian";
@@ -55,6 +60,7 @@ export function SessionProvider(props: { children: ReactNode }) {
 
   useEffect(() => {
     let alive = true;
+    configureForegroundBehaviour();
     (async () => {
       const stored = await loadActiveSession();
       const other = stored ? await loadSessionForRole(otherRoleOf(stored.role)) : null;
@@ -62,6 +68,12 @@ export function SessionProvider(props: { children: ReactNode }) {
         setSession(stored);
         setOtherSession(other);
         setLoading(false);
+      }
+      // 啟動時也註冊一次（真推播 D-08 階段 5）：token 會被系統換掉，而且在本功能
+      // 之前就登入的使用者永遠不會再走一次 signIn。不 await——推播是加分項，
+      // 不可讓它延後畫面顯示。
+      if (stored) {
+        void registerDeviceForPush(stored.token);
       }
     })();
     getMeta()
@@ -80,10 +92,14 @@ export function SessionProvider(props: { children: ReactNode }) {
     await saveSession(next);
     setSession(next);
     setOtherSession(await loadSessionForRole(otherRoleOf(next.role)));
+    void registerDeviceForPush(next.token);
   }, []);
 
   const signOut = useCallback(async () => {
     if (session) {
+      // 先解除推播再清 session：清完就沒有可用的 token 打 DELETE 了。失敗不擋登出
+      // ——留著一筆孤兒 token 的代價（提醒推到已登出的裝置）小於登不出去。
+      await unregisterDeviceForPush(session.token).catch(() => undefined);
       await clearSession(session.role);
     }
     setSession(null);

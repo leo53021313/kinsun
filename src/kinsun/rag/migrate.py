@@ -64,7 +64,7 @@ def main() -> None:
         )
         print(f"[backup] {backup_path}")
     ensure_schema(target_url)
-    db = Database.open(target_url)
+    db = Database.open_for_cli(target_url)
     try:
         _build_release(
             db,
