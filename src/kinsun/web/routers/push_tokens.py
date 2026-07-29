@@ -15,6 +15,7 @@ from kinsun.accounts.service import AccountService
 from kinsun.notifications.push_tokens import PushTokenStore
 from kinsun.web.envelope import ok
 from kinsun.web.errors import ErrorCode
+from kinsun.web.routers.deps import strip_bearer
 
 # 平台白名單：值只進 DB 供排查，不參與路由決策（Expo 兩邊都吃同一支 API）。
 _PLATFORMS = frozenset({"android", "ios"})
@@ -34,7 +35,7 @@ def create_push_tokens_router(
 
     def _principal(authorization: str = Header(default="")) -> tuple[PrincipalType, str]:
         """長輩或家屬皆可；主體由 token 決定，不看請求內容。"""
-        raw = authorization.removeprefix("Bearer ").strip()
+        raw = strip_bearer(authorization)
         auth = accounts.authenticate_token(raw) if raw else None
         if auth is None:
             raise HTTPException(status_code=401, detail=ErrorCode.INVALID_TOKEN)

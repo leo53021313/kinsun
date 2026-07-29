@@ -28,6 +28,7 @@ from kinsun.speech.chunking import reply_digest, split_for_speech
 from kinsun.speech.tts import TTSError, TtsPriority, tts_priority
 from kinsun.web.envelope import ok
 from kinsun.web.errors import ErrorCode
+from kinsun.web.routers.deps import strip_bearer
 
 logger = logging.getLogger("kinsun.channels.app")
 
@@ -104,7 +105,7 @@ def create_app_turns_router(
             logger.warning("長輩地點寫入失敗")
 
     def current_elder(authorization: str = Header(default="")) -> str:
-        token = authorization.removeprefix("Bearer ").strip()
+        token = strip_bearer(authorization)
         auth = accounts.authenticate_token(token) if token else None
         if auth is None or auth.principal_type is not PrincipalType.ELDER:
             raise HTTPException(status_code=401, detail=ErrorCode.INVALID_TOKEN)

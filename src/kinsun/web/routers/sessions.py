@@ -13,6 +13,7 @@ from kinsun.accounts.service import AccountService, AppAccountError
 from kinsun.web.envelope import ok
 from kinsun.web.errors import ErrorCode
 from kinsun.web.ratelimit import RateLimiter, throttle_or_429
+from kinsun.web.routers.deps import strip_bearer
 
 
 class LoginIn(BaseModel):
@@ -51,7 +52,7 @@ def create_sessions_router(*, accounts: AccountService, rate_limiter: RateLimite
     def logout(authorization: str = Header(default="")) -> None:
         """登出＝撤銷當前 token（被盜或換機時的主動撤銷手段）。
         家屬與長輩 token 皆可（✅ 庚-42：長輩自助登出）；「登出所有裝置」仍限家屬。"""
-        token = authorization.removeprefix("Bearer ").strip()
+        token = strip_bearer(authorization)
         auth = accounts.authenticate_token(token) if token else None
         if auth is None:
             raise HTTPException(status_code=401, detail=ErrorCode.INVALID_TOKEN)
@@ -60,7 +61,7 @@ def create_sessions_router(*, accounts: AccountService, rate_limiter: RateLimite
     @router.delete("/sessions/all", status_code=204)
     def logout_all(authorization: str = Header(default="")) -> None:
         """登出所有裝置＝撤銷該家屬全部 token（庚-05／A-47：永久 token 外洩補救）。"""
-        token = authorization.removeprefix("Bearer ").strip()
+        token = strip_bearer(authorization)
         auth = accounts.authenticate_token(token) if token else None
         if auth is None or auth.principal_type is not PrincipalType.GUARDIAN:
             raise HTTPException(status_code=401, detail=ErrorCode.INVALID_TOKEN)

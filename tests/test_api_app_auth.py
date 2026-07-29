@@ -353,3 +353,42 @@ def test_elder_token_can_logout_self():
     res = client.delete("/api/v1/sessions", headers={"Authorization": f"Bearer {token}"})
     assert res.status_code == 204
     assert svc.authenticate_token(token) is None
+
+
+# ── 認證 scheme 大小寫不敏感（A-15，2026-07-29）──────────────────────────
+
+
+def test_lowercase_bearer_scheme_is_accepted():
+    """RFC 7235 明訂 auth-scheme **大小寫不敏感**，我們只認 `Bearer ` 是錯的。
+
+    症狀最惡劣的地方在於它長得像「token 失效」：呼叫端拿到 401 invalid_token，
+    於是去查 token 生命週期、去查有沒有被撤銷——而真正的原因只是 B 沒有大寫。
+    HTTP 客戶端函式庫（與代理）依標準本來就可以自行決定大小寫。
+    """
+    client = _client(_service())
+    # ⚠️ 每個 scheme 都要用**自己的新 token**：共用一個 token 的話，第一輪就把它撤銷了，
+    # 後面幾輪拿到的 401 是「token 已失效」而不是「scheme 沒認得」——那樣這個測試在
+    # 修好之前也會綠，等於沒驗到任何事。
+    for index, scheme in enumerate(("Bearer", "bearer", "BEARER", "BeArEr")):
+        token = client.post(
+            "/api/v1/guardians",
+            json={
+                "email": f"g{index}@b.invalid",
+                "password": "pw12345678",
+                "name": "兒子",
+            },
+        ).json()["data"]["token"]
+        res = client.delete("/api/v1/sessions", headers={"Authorization": f"{scheme} {token}"})
+        assert res.status_code == 204, scheme
+
+
+def test_bearer_prefix_is_not_stripped_from_the_token_itself():
+    """只剝一次 scheme，不可把 token 內容裡剛好長得像 scheme 的字也吃掉。"""
+    from kinsun.web.routers.deps import strip_bearer
+
+    assert strip_bearer("Bearer abc") == "abc"
+    assert strip_bearer("bearer abc") == "abc"
+    assert strip_bearer("BEARER   abc  ") == "abc"
+    assert strip_bearer("abc") == "abc"  # 沒帶 scheme 的裸 token 維持既有寬容
+    assert strip_bearer("") == ""
+    assert strip_bearer("Bearer Bearer x") == "Bearer x"

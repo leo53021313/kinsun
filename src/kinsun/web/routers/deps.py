@@ -13,6 +13,26 @@ from kinsun.web.auth import AuthError, LiffVerifier
 from kinsun.web.errors import ErrorCode
 
 
+def strip_bearer(authorization: str) -> str:
+    """從 Authorization 標頭取出 token（A-15，2026-07-29）。
+
+    RFC 7235 明訂 auth-scheme **大小寫不敏感**，故 `bearer`／`BEARER` 都要認得。
+    原本各處寫 `removeprefix("Bearer ")`，小寫進來時剝不掉，token 變成
+    `"bearer xxx"` → 401 `invalid_token`——而那個症狀長得**跟 token 失效一模一樣**，
+    呼叫端會去查 token 生命週期、查有沒有被撤銷，查不到真正的原因只是 B 沒大寫。
+
+    本檔的 `current_guardian` 早就用 `scheme.lower()` 做對了，其餘幾支沒有：
+    這是漂移不是設計，故抽成單一出處。
+
+    沒帶 scheme 的裸 token 維持既有寬容（原 `removeprefix` 對不符前綴的字串是原樣
+    回傳）；只剝一次，token 內容剛好長得像 scheme 時不會被連帶吃掉。
+    """
+    scheme, separator, rest = authorization.partition(" ")
+    if separator and scheme.lower() == "bearer":
+        return rest.strip()
+    return authorization.strip()
+
+
 @dataclass(frozen=True)
 class GuardianAuth:
     """家屬請求身分：App token 直接得 guardian_id；LIFF 首次使用可能尚無家屬紀錄。"""
@@ -50,7 +70,7 @@ def build_current_app_guardian(accounts: AccountService) -> Callable[..., str]:
     """App token（家屬）認證依賴：回 guardian_id；非家屬 token 一律 401。"""
 
     def current_app_guardian(authorization: str = Header(default="")) -> str:
-        token = authorization.removeprefix("Bearer ").strip()
+        token = strip_bearer(authorization)
         auth = accounts.authenticate_token(token) if token else None
         if auth is None or auth.principal_type is not PrincipalType.GUARDIAN:
             raise HTTPException(status_code=401, detail=ErrorCode.INVALID_TOKEN)
@@ -69,7 +89,7 @@ def build_current_app_elder(accounts: AccountService) -> Callable[..., str]:
     """
 
     def current_app_elder(authorization: str = Header(default="")) -> str:
-        token = authorization.removeprefix("Bearer ").strip()
+        token = strip_bearer(authorization)
         auth = accounts.authenticate_token(token) if token else None
         if auth is None or auth.principal_type is not PrincipalType.ELDER:
             raise HTTPException(status_code=401, detail=ErrorCode.INVALID_TOKEN)
