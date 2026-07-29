@@ -54,6 +54,13 @@
         {
           "locationWhenInUsePermission": "金孫需要知道您在哪個城市，才能告訴您當地的天氣。"
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/android-icon-monochrome.png",
+          "color": "#FF8A3D"
+        }
       ]
     ],
     "experiments": {
