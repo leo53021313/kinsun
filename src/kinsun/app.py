@@ -300,6 +300,7 @@ def build_app() -> FastAPI:
                 settings.auth_rate_limit_window_seconds,
             ),
             notifications=core.notifications,
+            push_tokens=core.push_tokens,
         ),
         prefix="/api/v1",
     )

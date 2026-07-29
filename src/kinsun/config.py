@@ -401,6 +401,14 @@ class Settings(_BaseEnvSettings):
     # 降級後的重探間隔（秒）：連不到之後每隔這麼久重探一次，Opik 起來就自動接回。
     # 預設 60 秒——比 Opik 冷啟（30–60 秒）長一輪即可，不必更密。
     opik_reprobe_interval_seconds: float = 60.0
+    # 裝置推播（PUSH_ 前綴，真推播 D-08 階段 5，2026-07-29）。
+    # 預設 false：推播要能真的送到，前提是 App 已建 development build 並登記
+    # EAS／FCM 憑證——在那之前開著只會每次派送都白打一次 HTTP。
+    push_enabled: Bool = False
+    # Expo Push 的存取權杖（選填）。留空仍可送，但 Expo 建議設以防他人拿到
+    # 你的 push token 後冒名發送；值在 Expo 後台的 Access Tokens 產生。
+    push_expo_access_token: str = ""
+    push_timeout_seconds: float = 10.0
 
     @model_validator(mode="before")
     @classmethod

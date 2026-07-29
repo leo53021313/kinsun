@@ -281,6 +281,17 @@ APP_NOTIFICATIONS_DDL = (
     "ON app_notifications (external_id, created_at);"
 )
 
+# 裝置推播 token（真推播 D-08 階段 5，2026-07-29）：一人可有多台裝置。
+# token 唯一：同一台裝置換人使用時改綁，不可留兩列——否則提醒會送給前一位使用者。
+PUSH_TOKENS_DDL = (
+    "CREATE TABLE IF NOT EXISTS push_tokens ("
+    "push_token_id TEXT PRIMARY KEY, token TEXT NOT NULL UNIQUE, "
+    "principal_type TEXT NOT NULL, principal_id TEXT NOT NULL, "
+    "platform TEXT NOT NULL, updated_at DOUBLE PRECISION NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS idx_push_tokens_principal "
+    "ON push_tokens (principal_type, principal_id);"
+)
+
 # 整理進度標記（✅ 庚-06／庚-13）：某長輩某日已整理進長期記憶，供冪等與跨多日補齊。
 MEMORY_CONSOLIDATIONS_DDL = (
     "CREATE TABLE IF NOT EXISTS memory_consolidations ("
@@ -530,6 +541,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(REMINDER_LOGS_RESPONDED_MIGRATION_DDL)
         conn.execute(RISK_NOTIFICATION_LOGS_DDL)
         conn.execute(APP_NOTIFICATIONS_DDL)
+        conn.execute(PUSH_TOKENS_DDL)
         conn.execute(WEB_SEARCH_LOOKUPS_DDL)
         conn.execute(MEMORY_CONSOLIDATIONS_DDL)
         conn.execute(CONVERSATION_SUMMARIES_DDL)

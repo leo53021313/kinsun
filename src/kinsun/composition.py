@@ -37,6 +37,9 @@ from kinsun.memory.recall import SessionMemory
 from kinsun.memory.shortterm import PgMemoryStore
 from kinsun.news.mentions import NewsMentionStore, PgNewsMentionStore
 from kinsun.news.store import NewsStore, PgNewsStore
+from kinsun.notifications.expo_push import ExpoPushClient
+from kinsun.notifications.push_delivery import PushDelivery
+from kinsun.notifications.push_tokens import PgPushTokenStore
 from kinsun.notifications.store import PgAppNotificationStore
 from kinsun.observability.store import PgTraceStore
 from kinsun.places.store import PgPlaceStore, PlaceStore
@@ -160,6 +163,7 @@ class Core:
     risk_events: PgRiskEventStore
     summaries: PgConversationSummaryStore
     notifications: PgAppNotificationStore
+    push_tokens: PgPushTokenStore
     # 反思寫入（worker）與後台檢視／撤銷都需要同一個 store，故收進 Core。
     strategies: PgStrategyStore
     # 收進 Core 而非讓組裝根各自 new：clock 必須與 LocationFacts 同源，否則寫入
@@ -389,6 +393,21 @@ def assemble_core(
         ),
     )
     notifications = PgAppNotificationStore(db, clock=clock, new_id=new_id)
+    push_tokens = PgPushTokenStore(db, clock=clock, new_id=new_id)
+    # 真推播（D-08 階段 5）：旗標關閉時 push 為 None，AppOutboundChannel 行為與
+    # 補這段之前完全相同（只落庫）。開啟前提見 config.push_enabled 的註解。
+    push_delivery = (
+        PushDelivery(
+            accounts,
+            push_tokens,
+            ExpoPushClient(
+                access_token=settings.push_expo_access_token,
+                timeout_seconds=settings.push_timeout_seconds,
+            ),
+        )
+        if settings.push_enabled
+        else None
+    )
     risk_events = PgRiskEventStore(db, clock=clock, new_id=lambda: uuid.uuid4().hex)
     summaries = PgConversationSummaryStore(db, clock=clock)
     return Core(
@@ -402,7 +421,7 @@ def assemble_core(
             account_store,
             {
                 Channel.LINE: LineOutboundChannel(externals.messenger),
-                Channel.APP: AppOutboundChannel(notifications),
+                Channel.APP: AppOutboundChannel(notifications, push=push_delivery),
             },
         ),
         account_store=account_store,
@@ -415,6 +434,7 @@ def assemble_core(
         traces=traces,
         reminder_logs=PgReminderLogStore(db, clock=clock, new_id=new_id),
         notifications=notifications,
+        push_tokens=push_tokens,
         strategies=strategies,
         locations=locations,
         greeting_prefs=PgGreetingPreferenceStore(db),

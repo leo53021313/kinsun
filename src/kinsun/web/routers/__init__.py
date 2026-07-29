@@ -16,6 +16,7 @@ from datetime import datetime
 from fastapi import APIRouter
 
 from kinsun.accounts.service import AccountService
+from kinsun.notifications.push_tokens import PushTokenStore
 from kinsun.notifications.store import AppNotificationStore
 from kinsun.reports.reminders import ReminderLogStore
 from kinsun.reports.summaries import ConversationSummaryStore
@@ -37,6 +38,7 @@ from kinsun.web.routers.elders import create_elders_router
 from kinsun.web.routers.guardians import create_guardians_router
 from kinsun.web.routers.meta import create_meta_router
 from kinsun.web.routers.notifications import create_notifications_router
+from kinsun.web.routers.push_tokens import create_push_tokens_router
 from kinsun.web.routers.reports import create_reports_router
 from kinsun.web.routers.schedules import create_schedules_router
 from kinsun.web.routers.sessions import create_sessions_router
@@ -97,6 +99,7 @@ def create_app_auth_router(
     accounts: AccountService,
     rate_limiter: RateLimiter | None = None,
     notifications: AppNotificationStore | None = None,
+    push_tokens: PushTokenStore | None = None,
 ) -> APIRouter:
     """App 帳號面聚合：註冊／登入／裝置綁定共用同一節流器（各端點獨立計數）。"""
     limiter = rate_limiter or SlidingWindowRateLimiter(10, 300.0)
@@ -114,4 +117,5 @@ def create_app_auth_router(
             current_app_elder=current_app_elder,
         )
     )
+    router.include_router(create_push_tokens_router(accounts=accounts, push_tokens=push_tokens))
     return router

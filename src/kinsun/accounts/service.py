@@ -418,6 +418,19 @@ class AccountService:
                 return binding.external_id
         return None
 
+    def bound_principal(
+        self, channel: Channel, external_id: str
+    ) -> tuple[PrincipalType, str] | None:
+        """通道帳號反查主體（真推播用，2026-07-29）：不限角色，長輩與家屬都回。
+
+        與 `bound_elder_id` 的差別在「不限角色」——推播要送給訊息的收件人本人，
+        而 App 內通知的收件人可能是長輩（用藥提醒）也可能是家屬（危急警報）。
+        """
+        binding = self._repo.get_channel_binding(channel, external_id)
+        if binding is None:
+            return None
+        return binding.principal_type, binding.principal_id
+
     def bound_elder_id(self, channel: Channel, external_id: str) -> str | None:
         """查綁定不查同意（✅ D-19，AllowAllGate 旁路用）：綁的是長輩才回 elder_id。"""
         binding = self._repo.get_channel_binding(channel, external_id)
