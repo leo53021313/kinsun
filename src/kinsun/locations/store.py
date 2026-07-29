@@ -20,6 +20,39 @@ from kinsun.db import Database, _Errors
 
 _COLUMNS = "elder_id, place, recorded_at, latitude, longitude"
 
+# 地表座標的合法範圍。邊界值屬合法（±90／±180 是真的地方）。
+_LAT_MAX = 90.0
+_LON_MAX = 180.0
+
+
+def is_valid_coordinate(latitude: object, longitude: object) -> bool:
+    """這組座標是不是地表上的一個點（V-04，2026-07-29）。
+
+    ## 為什麼住在領域層而不是各通道自己判
+
+    有兩個呼叫端：`channels/app/ws.py` 的 JSON 訊框與 `channels/app/turns.py` 的
+    query 參數。兩邊各寫一份正是 2026-07-28 位置鍵名不合那個故障的成因——兩邊的
+    單元測試各自斷言自己那一版契約，所以**兩邊都是綠的**，而長輩的位置整晚沒進庫。
+
+    ## 為什麼型別與範圍一起判
+
+    兩者不合的後果完全相同：寫進去的是一個假位置。而假位置不只是一筆髒資料——
+    `LocationFacts` 會把它注入每一輪的提示詞，附近地點搜尋會拿它當圓心，於是長輩
+    問「附近有沒有藥局」，答案是北極圈的。
+
+    ⚠️ `bool` 要單獨排除：它是 `int` 的子型別，`float(True)` 是 1.0——傳 `true`
+    不報錯，會**安靜地**把長輩記在幾內亞灣外海（WS 訊框實測確認）。
+
+    ⚠️ 判準寫成 `-90 <= lat <= 90` 而不是 `abs(lat) > 90`：`json.loads` 接受
+    `NaN`／`Infinity` 字面值，而 NaN 的比較恆為 False——前者擋得住，後者漏掉。
+    """
+    for value, limit in ((latitude, _LAT_MAX), (longitude, _LON_MAX)):
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return False
+        if not -limit <= value <= limit:
+            return False
+    return True
+
 
 @dataclass(frozen=True)
 class ElderLocation:

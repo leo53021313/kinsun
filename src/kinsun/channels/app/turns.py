@@ -23,7 +23,7 @@ from kinsun import tracing
 from kinsun.accounts.models import Channel, PrincipalType
 from kinsun.accounts.service import AccountService
 from kinsun.channels.inbound import InboundMessage, dispatch
-from kinsun.locations.store import ElderLocation
+from kinsun.locations.store import ElderLocation, is_valid_coordinate
 from kinsun.speech.chunking import reply_digest, split_for_speech
 from kinsun.speech.tts import TTSError, TtsPriority, tts_priority
 from kinsun.web.envelope import ok
@@ -90,6 +90,13 @@ def create_app_turns_router(
         """
         place = place.strip()
         if locations is None or not place or lat is None or lon is None:
+            return
+        # 座標超出地表範圍＝這輪沒有位置（V-04，2026-07-29）。⚠️ 刻意**不**寫成
+        # FastAPI 簽章的 `Query(ge=-90, le=90)`：那會回 422，連長輩那句話一起退掉。
+        # 位置是加分項（見下方 except 的註解），為了 App 送錯一個參數而讓長輩重講
+        # 一次，代價遠大於少一筆位置。
+        if not is_valid_coordinate(lat, lon):
+            logger.warning("長輩地點座標超出範圍，這輪不寫入")
             return
         try:
             locations.save(ElderLocation(elder_id, place, now().timestamp(), lat, lon))

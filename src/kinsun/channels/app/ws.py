@@ -53,7 +53,7 @@ from kinsun.accounts.models import Channel, PrincipalType
 from kinsun.accounts.service import AccountService
 from kinsun.agent import SYSTEM_TROUBLE_REPLY
 from kinsun.channels.inbound import InboundMessage, dispatch
-from kinsun.locations.store import ElderLocation
+from kinsun.locations.store import ElderLocation, is_valid_coordinate
 from kinsun.turn_context import (
     pending_utterances,
     tool_announcer,
@@ -399,15 +399,6 @@ def create_app_ws_router(
     return router
 
 
-def _is_coordinate(value: object) -> bool:
-    """座標必須是真正的數字。
-
-    ⚠️ `bool` 要單獨排除：它是 `int` 的子型別，`float(True)` 是 1.0——傳 `true`
-    不會報錯，會**安靜地**把長輩記在緯度 1.0（幾內亞灣外海）。實測確認。
-    """
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
-
-
 def _parse_location(raw: str) -> dict:
     """解析上行的位置 JSON；壞掉就當成「這輪沒有位置」。
 
@@ -436,15 +427,12 @@ def _parse_location(raw: str) -> dict:
     location = payload.get("location", "")
     latitude = payload.get("latitude")
     longitude = payload.get("longitude")
-    # ⚠️ 型別不合與「沒帶座標」要分開記：後者是既有的正常語意（只送地名＝這輪沒有
-    # 位置），把它也記成 warning 等於製造誤導性日誌——那正是讓下一個人查錯方向的東西。
-    if (
-        not isinstance(location, str)
-        or (latitude is not None and not _is_coordinate(latitude))
-        or (longitude is not None and not _is_coordinate(longitude))
-    ):
-        logger.warning("WebSocket 位置訊框欄位型別不合，整筆忽略")
+    # ⚠️ 「沒帶座標」要與「帶了但不合法」分開：前者是既有的正常語意（只送地名＝這輪
+    # 沒有位置），把它也記成 warning 等於製造誤導性日誌——那正是讓下一個人查錯方向
+    # 的東西。
+    if latitude is None and longitude is None:
         return {}
-    if latitude is None or longitude is None:
+    if not isinstance(location, str) or not is_valid_coordinate(latitude, longitude):
+        logger.warning("WebSocket 位置訊框欄位不合法（型別或範圍），整筆忽略")
         return {}
     return {"location": location, "latitude": latitude, "longitude": longitude}

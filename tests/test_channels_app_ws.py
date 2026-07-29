@@ -573,3 +573,45 @@ def test_boolean_coordinates_are_rejected_rather_than_coerced_to_one():
         reply = ws.receive_json()
     assert reply["type"] == "reply"
     assert locations.get_for_elder(elder.elder_id) is None
+
+
+@pytest.mark.parametrize(
+    ("lat", "lon", "why"),
+    [
+        (999, 120.21, "緯度 999"),
+        (-999, 120.21, "緯度 -999"),
+        (22.99, 999, "經度 999"),
+        (90.1, 120.21, "緯度剛好越界"),
+    ],
+)
+def test_out_of_range_coordinates_are_not_written(lat, lon, why):
+    """座標超出地表範圍＝這輪沒有位置（V-04，2026-07-29）。
+
+    原樣落庫的代價不是「一筆髒資料」：`LocationFacts` 會把它注入每一輪的提示詞，
+    附近地點搜尋會拿它當圓心去撈——長輩問「附近有沒有藥局」，答案是北極圈的。
+    """
+    svc = _service()
+    elder, token = _bound_elder_token(svc)
+    locations = FakeLocationStore()
+    client = _client(svc, locations=locations)
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_text(json.dumps({"location": "台南市", "latitude": lat, "longitude": lon}))
+        ws.send_bytes(b"\x00fake-audio")
+        reply = ws.receive_json()
+    assert reply["type"] == "reply", why
+    assert locations.get_for_elder(elder.elder_id) is None, why
+
+
+def test_boundary_coordinates_are_accepted():
+    """±90／±180 是合法座標，不可連邊界一起擋掉。"""
+    svc = _service()
+    elder, token = _bound_elder_token(svc)
+    locations = FakeLocationStore()
+    client = _client(svc, locations=locations)
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_text(json.dumps({"location": "北極點", "latitude": 90.0, "longitude": 180.0}))
+        ws.send_bytes(b"\x00fake-audio")
+        ws.receive_json()
+    assert locations.get_for_elder(elder.elder_id) == ElderLocation(
+        elder.elder_id, "北極點", NOW.timestamp(), 90.0, 180.0
+    )
