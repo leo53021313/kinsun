@@ -54,6 +54,32 @@ def is_valid_coordinate(latitude: object, longitude: object) -> bool:
     return True
 
 
+# 地名長度上限（V-05，2026-07-29）。
+#
+# ⚠️ **刻意訂得寬**。地名被拒的失敗模式是**靜默的**——伺服器端忽略、不回錯，長輩那端
+# 的表現是金孫又開始反問「您人在哪裡」，而後台查不出原因。那正是 2026-07-28 那次位置
+# 故障的症狀。App 送的是 `address.city ?? subregion ?? region`（全是短的行政區名），
+# 100 字遠遠夠用；這個界線是為了擋掉實測抓到的 **2 萬字地名**——它會原樣落庫，而且
+# **每一輪都注入提示詞**，既燒 token 也是提示注入的入口。
+MAX_PLACE_CHARS = 100
+
+
+def is_valid_place(place: object) -> bool:
+    """這個地名可不可以寫進庫（V-05，2026-07-29）。
+
+    與 `is_valid_coordinate` 同住一處、同一個理由：WS 訊框與 REST query 兩個呼叫端
+    共用，各寫一份會重演 2026-07-28 鍵名不合那次——兩邊測試各斷言自己那版契約，
+    全綠而長輩的位置整晚沒進庫。
+
+    空字串與純空白回 False：那是「這輪沒有位置」（未授權、室內收不到），既有語意是
+    不寫入也不清空舊值，與「地名太長」走同一條分支即可。
+    """
+    if not isinstance(place, str):
+        return False
+    cleaned = place.strip()
+    return bool(cleaned) and len(cleaned) <= MAX_PLACE_CHARS
+
+
 @dataclass(frozen=True)
 class ElderLocation:
     elder_id: str

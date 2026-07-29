@@ -11,7 +11,7 @@ import math
 
 import pytest
 
-from kinsun.locations.store import is_valid_coordinate
+from kinsun.locations.store import is_valid_coordinate, is_valid_place
 
 
 @pytest.mark.parametrize(
@@ -75,3 +75,52 @@ def test_nan_and_infinity_are_rejected(bad):
     ——換成 `abs(lat) > 90` 這種寫法就會漏掉 NaN。"""
     assert not is_valid_coordinate(bad, 120.21)
     assert not is_valid_coordinate(22.99, bad)
+
+
+# ── 地名長度上限（V-05，2026-07-29）──────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("place", "why"),
+    [
+        ("台南市", "一般縣市"),
+        ("東區", "行政區"),
+        ("Kaohsiung City", "英文地名"),
+        ("台" * 100, "剛好在上限"),
+    ],
+)
+def test_real_place_names_are_accepted(place, why):
+    assert is_valid_place(place), why
+
+
+@pytest.mark.parametrize(
+    ("place", "why"),
+    [
+        ("台" * 101, "超過上限一個字"),
+        ("x" * 20000, "實測抓到的 2 萬字"),
+        ("", "空字串＝這輪沒有位置，不寫入"),
+        ("   ", "只有空白"),
+        (None, "型別不對"),
+        (123, "型別不對"),
+        (["台南市"], "型別不對"),
+    ],
+)
+def test_bad_place_names_are_rejected(place, why):
+    assert not is_valid_place(place), why
+
+
+def test_length_is_measured_after_trimming():
+    """前後空白不算長度——與座標判準同樣的取捨：寧可寬鬆也不要誤殺真實地名。"""
+    assert is_valid_place("  台南市  ")
+
+
+def test_the_limit_is_generous_on_purpose():
+    """⚠️ 這個上限刻意訂得寬。
+
+    地名被拒的失敗模式是**靜默的**（伺服器端忽略、不回錯），長輩那端的表現是金孫又
+    開始反問「您人在哪裡」——那正是 2026-07-28 那次故障的症狀，而且後台查不出原因。
+    App 送的是 `address.city ?? subregion ?? region`，全是短的行政區名，100 字遠遠夠用；
+    訂這個界線是為了擋掉 2 萬字灌進每一輪提示詞，不是為了規範格式。
+    """
+    assert is_valid_place("台北市內湖區")
+    assert is_valid_place("Kaohsiung City, Taiwan")

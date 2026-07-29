@@ -23,7 +23,7 @@ from kinsun import tracing
 from kinsun.accounts.models import Channel, PrincipalType
 from kinsun.accounts.service import AccountService
 from kinsun.channels.inbound import InboundMessage, dispatch
-from kinsun.locations.store import ElderLocation, is_valid_coordinate
+from kinsun.locations.store import ElderLocation, is_valid_coordinate, is_valid_place
 from kinsun.speech.chunking import reply_digest, split_for_speech
 from kinsun.speech.tts import TTSError, TtsPriority, tts_priority
 from kinsun.web.envelope import ok
@@ -89,9 +89,11 @@ def create_app_turns_router(
         空字串／純空白的地名＝「這輪沒有位置」（未授權、室內收不到），**不是**
         「他不在任何地方」——故不寫入也不清空既有資料。
         """
-        place = place.strip()
-        if locations is None or not place or lat is None or lon is None:
+        # 地名太長＝這輪沒有位置（V-05，2026-07-29）：2 萬字的地名會原樣落庫，而且
+        # **每一輪都注入提示詞**——既燒 token，也是提示注入的入口。判準與 WS 共用。
+        if locations is None or not is_valid_place(place) or lat is None or lon is None:
             return
+        place = place.strip()
         # 座標超出地表範圍＝這輪沒有位置（V-04，2026-07-29）。⚠️ 刻意**不**寫成
         # FastAPI 簽章的 `Query(ge=-90, le=90)`：那會回 422，連長輩那句話一起退掉。
         # 位置是加分項（見下方 except 的註解），為了 App 送錯一個參數而讓長輩重講

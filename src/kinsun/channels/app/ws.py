@@ -53,7 +53,7 @@ from kinsun.accounts.models import Channel, PrincipalType
 from kinsun.accounts.service import AccountService
 from kinsun.agent import SYSTEM_TROUBLE_REPLY
 from kinsun.channels.inbound import InboundMessage, dispatch
-from kinsun.locations.store import ElderLocation, is_valid_coordinate
+from kinsun.locations.store import ElderLocation, is_valid_coordinate, is_valid_place
 from kinsun.turn_context import (
     pending_utterances,
     tool_announcer,
@@ -219,9 +219,10 @@ def create_app_ws_router(
 
         三者必須同時具備才寫入；空地名＝「這輪沒有位置」，不寫入也不清空既有資料。
         """
-        place = (place or "").strip()
-        if locations is None or not place or lat is None or lon is None:
+        # 地名太長＝這輪沒有位置（V-05，2026-07-29）：判準與 REST 共用，見 locations/store。
+        if locations is None or not is_valid_place(place) or lat is None or lon is None:
             return
+        place = place.strip()
         try:
             locations.save(
                 ElderLocation(elder_id, place, now().timestamp(), float(lat), float(lon))
