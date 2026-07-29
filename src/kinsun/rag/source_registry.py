@@ -439,6 +439,4 @@ def order_answer_first(
     稽核、不建回答向量，衛教內文就查不到了。故收錄順序是正確性的一部分。
     """
     registry = registry or SourceRegistry()
-    return tuple(
-        sorted(source_ids, key=lambda sid: registry.get(sid).role != SourceRole.ANSWER)
-    )
+    return tuple(sorted(source_ids, key=lambda sid: registry.get(sid).role != SourceRole.ANSWER))
