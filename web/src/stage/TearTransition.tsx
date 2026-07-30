@@ -10,7 +10,7 @@
  * ⚠️ 尊重 prefers-reduced-motion（W-11）：純視覺享受不該讓對動態敏感的人不舒服。
  */
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 export const TEAR_DURATION_MS = 700;
 export const REDUCED_MOTION_MS = 200;
@@ -43,17 +43,30 @@ export function TearTransition(props: {
   // 掛上之後才加位移，否則兩半會直接出現在終點、看不到過程。
   const [moved, setMoved] = useState(false);
 
+  // ⚠️ onDone 存進 ref、不進相依陣列：舞台在動畫**期間**就掛載並發請求（見上方
+  // 說明），那正是父層最容易重新渲染的時刻。onDone 若留在相依陣列，父層一重繪就
+  // 會清掉計時器、重排一顆新的——「播完通知呼叫端」這個契約會被延後，極端情況下
+  // 永遠不觸發。用獨立的 effect 同步而非 render 期間直接賦值：後者會被
+  // react-hooks 的 refs 規則抓到。
+  const onDoneRef = useRef(onDone);
+  useEffect(() => {
+    onDoneRef.current = onDone;
+  }, [onDone]);
+
   useEffect(() => {
     if (!active) {
       return;
     }
     const raf = requestAnimationFrame(() => setMoved(true));
-    const timer = setTimeout(onDone, reduced ? REDUCED_MOTION_MS : TEAR_DURATION_MS);
+    const timer = setTimeout(
+      () => onDoneRef.current(),
+      reduced ? REDUCED_MOTION_MS : TEAR_DURATION_MS,
+    );
     return () => {
       cancelAnimationFrame(raf);
       clearTimeout(timer);
     };
-  }, [active, onDone, reduced]);
+  }, [active, reduced]);
 
   if (!active) {
     return <>{children}</>;
@@ -62,6 +75,7 @@ export function TearTransition(props: {
   if (reduced) {
     return (
       <div
+        aria-hidden
         className="transition-opacity ease-out"
         style={{ opacity: moved ? 0 : 1, transitionDuration: `${REDUCED_MOTION_MS}ms` }}
       >
@@ -79,7 +93,7 @@ export function TearTransition(props: {
   });
 
   return (
-    <div className="pointer-events-none fixed inset-0 z-50 overflow-hidden">
+    <div aria-hidden className="pointer-events-none fixed inset-0 z-50 overflow-hidden">
       {(["left", "right"] as const).map((side) => (
         <div
           key={side}

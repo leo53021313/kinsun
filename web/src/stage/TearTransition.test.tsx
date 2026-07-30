@@ -86,4 +86,41 @@ describe("TearTransition", () => {
     );
     expect(screen.queryByTestId("tear-left")).not.toBeInTheDocument();
   });
+
+  it("父層在動畫期間重繪也不會重排計時器", () => {
+    // ⚠️ 這正是最可能發生的情境：舞台在動畫期間掛載並發請求，資料回來就是一次重繪。
+    // onDone 若留在相依陣列，計時器會被反覆重排，動畫播完卻沒有人被通知。
+    vi.useFakeTimers();
+    mockReducedMotion(false);
+    const first = vi.fn();
+    const second = vi.fn();
+    const { rerender } = render(
+      <TearTransition active onDone={first}>
+        <p>開場</p>
+      </TearTransition>,
+    );
+    vi.advanceTimersByTime(TEAR_DURATION_MS - 100);
+    rerender(
+      <TearTransition active onDone={second}>
+        <p>開場</p>
+      </TearTransition>,
+    );
+    vi.advanceTimersByTime(100);
+    expect(second).toHaveBeenCalledOnce();
+    expect(first).not.toHaveBeenCalled();
+  });
+
+  it("撕開的兩層對讀螢幕的人隱藏", () => {
+    // 同一份內容在 DOM 裡有兩份（那是撕裂效果的做法），但它們是裝飾——動畫期間
+    // 真正的內容是後方已經掛載的舞台。不隱藏的話會被唸兩遍。
+    mockReducedMotion(false);
+    const { container } = render(
+      <TearTransition active onDone={vi.fn()}>
+        <p>開場</p>
+      </TearTransition>,
+    );
+    const overlay = container.querySelector("[aria-hidden]");
+    expect(overlay).not.toBeNull();
+    expect(overlay?.querySelectorAll("[data-testid^='tear-']")).toHaveLength(2);
+  });
 });
