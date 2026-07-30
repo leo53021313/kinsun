@@ -17,8 +17,8 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "kinsun-shared": path.resolve(__dirname, "../shared"),
-      "@": path.resolve(__dirname, "src"),
+      "kinsun-shared": path.resolve(import.meta.dirname, "../shared"),
+      "@": path.resolve(import.meta.dirname, "src"),
     },
   },
   server: {
