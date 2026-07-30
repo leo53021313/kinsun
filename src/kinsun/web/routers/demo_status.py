@@ -238,28 +238,54 @@ def scheduler_probe(
 
     ⚠️ **只看程序在不在會說謊**：2026-07-26 排程器假死七小時，`kinsun.sh status`
     全程顯示 RUNNING。判定必須看「工作有沒有按 cron 跑」，那樣程序被停掉、卡死、
-    當掉三種情形都會浮現。判定邏輯與 `admin_jobs.py` 的逾期判定同源。
+    當掉三種情形都會浮現。判定邏輯與 `admin_jobs.py` 的逾期判定同源，看三個訊號：
+    逾期未跑、從未執行過、一直在跑但一直失敗。
 
-    從未執行過回 unknown 而非 down：剛部署完還沒跑第一輪，不該一開機就報紅。
+    ⚠️ 「從未執行過」分兩種情形，不可混為一談：**全部**工作都從未執行過回
+    unknown——剛部署完還沒跑第一輪，不該一開機就報紅；但只要**有些**工作跑過、
+    卻**還有**一支從未執行過，就必須回 down——排程器活著卻沒認領那支工作，是
+    這裡看得到的情形裡最嚴重的一種，不能被別支正常運作的工作遮蔽掉。
     """
     default_tolerance = 300.0
 
     def probe() -> str:
         now = clock()
         seen_any = False
+        any_never_ran = False
         for spec in specs:
             last = schedule_state.get_last_run(spec.name)
             if last is None:
+                any_never_ran = True
                 continue
             seen_any = True
-            due_at = croniter(spec.cron, last).get_next(datetime)
             tolerance = (
                 spec.max_lateness_seconds
                 if spec.max_lateness_seconds is not None
                 else default_tolerance
             )
+            due_at = croniter(spec.cron, last).get_next(datetime)
             if (now - due_at).total_seconds() > tolerance:
                 return DOWN
-        return OK if seen_any else UNKNOWN
+            # ⚠️ 「一直在跑、但一直失敗」是上面的逾期判定抓不到的盲區：`last_run_at`
+            # 由 `_claim_if_due` 在執行**之前**寫入（at-most-once 搶占所必需），所以
+            # 每輪都拋例外的工作照樣按時更新 last_run_at，逾期判定於是永遠是 False。
+            # 要靠獨立的成功訊號才分得出來。
+            #
+            # `last_success` 為 None 有兩種可能：真的從沒成功過，或這一列是該欄
+            # 上線前的舊資料。兩者都**不可**當成失敗——否則第一次部署整排變紅，
+            # 狼來了一次之後就沒人再看這一頁了。故只在「有成功紀錄、但落後超過
+            # 一個容許量」時才報。
+            last_success = schedule_state.get_last_success(spec.name)
+            is_failing = (
+                last_success is not None
+                and last is not None
+                and (last - last_success).total_seconds() > tolerance
+            )
+            if is_failing:
+                return DOWN
+
+        if not seen_any:
+            return UNKNOWN
+        return DOWN if any_never_ran else OK
 
     return probe

@@ -354,11 +354,15 @@ class _Spec:
 
 
 class _State:
-    def __init__(self, last_runs):
+    def __init__(self, last_runs, last_successes=None):
         self._last_runs = last_runs
+        self._last_successes = last_successes or {}
 
     def get_last_run(self, name):
         return self._last_runs.get(name)
+
+    def get_last_success(self, name):
+        return self._last_successes.get(name)
 
 
 NOW = datetime(2026, 7, 30, 12, 0, tzinfo=UTC)
@@ -382,3 +386,53 @@ def test_排程器探針_從未執行過為不明():
     state = _State({})
     specs = [_Spec("schedule-dispatch", "* * * * *", 90)]
     assert scheduler_probe(state, specs, clock=lambda: NOW)() == "unknown"
+
+
+def test_排程器探針_全部工作都從未執行過為不明():
+    """兩支工作都還沒跑過第一輪——不該一開機就報紅。"""
+    state = _State({})
+    specs = [
+        _Spec("schedule-dispatch", "* * * * *", 90),
+        _Spec("nightly-batch", "0 3 * * *", 300),
+    ]
+    assert scheduler_probe(state, specs, clock=lambda: NOW)() == "unknown"
+
+
+def test_排程器探針_有支跑過但另一支從未執行過為停機():
+    """排程器活著卻沒認領那支工作，是這裡看得到的情形裡最嚴重的一種，
+    不能被別支正常運作的工作遮蔽掉。"""
+    state = _State({"schedule-dispatch": NOW - timedelta(seconds=30)})
+    specs = [
+        _Spec("schedule-dispatch", "* * * * *", 90),
+        _Spec("nightly-batch", "0 3 * * *", 300),
+    ]
+    assert scheduler_probe(state, specs, clock=lambda: NOW)() == "down"
+
+
+def test_排程器探針_一直在跑但一直失敗為停機():
+    """last_run_at 由 _claim_if_due 在執行之前寫入（at-most-once 搶占所必需），
+    每輪都失敗的工作照樣按時更新 last_run_at，只看逾期看不出來——要靠成功紀錄
+    落後超過容許量才分得出來。"""
+    state = _State(
+        {"schedule-dispatch": NOW - timedelta(seconds=30)},
+        {"schedule-dispatch": NOW - timedelta(hours=7)},
+    )
+    specs = [_Spec("schedule-dispatch", "* * * * *", 90)]
+    assert scheduler_probe(state, specs, clock=lambda: NOW)() == "down"
+
+
+def test_排程器探針_沒有成功紀錄但準時執行為正常():
+    """last_success 為 None 不等於失敗——可能是真的從沒成功過，也可能是這個
+    欄位上線前的舊資料，兩者都不可當成失敗，否則第一次部署整排就會變紅。"""
+    state = _State({"schedule-dispatch": NOW - timedelta(seconds=30)})
+    specs = [_Spec("schedule-dispatch", "* * * * *", 90)]
+    assert scheduler_probe(state, specs, clock=lambda: NOW)() == "ok"
+
+
+def test_排程器探針_全部準時且有成功紀錄為正常():
+    state = _State(
+        {"schedule-dispatch": NOW - timedelta(seconds=30)},
+        {"schedule-dispatch": NOW - timedelta(seconds=30)},
+    )
+    specs = [_Spec("schedule-dispatch", "* * * * *", 90)]
+    assert scheduler_probe(state, specs, clock=lambda: NOW)() == "ok"
