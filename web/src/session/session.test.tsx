@@ -12,7 +12,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { createSessionContext } from "./createSessionContext";
-import { clearSession, loadSession, saveSession } from "./storage";
+import { clearSession, loadSession, saveSession, type Session } from "./storage";
 
 const Elder = createSessionContext("elder");
 const Guardian = createSessionContext("guardian");
@@ -121,5 +121,27 @@ describe("createSessionContext", () => {
       return null;
     }
     expect(() => render(<Orphan />)).toThrow(/Provider/);
+  });
+
+  it("已存的登入在第一次繪製就讀得到，不會先閃一次未登入", () => {
+    // ⚠️ 這一條守的是 lazy initializer（`useState(() => loadSession(role))`）。
+    // 若改成在 effect 裡讀，元件會先以 null 繪製一次、effect 跑完再繪製一次——
+    // 兩欄同時閃一次「未登入」很難看。
+    //
+    // ⚠️ 必須記錄「每一次繪製看到什麼」而不是斷言最終畫面：testing-library 的
+    // render() 內部用同步 act() 包住掛載，會把 effect 一起 flush 掉，所以兩種
+    // 實作的最終畫面一模一樣，只看結果分辨不出來。
+    saveSession({ role: "elder", token: "t1", display_name: "王阿嬤" });
+    const seen: (Session | null)[] = [];
+    function Probe() {
+      seen.push(Elder.useSession().session);
+      return null;
+    }
+    render(
+      <Elder.Provider>
+        <Probe />
+      </Elder.Provider>,
+    );
+    expect(seen).toEqual([{ role: "elder", token: "t1", display_name: "王阿嬤" }]);
   });
 });
