@@ -347,3 +347,21 @@ def test_search_orders_catchup_batch_by_conversation_day():
     items = Mem0LongTermStore(mem).search("sess1", "x")
 
     assert [i.date for i in items] == ["2026-06-28", "2026-06-27", "2026-06-26"]
+
+
+def test_search_raw_wrapped_with_span(monkeypatch):
+    """逐路檢索各成一顆 span（2026-07-30 spec）：input 的 query 分辨原話／健康路，
+    output 關（合併結果已由外層 mem0_search 捕捉）。"""
+    import opik
+
+    from kinsun.tracing import client as tracing_client
+    from kinsun.tracing import decorators as tracing_decorators
+
+    tracing_client.reset_for_test()
+    seen: list[dict] = []
+    monkeypatch.setattr(opik, "track", lambda **kw: (seen.append(kw), lambda f: f)[1])
+    monkeypatch.setattr(tracing_decorators, "is_enabled", lambda: True)
+    store = Mem0LongTermStore(_FakeMem0(search_return={"results": [{"memory": "m"}]}))
+    assert _texts(store.search("elder-1", "查詢")) == ["m"]
+    raw_spans = [kw for kw in seen if kw["name"] == "mem0_search_raw"]
+    assert raw_spans and raw_spans[0]["capture_output"] is False

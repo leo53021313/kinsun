@@ -108,6 +108,10 @@ class Mem0LongTermStore:
         tracing.attach_prompt("mem0_fact_extraction", prov.CUSTOM_FACT_EXTRACTION_PROMPT)
         self._memory.add(payload, user_id=elder_id, metadata=metadata)
 
+    # 逐路一顆 span（2026-07-30 spec）：兩路並行時 waterfall 才分得出原話／健康
+    # 增補各自的耗時；input 的 query 即可辨路。output 關——合併結果已由外層
+    # mem0_search 捕捉，重複攤一份只是燒儲存。
+    @tracing.track(name="mem0_search_raw", capture_input=True, capture_output=False)
     def _search_raw(self, query: str, elder_id: str, top_k: int) -> list[dict]:
         try:
             # rerank＋explain（✅ D-40 丁-4）：reranker 是否生效由 mem0 config 決定
