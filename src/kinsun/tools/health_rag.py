@@ -10,6 +10,7 @@ from kinsun.llm import ToolSpec
 from kinsun.observability.store import TraceStore, safe_record
 from kinsun.rag.service import HealthEducationRagService
 from kinsun.tools.registry import ToolInvocationContext
+from kinsun.turn_context import record_source
 
 HEALTH_RAG_SPEC = ToolSpec(
     name="health_education_rag",
@@ -46,6 +47,11 @@ def build_health_rag_handler(
         error_message = ""
         try:
             answer = service.answer(query, has_risk_signal=context.has_risk_signal)
+            # 本輪來源登記（2026-07-26 實測 S4 的出站冒名防線上游）：citations 為空
+            # ——包含目前沒有 active RAG release 的情況——就是「沒有來源」，
+            # 防線據此攔下回覆裡的「某某署說」。
+            for citation in answer.citations:
+                record_source(citation.publisher)
             payload = {
                 "answer": answer.answer,
                 "safety_level": answer.safety_level.value,

@@ -1,3 +1,5 @@
+import time
+
 from kinsun.llm import Message
 from kinsun.memory.longterm.store import HEALTH_QUERY, Mem0LongTermStore
 
@@ -164,6 +166,36 @@ def test_search_uses_top_k_and_health_top_k():
     assert (HEALTH_QUERY, 2) in calls
 
 
+class _SlowMem0:
+    """每次檢索固定睡 delay 秒——用來分辨兩次檢索是排隊跑還是並行跑。"""
+
+    def __init__(self, delay: float) -> None:
+        self._delay = delay
+
+    def search(self, query, *, top_k=20, filters=None, **kwargs):
+        _reject_entity_kwargs(kwargs)
+        time.sleep(self._delay)
+        return {"results": [{"id": query, "memory": f"關於{query}"}]}
+
+
+def test_search_runs_the_two_queries_concurrently():
+    """兩次檢索必須並行（2026-07-26 延遲實測）。
+
+    每次 `_search_raw` 都是「embedding API ＋ 向量查詢 ＋ LLM rerank」，實測合計
+    約 2.3 秒；兩次排隊跑就是 4.6 秒，佔端到端延遲近三成。長輩原話與固定的健康
+    增補查詢彼此無依賴，沒有理由排隊。
+
+    只斷言結果不會發現迴歸——並行版與序列版的輸出一模一樣，故以時間釘住。
+    """
+    delay = 0.1
+    started = time.monotonic()
+    items = Mem0LongTermStore(_SlowMem0(delay)).search("sess1", "頭痛")
+    elapsed = time.monotonic() - started
+
+    assert len(items) == 2  # 長輩原話 ＋ 健康增補，兩邊都拿到
+    assert elapsed < delay * 2 * 0.75, f"耗時 {elapsed:.2f}s，看起來仍是排隊查"
+
+
 def test_health_search_failure_keeps_user_results():
     mem = _ByQueryMem0(
         {"頭痛": {"results": [{"id": "1", "memory": "今天頭痛"}]}, HEALTH_QUERY: "RAISE"}
@@ -315,3 +347,21 @@ def test_search_orders_catchup_batch_by_conversation_day():
     items = Mem0LongTermStore(mem).search("sess1", "x")
 
     assert [i.date for i in items] == ["2026-06-28", "2026-06-27", "2026-06-26"]
+
+
+def test_search_raw_wrapped_with_span(monkeypatch):
+    """逐路檢索各成一顆 span（2026-07-30 spec）：input 的 query 分辨原話／健康路，
+    output 關（合併結果已由外層 mem0_search 捕捉）。"""
+    import opik
+
+    from kinsun.tracing import client as tracing_client
+    from kinsun.tracing import decorators as tracing_decorators
+
+    tracing_client.reset_for_test()
+    seen: list[dict] = []
+    monkeypatch.setattr(opik, "track", lambda **kw: (seen.append(kw), lambda f: f)[1])
+    monkeypatch.setattr(tracing_decorators, "is_enabled", lambda: True)
+    store = Mem0LongTermStore(_FakeMem0(search_return={"results": [{"memory": "m"}]}))
+    assert _texts(store.search("elder-1", "查詢")) == ["m"]
+    raw_spans = [kw for kw in seen if kw["name"] == "mem0_search_raw"]
+    assert raw_spans and raw_spans[0]["capture_output"] is False

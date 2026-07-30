@@ -1,7 +1,11 @@
 /** 三端共用的 API 資源型別（✅ D-51，乙-5）：與後端 JSON 鍵名完全一致（snake_case）。 */
 
 // --- 家屬面資源 ---
-export type Elder = { elder_id: string; name: string };
+/** nickname＝金孫對長輩的稱謂（如「秀英阿嬤」），空字串＝未設定。
+ *  ⚠️ 後端 `GET /elders` 與 `POST /elders` 一直都有回這個欄位，型別卻沒宣告
+ *  （A-10，2026-07-29）：TS 消費端因此**取不到**一個明明送過來的值，而編譯器不會
+ *  提醒任何人——它只是安靜地不存在。前後端同鍵名是本檔的存在理由。 */
+export type Elder = { elder_id: string; name: string; nickname: string };
 export type CreatedElder = Elder & { invite_code: string };
 /** 統一排程（D-76 P3）：用藥、回診與長輩自訂提醒共用同一個資源。 */
 export type ScheduleKind = "medication" | "appointment" | "custom";
@@ -47,6 +51,22 @@ export type TurnReply = {
   audio_url: string;
   /** 回覆音檔時長；目前三端零消費，保留給虛擬形象動畫對嘴（階段 5 後）。 */
   duration_ms: number | null;
+  /**
+   * 分段串流（2026-07-26 延遲優化）：整段回覆被切成幾段。
+   * >1 代表 `audio_url` 只是**第一段**，其餘要用 `getTurnChunk` 依序取來接著播；
+   * 0／1 代表就這一段。TTS 是 0.9 秒固定成本＋每字 0.10 秒，整段合成完才送出
+   * 會讓長輩等 5～8 秒，先送第一句可提早約 2～4 秒聽到聲音。
+   */
+  chunk_count: number;
+  /** 這一輪回覆的短雜湊；取後續段落時帶上，伺服器據此確認不是上一輪的回覆。 */
+  reply_digest: string;
+};
+
+/** 分段串流的後續段落（第 0 段已隨 `TurnReply` 回過）。 */
+export type TurnChunk = {
+  audio_url: string;
+  duration_ms: number | null;
+  text: string;
 };
 
 // --- 觀測後台（admin） ---
@@ -235,7 +255,32 @@ export type AdminRiskNotification = {
   channels: string;
   created_at: number;
 };
-export type AdminJob = { job_name: string; cron: string; last_run_at: number | null };
+export type AdminJob = {
+  job_name: string;
+  cron: string;
+  /**
+   * 哪個程序負責執行它（字面即 `kinsun.sh` 的服務名，如 `scheduler`、`rag_worker`）。
+   * 逾期時該重啟的不一定是排程器——沒有這一欄，值班的人會對著健康的排程器查半天。
+   */
+  owner: string;
+  /** 後台能否就地「立即執行」。跑在別的程序的排程（RAG 週更）為 false。 */
+  can_run_now: boolean;
+  last_run_at: number | null;
+  /** 依 cron 算出的下次應執行時刻；`null` ＝ 從未執行過，無基準可算。 */
+  due_at: number | null;
+  /** 遲到秒數；未逾期一律 0。 */
+  late_seconds: number;
+  /** 已逾期未執行——負責的程序可能停擺或認領不到工作。 */
+  is_overdue: boolean;
+  /** 從未執行過。⚠️ 與 is_overdue 互斥：沒有基準就談不上逾期，但更不該當成健康。 */
+  never_ran: boolean;
+};
+/** `GET /admin/jobs` 的 meta：逾期與從未執行分列，另附人話告警。 */
+export type AdminJobsMeta = {
+  overdue: string[];
+  never_ran: string[];
+  warnings: string[];
+};
 export type RagStatus = {
   active_release: string | null;
   active_published_at: number | null;

@@ -129,6 +129,31 @@ def _content_policy(value: Any) -> str:
     return normalized
 
 
+def _speech_backend(key: str, allowed: frozenset[str]):
+    """回傳一個 before 驗證器：正規化後必須落在白名單，否則拋 ConfigError（含鍵名與值）。
+
+    ⚠️ 為什麼這兩個鍵非驗不可（2026-07-27）：`build_asr_client`／`build_tts_client` 的
+    分支是「等於 dgx 才用真後端，**其餘一律**回替身」，而 `MockAsrClient` 對任何音檔都
+    回傳寫死的「今天天氣真好」。少打一個字母，長輩每一句話都會被辨識成那一句、金孫照著
+    回，且全程不印任何錯誤——這種靜默降級要靠人偶然發現。改成載入當下就拒絕，與
+    `_require_present` 對四把必要金鑰的 fail-fast 同級。
+
+    大小寫與前後空白照 `_content_policy` 的慣例正規化（無害的變體不該擋人），
+    真正要攔的是拼錯的值。
+    """
+
+    def _validate(value: Any) -> str:
+        normalized = str(value).strip().lower()
+        if normalized not in allowed:
+            raise ConfigError(
+                f"{key}（{value!r}）必須為 {' 或 '.join(sorted(allowed))}："
+                "值不在白名單時語音後端會靜默降級成寫死的測試替身，不會有任何錯誤訊息。"
+            )
+        return normalized
+
+    return _validate
+
+
 def _refresh_cron(value: Any) -> str:
     normalized = str(value).strip() or "0 3 * * 0"
     if not croniter.is_valid(normalized):
@@ -193,16 +218,27 @@ class Settings(_BaseEnvSettings):
     # 按用途配模型（✅ D-16 丁-5）：未設＝沿用 GEMINI_MODEL（見 _resolve_model_fallbacks）。
     gemini_model_safety: str = "gemini-3.5-flash-lite"
     gemini_model_summary: str = "gemini-3.5-flash-lite"
-    asr_backend: str = "mock"
+    asr_backend: Annotated[
+        str, BeforeValidator(_speech_backend("ASR_BACKEND", frozenset({"mock", "dgx"})))
+    ] = "mock"
     asr_endpoint: str = ""
     asr_api_key: str = ""
     asr_timeout_seconds: float = 15.0
     gemini_timeout_seconds: float = 30.0
+    # 一輪對話從長輩開口到必須交出回覆的總時間上限（秒）；0＝不限制。
+    # ⚠️ 與 GEMINI_TIMEOUT_SECONDS 是兩件事：後者管**一次**呼叫，前者管一輪裡三次
+    # 呼叫**相加**（分級→審核→生成）。2026-07-28 Gemini 3.5 過載時三次各卡滿 30 秒，
+    # 長輩等了 96.6 秒才聽到回退話術；歷史 68 輪的 p95 是 19.8 秒，故 30 秒砍不到
+    # 正常對話，只砍已經壞掉的那種。
+    turn_budget_seconds: float = 30.0
     memory_max_turns: int = 200
     timezone: str = "Asia/Taipei"
     longterm_embedding_model: str = "gemini-embedding-001"
     longterm_consolidation_hour: int = 0
     scheduler_tick_seconds: int = 60
+    # 排程器心跳檔（2026-07-26 假死事件）：每輪 tick 寫入 epoch 秒，讓 kinsun.sh status
+    # 分得出「行程活著」與「迴圈凍住」——PID 還在不代表它在做事。設空字串＝關閉。
+    scheduler_heartbeat_path: str = ".run/scheduler.heartbeat"
     # 基準問候時間：真的鐘點，且須落在自適應上下限內（見 _validate_greeting_guardrails）。
     proactive_greeting_hour: Annotated[int, BeforeValidator(_hour("PROACTIVE_GREETING_HOUR"))] = 8
     proactive_inactivity_hour: int = 10
@@ -300,7 +336,9 @@ class Settings(_BaseEnvSettings):
     liff_timeout_seconds: float = 10.0
     rich_menu_id: str = ""
     binding_gate_enabled: Bool = True
-    tts_backend: str = "bubble"
+    tts_backend: Annotated[
+        str, BeforeValidator(_speech_backend("TTS_BACKEND", frozenset({"bubble", "dgx"})))
+    ] = "bubble"
     tts_endpoint: str = ""
     tts_api_key: str = ""
     tts_timeout_seconds: float = 30.0
@@ -360,6 +398,17 @@ class Settings(_BaseEnvSettings):
     # 啟用時的連線探測逾時（秒）：configure() 在此秒數內判定 Opik 是否可達；連不到就
     # 安靜降級（no-op），避免 Windows/macOS 開發機或 CI 無 Opik 服務時噴連線錯誤。
     opik_ping_timeout_seconds: float = 2.0
+    # 降級後的重探間隔（秒）：連不到之後每隔這麼久重探一次，Opik 起來就自動接回。
+    # 預設 60 秒——比 Opik 冷啟（30–60 秒）長一輪即可，不必更密。
+    opik_reprobe_interval_seconds: float = 60.0
+    # 裝置推播（PUSH_ 前綴，真推播 D-08 階段 5，2026-07-29）。
+    # 預設 false：推播要能真的送到，前提是 App 已建 development build 並登記
+    # EAS／FCM 憑證——在那之前開著只會每次派送都白打一次 HTTP。
+    push_enabled: Bool = False
+    # Expo Push 的存取權杖（選填）。留空仍可送，但 Expo 建議設以防他人拿到
+    # 你的 push token 後冒名發送；值在 Expo 後台的 Access Tokens 產生。
+    push_expo_access_token: str = ""
+    push_timeout_seconds: float = 10.0
 
     @model_validator(mode="before")
     @classmethod

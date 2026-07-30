@@ -169,7 +169,8 @@ def _l1_signals_for_day(risk_events, elder_id: str, now: datetime) -> list[str]:
     ]
 
 
-@tracing.track(name="daily_summary", type="general", capture_input=False, capture_output=False)
+# 輸入全是 store 與 callable，排除後只剩 elder_id（已在 trace metadata），故只開輸出。
+@tracing.track(name="daily_summary", type="general", capture_input=False, capture_output=True)
 def summarize_day(
     elder_id: str,
     *,

@@ -11,7 +11,7 @@ tests/test_config.py::test_importing_config_does_not_pull_in_the_database_driver
 
 from __future__ import annotations
 
-# 問候 job 每半小時掃描一次（cron `0,30 * * * *`，見 proactive/jobs.py 的
+# 問候 job 每半小時掃描一次（cron `0,30 * * * *`，見 cron/registry.py 的
 # GREETING_SCAN_CRON），故偏好時間必須落在整點或半點——存 07:45 卻在 08:00 問候，
 # 是對後台說謊。這是「掃描間隔」這件事的唯一真實來源：greeting_time 用它對齊時間
 # （_align），config 用它驗證 PROACTIVE_GREETING_MAX_SHIFT_MINUTES 是其正倍數。

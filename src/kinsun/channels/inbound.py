@@ -5,22 +5,26 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from kinsun import tracing
 from kinsun.accounts.models import Channel
-from kinsun.agent import FALLBACK_REPLY
+from kinsun.agent import SYSTEM_TROUBLE_REPLY
 from kinsun.llm import LLMError
 from kinsun.memory.shortterm import MemoryStoreError
 from kinsun.observability.store import TraceStore, safe_record
+from kinsun.speech.ack_audio import AckClip
 from kinsun.speech.asr import ASRError
+from kinsun.speech.chunking import reply_digest
 from kinsun.speech.tts import TtsResult
 
 logger = logging.getLogger("kinsun.inbound")
 
 NON_AUDIO_PROMPT = "金孫現在聽得懂語音喔，您可以按住麥克風跟我說說話。"
-# 回退話術與 agent 層共用單一出處（✅ 庚-37：FALLBACK_PROMPT／FALLBACK_REPLY 合併）。
-FALLBACK_PROMPT = FALLBACK_REPLY
+# 回退話術與 agent 層共用單一出處（✅ 庚-37）。這裡走的是**系統故障**那一句：
+# 觸發點是 ASRError／LLMError／MemoryStoreError，也就是服務出錯，不是長輩講不清楚
+# ——叫他再說一次只會讓他一再重試、一再失敗（2026-07-26 實測 M4）。
+FALLBACK_PROMPT = SYSTEM_TROUBLE_REPLY
 BIND_FIRST_PROMPT = (
     "金孫需要先完成綁定才能陪您聊天喔。請把家人給您的邀請碼貼到這裡，或回覆「設定」開始。"
 )
@@ -53,6 +57,12 @@ class DeliveryOutcome:
 
     kind: str
     audio_url: str = ""
+    # 分段串流（2026-07-26 延遲優化）：>1 代表送出的只是第一段，呼叫端（App 對講機）
+    # 據此告訴前端還有幾段要拉。LINE 收不到分段（只能一則語音），故恆為 0。
+    chunk_count: int = 0
+    # 這一輪回覆的短雜湊，前端取後續段落時帶上。⚠️ 由**真正的回覆文字**算出，不是
+    # 投遞層的顯示字串——後者在 debug 模式會多「辨識：…」前綴，與 turns 的內容不同。
+    reply_digest: str = ""
 
 
 class VoiceReplyDelivery:
@@ -62,10 +72,18 @@ class VoiceReplyDelivery:
     show_transcript：debug 用，在文字泡泡最前面附上本輪 ASR 辨識到的長者原話
     （只進文字泡泡、不進語音合成）。"""
 
-    def __init__(self, publisher, include_text: bool, show_transcript: bool = False) -> None:
+    def __init__(
+        self,
+        publisher,
+        include_text: bool,
+        show_transcript: bool = False,
+        *,
+        standby_clip: Callable[[str], AckClip | None] | None = None,
+    ) -> None:
         self._publisher = publisher
         self._include_text = include_text
         self._show_transcript = show_transcript
+        self._standby_clip = standby_clip
 
     def _compose_text(self, result: TtsResult, *, include_reply: bool) -> str | None:
         # debug 模式：「辨識：…」空一行「回復：…」；非 debug 就只回覆文字。
@@ -91,6 +109,33 @@ class VoiceReplyDelivery:
             msg.reply(self._compose_text(result, include_reply=True) or result.text)
             return DeliveryOutcome(kind="text")
 
+    def deliver_standby(self, msg: InboundMessage, text: str) -> DeliveryOutcome:
+        """回退話術的投遞（V-02，2026-07-29）：用**啟動時預錄好**的音檔送語音。
+
+        為什麼不能沿用 `deliver`：那條路要一個 `TtsResult`，也就是要當場合成——而走到
+        這裡代表管線已經失敗（ASR／LLM／記憶其中之一），再花 1.9 秒合成一句「有點小
+        狀況」既慢又可能同樣失敗。這裡只查表拿現成的網址。
+
+        取不到音檔就退回文字，與 `deliver` 同一條紀律：回覆絕不消失。對純語音的長輩
+        來說，文字≈沒有回應——但「文字」仍然遠好過「什麼都沒有」，後者跟斷線無法區分。
+        """
+        clip = None
+        if self._standby_clip is not None and msg.reply_voice is not None:
+            try:
+                clip = self._standby_clip(text)
+            except Exception:  # noqa: BLE001 - 查表在對話路徑上，壞掉也只是沒有音檔
+                logger.warning("待命話術查表失敗，退回文字泡泡")
+        if clip is None:
+            msg.reply(text)
+            return DeliveryOutcome(kind="text")
+        try:
+            msg.reply_voice(clip.audio_url, clip.duration_ms, text)
+            return DeliveryOutcome(kind="voice", audio_url=clip.audio_url)
+        except Exception:  # noqa: BLE001 - 送不出語音就送文字
+            logger.warning("待命話術語音回覆失敗，退回文字泡泡")
+            msg.reply(text)
+            return DeliveryOutcome(kind="text")
+
 
 def dispatch(
     msg: InboundMessage,
@@ -103,24 +148,24 @@ def dispatch(
     text_input_enabled: bool = True,
     timer: Callable[[], float] = time.monotonic,
     elder_id: str | None = None,
-) -> None:
+) -> DeliveryOutcome | None:
     """elder_id：呼叫端已解析過本人時傳入（✅ 庚-12），dispatch 不再重查閘門；
     未傳（LINE webhook 路徑）照舊經 gate 解析。"""
     if msg.kind == "text":
         reply = binding.handle(msg.external_id, msg.text)
         if reply is not None:
             msg.reply(reply)
-            return
+            return None
         # 非綁定自由文字走完整對話管線（危急偵測＋回覆＋記憶，✅ D-11 與語音同等對待）；
         # 旗標關為維運逃生口，回到只收語音提示。
         if not text_input_enabled:
             msg.reply(NON_AUDIO_PROMPT)
-            return
+            return None
         elder_id = elder_id or gate.resolve_elder(msg.channel, msg.external_id)
         if elder_id is None:
             msg.reply(BIND_FIRST_PROMPT)
-            return
-        _run_pipeline(
+            return None
+        return _run_pipeline(
             msg,
             lambda: pipeline.process_text(
                 msg.text,
@@ -133,15 +178,14 @@ def dispatch(
             traces=traces,
             timer=timer,
         )
-        return
     if msg.kind != "audio":
         msg.reply(NON_AUDIO_PROMPT)
-        return
+        return None
     elder_id = elder_id or gate.resolve_elder(msg.channel, msg.external_id)
     if elder_id is None:
         msg.reply(BIND_FIRST_PROMPT)
-        return
-    _run_pipeline(
+        return None
+    return _run_pipeline(
         msg,
         lambda: pipeline.process(
             msg.audio,
@@ -175,8 +219,15 @@ def _run_pipeline(
         result = produce()
     except (ASRError, LLMError, MemoryStoreError) as exc:
         logger.warning("對話管線失敗（回退提示）：%s: %s", type(exc).__name__, exc)
-        msg.reply(FALLBACK_PROMPT)
-        return
+        # ⚠️ 這裡走 deliver_standby 而不是 msg.reply（V-02，2026-07-29）：原本直接回文字
+        # 就 return，語音投遞在下面永遠到不了，所以就算 TTS 完全健康，回退話術也一律
+        # 無聲。對看不到螢幕的長輩，那一輪＝按下說話鍵、等五秒、什麼都沒有，跟斷線
+        # 分不出來（實測 p7：「伊有時陣攏無聲，干焦有字，我毋知伊有咧應無」）。
+        if voice is not None:
+            voice.deliver_standby(msg, FALLBACK_PROMPT)
+        else:
+            msg.reply(FALLBACK_PROMPT)
+        return None
     started = timer()
     if voice is not None:
         # 「or」容忍測試替身回 None（既有 _SpyVoice 類 fake）。
@@ -184,7 +235,18 @@ def _run_pipeline(
     else:
         msg.reply(result.text)
         outcome = DeliveryOutcome(kind="text")
+    # 段數來自管線（只有啟用分段的通道會 >1）；投遞層不自行判斷，兩邊各判一次
+    # 遲早會分岔成「送出的段數」與「宣告的段數」不一致，App 就會多播或漏播一段。
+    # getattr 預設 0：produce 是通道中立的 seam，回傳物件只保證有 text／audio
+    # （測試替身就用 SimpleNamespace），沒有 chunk_count 即視為未分段。
+    chunk_count = getattr(result, "chunk_count", 0)
+    outcome = replace(
+        outcome,
+        chunk_count=chunk_count,
+        reply_digest=reply_digest(result.text) if chunk_count > 1 else "",
+    )
     _record_reply(traces, msg, outcome, started, timer)
+    return outcome
 
 
 def _record_reply(

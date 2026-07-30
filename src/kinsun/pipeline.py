@@ -5,12 +5,13 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 
-from kinsun import tracing
-from kinsun.agent import FALLBACK_REPLY, CareAgent
+from kinsun import background, tracing, turn_context
+from kinsun.agent import NOT_HEARD_REPLY, CareAgent
 from kinsun.llm import LLMUsage, collect_llm_usage
+from kinsun.logging_setup import log_trace
 from kinsun.observability.models import (
     LLM_CALL_KIND_AGENT,
     LLM_CALL_KIND_MODERATION,
@@ -24,6 +25,7 @@ from kinsun.safety.moderation import AbuseModerator, ModerationResult, reply_for
 from kinsun.safety.notifier import Notifier
 from kinsun.safety.tiers import RiskAssessment, RiskTier
 from kinsun.speech.asr import ASRClient
+from kinsun.speech.chunking import split_for_speech
 from kinsun.speech.tts import TTSClient, TTSError, TtsResult, VoiceReference
 from kinsun.voice_profiles.store import VoiceProfileStore
 
@@ -57,6 +59,8 @@ class VoicePipeline:
         response_window_seconds: int = 3600,
         moderator: AbuseModerator | None = None,
         voice_profiles: VoiceProfileStore | None = None,
+        chunked_channels: frozenset[str] = frozenset(),
+        turn_budget_seconds: float = 0.0,
     ) -> None:
         self._asr = asr
         self._agent = agent
@@ -76,9 +80,33 @@ class VoicePipeline:
         self._response_window_seconds = response_window_seconds
         # 選填（預設 None＝不審核，等同 SAFETY_MODERATION_ENABLED=false）。
         self._moderator = moderator
+        # 啟用 TTS 分段串流的通道（2026-07-26 延遲優化）。預設空集合＝所有通道維持
+        # 原行為（整段合成）。逐通道而非全域開關，是因為分段需要**投遞端配合**：
+        # App 拿得到段數、會逐段拉並接著播；LINE 只能收一則語音訊息，給它第一句
+        # 等於把後面的話吞掉。故 app.py 只把 "app" 放進來。
+        self._chunked_channels = chunked_channels
+        # 這一輪從長輩開口到必須交出回覆的總時間（秒）；0＝不限制，回到逐次逾時的
+        # 舊行為。⚠️ 它管的是**相加**：一輪會依序打三次 Gemini（分級→審核→生成），
+        # 各自的 30 秒逾時攔得住一次呼叫，攔不住三次疊起來——2026-07-28 Gemini 3.5
+        # 過載那晚，三次各卡滿 30 秒，長輩等了 96.6 秒才聽到回退話術。
+        self._turn_budget_seconds = turn_budget_seconds
+
+    def _budgeted(self):
+        """本輪的預算範圍；未設定（0）時回不做事的空範圍。
+
+        ⚠️ 預算從**收到長輩的音檔**就開始跑，ASR 也算在裡面：長輩等的是「按完到聽見」，
+        不是「模型開工到聽見」。把 ASR 排除在外會讓上限說的 30 秒實際變成 37 秒。
+        """
+        if self._turn_budget_seconds <= 0:
+            return nullcontext()
+        return turn_context.turn_budget(self._turn_budget_seconds)
 
     @tracing.track(
-        name="care_turn_voice", type="general", capture_input=False, capture_output=False
+        name="care_turn_voice",
+        type="general",
+        capture_input=True,
+        capture_output=False,  # 回傳 TtsResult 含音檔 bytes
+        ignore_arguments=["audio"],
     )
     def process(
         self,
@@ -92,23 +120,27 @@ class VoicePipeline:
         audio_url: str = "",
     ) -> TtsResult:
         tracing.tag_current_trace(trace_id=trace_id, channel=channel, elder_id=elder_id)
-        user_text = self._transcribe(
-            audio,
-            content_type=content_type,
-            external_id=external_id,
-            channel=channel,
-            trace_id=trace_id,
-            audio_url=audio_url,
-        )
-        return self._process_transcribed(
-            user_text,
-            elder_id=elder_id,
-            external_id=external_id,
-            channel=channel,
-            trace_id=trace_id,
-        )
+        # 本輪的 log 全部蓋上 trace_id（2026-07-27）：logs 只記「發生什麼事」，
+        # 內容去 Opik 看，trace_id 是兩邊之間唯一的橋。
+        with log_trace(trace_id), self._budgeted():
+            user_text = self._transcribe(
+                audio,
+                content_type=content_type,
+                external_id=external_id,
+                channel=channel,
+                trace_id=trace_id,
+                audio_url=audio_url,
+            )
+            return self._process_transcribed(
+                user_text,
+                elder_id=elder_id,
+                external_id=external_id,
+                channel=channel,
+                trace_id=trace_id,
+            )
 
-    @tracing.track(name="care_turn_text", type="general", capture_input=False, capture_output=False)
+    # 輸出維持關閉：回傳 TtsResult 含音檔 bytes。
+    @tracing.track(name="care_turn_text", type="general", capture_input=True, capture_output=False)
     def process_text(
         self,
         text: str,
@@ -120,9 +152,10 @@ class VoicePipeline:
     ) -> TtsResult:
         """文字輸入路徑（✅ D-11 正式）：跳過 ASR，其餘與語音同管線（危急偵測＋回覆＋記憶）。"""
         tracing.tag_current_trace(trace_id=trace_id, channel=channel, elder_id=elder_id)
-        return self._process_transcribed(
-            text, elder_id=elder_id, external_id=external_id, channel=channel, trace_id=trace_id
-        )
+        with log_trace(trace_id), self._budgeted():
+            return self._process_transcribed(
+                text, elder_id=elder_id, external_id=external_id, channel=channel, trace_id=trace_id
+            )
 
     def _process_transcribed(
         self, user_text: str, *, elder_id: str, external_id: str, channel: str, trace_id: str
@@ -132,16 +165,24 @@ class VoicePipeline:
         # 對近無聲短檔的確定性幻覺，實錄「? ? ?」），去標點後皆無內容可分級、可回應也不
         # 該進記憶，直接以回退話術（仍走 TTS）請長輩再說一次。
         if not _has_recognizable_speech(user_text):
+            # ⚠️ 這是唯一真的「沒聽清楚」的情形，故用 NOT_HEARD_REPLY 而非系統故障話術：
+            # 這裡叫長輩再說一次是對的（他再說一次真的會成功）。其他回退點都是我們自己
+            # 壞掉，叫他重試只會讓他一再失敗（2026-07-26 實測 M4）。
             tracing.update_trace_metadata(fallback="empty_speech")
-            tracing.set_current_trace_io(user_input=user_text, assistant_output=FALLBACK_REPLY)
+            tracing.set_current_trace_io(user_input=user_text, assistant_output=NOT_HEARD_REPLY)
             result = self._synthesize(
-                FALLBACK_REPLY,
+                NOT_HEARD_REPLY,
                 elder_id=elder_id,
                 external_id=external_id,
                 channel=channel,
                 trace_id=trace_id,
             )
             return replace(result, transcript=user_text)
+        # 情境組裝先行啟動（2026-07-26 延遲實測）：它是本輪最慢的一段（長期記憶檢索
+        # ＋七次事實查詢，約 2.9 秒），而輸入只有 elder_id＋原話，不必等安全檢查跑完。
+        # ⚠️ 這只改「何時開始組」，**決策順序一字未動**——底下的落庫／通報／攔截先後
+        # 完全照舊。prepare 只讀不寫，故被攔的那一輪雖白做一次組裝，仍不會進記憶。
+        prepared = self._agent.prepare(elder_id, user_text)
         assessment = self._assess(
             user_text, external_id=external_id, channel=channel, trace_id=trace_id
         )
@@ -156,15 +197,16 @@ class VoicePipeline:
             except Exception:  # noqa: BLE001 - 落庫失敗不可中斷對話
                 logger.warning("危急事件落庫失敗")
         if assessment.tier >= RiskTier.L2:
-            self._notifier.notify(elder_id, assessment)
+            # 通知文案引長輩原話（2026-07-29 Leo 定案），故把 user_text 一併交給通知端。
+            self._notifier.notify(elder_id, assessment, user_text)
         # ⚠️ 位置有意義，請勿上移：反思的觀測訊號絕不可排在家屬通報之前（見
         # _mark_reminder_responded 的 docstring）。語音（process）與文字（process_text）
         # 都流經此處，故標記一次即涵蓋兩條路徑。
         self._mark_reminder_responded(elder_id)
         # 濫用審核（2026-07-25）：⚠️ 位置有意義，請勿上移——必須排在危急落庫與家屬
         # 通報之後。攔截會整段跳過 agent，若排在前面，一句被誤判的「我不想活了」就會
-        # 讓 risk_events 不落庫、家屬永遠收不到 L2 通知（那些詞全在
-        # ABSOLUTE_DANGER_WORDS 裡）。順序由 test_pipeline 的
+        # 讓 risk_events 不落庫、家屬永遠收不到 L2 通知（那句話是 classify_keywords
+        # 必定判 L2 的求死意念）。順序由 test_pipeline 的
         # test_moderation_runs_after_family_notification 守住。
         # 被攔的這一輪刻意不寫進記憶（記憶只由 agent.handle 寫）：綁架企圖不該變成
         # 明天的對話脈絡，也不該進長期記憶。
@@ -191,6 +233,7 @@ class VoicePipeline:
             channel=channel,
             trace_id=trace_id,
             has_risk_signal=assessment.tier >= RiskTier.L1,
+            prepared=prepared,
         )
         # 對話原話＋回覆寫進 trace I/O，Opik Threads 才顯示 First／Last message。
         tracing.set_current_trace_io(user_input=user_text, assistant_output=reply_text)
@@ -220,22 +263,31 @@ class VoicePipeline:
 
         ⚠️ now 用 time.time()（epoch 秒），不可用 self._timer——後者預設 time.monotonic，
         只能量延遲、不是牆鐘時間，拿去跟 reminder_logs.created_at 比較會得到垃圾。
+        now 在**提交前**取值，不可搬進背景動作裡：時間窗判定的基準是長輩開口的那一刻，
+        不是背景執行緒剛好排到的那一刻。
+
+        UPDATE 本身走 `background.run`（2026-07-26 延遲實測）：它是一次約 0.21 秒的
+        Supabase 跨網往返，而反思的訊號沒有任何人在等——移出回覆路徑後，上面那段
+        「try/except 擋得住錯誤、擋不住延遲」的疑慮也就徹底消失了。
         """
         if self._reminder_logs is None:
             return
-        try:
-            self._reminder_logs.mark_responded(
-                elder_id,
-                now=time.time(),
-                within_seconds=self._response_window_seconds,
-            )
-        except Exception:  # noqa: BLE001 - 訊號落庫失敗不可中斷對話
-            logger.warning("提醒回應標記失敗 elder=%s", elder_id)
+        reminder_logs = self._reminder_logs
+        now = time.time()
+        within_seconds = self._response_window_seconds
+
+        def mark() -> None:
+            try:
+                reminder_logs.mark_responded(elder_id, now=now, within_seconds=within_seconds)
+            except Exception:  # noqa: BLE001 - 訊號落庫失敗不可中斷對話
+                logger.warning("提醒回應標記失敗 elder=%s", elder_id)
+
+        background.run(mark)
 
     def _latency_ms(self, started: float) -> int:
         return int((self._timer() - started) * 1000)
 
-    @tracing.track(name="risk_assess", type="general", capture_input=False, capture_output=False)
+    @tracing.track(name="risk_assess", type="general", capture_input=True, capture_output=True)
     def _assess(
         self, user_text: str, *, external_id: str, channel: str, trace_id: str
     ) -> RiskAssessment:
@@ -269,7 +321,7 @@ class VoicePipeline:
             )
         return assessment
 
-    @tracing.track(name="abuse_moderate", type="general", capture_input=False, capture_output=False)
+    @tracing.track(name="abuse_moderate", type="general", capture_input=True, capture_output=True)
     def _moderate(
         self, user_text: str, *, external_id: str, channel: str, trace_id: str
     ) -> ModerationResult:
@@ -329,7 +381,13 @@ class VoicePipeline:
                 latency_ms = self._latency_ms(started)
                 safe_record(lambda: record(traces, status, latency_ms, error_message))
 
-    @tracing.track(name="asr", type="general", capture_input=False, capture_output=False)
+    @tracing.track(
+        name="asr",
+        type="general",
+        capture_input=True,
+        capture_output=True,
+        ignore_arguments=["audio"],  # 整包音檔 bytes，塞進 span 只會讓它讀不動
+    )
     def _transcribe(
         self,
         audio: bytes,
@@ -356,7 +414,13 @@ class VoicePipeline:
             text = self._asr.transcribe(audio, content_type=content_type)
         return text
 
-    @tracing.track(name="agent_generate", type="llm", capture_input=False, capture_output=False)
+    @tracing.track(
+        name="agent_generate",
+        type="llm",
+        capture_input=True,
+        capture_output=True,
+        ignore_arguments=["prepared"],  # PreparedTurn 物件，序列化沒有意義
+    )
     def _generate(
         self,
         elder_id: str,
@@ -366,6 +430,7 @@ class VoicePipeline:
         channel: str,
         trace_id: str,
         has_risk_signal: bool,
+        prepared=None,
     ) -> str:
         # 每輪記一筆（涵蓋整個 agent 含工具迴圈）；token 用量由收集器彙總本輪
         # 所有 Gemini 呼叫（✅ D-05 戊-2）。零申報（假 LLM／無 usage_metadata）
@@ -393,14 +458,26 @@ class VoicePipeline:
                     user_text,
                     trace_id=trace_id,
                     has_risk_signal=has_risk_signal,
+                    prepared=prepared,
                 )
         return reply
 
-    @tracing.track(name="tts", type="general", capture_input=False, capture_output=False)
+    # 輸出維持關閉：回傳 TtsResult 含音檔 bytes；輸入（要唸的文字）才是要看的東西。
+    @tracing.track(name="tts", type="general", capture_input=True, capture_output=False)
     def _synthesize(
         self, reply_text: str, *, elder_id: str, external_id: str, channel: str, trace_id: str
     ) -> TtsResult:
+        """啟用分段的通道只合成**第一段**，其餘由投遞端逐段取（2026-07-26 延遲優化）。
+
+        回傳的 `text` 一律是完整回覆——長輩看到的字幕、寫進記憶的內容、觀測留存的
+        內容都不可以因為分段而被切掉；只有 `audio` 是第一段。切不出兩段以上時
+        （短回覆、回退話術、被攔的回絕話術）不分段，因為分段的代價（多一次往返）
+        換不到任何東西。分段與長輩客製化聲音（2026-07-30）彼此獨立、可同時生效。
+        """
         voice = self._resolve_voice(elder_id)
+        chunks = split_for_speech(reply_text) if channel in self._chunked_channels else []
+        chunked = len(chunks) > 1
+        spoken = chunks[0] if chunked else reply_text
         try:
             with self._span(
                 lambda traces, status, latency_ms, error_message: traces.record_tts_call(
@@ -413,7 +490,8 @@ class VoicePipeline:
                     error_message=error_message,
                 )
             ):
-                return self._tts.synthesize(reply_text, voice=voice)
+                result = self._tts.synthesize(spoken, voice=voice)
+                return replace(result, text=reply_text, chunk_count=len(chunks) if chunked else 0)
         except TTSError:
             logger.warning("TTS 合成失敗，退化為純文字回覆")
             return TtsResult(text=reply_text, audio=None)

@@ -480,3 +480,168 @@ def test_dispatch_round_trip_null_when_received_at_unknown():
         timer=iter([0.0, 0.1]).__next__,
     )
     assert traces.replies[0].round_trip_ms is None
+
+
+class _ChunkedPipeline:
+    """回傳已分段結果的管線替身，用來驗 dispatch 交出去的 outcome。"""
+
+    def __init__(self, reply: str, chunk_count: int, transcript: str = "") -> None:
+        self._result = TtsResult(
+            text=reply, audio=b"A", duration_ms=900, transcript=transcript, chunk_count=chunk_count
+        )
+
+    def process(self, audio, **kwargs):
+        return self._result
+
+    def process_text(self, text, **kwargs):
+        return self._result
+
+
+def test_dispatch_reports_chunk_count_and_digest_of_the_real_reply():
+    """digest 必須由**真正的回覆文字**算出，不是投遞層的顯示字串。
+
+    ⚠️ 這條是實機驗證踩出來的（2026-07-26）：`ASR_DEBUG_SHOW_TRANSCRIPT=true` 時，
+    文字泡泡會變成「辨識：…\\n\\n回復：…」，而分段端點是從 `turns` 讀**純回覆**重新
+    切句比對。兩邊來源不同，雜湊就永遠對不上——每一段都被判為過期、回 409，長輩只
+    聽得到第一句。單元測試若只驗「有沒有 digest」不會發現，故這裡把來源釘死。
+    """
+    from kinsun.speech.chunking import reply_digest
+
+    reply = "阿公今天早上好嗎。今天天氣不錯，要不要出去走走？"
+    cap = _VoiceCapture()
+    msg = InboundMessage(
+        Channel.APP, "U-1", "audio", "", b"x", cap.reply, cap.reply_voice, received_at=1.0
+    )
+
+    outcome = dispatch(
+        msg,
+        pipeline=_ChunkedPipeline(reply, chunk_count=2, transcript="醫生說我血壓有點高"),
+        binding=_Binding(None),
+        gate=None,
+        voice=VoiceReplyDelivery(_Publisher(), include_text=True, show_transcript=True),
+        elder_id="e1",
+    )
+
+    assert outcome.chunk_count == 2
+    assert outcome.reply_digest == reply_digest(reply)
+    # 顯示字串確實帶了 debug 前綴——證明本測試真的踩在那個分岔上。
+    assert cap.voice_sent[0][2].startswith("辨識：")
+
+
+def test_unchunked_reply_carries_no_digest():
+    """沒分段就不該給 digest——前端據此判斷「不必再拉後續段落」。"""
+    cap = _VoiceCapture()
+    msg = InboundMessage(Channel.APP, "U-1", "audio", "", b"x", cap.reply, cap.reply_voice)
+
+    outcome = dispatch(
+        msg,
+        pipeline=_ChunkedPipeline("就這一句話而已喔阿公", chunk_count=0),
+        binding=_Binding(None),
+        gate=None,
+        voice=VoiceReplyDelivery(_Publisher(), include_text=True),
+        elder_id="e1",
+    )
+
+    assert outcome.chunk_count == 0
+    assert outcome.reply_digest == ""
+
+
+# ── 回退話術也要有聲音（V-02，2026-07-29）────────────────────────────────
+#
+# 管線失敗時原本只走 msg.reply()＝文字，語音投遞在下一行、永遠到不了。對看不到螢幕
+# 的長輩，那一輪就是按下說話鍵、等五秒、然後完全沒有反應——跟斷線一模一樣。
+# 回退話術在啟動時就預錄好（standby_phrases），這裡只查表送出，不合成、不上傳。
+
+
+def _standby(url="http://x/standby.m4a", duration_ms=1500):
+    from kinsun.speech.ack_audio import AckClip
+
+    return lambda text: AckClip(text=text, audio_url=url, duration_ms=duration_ms)
+
+
+def test_pipeline_failure_speaks_the_fallback_instead_of_only_texting_it():
+    cap = _VoiceCapture()
+    dispatch(
+        InboundMessage(Channel.APP, "U-1", "audio", "", b"x", cap.reply, cap.reply_voice),
+        pipeline=_Pipeline(boom=LLMError("boom")),
+        binding=_Binding(None),
+        gate=_Gate(True),
+        voice=VoiceReplyDelivery(_Publisher(), include_text=True, standby_clip=_standby()),
+    )
+    assert cap.voice_sent == [("http://x/standby.m4a", 1500, FALLBACK_PROMPT)]
+    assert cap.text_sent == []
+
+
+def test_pipeline_failure_falls_back_to_text_when_no_standby_clip_is_warm():
+    """還沒暖好／簽章過期＝沒有音檔，退回文字。降級不是錯誤，不可讓這輪沒有回覆。"""
+    cap = _VoiceCapture()
+    dispatch(
+        InboundMessage(Channel.APP, "U-1", "audio", "", b"x", cap.reply, cap.reply_voice),
+        pipeline=_Pipeline(boom=ASRError("boom")),
+        binding=_Binding(None),
+        gate=_Gate(True),
+        voice=VoiceReplyDelivery(_Publisher(), include_text=True, standby_clip=lambda text: None),
+    )
+    assert cap.text_sent == [FALLBACK_PROMPT]
+    assert cap.voice_sent == []
+
+
+def test_pipeline_failure_falls_back_to_text_when_channel_has_no_voice_handle():
+    """LINE 這類沒有 reply_voice 的通道照舊送文字。"""
+    r = _Replies()
+    dispatch(
+        _msg("audio", audio=b"x", reply=r),
+        pipeline=_Pipeline(boom=ASRError("boom")),
+        binding=_Binding(None),
+        gate=_Gate(True),
+        voice=VoiceReplyDelivery(_Publisher(), include_text=True, standby_clip=_standby()),
+    )
+    assert r.sent == [FALLBACK_PROMPT]
+
+
+def test_standby_voice_send_failure_still_delivers_text():
+    """送語音那一步自己炸掉時仍要有文字——回退話術本身不能再失敗一次。"""
+    cap = _VoiceCapture()
+
+    def _boom(url, duration_ms, text):
+        raise RuntimeError("送不出去")
+
+    msg = InboundMessage(Channel.APP, "U-1", "audio", "", b"x", cap.reply, _boom)
+    dispatch(
+        msg,
+        pipeline=_Pipeline(boom=LLMError("boom")),
+        binding=_Binding(None),
+        gate=_Gate(True),
+        voice=VoiceReplyDelivery(_Publisher(), include_text=True, standby_clip=_standby()),
+    )
+    assert cap.text_sent == [FALLBACK_PROMPT]
+
+
+def test_standby_lookup_failure_still_delivers_text():
+    """查表本身炸掉（不該發生，但它在對話路徑上）也不可讓長輩什麼都沒收到。"""
+    cap = _VoiceCapture()
+
+    def _boom(text):
+        raise RuntimeError("查表壞了")
+
+    dispatch(
+        InboundMessage(Channel.APP, "U-1", "audio", "", b"x", cap.reply, cap.reply_voice),
+        pipeline=_Pipeline(boom=LLMError("boom")),
+        binding=_Binding(None),
+        gate=_Gate(True),
+        voice=VoiceReplyDelivery(_Publisher(), include_text=True, standby_clip=_boom),
+    )
+    assert cap.text_sent == [FALLBACK_PROMPT]
+    assert cap.voice_sent == []
+
+
+def test_pipeline_failure_without_voice_still_texts_the_fallback():
+    """沒有語音投遞層（純文字後端／本機開發）時的既有行為不變。"""
+    r = _Replies()
+    dispatch(
+        _msg("audio", audio=b"x", reply=r),
+        pipeline=_Pipeline(boom=ASRError("boom")),
+        binding=_Binding(None),
+        gate=_Gate(True),
+    )
+    assert r.sent == [FALLBACK_PROMPT]

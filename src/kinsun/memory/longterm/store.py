@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextvars
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Protocol
 
 from kinsun import tracing
@@ -106,6 +108,10 @@ class Mem0LongTermStore:
         tracing.attach_prompt("mem0_fact_extraction", prov.CUSTOM_FACT_EXTRACTION_PROMPT)
         self._memory.add(payload, user_id=elder_id, metadata=metadata)
 
+    # 逐路一顆 span（2026-07-30 spec）：兩路並行時 waterfall 才分得出原話／健康
+    # 增補各自的耗時；input 的 query 即可辨路。output 關——合併結果已由外層
+    # mem0_search 捕捉，重複攤一份只是燒儲存。
+    @tracing.track(name="mem0_search_raw", capture_input=True, capture_output=False)
     def _search_raw(self, query: str, elder_id: str, top_k: int) -> list[dict]:
         try:
             # rerank＋explain（✅ D-40 丁-4）：reranker 是否生效由 mem0 config 決定
@@ -145,11 +151,34 @@ class Mem0LongTermStore:
 
     @tracing.track(name="mem0_search", type="general", capture_input=True, capture_output=True)
     def search(self, elder_id: str, query: str, *, top_k: int | None = None) -> list[MemoryItem]:
-        user_items = self._search_raw(query, elder_id, top_k or self._top_k)
-        health_items = self._search_raw(HEALTH_QUERY, elder_id, self._health_top_k)
+        """長輩原話與健康增補**並行**檢索（2026-07-26 延遲實測）。
+
+        每次 `_search_raw` 都是「embedding API ＋ 向量查詢 ＋（視設定）LLM rerank」，
+        實測合計約 2.3 秒；兩次排隊跑就是 4.6 秒，佔端到端延遲近三成。兩個查詢彼此
+        無依賴（一個用長輩原話、一個用固定的健康關鍵字），沒有理由排隊。
+
+        ⚠️ 合併順序維持「先 user、後 health」不可交換：`_dedup` 保留先出現者，兩邊
+        撈到同一筆記憶時，該留下的是**依長輩原話**檢索出來的那筆。並行只改變兩者
+        何時發出，不改變合併與排序（`test_search_dedups_overlapping_id` 守住）。
+
+        `_search_raw` 自帶 fail-safe（檢索失敗回空清單、不上拋），故兩邊各自的失敗
+        互不影響——`test_health_search_failure_keeps_user_results` 守住這條。
+        """
+        contexts = [contextvars.copy_context() for _ in range(2)]
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            user_future = pool.submit(
+                contexts[0].run, self._search_raw, query, elder_id, top_k or self._top_k
+            )
+            health_future = pool.submit(
+                contexts[1].run, self._search_raw, HEALTH_QUERY, elder_id, self._health_top_k
+            )
+            user_items, health_items = user_future.result(), health_future.result()
         merged = self._dedup(user_items + health_items)
         for item in merged:
-            if "score_details" in item:  # explain 供調閱：debug 層記錄，不進 prompt
+            # explain 供檢索調校：⚠️ score_details 可能含記憶原文，故只走 DEBUG。
+            # 正式環境的 root level 是 INFO（logging_setup），這行不會出現在 logs/；
+            # **不可為了除錯把正式環境調成 DEBUG**——對話內容只進 Opik（2026-07-27 政策）。
+            if "score_details" in item:
                 logger.debug("記憶評分 %s：%s", item.get("id"), item.get("score_details"))
         # 由新到舊：對話日遞減（同日再比寫入時刻）；兩者皆缺者排最後。
         ordered = sorted(merged, key=_recency_key, reverse=True)

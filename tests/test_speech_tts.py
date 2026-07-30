@@ -4,6 +4,7 @@ import pytest
 
 from kinsun.speech.tts import (
     DgxTtsClient,
+    QueuedTtsClient,
     TextBubbleTts,
     TTSError,
     TtsResult,
@@ -73,9 +74,19 @@ def test_build_dgx_without_endpoint_raises():
         build_tts_client(_StubSettings(backend="dgx", endpoint=""))
 
 
-def test_build_dgx_returns_client():
+def test_build_dgx_returns_a_queued_dgx_client():
+    """dgx 後端必須被優先權佇列包起來（spec 2026-07-28 P1）：瓶頸是那顆 GB10，
+    併發合成會互搶且搶得沒有規律（實測同一段落某次 1.88s、另一次 15.08s）。"""
     client = build_tts_client(_StubSettings(backend="dgx", endpoint="http://dgx:8002/synthesize"))
-    assert isinstance(client, DgxTtsClient)
+    assert isinstance(client, QueuedTtsClient)
+    assert isinstance(client._inner, DgxTtsClient)
+    client.close()
+
+
+def test_build_bubble_is_not_queued():
+    """文字泡泡沒有 GPU，包了只是多一層執行緒——本機開發與單元測試不該付這個成本。"""
+    client = build_tts_client(_StubSettings(backend="bubble", endpoint=""))
+    assert not isinstance(client, QueuedTtsClient)
 
 
 def test_dgx_tts_without_voice_sends_only_text():

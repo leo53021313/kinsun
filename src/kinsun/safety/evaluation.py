@@ -82,6 +82,9 @@ class EvaluationReport:
     alert_false_negative: int
     missed_alerts: list[Misclassified] = field(default_factory=list)
     false_alerts: list[Misclassified] = field(default_factory=list)
+    # 分級器失敗（`llm:error`）的句數。⚠️ 這一格存在的理由見 `evaluate` 的註解：
+    # 沒有它，整份報表可能量的是「純詞表＋fail-safe」而讀的人看不出來。
+    degraded: int = 0
 
     @property
     def exact_accuracy(self) -> float | None:
@@ -126,8 +129,8 @@ def load_labeled_utterances(path: Path) -> list[LabeledUtterance]:
 
 def keyword_only_assess(text: str) -> RiskAssessment:
     """離線詞表模式：只跑 classify_keywords，不需 LLM——量詞表本身的涵蓋率。"""
-    tier, is_absolute = classify_keywords(text)
-    signal = "keyword:absolute" if is_absolute else "keyword:symptom"
+    tier, is_emergency = classify_keywords(text)
+    signal = "keyword:emergency" if is_emergency else "keyword:symptom"
     return RiskAssessment(tier, 1.0, "詞表模式", [signal] if tier > RiskTier.L0 else [])
 
 
@@ -140,9 +143,19 @@ def evaluate(
     alert_tp = alert_fp = alert_fn = 0
     missed: list[Misclassified] = []
     false_alerts: list[Misclassified] = []
+    degraded = 0
     for example in examples:
         total += 1
-        predicted = assess(example.text).tier
+        assessment = assess(example.text)
+        predicted = assessment.tier
+        # ⚠️ **必須看 signals，不能只取 tier**（2026-07-29）。
+        # `RiskDetector` 的 fail-safe 是刻意設計：分級器一掛，症狀詞照舊撐住 L2、
+        # 其餘保守記 L1，好讓真的求救不會因為 LLM 故障而漏掉。但那代表 LLM 全掛時，
+        # 這支工具量到的其實是「純詞表＋fail-safe」的成績——而原本的報表完全看不出來。
+        # 實測撞過：同一份標注集，一次完整跑報「誤報 7」，逐句直呼偵測器卻是正確的 L1，
+        # 差別只在那一輪有呼叫失敗。看到「召回率 100%」的人會以為分級器很好，它沒跑。
+        if "llm:error" in assessment.signals:
+            degraded += 1
         if predicted == example.expected:
             exact_match += 1
             counts[predicted][0] += 1
@@ -168,6 +181,7 @@ def evaluate(
         alert_false_negative=alert_fn,
         missed_alerts=missed,
         false_alerts=false_alerts,
+        degraded=degraded,
     )
 
 
@@ -176,7 +190,21 @@ def _pct(value: float | None) -> str:
 
 
 def format_report(report: EvaluationReport) -> str:
-    lines = [
+    lines: list[str] = []
+    if report.degraded:
+        # ⚠️ 擺在**最前面**且用滿版警示：這份報表會被拿來決定要不要換模型、要不要調門檻。
+        # 降級的數字如果只是夾在一行小字裡會被略過，而略過的代價是拿詞表的成績去做
+        # 分級器的決策——那正是「看起來是綠的」比沒有告警更危險的情形。
+        lines += [
+            "=" * 66,
+            f"⚠️  本次有 {report.degraded}/{report.total} 句**降級**判定"
+            "——分級器失敗，走了 fail-safe（llm:error）。",
+            "    那些句子量到的是「純詞表＋fail-safe」，不是分級器的成績。",
+            "    以下數字不可用於模型選型或門檻調整——請先排除失敗原因再重跑。",
+            "=" * 66,
+            "",
+        ]
+    lines += [
         f"標注數：{report.total}　層級全對率：{_pct(report.exact_accuracy)}",
         "",
         f"通報層（≥{ALERT_TIER.name}，通知家屬與否）：",

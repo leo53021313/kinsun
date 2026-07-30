@@ -1,8 +1,10 @@
 """App 對講機通道測試：POST /api/app/turns 收音檔、回文字＋語音 URL。"""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from itertools import count
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -36,7 +38,7 @@ class _NullSession:
 
         return SimpleNamespace(system_suffix="", history=[])
 
-    def record_turn(self, elder_id, *messages):
+    def record_turn(self, elder_id, *messages, at=None):
         pass
 
 
@@ -48,7 +50,7 @@ class _NullClassifier:
 
 
 class _NullNotifier:
-    def notify(self, elder_id, assessment):
+    def notify(self, elder_id, assessment, user_text):
         pass
 
 
@@ -265,3 +267,236 @@ def test_location_write_failure_does_not_break_the_turn():
     _, token = _bound_elder_token(svc)
     res = _post_audio(_client(svc, locations=_ExplodingStore()), token, location="台南市")
     assert res.status_code == 201
+
+
+# ── TTS 分段串流（2026-07-26 延遲優化）──────────────────────────────
+_CHUNKED_REPLY = "阿公今天早上好嗎。今天天氣不錯，要不要出去走走？"
+
+
+class _ChunkedLLM:
+    def generate(self, *, system_prompt: str, messages: list[Message]) -> str:
+        return _CHUNKED_REPLY
+
+
+class _SpyChunkTts:
+    def __init__(self) -> None:
+        self.spoken: list[str] = []
+
+    def synthesize(self, text: str, *, voice=None) -> TtsResult:
+        self.spoken.append(text)
+        return TtsResult(text=text, audio=b"fake-m4a", duration_ms=900)
+
+
+class _RecordingMemory:
+    """短期記憶替身：分段端點靠它取回「這位長輩最後一則金孫回覆」。"""
+
+    def __init__(self) -> None:
+        self.messages: list[Message] = []
+
+    def assemble(self, elder_id, query):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(system_suffix="", history=[])
+
+    def record_turn(self, elder_id, *messages, at=None):
+        self.messages.extend(messages)
+
+    def recent(self, elder_id):
+        return list(self.messages)
+
+
+class _SpyPublisher:
+    def __init__(self) -> None:
+        self.count = 0
+
+    def publish(self, audio: bytes, *, content_type: str) -> str:
+        self.count += 1
+        return f"https://cdn.test/chunk-{self.count}.m4a"
+
+
+def _chunking_client(svc, memory, tts, publisher):
+    pipeline = VoicePipeline(
+        asr=MockAsrClient("阿公早安"),
+        agent=CareAgent(_ChunkedLLM(), memory),
+        tts=tts,
+        detector=RiskDetector(_NullClassifier()),
+        notifier=_NullNotifier(),
+        risk_events=FakeRiskEventStore(),
+        chunked_channels=frozenset({"app"}),
+    )
+    app = FastAPI()
+    install_error_envelope(app)
+    app.include_router(
+        create_app_turns_router(
+            accounts=svc,
+            pipeline=pipeline,
+            gate=ConsentGate(svc),
+            voice=VoiceReplyDelivery(publisher, include_text=True),
+            new_id=lambda: "trace-1",
+            clock=lambda: NOW,
+            memory=memory,
+            tts=tts,
+            audio_publisher=publisher,
+        ),
+        prefix="/api/v1",
+    )
+    return TestClient(app)
+
+
+def _chunk_setup():
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    memory, tts, publisher = _RecordingMemory(), _SpyChunkTts(), _SpyPublisher()
+    return _chunking_client(svc, memory, tts, publisher), token, tts, publisher
+
+
+def test_turn_reports_chunk_count_and_digest_when_chunked():
+    """App 拿到的第一段只是開頭，回應要告訴它總共幾段、以及這是哪一輪的回覆。"""
+    client, token, tts, _ = _chunk_setup()
+
+    body = _post_audio(client, token).json()["data"]
+
+    assert body["text"] == _CHUNKED_REPLY  # 文字仍是完整的一段
+    assert tts.spoken == ["阿公今天早上好嗎。"]  # 但只合成了第一句
+    assert body["chunk_count"] == 2
+    assert len(body["reply_digest"]) == 16
+
+
+def test_fetching_the_second_chunk_synthesizes_only_that_sentence():
+    client, token, tts, publisher = _chunk_setup()
+    body = _post_audio(client, token).json()["data"]
+
+    res = client.get(
+        f"/api/v1/turns/chunks/1?digest={body['reply_digest']}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert res.status_code == 200
+    assert res.json()["data"]["text"] == "今天天氣不錯，要不要出去走走？"
+    assert res.json()["data"]["audio_url"] == "https://cdn.test/chunk-2.m4a"
+    assert tts.spoken == ["阿公今天早上好嗎。", "今天天氣不錯，要不要出去走走？"]
+
+
+def test_stale_digest_is_rejected_so_the_app_stops_playing_the_old_turn():
+    """長輩又講了一句時，舊那輪的後續段落不可以再被播出去。"""
+    client, token, _, _ = _chunk_setup()
+    _post_audio(client, token)
+
+    res = client.get(
+        "/api/v1/turns/chunks/1?digest=0000000000000000",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert res.status_code == 409
+    assert res.json()["error"]["code"] == "chunk_superseded"
+
+
+def test_index_out_of_range_is_not_found():
+    client, token, _, _ = _chunk_setup()
+    body = _post_audio(client, token).json()["data"]
+
+    for index in (0, 2, 99):  # 第 0 段已隨 POST 回過，2 之後不存在
+        res = client.get(
+            f"/api/v1/turns/chunks/{index}?digest={body['reply_digest']}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert res.status_code == 404, index
+
+
+def test_chunk_endpoint_requires_an_elder_token():
+    client, _, _, _ = _chunk_setup()
+    assert client.get("/api/v1/turns/chunks/1").status_code == 401
+
+
+class _LoopWatchingAsr:
+    """記下自己是不是跑在事件迴圈的執行緒上。
+
+    `asyncio.get_running_loop()` 只有在「事件迴圈所在的執行緒」上才回傳得到迴圈；
+    在工作執行緒呼叫會丟 RuntimeError。這是「這段阻塞工作有沒有佔住事件迴圈」最
+    直接的判準——不依賴計時，不會偶爾紅一次。
+    """
+
+    def __init__(self) -> None:
+        self.on_event_loop: bool | None = None
+
+    def transcribe(self, audio: bytes, *, content_type: str) -> str:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            self.on_event_loop = False
+        else:
+            self.on_event_loop = True
+        return "阿公早安"
+
+
+def test_the_blocking_work_never_runs_on_the_event_loop():
+    """一輪對話的同步工作必須交給執行緒池，不可佔住事件迴圈。
+
+    這支端點是 async handler，但底下整段（進站上傳、ASR、Gemini、TTS、落庫）都是
+    同步阻塞呼叫。留在事件迴圈裡跑，整台後端一次就只服務得了一位長輩——2026-07-26
+    全流程模擬實測：一輪對話進行中，連 GET /healthz 都要等 2.89 秒，第二位長輩開口
+    得排隊，家屬 App 與觀測後台也一起卡住。
+    """
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    asr = _LoopWatchingAsr()
+    pipeline = VoicePipeline(
+        asr=asr,
+        agent=CareAgent(_EchoLLM(), _NullSession()),
+        tts=TextBubbleTts(),
+        detector=RiskDetector(_NullClassifier()),
+        notifier=_NullNotifier(),
+        risk_events=FakeRiskEventStore(),
+    )
+    app = FastAPI()
+    install_error_envelope(app)
+    app.include_router(
+        create_app_turns_router(
+            accounts=svc,
+            pipeline=pipeline,
+            gate=ConsentGate(svc),
+            voice=VoiceReplyDelivery(None, include_text=True),
+            new_id=lambda: "trace-1",
+            clock=lambda: NOW,
+        ),
+        prefix="/api/v1",
+    )
+
+    assert _post_audio(TestClient(app), token).status_code == 201
+    assert asr.on_event_loop is False, "對話管線跑在事件迴圈上，會把整台後端佔住"
+
+
+@pytest.mark.parametrize(
+    ("lat", "lon", "why"),
+    [
+        (999, 120.21, "緯度 999"),
+        (22.99, -999, "經度 -999"),
+        (90.1, 120.21, "緯度剛好越界"),
+    ],
+)
+def test_out_of_range_coordinates_are_ignored_without_failing_the_turn(lat, lon, why):
+    """座標超出範圍就當這輪沒有位置——**不可回 422**（V-04，2026-07-29）。
+
+    422 會連長輩那句話一起退掉。位置是加分項（`_save_location` 的既有註解：
+    「寫入失敗不可中斷對話」），為了一個 App 送錯的參數而讓長輩重講一次，
+    代價遠大於少一筆位置。故驗證放在 `_save_location`、不放 FastAPI 簽章。
+    """
+    svc = _service()
+    elder, token = _bound_elder_token(svc)
+    locations = FakeLocationStore()
+    res = _post_audio(_client(svc, locations=locations), token, location="台南市", lat=lat, lon=lon)
+    assert res.status_code == 201, why
+    assert locations.get_for_elder(elder.elder_id) is None, why
+
+
+def test_boundary_coordinates_are_accepted_over_rest():
+    svc = _service()
+    elder, token = _bound_elder_token(svc)
+    locations = FakeLocationStore()
+    res = _post_audio(
+        _client(svc, locations=locations), token, location="北極點", lat=90.0, lon=180.0
+    )
+    assert res.status_code == 201
+    assert locations.get_for_elder(elder.elder_id) == ElderLocation(
+        elder.elder_id, "北極點", NOW.timestamp(), 90.0, 180.0
+    )

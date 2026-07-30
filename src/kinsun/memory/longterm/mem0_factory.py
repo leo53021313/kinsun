@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import MutableMapping
 from pathlib import Path
 
+from kinsun import tracing
 from kinsun.config import Settings
 from kinsun.memory.longterm import provenance
+
+logger = logging.getLogger(__name__)
 
 # Gemini embedder 與 Supabase 向量庫的維度必須一致，否則向量查詢會維度不符。
 # mem0 gemini embedder 預設輸出 768 維，但 supabase 向量庫預設建 1536 維 → 兩邊都明確鎖 768。
@@ -73,8 +77,38 @@ def _disable_telemetry(environ: MutableMapping[str, str] | None = None) -> None:
     env.setdefault("MEM0_TELEMETRY", "False")
 
 
+def _instrument_tracing(memory):
+    """把 mem0 內部三段（embedding／向量查詢／rerank）包上 Opik span。
+
+    延遲數據要拆到「rerank 佔多少」才有辦法決定它的去留（2026-07-30 spec）。
+    包在**實例屬性**上、不動 mem0 類別；`keyword_search` 不包——Supabase provider
+    繼承基底的 `return None`，零網路成本。屬性缺席（mem0 升版改名）記 warning
+    後原樣回傳，比照 wrap_genai：觀測絕不可壞掉記憶功能。
+    """
+    try:
+        memory.embedding_model.embed = tracing.track(
+            name="mem0_embed", capture_input=True, capture_output=False
+        )(memory.embedding_model.embed)
+        memory.vector_store.search = tracing.track(
+            name="mem0_vector_search",
+            capture_input=True,
+            capture_output=False,
+            ignore_arguments=["vectors"],  # 768 維查詢向量，塞進 span 只是噪音
+        )(memory.vector_store.search)
+        if getattr(memory, "reranker", None) is not None:
+            memory.reranker.rerank = tracing.track(
+                name="mem0_rerank",
+                capture_input=True,
+                capture_output=False,
+                ignore_arguments=["documents"],  # 候選集可達數十筆記憶原文
+            )(memory.reranker.rerank)
+    except AttributeError:
+        logger.warning("mem0 實例屬性不符（升版改名？），內部子 span 略過")
+    return memory
+
+
 def build_mem0_memory(settings: Settings):
     _disable_telemetry()
     from mem0 import Memory  # 延遲匯入，避免單元測試與無 key 環境載入
 
-    return Memory.from_config(build_mem0_config(settings))
+    return _instrument_tracing(Memory.from_config(build_mem0_config(settings)))

@@ -67,7 +67,11 @@ BINDING_DDL = (
 
 SCHEDULER_DDL = (
     "CREATE TABLE IF NOT EXISTS scheduler_state ("
-    "job_name TEXT PRIMARY KEY, last_run_at DOUBLE PRECISION NOT NULL);"
+    "job_name TEXT PRIMARY KEY, last_run_at DOUBLE PRECISION NOT NULL, "
+    "last_success_at DOUBLE PRECISION);"
+    # last_success_at 可為 NULL＝「還沒成功過」，與「失敗」是兩回事——舊列升級後一律
+    # 為 NULL，後台必須顯示成「未知」而不是紅字，否則第一次部署整排變紅。
+    "ALTER TABLE scheduler_state ADD COLUMN IF NOT EXISTS last_success_at DOUBLE PRECISION;"
 )
 
 # 認證節流共享計數（✅ 庚-08／A-54）：多 worker 共用同一滑動視窗，避免 per-process
@@ -251,15 +255,21 @@ REMINDER_LOGS_RESPONDED_MIGRATION_DDL = (
 
 # 危急通知送達紀錄（✅ D-36，丙-7）：每位家屬成功／失敗獨立留痕。
 # channels 記實際走的通道（✅ 庚-16，逗號串接）；App＝落庫待拉取、非真送達。
+# outcome 記「為什麼沒送到」（2026-07-27）：sent／no_route／failed。`delivered` 答不出
+# 這件事，而未綁通道（常態）與送出失敗（故障）的處置完全不同——見 deliveries.py。
+# 舊列的 outcome 為 ''（未分類），失敗告警保守計入。
 RISK_NOTIFICATION_LOGS_DDL = (
     "CREATE TABLE IF NOT EXISTS risk_notification_logs ("
     "risk_notification_log_id TEXT PRIMARY KEY, elder_id TEXT NOT NULL, "
     "guardian_id TEXT NOT NULL, tier INTEGER NOT NULL, delivered BOOLEAN NOT NULL, "
-    "created_at DOUBLE PRECISION NOT NULL, channels TEXT NOT NULL DEFAULT '');"
+    "created_at DOUBLE PRECISION NOT NULL, channels TEXT NOT NULL DEFAULT '', "
+    "outcome TEXT NOT NULL DEFAULT '');"
     "CREATE INDEX IF NOT EXISTS idx_risk_notification_logs_elder_created "
     "ON risk_notification_logs (elder_id, created_at);"
     "ALTER TABLE risk_notification_logs "
     "ADD COLUMN IF NOT EXISTS channels TEXT NOT NULL DEFAULT '';"
+    "ALTER TABLE risk_notification_logs "
+    "ADD COLUMN IF NOT EXISTS outcome TEXT NOT NULL DEFAULT '';"
 )
 
 # App 內通知（✅ D-12，甲-6）：App 出站 adapter 落地訊息，登入後拉取。
@@ -269,6 +279,17 @@ APP_NOTIFICATIONS_DDL = (
     "content TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
     "CREATE INDEX IF NOT EXISTS idx_app_notifications_external_created "
     "ON app_notifications (external_id, created_at);"
+)
+
+# 裝置推播 token（真推播 D-08 階段 5，2026-07-29）：一人可有多台裝置。
+# token 唯一：同一台裝置換人使用時改綁，不可留兩列——否則提醒會送給前一位使用者。
+PUSH_TOKENS_DDL = (
+    "CREATE TABLE IF NOT EXISTS push_tokens ("
+    "push_token_id TEXT PRIMARY KEY, token TEXT NOT NULL UNIQUE, "
+    "principal_type TEXT NOT NULL, principal_id TEXT NOT NULL, "
+    "platform TEXT NOT NULL, updated_at DOUBLE PRECISION NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS idx_push_tokens_principal "
+    "ON push_tokens (principal_type, principal_id);"
 )
 
 # 整理進度標記（✅ 庚-06／庚-13）：某長輩某日已整理進長期記憶，供冪等與跨多日補齊。
@@ -324,6 +345,29 @@ VOICE_PROFILES_DDL = (
     "consented_by TEXT NOT NULL, "
     "granted_at DOUBLE PRECISION NOT NULL, "
     "revoked_at DOUBLE PRECISION);"
+)
+
+# 台灣店家 POI（Overture Maps，2026-07-27 spec 附近地點搜尋）。2026-07-28 正式庫
+# 實測：285,140 列，佔用 153 MB（heap 76 MB + index 77 MB），整庫 235 MB / 500 MB。
+# spec 原估 19 MB，實際低估近 8 倍——Supabase 免費方案的 500 MB 是共用預算，
+# 這一項要記在帳上。
+#
+# 刻意不用 PostGIS：查詢走「矩形粗篩 ＋ Haversine」，少一個擴充相依就少一個
+# 「託管環境有沒有裝」的外部變數。
+#
+# 兩支索引各有其查詢：主查詢帶 category（找附近的藥局），行政區指紋查詢不帶
+# category（統計鄰域郵遞區號分布），後者吃不到前者那支複合索引。
+PLACES_DDL = (
+    "CREATE TABLE IF NOT EXISTS places ("
+    "place_id TEXT PRIMARY KEY, name TEXT NOT NULL, "
+    "latitude DOUBLE PRECISION NOT NULL, longitude DOUBLE PRECISION NOT NULL, "
+    "category TEXT NOT NULL, overture_category TEXT, confidence DOUBLE PRECISION, "
+    "address TEXT, postcode TEXT, city TEXT, phone TEXT, "
+    "ingested_at DOUBLE PRECISION NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS places_category_lat_lon_idx "
+    "ON places (category, latitude, longitude);"
+    "CREATE INDEX IF NOT EXISTS places_lat_lon_idx "
+    "ON places (latitude, longitude);"
 )
 
 # 觀測五表以 external_id＋channel 記來源（✅ 庚-07／A-8）：欄位承載任一通道的外部
@@ -454,8 +498,35 @@ ELDER_GUARDIANS_TRANSCRIPT_COLUMN_RETIRE_DDL = (
 SCHEMA_MIGRATION_LOCK_KEY = 4_242_001
 
 
+# 連線層存活設定（2026-07-26 全流程模擬實測抓到的排程器假死）──
+#
+# 現場：排程程序活著、CPU 幾乎零、日誌零成長，但每分鐘該跑的 job 停在七小時前；
+# `ss -tnp` 顯示它與 Supabase 的連線 `Recv-Q=11988`——收到資料卻沒有人讀。
+# 那是一條對端已經不在、而本地毫不知情的 TCP 連線；沒有 keepalive，作業系統
+# 永遠不會告訴我們，psycopg 就一直等下去。整個排程（含用藥提醒）因此靜默停擺。
+#
+# ⚠️ 伺服器端的 statement_timeout 救不了這種情形——回應根本到不了，不是查詢跑太久。
+# （實測附帶結論：Supabase 的 Supavisor 會把連線的 statement_timeout 覆寫成自己的
+# 2 分鐘，`options="-c statement_timeout=..."` 送過去不會報錯但也不會生效，故不設。）
+#
+# keepalives_idle=30＋interval=10＋count=3：閒置 30 秒開始探測，最多 3 次、每次
+# 間隔 10 秒——約一分鐘內就會讓死連線變成一個**看得見的錯誤**，而不是無限期的等待。
+# 錯誤有人接（排程器每個 job 各自 try／except 並記 log），下一個 tick 就會重試。
+_KEEPALIVE_KWARGS: dict[str, int] = {
+    "connect_timeout": 10,
+    "keepalives": 1,
+    "keepalives_idle": 30,
+    "keepalives_interval": 10,
+    "keepalives_count": 3,
+}
+
+# 一次性 CLI 的連線池上限。連線天花板是 Supabase pooler（session mode）15 條，
+# 常駐服務已佔去大半，CLI 只能拿零頭；批次作業是單執行緒，2 條夠用。見 14 §3.5。
+CLI_POOL_MAX_SIZE = 2
+
+
 def connect(database_url: str) -> psycopg.Connection:
-    return psycopg.connect(database_url)
+    return psycopg.connect(database_url, **_KEEPALIVE_KWARGS)
 
 
 def ensure_schema(database_url: str) -> None:
@@ -482,12 +553,14 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(REMINDER_LOGS_RESPONDED_MIGRATION_DDL)
         conn.execute(RISK_NOTIFICATION_LOGS_DDL)
         conn.execute(APP_NOTIFICATIONS_DDL)
+        conn.execute(PUSH_TOKENS_DDL)
         conn.execute(WEB_SEARCH_LOOKUPS_DDL)
         conn.execute(MEMORY_CONSOLIDATIONS_DDL)
         conn.execute(CONVERSATION_SUMMARIES_DDL)
         conn.execute(NEWS_ITEMS_DDL)
         conn.execute(NEWS_MENTIONS_DDL)
         conn.execute(VOICE_PROFILES_DDL)
+        conn.execute(PLACES_DDL)
         # 三段順序不可調換：建表（既有庫 no-op）→ 舊欄改名／補 channel → 建索引。
         # 索引引用 external_id，既有庫要先改完名才建得起來。
         conn.execute(OBSERVABILITY_TABLES_DDL)
@@ -545,8 +618,30 @@ class Database:
         self._pool = pool
 
     @classmethod
+    def open_for_cli(cls, url: str) -> Database:
+        """一次性 CLI 專用的小連線池。
+
+        連線總量的天花板是 Supabase pooler（session mode）的 15 條，常駐服務
+        （webhook 兩個 worker＋排程器＋rag_worker）已吃掉大部分；CLI 沿用預設 5
+        會借不到連線而整個起不來（2026-07-28 實證：ingest 每次連線立即
+        EMAXCONNSESSION）。CLI 是單執行緒批次作業，2 條足夠。見 14 §3.5。
+        """
+        return cls.open(url, max_size=CLI_POOL_MAX_SIZE)
+
+    @classmethod
     def open(cls, url: str, *, min_size: int = 1, max_size: int = 5) -> Database:
-        return cls(ConnectionPool(url, min_size=min_size, max_size=max_size, open=True))
+        # kwargs：每條池內連線都開 TCP keepalive（見 _KEEPALIVE_KWARGS 的實測來由）。
+        # 沒有它，對端消失的連線會讓借到它的人無限期等待——排程器就是這樣靜默停擺
+        # 七小時而狀態頁還顯示 RUNNING。
+        return cls(
+            ConnectionPool(
+                url,
+                min_size=min_size,
+                max_size=max_size,
+                open=True,
+                kwargs=_KEEPALIVE_KWARGS,
+            )
+        )
 
     def close(self) -> None:
         self._pool.close()

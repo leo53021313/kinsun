@@ -23,7 +23,7 @@ class _NullDetector:
 
 
 class _NullNotifier:
-    def notify(self, line_user_id: str, assessment: RiskAssessment) -> None:
+    def notify(self, line_user_id: str, assessment: RiskAssessment, user_text: str) -> None:
         pass
 
 
@@ -41,7 +41,7 @@ class NullSession:
     def assemble(self, line_user_id: str, query: str) -> _NullCtx:
         return _NullCtx()
 
-    def record_turn(self, line_user_id: str, *messages: Message) -> None:
+    def record_turn(self, line_user_id: str, *messages: Message, at=None) -> None:
         pass
 
 
@@ -49,7 +49,7 @@ class RecordingSession(NullSession):
     def __init__(self) -> None:
         self.sessions: list[str] = []
 
-    def record_turn(self, line_user_id: str, *messages: Message) -> None:
+    def record_turn(self, line_user_id: str, *messages: Message, at=None) -> None:
         for _ in messages:
             self.sessions.append(line_user_id)
 

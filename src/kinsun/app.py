@@ -15,17 +15,23 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from linebot.v3 import WebhookParser
 
-from kinsun import tracing
+from kinsun import background, tracing
+from kinsun.accounts.models import Channel
 from kinsun.audio.publisher import build_audio_publisher
 from kinsun.binding.flow import BindingFlow
 from kinsun.binding.gate import AllowAllGate, ConsentGate
 from kinsun.binding.session import PgBindingSessionStore
 from kinsun.channels.app.turns import create_app_turns_router
-from kinsun.channels.inbound import VoiceReplyDelivery
+from kinsun.channels.app.ws import create_app_ws_router
+from kinsun.channels.inbound import FALLBACK_PROMPT, VoiceReplyDelivery
 from kinsun.channels.line.webhook import create_app
 from kinsun.composition import assemble_core, build_externals
 from kinsun.config import load_dotenv, load_settings
+from kinsun.cron.registry import job_specs
+from kinsun.cron.state import PgScheduleStateStore
+from kinsun.cron.worker import build_jobs
 from kinsun.llm import build_gemini_for
+from kinsun.logging_setup import setup_logging
 from kinsun.pipeline import VoicePipeline
 from kinsun.rag.releases import PgRagReleaseStore
 from kinsun.safety.classifier import LlmRiskClassifier
@@ -33,9 +39,8 @@ from kinsun.safety.deliveries import PgRiskNotificationLogStore
 from kinsun.safety.detector import RiskDetector
 from kinsun.safety.moderation import AbuseModerator, LlmAbuseClassifier
 from kinsun.safety.notifier import GuardianNotifier
-from kinsun.scheduler.state import PgScheduleStateStore
-from kinsun.scheduler.worker import build_jobs
 from kinsun.schedules.flow import ScheduleMenu
+from kinsun.speech.ack_audio import AckAudioCache, start_prewarm
 from kinsun.speech.asr import build_asr_client
 from kinsun.speech.tts import build_tts_client
 from kinsun.web.auth import LineIdTokenVerifier
@@ -53,6 +58,10 @@ from kinsun.web.security import install_security_headers
 
 
 def build_app() -> FastAPI:
+    # ⚠️ 必須是第一行：在此之前發生的任何事（設定載入失敗、建表卡住）都印不出來。
+    # 這個行程原本完全沒有日誌設定，39 個 kinsun.* logger 的 INFO 全數丟棄——見
+    # logging_setup 的模組 docstring。
+    setup_logging()
     load_dotenv()
     settings = load_settings(os.environ)
     tz = ZoneInfo(settings.timezone)
@@ -60,6 +69,10 @@ def build_app() -> FastAPI:
     def clock() -> datetime:
         return datetime.now(tz)
 
+    # 背景落庫（2026-07-26 延遲實測）：觀測稽核與提醒回應標記移出長輩的回覆路徑。
+    # 只有這個組裝根啟用——排程 worker 是批次作業，沒有人在等它的回覆，多一個池只是
+    # 多一份連線競爭；單元測試不啟用，故行為與引入前一字不差。
+    background.configure()
     externals = build_externals(settings)
     core = assemble_core(settings, externals, clock=clock)
     db = core.db
@@ -98,10 +111,15 @@ def build_app() -> FastAPI:
         if settings.safety_moderation_enabled
         else None
     )
+    # TTS 分段串流（2026-07-26 延遲優化）：只對 App 通道啟用。
+    # ⚠️ LINE 不可加入——它一輪只能回一則語音訊息，給它第一句等於把後面的話吞掉；
+    # 分段需要投遞端「逐段拉、接著播」的配合，目前只有 App 對講機做得到。
+    tts_client = build_tts_client(settings)
     pipeline = VoicePipeline(
         asr=build_asr_client(settings),
         agent=core.agent,
-        tts=build_tts_client(settings),
+        tts=tts_client,
+        chunked_channels=frozenset({Channel.APP.value}),
         detector=RiskDetector(
             LlmRiskClassifier(safety_llm),
             mid=settings.safety_confidence_mid,
@@ -118,6 +136,8 @@ def build_app() -> FastAPI:
         # 長輩開口即標記時間窗內的提醒為已回應：反思的行為訊號來源（✅ Task 4）。
         reminder_logs=core.reminder_logs,
         response_window_seconds=settings.reflection_response_window_minutes * 60,
+        # 一輪的總時間上限（辛-21）：逐次逾時攔不住三次呼叫相加。
+        turn_budget_seconds=settings.turn_budget_seconds,
         moderator=moderator,
     )
     binding_sessions = PgBindingSessionStore(db)
@@ -159,9 +179,45 @@ def build_app() -> FastAPI:
         if settings.tts_backend == "dgx"
         else None
     )
+    # 安撫話音檔（spec 2026-07-28 P2）：啟動時把語庫的十幾句合成上傳好，對話中只查表。
+    # ⚠️ 用**獨立的 prefix**（`acks/`）：`publisher` 的 `cleanup(retention_days)` 會依
+    # 日期資料夾刪除 `tts/` 下的音檔，安撫話被掃到就得重新合成。它們也沒有個資
+    # （都是我們自己寫的通用句），故與長輩的回覆音檔區隔對待是合理的。
+    # ⚠️ 必須排在 voice 之前（V-02，2026-07-29）：回退話術的音檔由這份快取供應。
+    ack_audio = None
+    if publisher is not None:
+        ack_audio = AckAudioCache(
+            tts_client,
+            build_audio_publisher(
+                settings, clock=clock, new_id=lambda: uuid.uuid4().hex, prefix="acks"
+            ),
+            signed_url_ttl_seconds=settings.audio_signed_url_expires_seconds,
+            # 管線失敗時唸的那一句也要預錄（V-02）：走到那裡代表 ASR／LLM／記憶已經
+            # 壞了一個，當場合成既慢又可能一起失敗。
+            standby_phrases=(FALLBACK_PROMPT,),
+        )
+        # 非阻塞：十幾段 × 約 1.9 秒 ≈ 半分鐘，同步跑會把服務啟動整整擋住那麼久。
+        start_prewarm(ack_audio)
+    standby_clip = ack_audio.clip_for_text if ack_audio is not None else None
     voice = VoiceReplyDelivery(
-        publisher, settings.tts_reply_text, show_transcript=settings.asr_debug_show_transcript
+        publisher,
+        settings.tts_reply_text,
+        show_transcript=settings.asr_debug_show_transcript,
+        standby_clip=standby_clip,
     )
+
+    def _shutdown() -> None:
+        # ⚠️ 順序有意義：背景落庫必須先排空，否則佇列裡的觀測寫入會撞上已關閉的
+        # 連線池，部署重啟就吃掉最後幾筆稽核。
+        background.shutdown()
+        # TTS 佇列同理先排空（spec 2026-07-28 P1）：關機時佇列裡可能還有長輩的回覆
+        # 等著合成，直接關掉等於讓那一輪永遠沒有聲音。`close` 對未包裝的客戶端
+        # （文字泡泡）不存在，故以 getattr 取用——組裝根不該假設後端型別。
+        close_tts = getattr(tts_client, "close", None)
+        if close_tts is not None:
+            close_tts()
+        db.close()
+
     parser = WebhookParser(settings.line_channel_secret)
     app = create_app(
         parser=parser,
@@ -173,7 +229,7 @@ def build_app() -> FastAPI:
         traces=core.traces,
         inbound_audio=inbound_audio,
         text_input_enabled=settings.line_text_input_enabled,
-        on_shutdown=db.close,
+        on_shutdown=_shutdown,
     )
     verifier = LineIdTokenVerifier(settings.liff_channel_id, settings.liff_timeout_seconds)
     install_error_envelope(app)  # HTTPException → 統一信封（✅ D-23 乙-1）
@@ -218,10 +274,13 @@ def build_app() -> FastAPI:
         prefix="/api/v1/admin",
     )
     # 內測操作面（spec 2026-07-12 §3.4）：與 worker 共用同一份 job 清單。
+    # specs 是**全系統**的排程宣告（含跑在別的程序的 RAG 週更），jobs 只有本程序
+    # 綁得出執行體的那些——監控要看得到全部，手動觸發只能動得了自己這一份。
     app.include_router(
         create_admin_jobs_router(
             admin_api_key=settings.admin_api_key,
             internal_testing_enabled=settings.internal_testing_enabled,
+            specs=job_specs(settings),
             jobs=build_jobs(settings, core, clock=clock),
             schedule_state=PgScheduleStateStore(db, tz),
             accounts=core.accounts,
@@ -249,6 +308,7 @@ def build_app() -> FastAPI:
                 settings.auth_rate_limit_window_seconds,
             ),
             notifications=core.notifications,
+            push_tokens=core.push_tokens,
         ),
         prefix="/api/v1",
     )
@@ -262,12 +322,42 @@ def build_app() -> FastAPI:
                 publisher,
                 include_text=True,
                 show_transcript=settings.asr_debug_show_transcript,
+                standby_clip=standby_clip,
             ),
             traces=core.traces,
             inbound_audio=inbound_audio,
             # 地點（spec 2026-07-17）：clock 與 LocationFacts 同源（皆為本函式的 clock），
             # 否則寫入時刻與過期判斷會用到兩個不同的時鐘、讓門檻悄悄偏移。
             locations=core.locations,
+            clock=clock,
+            max_audio_bytes=settings.audio_max_upload_bytes,
+            # 分段串流的後續段落：從長輩自己最後一則回覆重新切句、逐段合成上傳。
+            memory=core.memory,
+            tts=tts_client,
+            audio_publisher=publisher,
+        ),
+        prefix="/api/v1",
+    )
+    # App 對講機的 WebSocket 通道（spec 2026-07-28 P2）：與上面的 POST /turns 平行，
+    # 差別在後端可以主動送第二則訊息——先「好，我幫您查一下喔」，答案好了再送。
+    # ⚠️ 整輪走同一條連線是刻意的：後端跑兩個 worker，只加下行通道會讓「算出答案的
+    # worker 推不到長輩的連線」。POST /turns 保留為降級路徑，兩者共存。
+    app.include_router(
+        create_app_ws_router(
+            accounts=core.accounts,
+            pipeline=pipeline,
+            gate=gate,
+            voice=VoiceReplyDelivery(
+                publisher,
+                include_text=True,
+                show_transcript=settings.asr_debug_show_transcript,
+                standby_clip=standby_clip,
+            ),
+            traces=core.traces,
+            inbound_audio=inbound_audio,
+            ack_audio=ack_audio,
+            locations=core.locations,
+            new_id=lambda: uuid.uuid4().hex,
             clock=clock,
             max_audio_bytes=settings.audio_max_upload_bytes,
         ),

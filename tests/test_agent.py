@@ -1,5 +1,19 @@
-from kinsun.agent import FALLBACK_REPLY, SYSTEM_PROMPT, CareAgent, Recall
+import logging
+import threading
+import time
+
+import pytest
+
+from kinsun import agent as agent_module
+from kinsun.agent import (
+    FALLBACK_REPLY,
+    SYSTEM_PROMPT,
+    SYSTEM_TROUBLE_REPLY,
+    CareAgent,
+    Recall,
+)
 from kinsun.llm import Message, ToolCall, ToolSpec, ToolTurn
+from kinsun.memory.shortterm import MemoryStoreError
 from kinsun.tools.registry import ToolRegistry
 
 
@@ -33,7 +47,7 @@ class SpySession:
         self.queries.append(query)  # 檢索關鍵字是本次的受測對象，必須留痕
         return _Ctx(self._suffix, list(self._history))
 
-    def record_turn(self, line_user_id: str, *messages: Message) -> None:
+    def record_turn(self, line_user_id: str, *messages: Message, at=None) -> None:
         self.recorded.append((line_user_id, messages))
 
 
@@ -378,6 +392,73 @@ def test_system_prompt_refuses_format_hijack_explicitly():
     assert "JSON" in SYSTEM_PROMPT
 
 
+# --- 退化輸出護欄（2026-07-26 延遲優化報告 §7 順帶發現，2026-07-28 補修）---
+#
+# 提示詞點名的工具若沒註冊（`TAVILY_API_KEY` 未設時的 `web_search`），模型不會說
+# 「我沒有這個工具」，而是**假裝呼叫**：吐出 `tool_code\n{...}` 並無限重複，
+# 實測單則 186,514 字。既有防線全數放行（不以 `{` 開頭），這坨東西一路送進 TTS，
+# 唸不完撞 30 秒逾時 → `pipeline._synthesize` 退化成無音檔 → 長輩按下對講機等
+# 三十秒、完全沒有聲音，而完整回覆照樣寫進字幕、記憶與觀測。
+
+
+def test_handle_rejects_leaked_tool_call_syntax():
+    """假裝呼叫工具的輸出直接回退，不打撈——撈出來的是工具參數，不是給長輩的答案。"""
+    degenerate = 'tool_code\n{"name": "web_search", "args": {"query": "新聞"}}\n' * 40
+    agent = CareAgent(_FixedLLM(degenerate), SpySession())
+    assert agent.handle("u1", "最近有什麼新聞") == SYSTEM_TROUBLE_REPLY
+
+
+def test_handle_rejects_fenced_tool_call_syntax():
+    """同一種退化也會包在 code fence 裡出現，拆殼之後仍要認得。"""
+    fenced = '```tool_code\n{"name": "web_search", "args": {"query": "詐騙"}}\n```'
+    agent = CareAgent(_FixedLLM(fenced), SpySession())
+    assert agent.handle("u1", "這是詐騙嗎") == SYSTEM_TROUBLE_REPLY
+
+
+def test_handle_rejects_runaway_repetition():
+    """長度上限是通用網：未來換一種鬼打牆形式（不以 tool_code 開頭）同樣擋得住。"""
+    agent = CareAgent(_FixedLLM("阿公我幫您查一下喔。" * 200), SpySession())
+    assert agent.handle("u1", "查一下") == SYSTEM_TROUBLE_REPLY
+
+
+def test_memory_does_not_store_runaway_output():
+    """護欄擺在 `_speakable`（而非 TTS 前）的理由：記憶存的是回退話術，不是那 18 萬字。
+
+    存進去下一輪會被 `recent()` 原封不動帶回上下文，一次退化污染後續每一輪。
+    """
+    session = SpySession()
+    degenerate = 'tool_code\n{"name": "web_search", "args": {"query": "新聞"}}\n' * 40
+    agent = CareAgent(_FixedLLM(degenerate), session)
+    agent.handle("u1", "最近有什麼新聞")
+    assert session.recorded[-1][1][-1] == Message("assistant", SYSTEM_TROUBLE_REPLY)
+
+
+def test_guard_keeps_long_but_plausible_reply():
+    """⚠️ 誤殺防線：上限要落在「TTS 本來就唸不完」之外，正常轉述不可被殺。
+
+    TTS 是 0.9 秒固定成本＋每字 0.10 秒（2026-07-26 實測），30 秒逾時換算約 291 字；
+    分段通道只合成第一段，所以上限訂在 500 字——那已經是任何正常回覆的兩倍以上。
+    """
+    long_reply = "阿公，今天的新聞說最近天氣變冷，出門記得多穿一件衣服喔。" * 5
+    assert 100 < len(long_reply) < 500
+    agent = CareAgent(_FixedLLM(long_reply), SpySession())
+    assert agent.handle("u1", "有什麼新聞") == long_reply
+
+
+def test_guard_does_not_kill_replies_merely_mentioning_tool_words():
+    """只在**開頭**認工具語法：長輩的話題裡出現這些字不該觸發回退。"""
+    text = "阿嬤，您說的那個 print 是印表機的意思嗎？我幫您問問看孫女喔。"
+    agent = CareAgent(_FixedLLM(text), SpySession())
+    assert agent.handle("u1", "print 是什麼") == text
+
+
+def test_proactive_is_guarded_against_tool_call_leak():
+    """主動問候同樣會撞到未註冊工具，兩條路徑的防線必須對稱。"""
+    degenerate = 'tool_code\n{"name": "get_news", "args": {}}\n' * 40
+    agent = CareAgent(_FixedLLM(degenerate), SpySession())
+    assert agent.proactive("u1", "早安問候") == SYSTEM_TROUBLE_REPLY
+
+
 # --- 主動問候走工具迴圈（2026-07-17：問候也要會查天氣等工具）---
 
 
@@ -407,3 +488,576 @@ def test_proactive_tool_loop_reply_is_guarded():
     llm = ScriptedToolLLM([ToolTurn(text='{"greeting": "阿嬤早安呀。"}', tool_calls=[])])
     agent = CareAgent(llm, SpySession(), tools=_registry_with_weather())
     assert agent.proactive("u1", "早安問候") == "阿嬤早安呀。"
+
+
+def test_proactive_cannot_create_a_schedule_the_elder_never_agreed_to():
+    """端到端守住安全界線 4：主動問候那一輪長輩沒開口，模型不得替她建立提醒。
+
+    這條走**真的** create_schedule handler（不是替身）——防線在工具內，用替身測
+    等於測了個寂寞。單元層的對照在 test_tools_schedules 的
+    test_create_refuses_when_the_elder_never_spoke。
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from kinsun.schedules.service import ScheduleService
+    from kinsun.schedules.store import FakeScheduleStore
+    from kinsun.tools.schedules import CREATE_SPEC, build_create_handler
+
+    now = datetime(2026, 7, 25, 20, 0, tzinfo=ZoneInfo("Asia/Taipei"))
+    service = ScheduleService(FakeScheduleStore(), clock=lambda: now, new_id=lambda: "g1")
+    registry = ToolRegistry()
+    registry.register(CREATE_SPEC, build_create_handler(service, clock=lambda: now))
+    llm = ScriptedToolLLM(
+        [
+            ToolTurn(
+                text=None,
+                tool_calls=[
+                    ToolCall(
+                        "create_schedule",
+                        {
+                            "title": "長輩沒答應的事",
+                            "kind": "custom",
+                            "repeat": "once",
+                            "date": "2026-07-25",
+                            "time": "21:00",
+                        },
+                    )
+                ],
+            ),
+            ToolTurn(text="阿嬤早安，我幫您記下來了。", tool_calls=[]),
+        ]
+    )
+
+    CareAgent(llm, SpySession(), tools=registry).proactive("u1", "早安問候")
+
+    assert service.groups_for_elder("u1") == []
+
+
+class _SlowSession(SpySession):
+    """assemble 固定睡 delay 秒——用來分辨情境組裝是排隊跑還是已在背景先跑。"""
+
+    def __init__(self, delay: float, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.delay = delay
+
+    def assemble(self, line_user_id: str, query: str):
+        time.sleep(self.delay)
+        return super().assemble(line_user_id, query)
+
+
+def test_prepare_starts_context_assembly_without_blocking():
+    """`prepare` 必須立刻返回（2026-07-26 延遲實測）。
+
+    情境組裝是本輪最慢的一段（長期記憶檢索＋七次事實查詢，實測約 2.9 秒），而它
+    只吃 elder_id 與原話——不必等危急分級與濫用審核跑完才開始。`prepare` 若會阻塞，
+    整個預取就沒有意義。
+    """
+    session = _SlowSession(0.2)
+    agent = CareAgent(SpyLLM(), session)
+
+    started = time.monotonic()
+    prepared = agent.prepare("u1", "我今天有點累")
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.1, f"prepare 耗時 {elapsed:.2f}s，並沒有非阻塞"
+    assert prepared.context().history == []  # 取結果時才等它完成
+
+
+def test_handle_reuses_the_prepared_context_instead_of_assembling_again():
+    """帶著 prepared 進 handle 不可以重組一次——重組等於白做一次最慢的工作。"""
+    session = SpySession(history=[Message("user", "早安")])
+    agent = CareAgent(SpyLLM(), session)
+
+    prepared = agent.prepare("u1", "我今天有點累")
+    agent.handle("u1", "我今天有點累", prepared=prepared)
+
+    assert session.queries == ["我今天有點累"]  # 只組裝過一次
+
+
+def test_handle_without_prepared_keeps_assembling_inline():
+    """未預取時行為一字不變（排程 worker 與既有呼叫端都走這條）。"""
+    session = SpySession()
+    agent = CareAgent(SpyLLM(), session)
+
+    agent.handle("u1", "我今天有點累")
+
+    assert session.queries == ["我今天有點累"]
+
+
+class _BoomSession(SpySession):
+    def assemble(self, line_user_id: str, query: str):
+        raise RuntimeError("記憶掛了")
+
+
+def test_prepared_assembly_failure_surfaces_from_handle():
+    """預取期間的例外必須在 handle 取結果時原樣拋出。
+
+    情境組裝失敗（MemoryStoreError）本來就會往上冒到管線的回退話術；搬到背景執行緒
+    後若把例外吞掉，長輩會拿到一則「沒有記憶」的回覆卻沒有任何人知道記憶壞了。
+    """
+    agent = CareAgent(SpyLLM(), _BoomSession())
+    prepared = agent.prepare("u1", "我今天有點累")
+
+    with pytest.raises(RuntimeError, match="記憶掛了"):
+        agent.handle("u1", "我今天有點累", prepared=prepared)
+
+
+# --- 情境組裝的等待上限（2026-07-27）---
+#
+# mem0 檢索沒有任何逾時可設：mem0 的 gemini LLM／embedder 自建 genai.Client 卻不帶
+# http_options，而 google-genai 的預設是 Timeout(timeout=None)——實測確認完全沒有上限。
+# 組裝一旦卡住，這一輪就永遠不返回，長輩連回退話術都拿不到，uvicorn worker 也一直被佔著。
+
+
+class _HangingSession(SpySession):
+    """assemble 卡住不返回——模擬 mem0 或 Supabase 假死。"""
+
+    def __init__(self, released: threading.Event, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._released = released
+
+    def assemble(self, line_user_id: str, query: str):
+        self._released.wait()
+        return super().assemble(line_user_id, query)
+
+
+def test_prepared_context_gives_up_instead_of_waiting_forever():
+    """等不到就丟 MemoryStoreError——inbound 接住後長輩至少拿得到回退話術。"""
+    released = threading.Event()
+    agent = CareAgent(SpyLLM(), _HangingSession(released))
+    try:
+        prepared = agent.prepare("u1", "我今天有點累")
+        prepared._timeout = 0.05  # 測試用短上限，避免真的等 15 秒
+        started = time.monotonic()
+        with pytest.raises(MemoryStoreError, match="情境組裝逾時"):
+            prepared.context()
+        assert time.monotonic() - started < 1.0
+    finally:
+        released.set()  # 放走背景執行緒，不留給其他測試
+
+
+def test_prepared_context_still_returns_when_assembly_finishes_in_time():
+    """正常路徑一字未變：組裝來得及就照常回傳情境。"""
+    released = threading.Event()
+    released.set()
+    agent = CareAgent(SpyLLM(), _HangingSession(released))
+    assert agent.prepare("u1", "我今天有點累").context().history == []
+
+
+def test_proactive_gives_up_instead_of_hanging_the_whole_greeting_job(monkeypatch):
+    """主動問候跑在排程的**序列**扇出裡，一位長輩卡住就等於當天所有人都收不到。
+
+    逾時後丟 MemoryStoreError，由 fanout 的逐筆隔離接住、換下一位——這是本次
+    把 `_envelope` 的當場組裝也改走 PreparedTurn 的唯一理由。
+    """
+    monkeypatch.setattr(agent_module, "CONTEXT_ASSEMBLY_TIMEOUT_SECONDS", 0.05)
+    released = threading.Event()
+    agent = CareAgent(SpyLLM(), _HangingSession(released))
+    try:
+        started = time.monotonic()
+        with pytest.raises(MemoryStoreError, match="情境組裝逾時"):
+            agent.proactive("u1", "早安問候")
+        assert time.monotonic() - started < 1.0
+    finally:
+        released.set()
+
+
+# --- 出站冒名防線（2026-07-26 全流程模擬實測：零工具呼叫卻說「國健署網站說」）---
+
+
+def test_strips_a_fabricated_authority_when_no_tool_returned_a_source():
+    """該輪沒有任何工具登記來源，就不准借政府機關的名義背書。"""
+    session = SpySession()
+    agent = CareAgent(_FixedLLM("國健署網站說，在家裡要穿防滑鞋子、走道保持亮光。"), session)
+    reply = agent.handle("u1", "老人家要怎麼預防跌倒？")
+    assert "國健署" not in reply
+    assert "在家裡要穿防滑鞋子" in reply  # 內容保留，只拿掉偽授權
+
+
+def test_strips_a_fabricated_fact_check_claim():
+    session = SpySession()
+    agent = CareAgent(_FixedLLM("查核中心說這是假的喔！千萬不要停藥。"), session)
+    reply = agent.handle("u1", "鄰居說吃苦瓜可以治好糖尿病，不用吃藥了對不對？")
+    assert "查核中心" not in reply
+    assert "千萬不要停藥" in reply
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "醫生說要按時吃藥，阿嬤您記得喔。",
+        "電視說最近很冷，您要多穿一件。",
+        "您女兒說她週末會回來看您。",
+        "我兒子在衛福部上班，很辛苦喔。",
+        "我們一起看衛福部的網站好不好？",
+        "健保署的卡片您有帶在身上嗎？",
+    ],
+)
+def test_people_media_and_plain_mentions_pass_through_untouched(text):
+    """防線只認封閉的機關清單＋引述動詞：人、媒體、把機關當地點講，一律原樣通過。
+
+    這組比命中測試更重要——誤殺長輩最愛講的「我女兒說…」，比放過一次冒名更傷。
+    """
+    session = SpySession()
+    agent = CareAgent(_FixedLLM(text), session)
+    assert agent.handle("u1", "隨便聊") == text
+
+
+def test_a_registered_source_lets_the_citation_through():
+    """工具真的拿到**那個機關**的來源時，引用一字不動——防線的不誤殺驗收點。"""
+    from kinsun.turn_context import record_source
+
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(name="web_search", description="查", parameters={"type": "object"}),
+        lambda args: record_source("mohw.gov.tw") or "查到了",
+    )
+    llm = ScriptedToolLLM(
+        [
+            ToolTurn(text=None, tool_calls=[ToolCall("web_search", {})]),
+            ToolTurn(text="衛福部網站說水果可以吃，但要控制份量喔。", tool_calls=[]),
+        ]
+    )
+    agent = CareAgent(llm, SpySession(), tools=registry)
+    assert agent.handle("u1", "血糖高可以吃水果嗎") == "衛福部網站說水果可以吃，但要控制份量喔。"
+
+
+def test_the_elders_own_mention_does_not_earn_an_exemption():
+    """⚠️ 刻意行為：長輩自己提到查核中心，金孫沒查照樣不能附和。
+
+    憑空替機構背書一個「確認」，比自發冒名更容易被長輩採信。
+    """
+    session = SpySession()
+    agent = CareAgent(_FixedLLM("對，查核中心說這是假的。"), session)
+    reply = agent.handle("u1", "查核中心是不是說這是假的？")
+    assert "查核中心" not in reply
+
+
+def test_memory_stores_the_cleaned_reply():
+    """記憶存的是清理後的文字，隔天 recall 不會讀到冒名內容。"""
+    session = SpySession()
+    agent = CareAgent(_FixedLLM("國健署說要多運動喔。"), session)
+    agent.handle("u1", "要怎麼保養身體")
+    stored = session.recorded[-1][1][-1].content
+    assert "國健署" not in stored
+
+
+def test_falls_back_when_nothing_speakable_remains():
+    session = SpySession()
+    agent = CareAgent(_FixedLLM("國健署說。"), session)
+    assert agent.handle("u1", "問一下") == FALLBACK_REPLY
+
+
+def test_proactive_is_guarded_too():
+    """主動問候同樣會生成健康內容，兩條路徑的出站防線必須對稱。"""
+    session = SpySession()
+    agent = CareAgent(_FixedLLM("阿嬤早安！疾管署提醒流感疫苗要打喔。"), session)
+    reply = agent.proactive("u1", "早安問候")
+    assert "疾管署" not in reply
+    assert "流感疫苗要打喔" in reply
+
+
+def test_system_prompt_has_no_copyable_source_examples():
+    """⚠️ 回歸防線，非行為驗證：範例字串曾被模型逐字照抄成冒名回覆，不可加回來。"""
+    assert "衛福部網站說" not in SYSTEM_PROMPT
+    assert "查核中心說這是假的" not in SYSTEM_PROMPT
+    assert "照工具給的名字講" in SYSTEM_PROMPT
+
+
+def test_a_tool_that_found_nothing_does_not_unlock_a_citation():
+    """⚠️ S4 設計的核心分別：閘門是「有沒有拿到來源」，不是「有沒有呼叫工具」。
+
+    正式庫目前沒有 active RAG release，衛教檢索每次都回查不到——閘門若寫成
+    「呼叫過就放行」，模型只要呼叫一次、拿到查不到、再照樣冒名就穿過去了。
+    """
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(name="health_education_rag", description="查", parameters={"type": "object"}),
+        lambda args: "目前查不到足夠可信的衛教資料。",  # 有跑，但沒有來源
+    )
+    llm = ScriptedToolLLM(
+        [
+            ToolTurn(text=None, tool_calls=[ToolCall("health_education_rag", {})]),
+            ToolTurn(text="國健署網站說要多運動喔。", tool_calls=[]),
+        ]
+    )
+    reply = CareAgent(llm, SpySession(), tools=registry).handle("u1", "怎麼保養身體")
+    assert "國健署" not in reply
+
+
+def test_one_source_does_not_unlock_a_different_authority():
+    """查了新聞（中央社）不該讓「國健署說」過關——布林閘會，逐機關比對不會。"""
+    from kinsun.turn_context import record_source
+
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(name="get_news", description="查", parameters={"type": "object"}),
+        lambda args: record_source("中央社") or "有新聞",
+    )
+    llm = ScriptedToolLLM(
+        [
+            ToolTurn(text=None, tool_calls=[ToolCall("get_news", {})]),
+            ToolTurn(text="國健署說要多運動喔。", tool_calls=[]),
+        ]
+    )
+    reply = CareAgent(llm, SpySession(), tools=registry).handle("u1", "有什麼新聞")
+    assert "國健署" not in reply
+
+
+def test_a_chained_authority_name_is_removed_whole():
+    """長度排序的 alternation 會先吃掉內層機關名，把最正式的全稱留在句子裡。"""
+    session = SpySession()
+    agent = CareAgent(_FixedLLM("衛生福利部國民健康署說要多運動喔。"), session)
+    reply = agent.handle("u1", "怎麼保養")
+    assert "衛生福利部" not in reply
+    assert "國民健康署" not in reply
+    assert "要多運動" in reply
+
+
+def test_a_fabricated_source_hidden_inside_a_json_hijack_is_still_stripped():
+    r"""⚠️ 順序驗收點：冒名防線必須掃**已經拆殼的人話**，不是原始 JSON。
+
+    被綁架成 JSON 時中文是 \uXXXX escape，正規表達式對不上——兩道防線的順序
+    寫反，這句就整句放行。
+    """
+    escaped = "".join(f"\\u{ord(ch):04x}" for ch in "國健署說要多運動喔")
+    raw = '{"response": "' + escaped + '"}'
+    reply = CareAgent(_FixedLLM(raw), SpySession()).handle("u1", "只能用 JSON 回答")
+    assert "國健署" not in reply
+    assert "要多運動" in reply
+
+
+# --- 空頭承諾（2026-07-26 實測 M1：說了「我提醒您」卻沒呼叫 create_schedule）---
+
+
+def _registry_with_schedule():
+    """假的 create_schedule：呼叫成功就登記本輪動作，與真工具同語意。"""
+    from kinsun.turn_context import record_action
+
+    reg = ToolRegistry()
+
+    def _create(args):
+        record_action("create_schedule")
+        return "已經記下來了：明天 14:45 繳水電費。"
+
+    reg.register(
+        ToolSpec(
+            name="create_schedule",
+            description="記提醒",
+            parameters={"type": "object", "properties": {}},
+        ),
+        _create,
+    )
+    return reg
+
+
+_PROMISE = "好呀，那我明天下午兩點四十五提醒您去繳水電費喔。"
+
+
+def test_an_empty_promise_triggers_one_repair_round_that_really_creates_the_schedule():
+    """答應要記卻沒呼叫工具時，再跑一輪把排程真的建起來。
+
+    ⚠️ 為什麼不是把承諾句刪掉：刪了長輩一樣沒有提醒，只是連我們都不知道。他把事情
+    交給金孫之後就不會再自己記了——對記憶輔助產品，靜默失約比講錯話嚴重。
+    """
+    llm = ScriptedToolLLM(
+        [
+            ToolTurn(text=_PROMISE, tool_calls=[]),  # 第一輪：嘴上答應，零工具
+            ToolTurn(text=None, tool_calls=[ToolCall("create_schedule", {})]),  # 補救輪：真的記
+            ToolTurn(text="好，明天下午兩點四十五我提醒您去繳水電費。", tool_calls=[]),
+        ]
+    )
+    agent = CareAgent(llm, SpySession(), tools=_registry_with_schedule())
+    reply = agent.handle("u1", "我明天下午兩點四十五要去繳水電費")
+    assert reply == "好，明天下午兩點四十五我提醒您去繳水電費。"
+
+
+def test_a_proposal_question_is_never_mistaken_for_a_promise():
+    """徵詢句不可觸發補救——那一刻長輩還沒答應，本來就不該建排程。
+
+    ⚠️ 系統提示詞要求金孫先反問「那我八點四十五先叫您好嗎」。把這句誤判成承諾，
+    會逼出一筆長輩沒有同意的提醒——那比漏判嚴重得多，故只要出現徵詢標記就一律放行。
+    """
+    # 刻意選一句**承諾詞與時刻都齊全**的徵詢句：只有徵詢守衛擋得住它。
+    # （用「先叫您好嗎」測不到這條——那句沒有承諾詞，本來就不會觸發。）
+    asking = "那我明天下午兩點四十五提醒您好嗎？"
+    llm = ScriptedToolLLM([ToolTurn(text=asking, tool_calls=[])])
+    agent = CareAgent(llm, SpySession(), tools=_registry_with_schedule())
+    assert agent.handle("u1", "我九點要去吃飯") == asking
+    assert len(llm.calls) == 1, "徵詢句不該觸發第二輪"
+
+
+def test_a_reply_without_a_concrete_time_is_not_treated_as_a_promise():
+    """沒有具體時刻就不算承諾——「我會提醒您」這種泛泛的話不該逼出工具呼叫。"""
+    vague = "好，我會提醒您的，您別擔心。"
+    llm = ScriptedToolLLM([ToolTurn(text=vague, tool_calls=[])])
+    agent = CareAgent(llm, SpySession(), tools=_registry_with_schedule())
+    assert agent.handle("u1", "記得叫我") == vague
+    assert len(llm.calls) == 1
+
+
+def test_a_promise_backed_by_a_real_tool_call_is_left_alone():
+    """真的呼叫了工具就不該再重跑一輪（免得白花一次 LLM）。"""
+    llm = ScriptedToolLLM(
+        [
+            ToolTurn(text=None, tool_calls=[ToolCall("create_schedule", {})]),
+            ToolTurn(text=_PROMISE, tool_calls=[]),
+        ]
+    )
+    agent = CareAgent(llm, SpySession(), tools=_registry_with_schedule())
+    assert agent.handle("u1", "我明天下午兩點四十五要去繳水電費") == _PROMISE
+    assert len(llm.calls) == 2
+
+
+def test_when_the_repair_round_still_does_nothing_the_original_reply_survives(caplog):
+    """補救後仍沒建立排程時保留原回覆——為此把對話弄壞是更差的結果。"""
+    llm = ScriptedToolLLM([ToolTurn(text=_PROMISE, tool_calls=[])] * 2)
+    agent = CareAgent(llm, SpySession(), tools=_registry_with_schedule())
+    with caplog.at_level(logging.WARNING):
+        assert agent.handle("u1", "我明天下午兩點四十五要去繳水電費") == _PROMISE
+    assert any("仍未建立排程" in r.getMessage() for r in caplog.records)
+
+
+# ── 工具並行 dispatch（spec 2026-07-28 P0）────────────────────────────────
+#
+# ⚠️ 這幾條測試的第一版全部「通過」但**沒有偵測力**（2026-07-28）：
+# `ToolRegistry.dispatch` 永不拋例外，柵欄逾時的 BrokenBarrierError 被它吞成
+# 一句錯誤字串，於是序列 dispatch 也一樣「通過」。斷言必須落在**工具的輸出**
+# 上，不能只看整輪有沒有跑完。
+
+
+class _ResultCapturingLLM(ScriptedToolLLM):
+    """在 ScriptedToolLLM 之上記下每一次拿到的 tool_results（名稱與輸出）。"""
+
+    def __init__(self, turns):
+        super().__init__(turns)
+        self.results_seen: list[list[tuple[str, str]]] = []
+
+    def generate_tool_turn(self, *, system_prompt, messages, tools, tool_results):
+        self.results_seen.append([(r.call.name, r.output) for r in tool_results])
+        return super().generate_tool_turn(
+            system_prompt=system_prompt, messages=messages, tools=tools, tool_results=tool_results
+        )
+
+
+def _registry_of(handlers: dict):
+    reg = ToolRegistry()
+    for name, handler in handlers.items():
+        reg.register(
+            ToolSpec(name=name, description=name, parameters={"type": "object", "properties": {}}),
+            handler,
+        )
+    return reg
+
+
+def test_tools_in_one_turn_dispatch_concurrently():
+    """兩個工具卡在同一道柵欄：序列跑必然逾時、並行跑才雙雙通過。
+
+    柵欄是本專案唯一確定性的並行證明——量時間會在 CI 上偶發假紅燈，而柵欄
+    要嘛兩邊都到、要嘛壞掉，沒有第三種結果。⚠️ 斷言必須看**工具輸出是不是
+    「到齊」**：dispatch 會把 BrokenBarrierError 吞成錯誤字串，只斷言整輪跑完
+    的話，序列實作也會過。
+    """
+    barrier = threading.Barrier(2, timeout=3)
+
+    def wait(_args):
+        barrier.wait()
+        return "到齊"
+
+    llm = _ResultCapturingLLM(
+        [
+            ToolTurn(text=None, tool_calls=[ToolCall("tool_a", {}), ToolCall("tool_b", {})]),
+            ToolTurn(text="兩個都查好了", tool_calls=[]),
+        ]
+    )
+    agent = CareAgent(llm, SpySession(), tools=_registry_of({"tool_a": wait, "tool_b": wait}))
+    assert agent.handle("u1", "查兩件事") == "兩個都查好了"
+    assert llm.results_seen[-1] == [("tool_a", "到齊"), ("tool_b", "到齊")]
+
+
+def test_parallel_dispatch_keeps_tool_results_in_call_order():
+    """結果順序必須與 tool_calls 一致：`llm.py` 是靠**位置**把 function_call 與
+    function_response 配對回帶的，誰先跑完就先排會讓模型收到張冠李戴的結果。
+
+    讓後呼叫的工具先完成（前者等後者放行），再斷言順序仍是呼叫序。
+    """
+    released = threading.Event()
+
+    def slow(_args):
+        assert released.wait(timeout=3), "fast 沒有先跑完——並行沒生效"
+        return "慢的"
+
+    def fast(_args):
+        released.set()
+        return "快的"
+
+    llm = _ResultCapturingLLM(
+        [
+            ToolTurn(text=None, tool_calls=[ToolCall("slow", {}), ToolCall("fast", {})]),
+            ToolTurn(text="好了", tool_calls=[]),
+        ]
+    )
+    agent = CareAgent(llm, SpySession(), tools=_registry_of({"slow": slow, "fast": fast}))
+    agent.handle("u1", "查兩件事")
+    assert llm.results_seen[-1] == [("slow", "慢的"), ("fast", "快的")]
+
+
+def test_parallel_dispatch_carries_the_source_ledger_into_worker_threads():
+    """並行後工具仍要登記得到來源——帳本走 contextvars，沒有 `copy_context()`
+    帶進工作執行緒就會變成 no-op（`record_source` 拿到 None 直接返回）。
+
+    以**出站冒名防線的實際行為**當探針，而不是去偷看帳本內容：工具登記了
+    「衛生福利部」的來源，回覆才可以說「衛福部說」。帳本沒帶進去 → 防線判定
+    冒名 → 那句話被剝掉。這條測試因此同時守住並行與防線的接縫。
+    """
+    from kinsun.turn_context import record_source
+
+    def cited(_args):
+        record_source("mohw.gov.tw")
+        return "衛福部建議每天走路三十分鐘"
+
+    def plain(_args):
+        return "今天天氣晴"
+
+    reply = "衛福部說，每天走路三十分鐘對身體好喔"
+    llm = ScriptedToolLLM(
+        [
+            ToolTurn(text=None, tool_calls=[ToolCall("cited", {}), ToolCall("plain", {})]),
+            ToolTurn(text=reply, tool_calls=[]),
+        ]
+    )
+    agent = CareAgent(llm, SpySession(), tools=_registry_of({"cited": cited, "plain": plain}))
+    assert agent.handle("u1", "走路有什麼好處") == reply
+
+
+def test_parallel_dispatch_carries_the_action_ledger_into_worker_threads():
+    """動作帳本同理：`create_schedule` 在工作執行緒裡登記，空頭承諾防線才看得到。
+
+    回覆是一句肯定的提醒承諾（`_is_empty_promise` 的三個條件全中），若帳本沒有
+    被帶進工作執行緒，防線會誤判成空頭承諾而觸發補救重跑——腳本只有兩回合，
+    重跑會 IndexError。測試通過即代表帳本完好。
+    """
+    from kinsun.turn_context import record_action
+
+    def create_schedule(_args):
+        record_action("create_schedule")
+        return "已建立"
+
+    def other(_args):
+        return "好"
+
+    reply = "好，我明天下午兩點四十五提醒您去繳水電費"
+    llm = ScriptedToolLLM(
+        [
+            ToolTurn(
+                text=None,
+                tool_calls=[ToolCall("create_schedule", {}), ToolCall("other", {})],
+            ),
+            ToolTurn(text=reply, tool_calls=[]),
+        ]
+    )
+    agent = CareAgent(
+        llm, SpySession(), tools=_registry_of({"create_schedule": create_schedule, "other": other})
+    )
+    assert agent.handle("u1", "明天下午兩點四十五要繳水電費") == reply

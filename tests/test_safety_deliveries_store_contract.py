@@ -49,6 +49,32 @@ def test_record_channels_roundtrip(store, ns):
     assert got[0].channels == "app"
 
 
+def test_record_outcome_roundtrip(store, ns):
+    """2026-07-27：outcome 記「為什麼沒送到」，Fake 與 Pg 必須同樣保存。"""
+    store.record(f"{ns}e8", f"{ns}g1", RiskTier.L2, delivered=False, outcome="no_route")
+    assert store.list_for_elder(f"{ns}e8")[0].outcome == "no_route"
+
+
+def test_unrecorded_outcome_defaults_to_empty(store, ns):
+    """舊資料與未指定 outcome 的呼叫端一律得到空字串（未分類），兩個實作一致。"""
+    store.record(f"{ns}e7", f"{ns}g1", RiskTier.L2, delivered=True)
+    assert store.list_for_elder(f"{ns}e7")[0].outcome == ""
+
+
+def test_count_failed_since_excludes_guardians_with_no_route(store, ns):
+    """未綁通道是常態不是故障，不可算進投遞失敗告警（2026-07-27）。
+
+    未分類的舊資料（outcome=''）仍算失敗——寧可多報，不可讓歷史失敗憑空消失。
+    """
+    ts = FIXED_CLOCK.timestamp()
+    before = store.count_failed_since(ts - 1)
+    store.record(f"{ns}e3", f"{ns}g1", RiskTier.L2, delivered=False, outcome="no_route")
+    assert store.count_failed_since(ts - 1) == before  # 沒有增加
+    store.record(f"{ns}e3", f"{ns}g2", RiskTier.L2, delivered=False, outcome="failed")
+    store.record(f"{ns}e3", f"{ns}g3", RiskTier.L2, delivered=False)  # 舊形狀＝未分類
+    assert store.count_failed_since(ts - 1) == before + 2
+
+
 def test_count_failed_since_counts_undelivered_across_elders(store, ns):
     """✅ 庚-02（A-40）：送達失敗（delivered=False）跨長輩全域計數，供 admin 告警。
 

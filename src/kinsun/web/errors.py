@@ -18,6 +18,10 @@ class ErrorCode(StrEnum):
     # --- 認證與授權 ---
     MISSING_TOKEN = "missing_token"
     INVALID_TOKEN = "invalid_token"
+    # 框架層（打錯網址／方法不對）與排程業務驗證的統一出口（A-04／A-01，2026-07-29）
+    NOT_FOUND = "not_found"
+    METHOD_NOT_ALLOWED = "method_not_allowed"
+    INVALID_SCHEDULE = "invalid_schedule"
     INVALID_CREDENTIALS = "invalid_credentials"
     INVALID_ADMIN_KEY = "invalid_admin_key"
     CONSENT_REVOKED = "consent_revoked"
@@ -29,7 +33,14 @@ class ErrorCode(StrEnum):
     TRACE_NOT_FOUND = "trace_not_found"
     SCHEDULE_NOT_FOUND = "schedule_not_found"
     JOB_NOT_FOUND = "job_not_found"
+    # 這支 job 存在，但由別的程序執行（如 RAG 週更），後台無法就地觸發。
+    JOB_NOT_RUNNABLE_HERE = "job_not_runnable_here"
     STRATEGY_NOT_FOUND = "strategy_not_found"
+    CHUNK_NOT_FOUND = "chunk_not_found"
+
+    # --- 分段語音串流（2026-07-26 延遲優化）---
+    CHUNK_SUPERSEDED = "chunk_superseded"  # 那一輪已被新的一輪取代，App 應停止續拉
+    SPEECH_UNAVAILABLE = "speech_unavailable"  # 合成或上傳失敗，後續段落取不到
 
     # --- 帳號 ---
     EMAIL_TAKEN = "email_taken"
@@ -51,6 +62,7 @@ class ErrorCode(StrEnum):
     SLOTS_REQUIRED = "slots_required"
     INVALID_SLOT = "invalid_slot"
     INVALID_KIND = "invalid_kind"
+    KIND_NOT_CHANGEABLE = "kind_not_changeable"
     OCCURRENCES_REQUIRED = "occurrences_required"
     INVALID_DATE = "invalid_date"
     INVALID_TIME = "invalid_time"

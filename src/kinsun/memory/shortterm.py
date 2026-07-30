@@ -6,6 +6,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
+from kinsun import tracing
 from kinsun.db import Database, _Errors
 from kinsun.llm import Message
 
@@ -43,7 +44,7 @@ def _first_per_day(timestamps: list[float], tz) -> list[float]:
 
 
 class MemoryStore(Protocol):
-    def append(self, elder_id: str, message: Message) -> None: ...
+    def append(self, elder_id: str, message: Message, *, at: datetime | None = None) -> None: ...
     def recent(self, elder_id: str) -> list[Message]: ...
     def previous_day(self, elder_id: str) -> list[Message]: ...
     def list_for_range(self, elder_id: str, *, start: float, end: float) -> list[Message]: ...
@@ -69,13 +70,27 @@ class PgMemoryStore:
         self._clock = clock
         self._max_turns = max_turns
 
-    def append(self, elder_id: str, message: Message) -> None:
-        created_at = self._clock().timestamp()
+    def append(self, elder_id: str, message: Message, *, at: datetime | None = None) -> None:
+        """`at`＝這一輪**長輩開口的時刻**；None 沿用寫入當下（原行為）。
+
+        ⚠️ 為什麼需要它（spec 2026-07-28 P3）：`recent()` 依 `created_at DESC, id DESC`
+        取回，而併發輪的寫入時刻是「誰先算完誰先寫」。長輩先問新聞（要查、慢）再問
+        天氣（快），天氣會先寫進去——隔天 recall 讀到的對話順序是**顛倒的**，摘要也
+        跟著錯。更糟的是兩輪的 user／assistant 訊息可能交錯寫入，讀起來像兩段被打散
+        的對話。以開口時刻為排序鍵時，`created_at` 主導排序，同一輪的兩則自然相鄰，
+        兩個問題一起消失。
+
+        單輪路徑數值幾乎不變（開口時刻 ≈ 寫入時刻），故既有行為不受影響。
+        """
+        created_at = (at or self._clock()).timestamp()
         self._db.execute(
             "INSERT INTO turns (elder_id, role, content, created_at) VALUES (%s, %s, %s, %s)",
             (elder_id, message.role, message.content, created_at),
         )
 
+    # 一顆 span（2026-07-30 spec）：memory_assemble 三段串行裡唯一沒露臉的一段。
+    # output 關——TurnContext.history 已含同一份內容，重複攤只是燒儲存。
+    @tracing.track(name="shortterm_recent", capture_input=True, capture_output=False)
     def recent(self, elder_id: str) -> list[Message]:
         start = self._start_of_today()
         rows = self._db.query(

@@ -22,6 +22,7 @@ from kinsun.tools.lookups import (
     safe_record,
 )
 from kinsun.transport import HttpxTransport, Transport, TransportError, read_json
+from kinsun.turn_context import record_source
 
 logger = logging.getLogger("kinsun.tools.web_search")
 
@@ -54,7 +55,9 @@ WEB_SEARCH_SPEC = ToolSpec(
     name="web_search",
     description=(
         "上網查證即時或可疑資訊，回傳附來源網站的搜尋結果。"
-        "長輩問時事、生活資訊（天氣除外）時用 topic=general；"
+        "長輩問時事、生活資訊（天氣、附近的店家與場所除外）時用 topic=general；"
+        "問附近有什麼餐廳、藥局、哪裡可以推拿這類問題，一律用 search_nearby_places，"
+        "不要用本工具——本工具查到的是全網熱門推薦，地理範圍太廣，給不了長輩家附近的店；"
         "長輩轉述可疑訊息、疑似謠言或詐騙時用 topic=rumor_check，只查事實查核網站；"
         "健康問題一律先用 health_education_rag，"
         "只有在它回報查無資料且非高風險時，才用 topic=health 上官方衛教網站備援。"
@@ -80,7 +83,15 @@ def _site_of(url: str) -> str:
 
 
 # capture_input=False：本函式第二個參數是 api_key，絕不可被觀測層記錄。
-@tracing.track(name="web_search_tavily", type="tool", capture_input=False, capture_output=False)
+# ⚠ api_key 是第二個參數，opik 不會自動移除（只會 pop self／cls），必須顯式排除；
+# http 是 Transport 物件，序列化沒有意義。排除後 query／topic 就看得到了。
+@tracing.track(
+    name="web_search_tavily",
+    type="tool",
+    capture_input=True,
+    capture_output=True,
+    ignore_arguments=["api_key", "http"],
+)
 def _search(http: Transport, api_key: str, query: str, topic: str) -> list[dict]:
     payload: dict = {"query": query, "search_depth": "basic", "max_results": _MAX_RESULTS}
     domains = _ALLOWED_DOMAINS[topic]
@@ -136,6 +147,11 @@ def build_web_search_handler(
             status=STATUS_OK,
             sources=[{key: r[key] for key in ("title", "site", "url")} for r in results],
         )
+        # 本輪來源登記（2026-07-26 實測 S4）：這裡是真的拿到外部來源，金孫轉述時
+        # 講出來源名稱屬合法引用，出站的冒名防線據此放行。查不到（STATUS_EMPTY）
+        # 與失敗（STATUS_ERROR）刻意不登記——沒查到就是沒有來源。
+        for result in results:
+            record_source(result["site"])
         return json.dumps({"topic": topic, "results": results}, ensure_ascii=False)
 
     return handler

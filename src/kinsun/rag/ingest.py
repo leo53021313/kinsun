@@ -26,12 +26,12 @@ from kinsun.rag.ingestion import (
 from kinsun.rag.releases import PgRagReleaseStore, QualityGateInput
 from kinsun.rag.retriever import HealthEducationRetriever
 from kinsun.rag.schemas import ContentPolicy
-from kinsun.rag.source_registry import SourceRegistry
+from kinsun.rag.source_registry import SourceRegistry, order_answer_first
 from kinsun.rag.source_validator import SourceValidator
 from kinsun.rag.vector_store import PgVectorStore
 
 
-@tracing.track(name="rag_ingest", type="general", capture_input=False, capture_output=False)
+@tracing.track(name="rag_ingest", type="general", capture_input=False, capture_output=True)
 def main() -> None:
     _load_dotenv(Path(".env"))
     args = _parse_args()
@@ -40,7 +40,7 @@ def main() -> None:
     embedding_model = os.environ.get("RAG_EMBEDDING_MODEL", "gemini-embedding-001")
     content_policy = ContentPolicy(os.environ.get("RAG_CONTENT_POLICY", "allowed_only"))
     ensure_schema(database_url)
-    db = Database.open(database_url)
+    db = Database.open_for_cli(database_url)
     try:
         store = PgVectorStore(db)
         if args.reset:
@@ -68,8 +68,11 @@ def main() -> None:
             max_chunk_chars=args.max_chunk_chars,
         )
         registry = SourceRegistry()
-        source_ids = tuple(
-            args.source or [source.source_id for source in registry.approved_for_rag()]
+        # ANSWER 先於 DISCOVERY：跨來源 URL 去重是先到先得，順序決定衛教內文
+        # 會不會被只留 membership 的 discovery 來源搶走（見 order_answer_first）。
+        source_ids = order_answer_first(
+            args.source or [source.source_id for source in registry.approved_for_rag()],
+            registry,
         )
         try:
             _ingest_seed_file(

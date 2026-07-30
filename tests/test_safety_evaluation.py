@@ -145,6 +145,18 @@ def test_shipped_dataset_loads_and_covers_all_tiers():
     assert tiers == {RiskTier.L0, RiskTier.L1, RiskTier.L2}
 
 
+def _block_dotenv(monkeypatch) -> None:
+    """擋掉 `_build_detector_assess` 內的 load_dotenv（2026-07-27）。
+
+    它是**函式內 import**，故要打在 `kinsun.config` 上而不是本模組屬性。不擋的話會把
+    正式 .env 的 106 個鍵灌回**整個測試行程**、汙染後面所有測試——與 test_app.py 同型，
+    由 conftest 的 pytest_sessionfinish 守住。
+    """
+    import kinsun.config
+
+    monkeypatch.setattr(kinsun.config, "load_dotenv", lambda *a, **k: None)
+
+
 def _set_required_env(monkeypatch) -> None:
     """`_build_detector_assess` 會跑 `load_settings`，缺任何一個必要鍵就拋 ConfigError。
 
@@ -177,6 +189,7 @@ def test_detector_builder_honours_model_override(monkeypatch):
             return ""
 
     monkeypatch.setattr("kinsun.llm.GeminiClient", _SpyGeminiClient)
+    _block_dotenv(monkeypatch)
     _set_required_env(monkeypatch)
 
     evaluation._build_detector_assess("gemini-3.5-pro")
@@ -197,8 +210,57 @@ def test_detector_builder_defaults_to_configured_safety_model(monkeypatch):
             return ""
 
     monkeypatch.setattr("kinsun.llm.GeminiClient", _SpyGeminiClient)
+    _block_dotenv(monkeypatch)
     _set_required_env(monkeypatch)
     monkeypatch.setenv("GEMINI_MODEL_SAFETY", "gemini-from-env")
 
     evaluation._build_detector_assess()
     assert captured["model"] == "gemini-from-env"
+
+
+# ── 分級器降級必須被看見（2026-07-29）────────────────────────────────────
+
+
+def _assess_with(tier: RiskTier, signals: list[str]):
+    return lambda text: RiskAssessment(tier, 0.9, "測試", signals)
+
+
+def test_report_counts_utterances_where_the_classifier_failed():
+    """⚠️ 這是這支工具最危險的盲點：分級器失敗時它會**安靜地量到別的東西**。
+
+    `RiskDetector` 的 fail-safe 是刻意設計——分級器一掛，症狀詞照舊撐住 L2、其餘保守
+    記 L1，好讓真的求救不會因為 LLM 故障而漏掉。但那代表**當 LLM 全掛的時候，這支
+    工具量到的其實是「純詞表＋fail-safe」的成績**，而報表上完全看不出來。
+
+    實測撞到過：2026-07-29 一次完整跑報出「誤報 7」，而 `detector.py` 的註解記載同一
+    份標注集應為 3；逐句直呼偵測器得到的是正確的 L1。差別就是那一輪有呼叫失敗，
+    降級結果被當成真實量測。看到「召回率 100%」的人會以為分級器很好——它根本沒跑。
+    """
+    examples = [
+        LabeledUtterance("我跌倒了", RiskTier.L2, ""),
+        LabeledUtterance("今天天氣真好", RiskTier.L0, ""),
+    ]
+    report = evaluate(_assess_with(RiskTier.L2, ["keyword:symptom", "llm:error"]), examples)
+    assert report.degraded == 2
+
+
+def test_a_healthy_run_reports_zero_degraded():
+    examples = [LabeledUtterance("我跌倒了", RiskTier.L2, "")]
+    report = evaluate(_assess_with(RiskTier.L2, ["llm"]), examples)
+    assert report.degraded == 0
+
+
+def test_format_report_shouts_when_any_utterance_degraded():
+    """降級必須**大聲**：這份報表會被拿來決定要不要換模型、要不要調門檻。
+    一行不起眼的數字會被略過，而略過的代價是拿詞表的成績去做分級器的決策。"""
+    examples = [LabeledUtterance("我跌倒了", RiskTier.L2, "")]
+    text = format_report(evaluate(_assess_with(RiskTier.L2, ["llm:error"]), examples))
+    assert "⚠" in text
+    assert "降級" in text
+    assert "1/1" in text
+
+
+def test_format_report_stays_quiet_when_nothing_degraded():
+    examples = [LabeledUtterance("我跌倒了", RiskTier.L2, "")]
+    text = format_report(evaluate(_assess_with(RiskTier.L2, ["llm"]), examples))
+    assert "降級" not in text

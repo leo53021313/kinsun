@@ -15,7 +15,7 @@ from kinsun.rag.ingestion import IngestionPipeline
 from kinsun.rag.releases import PgRagReleaseStore, QualityGateInput
 from kinsun.rag.retriever import HealthEducationRetriever
 from kinsun.rag.schemas import ContentPolicy, CrawlStatus, SourceRole
-from kinsun.rag.source_registry import SourceRegistry
+from kinsun.rag.source_registry import SourceRegistry, order_answer_first
 from kinsun.rag.source_validator import SourceValidator
 from kinsun.rag.vector_store import PgVectorStore
 
@@ -71,7 +71,9 @@ def refresh_known_urls(
         config=CrawlerConfig(max_pages_per_source=1, delay_seconds=crawler_delay_seconds)
     )
     try:
-        for source_id, urls in known_urls.items():
+        # 同 ingest：ANSWER 先於 DISCOVERY（dict 的插入序來自 DB 列順序，不可依賴）。
+        for source_id in order_answer_first(known_urls, registry):
+            urls = known_urls[source_id]
             source = registry.get(source_id)
             validation = validator.validate(source)
             if not validation.can_ingest:

@@ -289,3 +289,37 @@ def test_handler_location_store_failure_degrades():
     store.save(_item("n1", title="照常給料的新聞"))
     handler = build_news_handler(store, clock=_clock, locations=_Exploding())
     assert "照常給料的新聞" in handler({}, _ctx("e1"))
+
+
+# --- 本輪來源登記（2026-07-26 實測 S4）：媒體名是真的來源，金孫轉述屬合法引用 ---
+
+
+def test_news_handler_registers_the_publishers():
+    from kinsun.turn_context import turn_sources
+
+    store = FakeNewsStore()
+    store.save(_item("n1", title="長者防跌新措施"))
+    store.save(_item("n2", title="流感疫苗開打", publisher="測試媒體"))
+    with turn_sources() as sources:
+        build_news_handler(store, clock=_clock)({}, None)
+    assert set(sources) == {"衛生福利部", "測試媒體"}
+
+
+def test_news_detail_handler_registers_the_publisher():
+    from kinsun.turn_context import turn_sources
+
+    store = FakeNewsStore()
+    store.save(_item("n1", title="流感疫苗開打", publisher="測試媒體"))
+    with turn_sources() as sources:
+        build_news_detail_handler(store, clock=_clock)({"title": "流感疫苗"}, None)
+    assert sources == ["測試媒體"]
+
+
+def test_non_string_topic_does_not_break_the_tool():
+    """實測：模型把 topic 送成 ["健康"] 時原本會拋 AttributeError，被吞成「工具執行失敗」。"""
+    from kinsun.news.store import FakeNewsStore
+    from kinsun.tools.news import build_news_handler
+
+    handler = build_news_handler(FakeNewsStore(), clock=lambda: _NOW)
+    reply = handler({"topic": ["健康"]}, ToolInvocationContext("t", "e1"))
+    assert "AttributeError" not in reply and "工具執行失敗" not in reply

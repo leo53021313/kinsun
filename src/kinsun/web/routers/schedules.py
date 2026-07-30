@@ -129,7 +129,13 @@ def create_schedules_router(
                 event_at=parse_event_at(body),
             )
         except ScheduleValidationError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            # code 給機器判斷、message 用服務層已經寫好的繁中人話（A-01，2026-07-29）。
+            # 原本 detail=str(exc) 把整句中文塞進 error.code，前端無從分支；而那些句子
+            # 是寫給長輩看的（LINE 流程與 LLM 工具都直接用），不能為了 code 而改掉。
+            raise HTTPException(
+                status_code=400,
+                detail={"code": ErrorCode.INVALID_SCHEDULE, "message": str(exc)},
+            ) from exc
         return ok(_group_json(find_group(elder_id, rows[0].group_id)))
 
     @router.put("/elders/{elder_id}/schedules/{group_id}")
@@ -140,7 +146,14 @@ def create_schedules_router(
         auth: GuardianAuth = Depends(current_guardian),
     ) -> dict:
         scope.assert_manages(auth, elder_id)
-        find_group(elder_id, group_id)  # 不屬於這位長輩就 404，不洩漏他人資料
+        group = find_group(elder_id, group_id)  # 不屬於這位長輩就 404，不洩漏他人資料
+        # 類型不可改（A-09，2026-07-29）。⚠️ `replace_group` 沿用原本的 kind 是**刻意的**
+        # （見其 docstring：改內容不該讓家屬設的藥變成長輩設的、用藥變成回診），所以正解
+        # 不是讓它可改。真正的缺陷是契約說謊——`kind` 是必填卻永遠被忽略，家屬把用藥改成
+        # 回診會拿到 200 OK 與一筆完全沒變的資料，UI 沒有任何理由懷疑它。明確擋下來，
+        # 呼叫端才知道要改類型得刪掉重建。
+        if parse_kind(body.kind) is not group.kind:
+            raise HTTPException(status_code=400, detail=ErrorCode.KIND_NOT_CHANGEABLE)
         occurrences = parse_occurrences(body.occurrences)
         try:
             schedules.replace_group(
@@ -150,7 +163,13 @@ def create_schedules_router(
                 event_at=parse_event_at(body),
             )
         except ScheduleValidationError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            # code 給機器判斷、message 用服務層已經寫好的繁中人話（A-01，2026-07-29）。
+            # 原本 detail=str(exc) 把整句中文塞進 error.code，前端無從分支；而那些句子
+            # 是寫給長輩看的（LINE 流程與 LLM 工具都直接用），不能為了 code 而改掉。
+            raise HTTPException(
+                status_code=400,
+                detail={"code": ErrorCode.INVALID_SCHEDULE, "message": str(exc)},
+            ) from exc
         return ok(_group_json(find_group(elder_id, group_id)))
 
     @router.delete("/elders/{elder_id}/schedules/{group_id}", status_code=204)

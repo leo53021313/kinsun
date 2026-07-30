@@ -408,11 +408,27 @@ def test_observed_days_equal_to_the_lookback_window_is_still_accepted():
     assert [r.observed_days for r in rows] == [7]
 
 
+def _sent_turns(reflector: FakeReflector) -> list[str]:
+    """反思送出的是單一文字稿訊息；拆回逐句內容，讓「讀了哪些輪」的斷言照舊。"""
+    assert len(reflector.messages) == 1
+    lines = reflector.messages[0].content.split("\n")[1:]  # 第一行是文字稿的段首
+    return [line.split("：", 1)[1] for line in lines]
+
+
+def test_the_request_never_ends_with_a_model_turn():
+    """對話必然以金孫的回覆收尾，而 Gemini 3.5 拒收「以模型回合結尾」的請求（400
+    INVALID_ARGUMENT）。直接餵歷史會讓每晚反思對每位長輩整批失敗——2026-07-26
+    全流程模擬實測實際踩到，正式庫守則自 2026-07-20 起再無新增。故一律送文字稿。"""
+    memory = _memory_with_turns()  # 最後一輪是 assistant（「早安！」）
+    _, reflector = _run(_one_candidate(), short_term=memory)
+    assert [m.role for m in reflector.messages] == ["user"]
+
+
 def test_the_whole_lookback_window_is_read_not_just_yesterday():
     memory = _memory_with_turns()
     memory.append("e1", Message(role="user", content="六天前講的話"), at=SIX_DAYS_AGO)
     _, reflector = _run(_one_candidate(), short_term=memory)
-    assert "六天前講的話" in [m.content for m in reflector.messages]
+    assert "六天前講的話" in _sent_turns(reflector)
 
 
 def test_turns_outside_the_window_are_not_read():
@@ -420,7 +436,7 @@ def test_turns_outside_the_window_are_not_read():
     memory.append("e1", Message(role="user", content="八天前講的話"), at=TOO_OLD)
     memory.append("e1", Message(role="user", content="今天講的話"), at=TODAY)
     _, reflector = _run(_one_candidate(), short_term=memory)
-    contents = [m.content for m in reflector.messages]
+    contents = _sent_turns(reflector)
     assert "八天前講的話" not in contents
     assert "今天講的話" not in contents
 
@@ -433,7 +449,7 @@ def test_the_latest_days_survive_the_turn_cap():
     最投入的長輩反而拿到最爛的反思。
     """
     _, reflector = _run(_one_candidate(), short_term=_chatty_week(), max_turns=200)
-    contents = [m.content for m in reflector.messages]
+    contents = _sent_turns(reflector)
     assert len(contents) == 200
     assert any(c.startswith("7/13") for c in contents)  # 昨天
     assert any(c.startswith("7/12") for c in contents)  # 前天
@@ -444,7 +460,7 @@ def test_the_latest_days_survive_the_turn_cap():
 def test_the_whole_chatty_week_fits_under_the_default_cap():
     """預設上限（600）下，健談長輩的整週 280 輪一輪都不該少。"""
     _, reflector = _run(_one_candidate(), short_term=_chatty_week())
-    contents = [m.content for m in reflector.messages]
+    contents = _sent_turns(reflector)
     assert len(contents) == 280
     assert contents[0] == "7/7 第 0 句"
     assert contents[-1] == "7/13 第 39 句"
