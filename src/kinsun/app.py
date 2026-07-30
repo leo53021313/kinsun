@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -56,9 +57,20 @@ from kinsun.web.routers import (
     create_guardian_face_router,
     create_meta_router,
 )
+from kinsun.web.routers.demo_status import (
+    create_demo_status_router,
+    database_probe,
+    llm_probe,
+    scheduler_probe,
+    service_probe,
+)
 from kinsun.web.security import install_security_headers
 
 logger = logging.getLogger("kinsun.app")
+
+# 運營狀態探針的逾時（秒）。刻意很短：這是使用者進站看到的第一個畫面，
+# 不可以被一個連不上的服務拖住。
+_DEMO_PROBE_TIMEOUT = 1.5
 
 
 def build_app() -> FastAPI:
@@ -385,6 +397,26 @@ def build_app() -> FastAPI:
     # 公開 meta（spec 2026-07-12）：內測模式下發；App 與 admin 前端啟動時查一次。
     app.include_router(
         create_meta_router(internal_testing_enabled=settings.internal_testing_enabled),
+        prefix="/api/v1",
+    )
+    # 公開運營狀態（spec 2026-07-30 W-03）：網頁版前端進站即查，據此決定
+    # 「開始使用」能不能按。不需認證，只回粗粒度狀態——見 demo_status.py 的說明。
+    #
+    # ⚠️ `settings.asr_endpoint`／`tts_endpoint` 在 backend=mock／bubble 的開發設定
+    # 下是空字串，此時探針回 unknown（「這個部署沒接語音服務」），而 unknown 不影響
+    # 整體可用——本機開發不該因為沒接 DGX 就進不去。
+    app.include_router(
+        create_demo_status_router(
+            probes={
+                "database": database_probe(db),
+                "asr": service_probe(settings.asr_endpoint, timeout=_DEMO_PROBE_TIMEOUT),
+                "tts": service_probe(settings.tts_endpoint, timeout=_DEMO_PROBE_TIMEOUT),
+                "llm": llm_probe(core.traces, clock=time.time),
+                "scheduler": scheduler_probe(
+                    PgScheduleStateStore(db, tz), job_specs(settings), clock=clock
+                ),
+            }
+        ),
         prefix="/api/v1",
     )
     dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"

@@ -12,11 +12,16 @@
 from __future__ import annotations
 
 import logging
+import socket
 import time
 from collections.abc import Callable, Mapping
+from datetime import datetime
+from urllib.parse import urlsplit, urlunsplit
 
+from croniter import croniter
 from fastapi import APIRouter
 
+from kinsun.transport import HttpxTransport, Transport, TransportError
 from kinsun.web.envelope import ok
 
 logger = logging.getLogger("kinsun.web.demo_status")
@@ -93,3 +98,168 @@ def create_demo_status_router(
         return ok(payload)
 
     return router
+
+
+# --- 真實探針 ---
+#
+# 每個探針都是「無參數、回傳分項狀態字串」的閉包，這樣路由完全不必知道分項是怎麼
+# 問出來的，測試也就不必碰網路與資料庫。
+
+
+def healthz_url_of(endpoint: str) -> str:
+    """把服務的 endpoint（如 `.../transcribe`）換成同一台主機的 `/healthz`。
+
+    ⚠️ 用 `urlsplit` 而不是字串切割：位址若沒有路徑（`http://host:8001`），
+    切最後一段會算出 `http://healthz` 這種連得上但完全不對的網址，而症狀是
+    「這個服務永遠顯示停機」——查起來會非常久。
+    """
+    if not endpoint:
+        return ""
+    parts = urlsplit(endpoint)
+    return urlunsplit((parts.scheme, parts.netloc, "/healthz", "", ""))
+
+
+def tcp_port_open(host: str, port: int, *, timeout: float = 0.5) -> bool:
+    """埠有沒有人在聽。逾時要更短——這只是在 healthz 已經失敗之後補問一句。"""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def http_healthz_probe(
+    url: str,
+    *,
+    transport: Transport | None = None,
+    timeout: float = 1.5,
+) -> Callable[[], str]:
+    """打對方的 `/healthz`。位址空字串＝這個部署沒接這個服務，回 unknown 而非 down。
+
+    ⚠️ 逾時要短（預設 1.5 秒）：這支端點是使用者進站看到的第一個畫面，
+    不可以被一個連不上的服務拖住五秒。
+    """
+    client = transport or HttpxTransport()
+
+    def probe() -> str:
+        if not url:
+            return UNKNOWN
+        try:
+            response = client.request("GET", url, timeout=timeout)
+        except TransportError:
+            return DOWN
+        return OK if 200 <= response.status < 300 else DOWN
+
+    return probe
+
+
+def service_probe(
+    endpoint: str,
+    *,
+    transport: Transport | None = None,
+    timeout: float = 1.5,
+    port_check: Callable[[str, int], bool] = lambda host, port: tcp_port_open(host, port),
+) -> Callable[[], str]:
+    """ASR／TTS 這種「有 healthz 的獨立服務」的完整探針。
+
+    ⚠️ **healthz 不通但埠是開的＝模型還在載入**，這是本函式存在的唯一理由，
+    也是 `overall_of` 的 `starting` 狀態唯一的來源。「載入中」與「沒開」在畫面上
+    是兩件完全不同的事：前者再等十秒就好，後者要有人去下指令。分不出來的話，
+    使用者只能盲等或盲放棄——而這是內部測試最常遇到的狀況。
+    判斷與 `scripts/kinsun.sh` 的 `_health_note` 同源。
+    """
+    healthz = http_healthz_probe(healthz_url_of(endpoint), transport=transport, timeout=timeout)
+    parts = urlsplit(endpoint) if endpoint else None
+
+    def probe() -> str:
+        status = healthz()
+        if status in (OK, UNKNOWN):
+            return status
+        if parts is None or not parts.hostname:
+            return DOWN
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+        return LOADING if port_check(parts.hostname, port) else DOWN
+
+    return probe
+
+
+def database_probe(db) -> Callable[[], str]:
+    """最便宜的連通性驗證。查不動就是查不動，不細分原因——那是 log 的工作。"""
+
+    def probe() -> str:
+        try:
+            db.query_one("SELECT 1")
+        except Exception:  # noqa: BLE001 - 任何失敗都是「資料庫現在不能用」
+            return DOWN
+        return OK
+
+    return probe
+
+
+def llm_probe(
+    traces,
+    *,
+    clock: Callable[[], float],
+    window_seconds: float = 600.0,
+    failure_ratio: float = 0.5,
+) -> Callable[[], str]:
+    """看最近一段時間內對話模型呼叫的失敗比例。**刻意不空打 Gemini**——那要花錢，
+    而且一支公開端點每五秒燒一次 API 額度是荒謬的。
+
+    近期沒有任何呼叫時回 unknown：沒有人講話的時候，談不上健康或不健康。
+    """
+
+    def probe() -> str:
+        now = clock()
+        stats = traces.get_overview_stats(
+            today_start=now - window_seconds, hourly_start=now - window_seconds
+        )
+        calls = 0
+        errors = 0
+        for stage in stats.stages:
+            if not stage.stage.startswith("llm:"):
+                continue
+            calls += stage.call_count
+            errors += stage.error_count
+        if calls == 0:
+            return UNKNOWN
+        return DOWN if errors / calls > failure_ratio else OK
+
+    return probe
+
+
+def scheduler_probe(
+    schedule_state,
+    specs,
+    *,
+    clock: Callable[[], datetime],
+) -> Callable[[], str]:
+    """排程器是否還在按時做事。
+
+    ⚠️ **只看程序在不在會說謊**：2026-07-26 排程器假死七小時，`kinsun.sh status`
+    全程顯示 RUNNING。判定必須看「工作有沒有按 cron 跑」，那樣程序被停掉、卡死、
+    當掉三種情形都會浮現。判定邏輯與 `admin_jobs.py` 的逾期判定同源。
+
+    從未執行過回 unknown 而非 down：剛部署完還沒跑第一輪，不該一開機就報紅。
+    """
+    default_tolerance = 300.0
+
+    def probe() -> str:
+        now = clock()
+        seen_any = False
+        for spec in specs:
+            last = schedule_state.get_last_run(spec.name)
+            if last is None:
+                continue
+            seen_any = True
+            due_at = croniter(spec.cron, last).get_next(datetime)
+            tolerance = (
+                spec.max_lateness_seconds
+                if spec.max_lateness_seconds is not None
+                else default_tolerance
+            )
+            if (now - due_at).total_seconds() > tolerance:
+                return DOWN
+        return OK if seen_any else UNKNOWN
+
+    return probe

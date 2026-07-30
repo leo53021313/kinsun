@@ -180,3 +180,205 @@ def test_探針爆掉不會讓端點本身掛掉():
     )
     res = TestClient(app).get("/api/v1/demo-status")
     assert res.status_code == 200
+
+
+# --- 真實探針 ---
+
+from datetime import UTC, datetime, timedelta  # noqa: E402
+
+from kinsun.transport import FakeTransport, Response, TransportError  # noqa: E402
+from kinsun.web.routers.demo_status import (  # noqa: E402
+    database_probe,
+    healthz_url_of,
+    http_healthz_probe,
+    llm_probe,
+    scheduler_probe,
+    service_probe,
+)
+
+
+def test_healthz_位址由服務位址推導():
+    """ASR_ENDPOINT 指的是 /transcribe 那一支，healthz 在同一個主機的根路徑下。"""
+    assert healthz_url_of("http://127.0.0.1:8001/transcribe") == "http://127.0.0.1:8001/healthz"
+    assert healthz_url_of("http://127.0.0.1:8002/synthesize") == "http://127.0.0.1:8002/healthz"
+
+
+def test_healthz_位址_對沒有路徑的位址也要算得對():
+    """字串切割在這裡會算出 http://healthz 這種壞網址，所以用正規的 URL 解析。"""
+    assert healthz_url_of("http://127.0.0.1:8001") == "http://127.0.0.1:8001/healthz"
+    assert healthz_url_of("https://asr.example.com/") == "https://asr.example.com/healthz"
+
+
+def test_healthz_位址_未設定時為空字串():
+    assert healthz_url_of("") == ""
+
+
+def test_healthz_探針_二百回應為正常():
+    transport = FakeTransport([Response(200, {}, b'{"status":"ok"}')])
+    assert http_healthz_probe("http://svc/healthz", transport=transport, timeout=1.5)() == "ok"
+
+
+def test_healthz_探針_連不上為停機():
+    transport = FakeTransport()
+    transport.error = TransportError("connection refused")
+    assert http_healthz_probe("http://svc/healthz", transport=transport, timeout=1.5)() == "down"
+
+
+def test_healthz_探針_未設定位址時為不明():
+    """ASR_ENDPOINT 沒設＝這個部署沒接語音服務，不是它壞了。"""
+    transport = FakeTransport()
+    assert http_healthz_probe("", transport=transport, timeout=1.5)() == "unknown"
+    assert transport.calls == [], "沒有位址就不該發出任何請求"
+
+
+def test_服務探針_healthz_通即為正常():
+    transport = FakeTransport([Response(200, {}, b"{}")])
+    probe = service_probe(
+        "http://127.0.0.1:8001/transcribe",
+        transport=transport,
+        port_check=lambda host, port: True,
+    )
+    assert probe() == "ok"
+
+
+def test_服務探針_healthz_不通但埠開著為載入中():
+    """⚠️ 這一條是 starting 狀態唯一的來源。沒有它，overall_of 的 starting
+    分支永遠不會發生，而「模型還在載入」會被顯示成「停機」——那是內部測試
+    最常遇到的狀況，也是最容易讓人白等或白放棄的誤報。"""
+    transport = FakeTransport()
+    transport.error = TransportError("connection refused")
+    probe = service_probe(
+        "http://127.0.0.1:8001/transcribe",
+        transport=transport,
+        port_check=lambda host, port: True,
+    )
+    assert probe() == "loading"
+
+
+def test_服務探針_埠也沒開為停機():
+    transport = FakeTransport()
+    transport.error = TransportError("connection refused")
+    probe = service_probe(
+        "http://127.0.0.1:8001/transcribe",
+        transport=transport,
+        port_check=lambda host, port: False,
+    )
+    assert probe() == "down"
+
+
+def test_服務探針_未設定位址時為不明_且完全不碰網路():
+    transport = FakeTransport()
+    calls = []
+    probe = service_probe(
+        "",
+        transport=transport,
+        port_check=lambda host, port: calls.append((host, port)) or True,
+    )
+    assert probe() == "unknown"
+    assert transport.calls == []
+    assert calls == []
+
+
+def test_服務探針_從位址解出主機與埠():
+    transport = FakeTransport()
+    transport.error = TransportError("nope")
+    seen = []
+    probe = service_probe(
+        "http://10.0.0.5:8002/synthesize",
+        transport=transport,
+        port_check=lambda host, port: seen.append((host, port)) or False,
+    )
+    probe()
+    assert seen == [("10.0.0.5", 8002)]
+
+
+def test_資料庫探針_查得動為正常():
+    class Db:
+        def query_one(self, sql, params=()):
+            return (1,)
+
+    assert database_probe(Db())() == "ok"
+
+
+def test_資料庫探針_查不動為停機():
+    class Db:
+        def query_one(self, sql, params=()):
+            raise RuntimeError("connection pool exhausted")
+
+    assert database_probe(Db())() == "down"
+
+
+class _Stage:
+    def __init__(self, stage, call_count, error_count):
+        self.stage = stage
+        self.call_count = call_count
+        self.error_count = error_count
+
+
+class _Traces:
+    def __init__(self, stages):
+        self._stages = stages
+        self.windows = []
+
+    def get_overview_stats(self, *, today_start, hourly_start):
+        self.windows.append(today_start)
+        return type("S", (), {"stages": self._stages})()
+
+
+def test_對話模型探針_近期無呼叫為不明():
+    """沒有人講話時談不上健康或不健康。回 unknown 而不是 ok——不知道就說不知道。"""
+    assert llm_probe(_Traces([]), clock=lambda: 1000.0)() == "unknown"
+
+
+def test_對話模型探針_近期全成功為正常():
+    stages = [_Stage("llm:care", 10, 0), _Stage("asr", 10, 5)]
+    assert llm_probe(_Traces(stages), clock=lambda: 1000.0)() == "ok"
+
+
+def test_對話模型探針_近期過半失敗為停機():
+    stages = [_Stage("llm:care", 10, 6)]
+    assert llm_probe(_Traces(stages), clock=lambda: 1000.0)() == "down"
+
+
+def test_對話模型探針_只看時間窗內的資料():
+    traces = _Traces([_Stage("llm:care", 1, 0)])
+    llm_probe(traces, clock=lambda: 1000.0, window_seconds=600.0)()
+    assert traces.windows == [400.0], "應該只查最近十分鐘，不是查一整天"
+
+
+class _Spec:
+    def __init__(self, name, cron, max_lateness_seconds=None):
+        self.name = name
+        self.cron = cron
+        self.max_lateness_seconds = max_lateness_seconds
+
+
+class _State:
+    def __init__(self, last_runs):
+        self._last_runs = last_runs
+
+    def get_last_run(self, name):
+        return self._last_runs.get(name)
+
+
+NOW = datetime(2026, 7, 30, 12, 0, tzinfo=UTC)
+
+
+def test_排程器探針_每分鐘的工作剛跑過為正常():
+    state = _State({"schedule-dispatch": NOW - timedelta(seconds=30)})
+    specs = [_Spec("schedule-dispatch", "* * * * *", 90)]
+    assert scheduler_probe(state, specs, clock=lambda: NOW)() == "ok"
+
+
+def test_排程器探針_逾期為停機():
+    """2026-07-26 排程器假死七小時、狀態列全程顯示 RUNNING——只看程序在不在會說謊。"""
+    state = _State({"schedule-dispatch": NOW - timedelta(hours=7)})
+    specs = [_Spec("schedule-dispatch", "* * * * *", 90)]
+    assert scheduler_probe(state, specs, clock=lambda: NOW)() == "down"
+
+
+def test_排程器探針_從未執行過為不明():
+    """剛部署完還沒跑過第一輪，不該一開機就報紅。"""
+    state = _State({})
+    specs = [_Spec("schedule-dispatch", "* * * * *", 90)]
+    assert scheduler_probe(state, specs, clock=lambda: NOW)() == "unknown"
