@@ -9,10 +9,13 @@
 
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { ApiError } from "kinsun-shared/envelope";
 
 import { createSessionContext } from "./createSessionContext";
 import { clearSession, loadSession, saveSession, type Session } from "./storage";
+import { makeSignOutOnAuthError } from "./useSignOutOnAuthError";
 
 const Elder = createSessionContext("elder");
 const Guardian = createSessionContext("guardian");
@@ -182,5 +185,20 @@ describe("createSessionContext", () => {
       </Elder.Provider>,
     );
     expect(seen).toEqual([{ role: "elder", token: "t1", display_name: "王阿嬤" }]);
+  });
+});
+
+describe("makeSignOutOnAuthError", () => {
+  it("401 時登出並回報已處理", () => {
+    const signOut = vi.fn();
+    expect(makeSignOutOnAuthError(signOut)(new ApiError(401, "invalid_token"))).toBe(true);
+    expect(signOut).toHaveBeenCalledOnce();
+  });
+
+  it("其他錯誤不登出，交回給呼叫端顯示", () => {
+    const signOut = vi.fn();
+    expect(makeSignOutOnAuthError(signOut)(new ApiError(400, "name_required"))).toBe(false);
+    expect(makeSignOutOnAuthError(signOut)(new Error("network"))).toBe(false);
+    expect(signOut).not.toHaveBeenCalled();
   });
 });
