@@ -55,8 +55,11 @@ def _format_alert(assessment: RiskAssessment, user_text: str) -> str:
     # 分級器的 reason，也不放家屬看不懂的「風險等級」字樣。語音輪次的原話是
     # ASR 轉出的文字（可能有錯字），Leo 同日核定不加辨識註記、直接呈現。
     text = f"{_ALERT_PREFIX}\n您關心的長輩剛剛說：\n「{user_text}」\n請盡快主動關心一下。"
-    # L3 刪除後（✅ D-72），119 提示改掛「絕對危急詞命中」訊號——tier 已無法區分。
-    if "keyword:absolute" in assessment.signals:
+    # L3 刪除後（✅ D-72），119 提示改掛關鍵詞層的訊號——tier 已無法區分。
+    # 2026-07-30 起訊號改為 `keyword:emergency`＝地端偵測器判定的急症／生命危險類
+    # （求死意念、急症徵兆、身體或環境危險）。刻意不含迷路走失與受虐：那兩類該找的
+    # 是家人或 110 而非救護車，今日行為亦然。
+    if "keyword:emergency" in assessment.signals:
         text += "\n（如情況緊急，請自行評估是否撥打 119。金孫不提供醫療診斷。）"
     return text
 
