@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import socket
+import threading
 import time
 from collections.abc import Callable, Mapping
 from datetime import datetime
@@ -65,9 +66,25 @@ def create_demo_status_router(
     clock: Callable[[], float] = time.monotonic,
     cache_seconds: float = 5.0,
 ) -> APIRouter:
-    """probes 是注入點：鍵＝分項名稱，值＝回傳分項狀態的函式（不得拋出，但這裡仍接住）。"""
+    """probes 是注入點：鍵＝分項名稱，值＝回傳分項狀態的函式（不得拋出，但這裡仍接住）。
+
+    ⚠️ **分項不齊就在這裡炸**：`overall_of` 用 `components.get(name)` 判斷關鍵項，
+    鍵不存在時是 `None`、而 `None != DOWN`，於是「ASR 掛掉＝整體停機」這條規則會
+    **悄悄**失效——畫面顯示 available、按鈕可按，而語音辨識根本沒被問過。組裝時
+    漏接一支探針，不該要等到有人在展示現場開口說話才發現。
+    """
+    missing = [name for name in COMPONENT_NAMES if name not in probes]
+    if missing:
+        raise ValueError(f"運營狀態探針缺少分項：{missing}")
+
     router = APIRouter(tags=["demo"])
     cache: dict[str, object] = {"at": None, "payload": None}
+    # ⚠️ single-flight：快取在探測**完成後**才更新，期間到達的每個請求都會看到過期的
+    # 快取、各自開始探測。一次 cache miss 的成本是兩次 healthz（各 1.5 秒逾時）＋埠
+    # 探測＋資料庫＋traces 統計＋每支排程 job 兩次查詢——ASR／TTS 真的掛掉時（也就是
+    # 這一頁最需要運作的時候）最慢約四秒。而這支端點公開、免認證、經 ngrok 對外，
+    # 底下的 handler 全是同步 def、共用 anyio 那 40 條執行緒池。
+    probe_lock = threading.Lock()
 
     def probe_all() -> dict[str, str]:
         result: dict[str, str] = {}
@@ -85,17 +102,38 @@ def create_demo_status_router(
                 result[name] = DOWN if name in _CRITICAL else UNKNOWN
         return result
 
+    def is_fresh(now: float) -> bool:
+        last_at = cache["at"]
+        return last_at is not None and now - float(last_at) < cache_seconds
+
     @router.get("/demo-status")
     def demo_status() -> dict:
+        # clock() 只叫一次：測試用有限的 tick 序列注入時間，多叫一次就對不上了。
         now = clock()
-        last_at = cache["at"]
-        if last_at is not None and now - float(last_at) < cache_seconds:
+        if is_fresh(now):
             return ok(cache["payload"])
-        components = probe_all()
-        payload = {"overall": overall_of(components), "components": components}
-        cache["at"] = now
-        cache["payload"] = payload
-        return ok(payload)
+
+        # 已經有過一份快取時，拿不到鎖就**回上一份（即使過期）**，不排隊。公開端點
+        # 寧可回舊資料，也不要三十條執行緒同時去打一台正在重啟的 GPU 服務。
+        # 冷啟動（連一份快取都還沒有）則必須等——這時回 None 會讓前端拿到一個沒有
+        # overall 的回應，那比慢更糟。
+        must_wait = cache["payload"] is None
+        if not probe_lock.acquire(blocking=must_wait):
+            return ok(cache["payload"])
+        try:
+            # 等到鎖的人可能是在別人探測期間排隊進來的——再確認一次，別重探。
+            if is_fresh(now):
+                return ok(cache["payload"])
+            components = probe_all()
+            payload = {"overall": overall_of(components), "components": components}
+            # 先寫 payload 再寫 at：快取的兩個欄位不是一次寫進去的，而讀取那一路
+            # 不拿鎖。反過來寫的話，中間那一瞬間會有「時間戳是新的、內容還是舊的」，
+            # 讀到的人會把舊內容當成新鮮的多留五秒。
+            cache["payload"] = payload
+            cache["at"] = now
+            return ok(payload)
+        finally:
+            probe_lock.release()
 
     return router
 

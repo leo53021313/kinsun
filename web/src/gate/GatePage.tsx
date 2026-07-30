@@ -1,13 +1,17 @@
-/** 開場：先看服務狀態，可用才讓人進去（spec §5.1）。 */
+/** 開場：先看服務狀態，可用才讓人進去（spec §5.1）。
+ *
+ * ⚠️ **純展示元件**：狀態由 props 收，不自己呼叫 `useDemoStatus`。撕裂動畫啟動時
+ * 本元件會被卸載、在 overlay 底下重掛兩份（見 TearTransition），狀態若住在這裡，
+ * 撕開的瞬間就會歸零成「正在確認服務狀態…」。狀態的擁有者是 App.tsx 的 Demo。
+ */
 
 import { strings } from "@/strings";
 
 import { StatusCard } from "./StatusCard";
-import { canEnter, useDemoStatus } from "./useDemoStatus";
+import { canEnter, type GateState } from "./useDemoStatus";
 
-export function GatePage(props: { onStart: () => void }) {
-  const state = useDemoStatus();
-  const enterable = canEnter(state);
+export function GatePage(props: { state: GateState; onStart: () => void }) {
+  const enterable = canEnter(props.state);
 
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-8 bg-background p-8">
@@ -16,7 +20,7 @@ export function GatePage(props: { onStart: () => void }) {
         <p className="mt-2 text-base text-ink-soft">{strings.gate.slogan}</p>
       </div>
 
-      <StatusCard state={state} />
+      <StatusCard state={props.state} />
 
       <button
         type="button"

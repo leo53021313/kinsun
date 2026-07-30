@@ -12,7 +12,16 @@ import { clearSession, loadSession, saveSession, type Role, type Session } from 
 
 type SessionContextValue = {
   session: Session | null;
-  signIn: (session: Session) => void;
+  /**
+   * ⚠️ 收 `Omit<Session, "role">`：**角色由工廠決定，呼叫端傳不進來**。
+   *
+   * 以前這裡收整個 `Session`，於是寫入那一路用的是呼叫端傳的 `next.role`，讀取
+   * 與清除用的卻是工廠的 `role`。在長輩 context 上傳成 `guardian`，畫面顯示長輩
+   * 已登入、token 卻落在家屬鍵、長輩鍵是 null；重整之後家屬欄變成登入、長輩欄
+   * 空白——那是「兩欄互不干擾」唯一可被違反的路徑，而且看起來像永久故障。
+   * 把 role 從簽章拿掉，讓它連傳錯都不可能。
+   */
+  signIn: (session: Omit<Session, "role">) => void;
   signOut: () => void;
 };
 
@@ -24,9 +33,12 @@ export function createSessionContext(role: Role) {
     // 「未登入」，兩欄同時閃很難看。
     const [session, setSession] = useState<Session | null>(() => loadSession(role));
 
-    const signIn = useCallback((next: Session) => {
-      saveSession(next);
-      setSession(next);
+    const signIn = useCallback((next: Omit<Session, "role">) => {
+      // role 放在展開之後：呼叫端就算繞過型別硬塞一個角色進來，也蓋不掉這個
+      // context 自己的角色。寫成 `{ role, ...next }` 的話同一個 bug 會原地復活。
+      const session: Session = { ...next, role };
+      saveSession(session);
+      setSession(session);
     }, []);
 
     const signOut = useCallback(() => {

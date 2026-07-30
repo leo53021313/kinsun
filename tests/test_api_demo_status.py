@@ -4,13 +4,40 @@
 必須正確（按鈕能不能按由它決定），以及回應**不可**洩漏版本、主機名或錯誤內容。
 """
 
+import threading
+import time
+
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from kinsun.web.envelope import install_error_envelope
-from kinsun.web.routers.demo_status import create_demo_status_router, overall_of
+from kinsun.web.routers.demo_status import (
+    COMPONENT_NAMES,
+    create_demo_status_router,
+    overall_of,
+)
 
 ALL_OK = {"database": "ok", "asr": "ok", "tts": "ok", "llm": "ok", "scheduler": "ok"}
+
+
+def _all_ok_probes(**overrides):
+    """完整的一組探針。
+
+    ⚠️ 每個分項都要有：`create_demo_status_router` 會擋下缺項——`_CRITICAL` 靠
+    `components.get(name)` 判斷，鍵不存在時是 None、`None != "down"`，於是
+    「ASR 掛掉＝整體停機」會悄悄失效。
+    """
+    probes = {name: (lambda: "ok") for name in COMPONENT_NAMES}
+    probes.update(overrides)
+    return probes
+
+
+def _handler_of(**kwargs):
+    """取出路由背後的函式，直接從多條執行緒呼叫——快取的鎖是 threading.Lock，
+    這樣測到的就是它本身，不必繞過 ASGI 與執行緒池。"""
+    router = create_demo_status_router(**kwargs)
+    return router.routes[0].endpoint
 
 
 def _client(components: dict, *, now=None, cache_seconds: float = 5.0):
@@ -93,7 +120,7 @@ def test_快取期間內不重複呼叫探針():
     install_error_envelope(app)
     app.include_router(
         create_demo_status_router(
-            probes={"database": counting_probe},
+            probes=_all_ok_probes(database=counting_probe),
             clock=lambda: next(ticks),
             cache_seconds=5.0,
         ),
@@ -124,7 +151,7 @@ def test_關鍵項探針爆掉時該分項為停機_且整體亦為停機():
     install_error_envelope(app)
     app.include_router(
         create_demo_status_router(
-            probes={"database": lambda: "ok", "asr": exploding_probe},
+            probes=_all_ok_probes(asr=exploding_probe),
             clock=lambda: 0.0,
             cache_seconds=5.0,
         ),
@@ -148,7 +175,7 @@ def test_非關鍵項探針爆掉時該分項為不明_整體仍為可用():
     install_error_envelope(app)
     app.include_router(
         create_demo_status_router(
-            probes={"database": lambda: "ok", "asr": lambda: "ok", "tts": exploding_probe},
+            probes=_all_ok_probes(tts=exploding_probe),
             clock=lambda: 0.0,
             cache_seconds=5.0,
         ),
@@ -172,7 +199,7 @@ def test_探針爆掉不會讓端點本身掛掉():
     install_error_envelope(app)
     app.include_router(
         create_demo_status_router(
-            probes={"database": exploding_probe, "asr": exploding_probe, "tts": exploding_probe},
+            probes={name: exploding_probe for name in COMPONENT_NAMES},
             clock=lambda: 0.0,
             cache_seconds=5.0,
         ),
@@ -180,6 +207,110 @@ def test_探針爆掉不會讓端點本身掛掉():
     )
     res = TestClient(app).get("/api/v1/demo-status")
     assert res.status_code == 200
+
+
+def test_探針缺少分項時在建立路由就擲出():
+    """⚠️ `_CRITICAL` 用 `components.get(name) == DOWN` 判斷，鍵不存在時是 None、
+    `None != "down"`，於是「ASR 掛掉＝整體停機」這條規則會**悄悄**失效：畫面顯示
+    available、按鈕可按，而語音辨識根本沒被問過。組裝時漏接一支探針不該要等到
+    有人在展示現場開口說話才發現，所以在建立路由的那一刻就炸。
+    """
+    with pytest.raises(ValueError, match="asr"):
+        create_demo_status_router(probes={"database": lambda: "ok"})
+
+
+def test_探針齊全時正常建立():
+    assert create_demo_status_router(probes=_all_ok_probes()) is not None
+
+
+def test_併發請求只有一條執行緒真的去探測():
+    """一次 cache miss 的成本是兩次 healthz（各 1.5 秒逾時）＋埠探測＋資料庫＋
+    traces 統計＋每支排程 job 兩次查詢——ASR／TTS 真的掛掉時最慢約四秒。而這支
+    端點公開、免認證、經 ngrok 對外，底下的 handler 全是同步 def、共用 anyio 那
+    40 條執行緒池。沒有 single-flight 的話，快取一過期，所有併發請求會一起穿透
+    去打同一台正在重啟的 GPU 服務。
+    """
+    probing = threading.Event()
+    finish = threading.Event()
+    calls: list[int] = []
+
+    def slow_probe() -> str:
+        calls.append(1)
+        probing.set()
+        finish.wait(timeout=5.0)
+        return "ok"
+
+    handler = _handler_of(
+        probes=_all_ok_probes(asr=slow_probe), clock=lambda: 0.0, cache_seconds=5.0
+    )
+    results: list[dict] = []
+    threads = [threading.Thread(target=lambda: results.append(handler())) for _ in range(2)]
+    threads[0].start()
+    assert probing.wait(timeout=5.0), "第一條執行緒應該已經開始探測"
+    threads[1].start()
+    time.sleep(0.05)  # 讓第二條執行緒真的走到快取那一段
+    finish.set()
+    for thread in threads:
+        thread.join(timeout=5.0)
+
+    assert len(calls) == 1, "併發的第二個請求不該觸發第二次探測"
+    assert len(results) == 2
+    assert all(result["data"]["components"]["asr"] == "ok" for result in results)
+
+
+def test_快取過期時併發請求拿上一份舊資料_而不是排隊等新的():
+    """公開端點寧可回舊資料，也不要三十條執行緒同時去打一台正在重啟的 GPU 服務。
+    拿不到鎖的請求立刻回上一份快取（即使過期），不等。
+    """
+    now = [0.0]
+    probing = threading.Event()
+    finish = threading.Event()
+    calls: list[int] = []
+
+    def slow_probe() -> str:
+        calls.append(1)
+        probing.set()
+        finish.wait(timeout=5.0)
+        return "ok"
+
+    handler = _handler_of(
+        probes=_all_ok_probes(asr=slow_probe), clock=lambda: now[0], cache_seconds=5.0
+    )
+    finish.set()
+    handler()  # 先把快取灌熱
+    assert len(calls) == 1
+
+    finish.clear()
+    probing.clear()
+    now[0] = 100.0  # 快取過期
+    thread = threading.Thread(target=handler)
+    thread.start()
+    assert probing.wait(timeout=5.0), "背景那一條應該已經開始探測"
+
+    started_at = time.monotonic()
+    body = handler()
+    elapsed = time.monotonic() - started_at
+
+    assert len(calls) == 2, "第二個請求不該再探一次"
+    assert body["data"]["components"]["asr"] == "ok", "應該拿到上一份快取"
+    assert elapsed < 1.0, f"不該排隊等前一個探測做完（等了 {elapsed:.2f} 秒）"
+    finish.set()
+    thread.join(timeout=5.0)
+
+
+def test_第一次請求沒有任何快取可回時要等_不可回空():
+    """⚠️ 冷啟動時拿不到鎖不能回 None——那會讓前端拿到一個沒有 overall 的回應。
+    這時必須等第一次探測做完。
+    """
+    handler = _handler_of(probes=_all_ok_probes(), clock=lambda: 0.0, cache_seconds=5.0)
+    results: list[dict] = []
+    threads = [threading.Thread(target=lambda: results.append(handler())) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5.0)
+    assert len(results) == 4
+    assert all(result["data"]["overall"] == "available" for result in results)
 
 
 # --- 真實探針 ---

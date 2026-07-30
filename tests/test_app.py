@@ -122,3 +122,39 @@ def test_網頁版前端未_build_時不掛載():
 
     mounts = dict(_static_mounts(Path("/nonexistent-root")))
     assert mounts == {}
+
+
+def _spa_client(root):
+    """把假的 web/dist 掛上去，走的是 build_app 用的同一段接線。"""
+    from fastapi import FastAPI
+
+    dist = root / "web" / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<html>金孫</html>", encoding="utf-8")
+    (dist / "assets" / "app.js").write_text("console.log(1)", encoding="utf-8")
+    app = FastAPI()
+    app_module._mount_static(app, root)
+    return TestClient(app)
+
+
+def test_前端路由的網址由靜態檔回退到_index_html(tmp_path):
+    """`/demo/stage` 是 spec §5.4 與 docs/dev/17 列在路由表上的網址，而且
+    `navigate(..., {replace: true})` 會讓網址真的變成它——進到舞台後按重整、
+    或把網址複製給別人，都會直接向伺服器要這條路徑。單頁應用沒有回退的話，
+    使用者拿到的是 404，而他做的事情看起來完全正常。
+    """
+    client = _spa_client(tmp_path)
+    assert client.get("/demo/").status_code == 200
+    res = client.get("/demo/stage")
+    assert res.status_code == 200
+    assert "金孫" in res.text
+
+
+def test_回退不吞掉資產的_404(tmp_path):
+    """⚠️ 全部回退的話，一個打錯的資產路徑會拿到 200 ＋ 一頁 HTML，瀏覽器
+    會安靜地渲染失敗——那比 404 難查得多。只有「最後一段沒有副檔名」的路徑
+    才回退。
+    """
+    client = _spa_client(tmp_path)
+    assert client.get("/demo/assets/app.js").status_code == 200
+    assert client.get("/demo/assets/does-not-exist.js").status_code == 404

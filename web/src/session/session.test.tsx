@@ -26,11 +26,7 @@ function Panel(props: { ctx: typeof Elder; label: string }) {
       </p>
       <button
         onClick={() =>
-          signIn({
-            role: session?.role ?? (props.label === "左" ? "elder" : "guardian"),
-            token: `${props.label}-token`,
-            display_name: `${props.label}的人`,
-          })
+          signIn({ token: `${props.label}-token`, display_name: `${props.label}的人` })
         }
       >
         登入{props.label}
@@ -113,6 +109,49 @@ describe("createSessionContext", () => {
       </Elder.Provider>,
     );
     expect(screen.getByText("左：王阿嬤")).toBeInTheDocument();
+  });
+
+  it("登入的角色由 context 自己決定，token 只落在自己的鍵", async () => {
+    render(
+      <Elder.Provider>
+        <Panel ctx={Elder} label="左" />
+      </Elder.Provider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "登入左" }));
+    expect(loadSession("elder")).toEqual({
+      role: "elder",
+      token: "左-token",
+      display_name: "左的人",
+    });
+    expect(localStorage.getItem("kinsun_web_session_guardian")).toBeNull();
+  });
+
+  it("呼叫端硬塞角色也蓋不掉 context 自己的角色", async () => {
+    // ⚠️ 這是「兩欄互不干擾」唯一可被違反的路徑。以前 signIn 收整個 Session、
+    // 寫入那一路用的是 `next.role`（讀取與清除卻用工廠的 role）：在長輩 context 上
+    // 傳成 guardian，畫面會顯示長輩已登入，token 卻落在家屬鍵、長輩鍵是 null。
+    // 重整之後家屬欄變成登入、長輩欄空白——看起來像永久故障。
+    //
+    // 型別現在已經擋住了（signIn 收 Omit<Session, "role">），這裡用 cast 模擬繞過
+    // 型別的呼叫端——守的是 `saveSession({ ...next, role })` 裡 role 放在後面這個
+    // 順序，寫成 `{ role, ...next }` 的話同一個 bug 會原地復活。
+    function Rogue() {
+      const forced = Elder.useSession().signIn as unknown as (next: Session) => void;
+      return (
+        <button onClick={() => forced({ role: "guardian", token: "t", display_name: "冒名" })}>
+          亂傳
+        </button>
+      );
+    }
+    render(
+      <Elder.Provider>
+        <Rogue />
+      </Elder.Provider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "亂傳" }));
+    expect(loadSession("elder")?.display_name).toBe("冒名");
+    expect(loadSession("elder")?.role).toBe("elder");
+    expect(localStorage.getItem("kinsun_web_session_guardian")).toBeNull();
   });
 
   it("在 Provider 外面用 hook 會擲出說得清楚的錯誤", () => {

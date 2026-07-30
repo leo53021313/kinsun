@@ -4,9 +4,10 @@
  * 判錯的兩種代價不對稱——誤放進去會看到壞掉的產品，誤擋在外只是多等十秒。
  */
 
-import { describe, expect, it } from "vitest";
+import { renderHook, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { canEnter } from "./useDemoStatus";
+import { canEnter, useDemoStatus } from "./useDemoStatus";
 
 const state = (overall: string) => ({
   status: { overall, components: {} },
@@ -38,5 +39,38 @@ describe("canEnter", () => {
 
   it("連不上後端時不可進入", () => {
     expect(canEnter({ status: null, unreachable: true })).toBe(false);
+  });
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("useDemoStatus", () => {
+  it("問到結果後把整體與分項一起帶回來", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        status: 200,
+        json: async () => ({
+          success: true,
+          data: { overall: "available", components: { asr: "ok" } },
+          error: null,
+          meta: null,
+        }),
+      }),
+    );
+    const { result } = renderHook(() => useDemoStatus());
+    await waitFor(() => expect(result.current.status?.overall).toBe("available"));
+    expect(result.current.unreachable).toBe(false);
+  });
+
+  it("打不到後端時回報連不上，而不是回報服務停機", async () => {
+    // ⚠️ 這兩件事在畫面上是不同的一句話：前者要去看伺服器有沒有開，後者要去看是
+    // 哪個服務掛了。混成同一句會讓人查錯方向。
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network")));
+    const { result } = renderHook(() => useDemoStatus());
+    await waitFor(() => expect(result.current.unreachable).toBe(true));
+    expect(result.current.status).toBeNull();
   });
 });

@@ -16,6 +16,9 @@ from zoneinfo import ZoneInfo
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from linebot.v3 import WebhookParser
+from starlette.exceptions import HTTPException
+from starlette.responses import Response
+from starlette.types import Scope
 
 from kinsun import background, tracing
 from kinsun.accounts.models import Channel
@@ -85,6 +88,35 @@ def _static_mounts(root: Path) -> list[tuple[str, Path]]:
         ("/demo", root / "web" / "dist"),
     ]
     return [(path, directory) for path, directory in candidates if directory.is_dir()]
+
+
+class _SpaStaticFiles(StaticFiles):
+    """單頁應用的靜態檔：找不到的路徑回 index.html，讓前端路由自己處理。
+
+    三個前端（/liff、/admin、/demo）都是前端路由的單頁應用：網址列上的
+    `/demo/stage` 這種路徑在磁碟上不存在，直接向伺服器要就是 404。使用者做的事
+    完全正常——進到舞台後按重整、或把網址複製給別人——卻拿到一頁 Not Found。
+
+    ⚠️ **只對「看起來不是資產」的路徑回退**（最後一段沒有副檔名）。全部回退的話，
+    一個打錯的圖片或 JS 路徑會拿到 200 ＋ 一頁 HTML，而瀏覽器會安靜地渲染失敗
+    ——那比 404 難查得多。
+    """
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        try:
+            return await super().get_response(path, scope)
+        except HTTPException as exc:
+            if exc.status_code != 404 or "." in path.rsplit("/", 1)[-1]:
+                raise
+            return await super().get_response("index.html", scope)
+
+
+def _mount_static(app: FastAPI, root: Path) -> None:
+    """把 build 過的前端掛上去。三個掛載點共用同一個單頁應用回退。"""
+    for mount_path, directory in _static_mounts(root):
+        app.mount(
+            mount_path, _SpaStaticFiles(directory=directory, html=True), name=mount_path.lstrip("/")
+        )
 
 
 def build_app() -> FastAPI:
@@ -433,9 +465,5 @@ def build_app() -> FastAPI:
         ),
         prefix="/api/v1",
     )
-    root = Path(__file__).resolve().parents[2]
-    for mount_path, directory in _static_mounts(root):
-        app.mount(
-            mount_path, StaticFiles(directory=directory, html=True), name=mount_path.lstrip("/")
-        )
+    _mount_static(app, Path(__file__).resolve().parents[2])
     return app

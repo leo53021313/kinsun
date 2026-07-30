@@ -773,7 +773,7 @@ usage() {
   update [opik]    更新 Opik（repo＋映像）；只下載、不碰運行中的服務，
                    新映像等下次 restart opik 才生效（啟動本身永遠走本機映像）
 
-服務名：asr　tts　webhook　scheduler　rag_worker　frontend　app　ngrok　opik
+服務名：asr　tts　webhook　scheduler　rag_worker　frontend　web　app　ngrok　opik
 
 Opik 工程觀測：status／start 結尾會印出本機後台連結（預設 http://localhost:5273）與服務狀態。
   服務本身由 /home/leo29/opik 的 ./opik.sh 獨立管理；app 要送 trace 需設 OPIK_ENABLED=true。
