@@ -1,1 +1,29 @@
+/**
+ * 設計 token（Tailwind v4 的 @theme）。
+ *
+ * 值與 app/src/lib/theme.ts 完全相同——docs/dev/12 §3 載明那一組是三端視覺基準。
+ * 改這裡等於改品牌色，請連同 app 端一起考慮（app 已凍結，但值分岔會讓截圖與
+ * 實機看起來是兩個產品）。
+ *
+ * 命名與 app 端略有出入之處：text／textSoft／border 在 Tailwind 底下會與內建
+ * 工具類撞名（text-* 是字級、border-* 是框線寬度），故改為 ink／ink-soft／line。
+ */
+
 @import "tailwindcss";
+
+@theme {
+  --color-background: #FFF9F0;
+  --color-surface: #FFFFFF;
+  --color-primary: #C2410C;
+  --color-primary-pressed: #9A3412;
+  --color-ink: #1C1917;
+  --color-ink-soft: #57534E;
+  --color-line: #E7E5E4;
+  --color-danger: #B91C1C;
+  --color-success: #15803D;
+
+  /* 長輩端適老化字級（✅ D-48）。家屬端沿用 Tailwind 內建級距。 */
+  --text-elder-min: 22px;
+  --text-elder-big: 30px;
+  --text-elder-huge: 40px;
+}

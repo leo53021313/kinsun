@@ -10,7 +10,7 @@
     "noUnusedParameters": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["vitest/globals"],
+    "types": ["vitest/globals", "node"],
     "baseUrl": ".",
     "paths": {
       "kinsun-shared/*": ["../shared/*"],
