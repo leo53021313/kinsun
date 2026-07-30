@@ -16,6 +16,7 @@ import { ElderDetailScreen } from "./ElderDetailScreen";
 import { HomeScreen } from "./HomeScreen";
 import { LoginScreen } from "./LoginScreen";
 import { RegisterScreen } from "./RegisterScreen";
+import { SchedulesScreen } from "./SchedulesScreen";
 
 export type GuardianRoute =
   | { name: "login" }
@@ -80,8 +81,10 @@ export function GuardianApp() {
             onManageSchedules={() => stack.push({ name: "schedules", elderId: route.elderId })}
           />
         );
+      case "schedules":
+        return <SchedulesScreen elderId={route.elderId} />;
       default:
-        // schedules／notifications 由 Task 6 接上。
+        // notifications 由下一個工項接上。
         return <div className="p-5 text-ink-soft">{strings.common.notImplementedYet}</div>;
     }
   }
