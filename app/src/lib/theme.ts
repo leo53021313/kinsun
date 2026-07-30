@@ -12,6 +12,21 @@ export const colors = {
   success: "#15803D",
 };
 
+/** 對講機核准視覺：只套用於長輩陪伴對話，不改動家屬端既有配色。 */
+export const talkColors = {
+  ink: "#171D2A",
+  paper: "#FFFDF8",
+  blue: "#76BDF0",
+  yellow: "#FFC928",
+  coral: "#FF6A33",
+  coralPressed: "#E84D1E",
+  thinking: "#F7D984",
+  speaking: "#A6D7B9",
+  error: "#FFD2C7",
+  errorText: "#7B1E1A",
+  shadow: "rgba(23, 29, 42, 0.16)",
+};
+
 export const elder = {
   /** 長輩端最小字級 */
   fontMin: 22,

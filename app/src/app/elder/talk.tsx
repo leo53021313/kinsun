@@ -9,6 +9,12 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as Haptics from "expo-haptics";
 import * as Location from "expo-location";
+import { ArrowClockwiseIcon } from "phosphor-react-native/src/icons/ArrowClockwise";
+import { CheckCircleIcon } from "phosphor-react-native/src/icons/CheckCircle";
+import { SignOutIcon } from "phosphor-react-native/src/icons/SignOut";
+import { SpeakerHighIcon } from "phosphor-react-native/src/icons/SpeakerHigh";
+import { WaveformIcon } from "phosphor-react-native/src/icons/Waveform";
+import { WifiSlashIcon } from "phosphor-react-native/src/icons/WifiSlash";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -30,13 +36,20 @@ import { useSession } from "@/lib/SessionProvider";
 import { strings } from "@/lib/strings";
 import { createTalkGesture } from "@/lib/talkGesture";
 import {
+  getTalkPresentation,
+  getTalkSocketFrameArrivalState,
+  getTalkSocketPlaybackCompletionState,
+  type ListeningMode,
+  type TalkVisualState,
+} from "@/lib/talkPresentation";
+import {
   createPlaybackQueue,
   createTalkSocket,
   playAndWait,
   type PlaybackItem,
   type TalkFrame,
 } from "@/lib/talkSocket";
-import { colors, elder, spacing } from "@/lib/theme";
+import { colors, elder, spacing, talkColors } from "@/lib/theme";
 
 /**
  * 分段播放的進度（2026-07-26 延遲優化）。
@@ -69,6 +82,7 @@ export default function ElderTalk() {
   // （2026-07-18 診斷），起始改以觸覺＋畫面提示代替。
   const stopBeep = useAudioPlayer(require("@/assets/sounds/record-stop.wav"));
   const [avatar, setAvatar] = useState<AvatarState>("idle");
+  const [listeningMode, setListeningMode] = useState<ListeningMode | null>(null);
   const [replyText, setReplyText] = useState<string>(strings.talk.idleHint);
   const [micReady, setMicReady] = useState(false);
   // 未讀提醒數（X-01，2026-07-29）：比已讀水位新的提醒數；載入失敗保持 0，
@@ -95,6 +109,9 @@ export default function ElderTalk() {
   // 播放佇列：一輪會有兩則語音（安撫話、答案），長輩連問兩件事時還會交錯回來。
   // 聲音是線性的，同時播長輩什麼都聽不懂——故一次只播一則、先到先播。
   const playQueueRef = useRef<ReturnType<typeof createPlaybackQueue> | null>(null);
+  // 共用播放器也負責 POST 回覆與後續分段；記住是否正由 WebSocket 佇列播放，
+  // 才不會共用 didJustFinish 監聽把安撫語音誤判成整輪回答結束。
+  const socketPlaybackRef = useRef<PlaybackItem | null>(null);
 
   const { loading: sessionLoading, session, signOut, internalTesting } = useSession();
 
@@ -145,6 +162,7 @@ export default function ElderTalk() {
         setLocationGranted(locationPermission.granted);
         if (!micPermission.granted) {
           setReplyText(strings.talk.micPermission);
+          setAvatar("error");
         }
       }
     })();
@@ -158,16 +176,41 @@ export default function ElderTalk() {
     if (sessionLoading || !session || session.role !== "elder") {
       return;
     }
+    const failedTurnIds = new Set<string>();
     const queue = createPlaybackQueue(async (item: PlaybackItem) => {
+      if (failedTurnIds.delete(item.turnId)) {
+        return;
+      }
+      socketPlaybackRef.current = item;
       setAvatar("speaking");
       // 等 didJustFinish 事件，時長只當保險（見 playAndWait 的 docstring）：
       // 「音檔多長」不等於「播完了」——載入、緩衝、音訊工作階段被錄音搶走都會讓
       // 實際播放時間長於時長，估短了下一則會蓋掉還在講的這一則。
-      const outcome = await playAndWait(player, item);
+      const outcome = await playAndWait(player, item).finally(() => {
+        if (socketPlaybackRef.current === item) {
+          socketPlaybackRef.current = null;
+        }
+      });
       if (outcome === "timeout") {
         // 事件沒來就靠保險放行了。留 log 而不是靜默——真的常發生的話，代表音訊
         // 工作階段有問題，那是另一個要查的東西。
         console.warn("[talk] 播放結束事件沒來，靠保險逾時放行", item.turnId);
+      }
+      if (failedTurnIds.delete(item.turnId)) {
+        return;
+      }
+      const nextState = getTalkSocketPlaybackCompletionState(
+        item.kind,
+        Boolean(queueRef.current?.pending),
+      );
+      if (item.kind === "reply" && nextState === null) {
+        await advanceQueue();
+        return;
+      }
+      if (nextState !== null) {
+        // 長輩可能在播放中已開始下一輪，或同輪收到 error；只收尾本次 speaking，
+        // 不覆蓋較新的 listening／thinking／error 狀態。
+        setAvatar((current) => (current === "speaking" ? nextState : current));
       }
     });
     playQueueRef.current = queue;
@@ -180,15 +223,20 @@ export default function ElderTalk() {
       },
       onFrame: (frame: TalkFrame) => {
         if (frame.type === "error") {
+          failedTurnIds.add(frame.turn_id);
+          queueRef.current = null;
           setReplyText(frame.text);
-          setAvatar("idle");
+          setAvatar("error");
+          setListeningMode(null);
           return;
         }
         setReplyText(frame.text);
         if (frame.type === "reply") {
           // 上一輪的續播就此作廢（同 POST 路徑的處理）。
           queueRef.current = null;
-          if (frame.chunk_count > 1 && frame.reply_digest) {
+          // 第一段沒有音檔時是純文字降級，不會有播放完成事件可接續下一段；
+          // 此時不可預抓後續音檔並留下永遠不會消耗的佇列。
+          if (frame.audio_url && frame.chunk_count > 1 && frame.reply_digest) {
             const chunks: ChunkQueue = {
               digest: frame.reply_digest,
               token: session.token,
@@ -200,13 +248,22 @@ export default function ElderTalk() {
             prefetchNext(chunks);
           }
         }
+        const arrivalState = getTalkSocketFrameArrivalState(
+          frame.type,
+          Boolean(frame.audio_url),
+        );
         if (frame.audio_url) {
           queue.push({
+            kind: frame.type,
             turnId: frame.turn_id,
             audioUrl: frame.audio_url,
             text: frame.text,
             durationMs: frame.duration_ms ?? 0,
           });
+        } else if (arrivalState !== null) {
+          // TTS 可降級成純文字（audio_url=""）；沒有播放完成事件可收尾，需在這裡
+          // 直接離開 thinking，否則長輩會永遠看到「想一下喔」且麥克風維持停用。
+          setAvatar(arrivalState);
         }
       },
     });
@@ -215,6 +272,7 @@ export default function ElderTalk() {
       socket.close();
       socketRef.current = null;
       playQueueRef.current = null;
+      socketPlaybackRef.current = null;
     };
     // player 與 prefetchNext 在本元件生命週期內恆定，不列入相依以免重建連線。
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -230,6 +288,7 @@ export default function ElderTalk() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
       // ⚠️ 按下去就是要講話：不清空還沒播的，金孫的聲音會被錄進去。
       playQueueRef.current?.clear();
+      queueRef.current = null;
       player.pause();
       // 錄音前重新宣告錄音模式：上一輪 TTS 回覆播放會把音訊工作階段留在播放類別，
       // 不重設就直接 record() 會收不到聲音（iOS AVAudioSession 類別衝突，2026-07-18 診斷）。
@@ -240,11 +299,13 @@ export default function ElderTalk() {
       // 通常已經好了。權限已於進畫面時取得，這裡不會再跳對話框。currentPlace 永不拋，不需 catch。
       placeRef.current = currentPlace();
       setAvatar("listening");
+      setListeningMode("pressing");
       setReplyText(strings.talk.listening);
       return true;
     } catch {
       setReplyText(strings.talk.fallback);
-      setAvatar("idle");
+      setAvatar("error");
+      setListeningMode(null);
       return false;
     }
   }
@@ -258,6 +319,7 @@ export default function ElderTalk() {
     }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
     setAvatar("thinking");
+    setListeningMode(null);
     setReplyText(strings.talk.thinking);
     try {
       await recorder.stop();
@@ -307,7 +369,8 @@ export default function ElderTalk() {
       } else {
         setReplyText(strings.talk.fallback);
       }
-      setAvatar("idle");
+      setAvatar(exc instanceof ApiError && exc.status === 403 ? "idle" : "error");
+      setListeningMode(null);
     }
   }
 
@@ -319,6 +382,7 @@ export default function ElderTalk() {
         if (!started) {
           // 開錄失敗或被擋下：手勢復位，下一次按壓重新開始。
           gestureRef.current.reset();
+          setListeningMode(null);
         }
         return started;
       });
@@ -336,6 +400,7 @@ export default function ElderTalk() {
       // 失敗時保留 startRecording 已顯示的錯誤訊息。
       void startPromiseRef.current.then((started) => {
         if (started) {
+          setListeningMode("tap");
           setReplyText(strings.talk.listeningTapHint);
         }
       });
@@ -379,7 +444,7 @@ export default function ElderTalk() {
   // 一段播完就接下一段；沒有下一段才回到待機表情。
   useEffect(() => {
     const sub = player.addListener("playbackStatusUpdate", (status) => {
-      if (status.didJustFinish) {
+      if (status.didJustFinish && socketPlaybackRef.current === null) {
         void advanceQueue();
       }
     });
@@ -404,98 +469,214 @@ export default function ElderTalk() {
     ]);
   }
 
+  const presentation = getTalkPresentation(avatar, listeningMode);
+
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.topRow}>
-        <RoleSwitcher />
-        <View style={styles.topActions}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={styles.screenContent}
+        showsVerticalScrollIndicator
+        style={styles.screenScroll}
+      >
+        <View style={styles.topRow}>
+          <Text selectable style={styles.eyebrow} maxFontSizeMultiplier={1.5}>
+            {strings.talk.screenTitle}
+          </Text>
+          <View style={styles.topActions}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={
+                unreadCount > 0
+                  ? `${strings.elderNotifications.bell}，${unreadCount} 則新的`
+                  : strings.elderNotifications.bell
+              }
+              onPress={() => router.push("/elder/notifications")}
+              style={({ pressed }) => [
+                styles.bellButton,
+                pressed ? styles.bellButtonPressed : null,
+              ]}
+            >
+              <BellIcon color={talkColors.ink} size={30} />
+              {unreadCount > 0 ? (
+                <View style={styles.bellBadge}>
+                  <Text style={styles.bellBadgeText} maxFontSizeMultiplier={1.3}>
+                    {unreadCount > 9 ? "9+" : unreadCount}
+                  </Text>
+                </View>
+              ) : null}
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={confirmLogout}
+              style={({ pressed }) => [
+                styles.logoutButton,
+                pressed ? styles.logoutButtonPressed : null,
+              ]}
+            >
+              <SignOutIcon color={talkColors.coral} size={25} weight="bold" />
+              <Text style={styles.logoutText} maxFontSizeMultiplier={1.6}>
+                {strings.talk.logout}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+
+        {internalTesting ? (
+          <View style={styles.internalTesting}>
+            <RoleSwitcher />
+            <Text selectable style={styles.debugPermissions} maxFontSizeMultiplier={1.2}>
+              {`${strings.talk.debugMicLabel}：${micReady ? strings.talk.debugGranted : strings.talk.debugDenied}　${strings.talk.debugLocationLabel}：${locationGranted ? strings.talk.debugGranted : strings.talk.debugDenied}`}
+            </Text>
+          </View>
+        ) : null}
+
+        <View style={styles.companionSection}>
+          <Text selectable style={styles.companionTitle} maxFontSizeMultiplier={1.5}>
+            {strings.talk.companionTitle}
+          </Text>
+          <AvatarPlaceholder state={avatar} />
+        </View>
+
+        <View
+          accessibilityLabel={`${presentation.statusLabel}。${replyText}`}
+          accessibilityLiveRegion={avatar === "error" ? "assertive" : "polite"}
+          accessible
+          style={[
+            styles.statusBand,
+            avatar === "idle" ? styles.statusIdle : null,
+            avatar === "listening" ? styles.statusListening : null,
+            avatar === "thinking" ? styles.statusThinking : null,
+            avatar === "speaking" ? styles.statusSpeaking : null,
+            avatar === "error" ? styles.statusError : null,
+          ]}
+          testID="talk-status-band"
+        >
+          <View style={styles.statusIcon}>
+            <TalkStatusIcon state={avatar} />
+          </View>
+          <Text
+            selectable
+            maxFontSizeMultiplier={1.5}
+            style={[styles.statusLabel, avatar === "error" ? styles.statusLabelError : null]}
+            testID="talk-status-label"
+          >
+            {presentation.statusLabel}
+          </Text>
+        </View>
+
+        <View style={styles.replyZone}>
+          <Text selectable style={styles.replyText} maxFontSizeMultiplier={2}>
+            {replyText}
+          </Text>
+        </View>
+
+        <View style={styles.voiceAction}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={
-              unreadCount > 0
-                ? `${strings.elderNotifications.bell}，${unreadCount} 則新的`
-                : strings.elderNotifications.bell
-            }
-            onPress={() => router.push("/elder/notifications")}
-            style={styles.bellButton}
+            accessibilityLabel={strings.talk.pressToTalk}
+            accessibilityState={{
+              busy: avatar === "thinking",
+              disabled: !micReady || avatar === "thinking",
+            }}
+            onPressIn={handlePressIn}
+            // 長按門檻採 Pressable 預設 delayLongPress（500ms）：達標＝按住說話、放開送出。
+            onLongPress={() => {
+              gestureRef.current.longPress();
+              setListeningMode("hold");
+            }}
+            onPressOut={handlePressOut}
+            disabled={!micReady || avatar === "thinking"}
+            style={({ pressed }) => [
+              styles.talkButton,
+              pressed || avatar === "listening" ? styles.talkButtonActive : null,
+              !micReady || avatar === "thinking" ? styles.talkButtonDisabled : null,
+            ]}
+            testID="talk-button"
           >
-            <BellIcon size={30} />
-            {unreadCount > 0 ? (
-              <View style={styles.bellBadge}>
-                <Text style={styles.bellBadgeText} maxFontSizeMultiplier={1.3}>
-                  {unreadCount > 9 ? "9+" : unreadCount}
-                </Text>
-              </View>
-            ) : null}
+            <MicIcon size={52} />
           </Pressable>
-          <Pressable accessibilityRole="button" onPress={confirmLogout} style={styles.logoutButton}>
-            <Text style={styles.logoutText} maxFontSizeMultiplier={1.6}>
-              {strings.talk.logout}
-            </Text>
-          </Pressable>
+          <Text
+            selectable
+            maxFontSizeMultiplier={1.5}
+            style={styles.actionLabel}
+            testID="talk-action-label"
+          >
+            {presentation.actionLabel}
+          </Text>
         </View>
-      </View>
-      {internalTesting ? (
-        <Text style={styles.debugPermissions} maxFontSizeMultiplier={1.2}>
-          {`${strings.talk.debugMicLabel}：${micReady ? strings.talk.debugGranted : strings.talk.debugDenied}　${strings.talk.debugLocationLabel}：${locationGranted ? strings.talk.debugGranted : strings.talk.debugDenied}`}
-        </Text>
-      ) : null}
-      <View style={styles.avatarZone}>
-        <AvatarPlaceholder state={avatar} />
-      </View>
-      <ScrollView
-        style={styles.replyZone}
-        contentContainerStyle={styles.replyContent}
-        showsVerticalScrollIndicator
-      >
-        <Text style={styles.replyText} maxFontSizeMultiplier={2}>
-          {replyText}
-        </Text>
       </ScrollView>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={strings.talk.pressToTalk}
-        onPressIn={handlePressIn}
-        // 長按門檻採 Pressable 預設 delayLongPress（500ms）：達標＝按住說話、放開送出。
-        onLongPress={() => gestureRef.current.longPress()}
-        onPressOut={handlePressOut}
-        disabled={!micReady || avatar === "thinking"}
-        style={({ pressed }) => [
-          styles.talkButton,
-          pressed || avatar === "listening" ? styles.talkButtonActive : null,
-          !micReady || avatar === "thinking" ? styles.talkButtonDisabled : null,
-        ]}
-      >
-        <MicIcon size={52} />
-      </Pressable>
     </SafeAreaView>
   );
+}
+
+function TalkStatusIcon(props: { state: TalkVisualState }) {
+  const color = props.state === "error" ? talkColors.errorText : talkColors.ink;
+  const iconProps = { color, size: 32, weight: "bold" as const };
+  if (props.state === "listening") {
+    return <WaveformIcon {...iconProps} />;
+  }
+  if (props.state === "thinking") {
+    return <ArrowClockwiseIcon {...iconProps} />;
+  }
+  if (props.state === "speaking") {
+    return <SpeakerHighIcon {...iconProps} />;
+  }
+  if (props.state === "error") {
+    return <WifiSlashIcon {...iconProps} />;
+  }
+  return <CheckCircleIcon {...iconProps} />;
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
-    padding: spacing.l,
-    gap: spacing.l,
   },
-  topRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  topActions: { flexDirection: "row", alignItems: "center", gap: spacing.s },
+  screenScroll: { flex: 1 },
+  screenContent: {
+    flexGrow: 1,
+    paddingHorizontal: 21,
+    paddingTop: spacing.s,
+    paddingBottom: spacing.m,
+    gap: 10,
+  },
+  topRow: {
+    minHeight: 48,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: spacing.s,
+  },
+  topActions: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
+  eyebrow: {
+    flexShrink: 1,
+    color: talkColors.ink,
+    fontSize: 26,
+    fontWeight: "900",
+    letterSpacing: -1,
+    lineHeight: 30,
+  },
   // 鈴鐺 56dp：長輩手指粗、又常戴老花，48dp 的最小可觸控目標對他們仍偏小。
   bellButton: {
     width: 56,
     height: 56,
+    borderWidth: 3,
+    borderColor: talkColors.ink,
     borderRadius: 28,
+    backgroundColor: talkColors.paper,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
+    boxShadow: `0 4px 0 ${talkColors.shadow}`,
+  },
+  bellButtonPressed: {
+    transform: [{ translateY: 3 }],
+    boxShadow: `0 1px 0 ${talkColors.shadow}`,
   },
   bellBadge: {
     position: "absolute",
-    top: 4,
-    right: 4,
+    top: 2,
+    right: 2,
     minWidth: 22,
     height: 22,
     borderRadius: 11,
@@ -505,30 +686,105 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   bellBadgeText: { color: "#FFFFFF", fontSize: 13, fontWeight: "700" },
-  debugPermissions: { fontSize: 13, color: colors.textSoft, textAlign: "center" },
-  logoutButton: { paddingVertical: 8, paddingHorizontal: spacing.m, minHeight: 48, justifyContent: "center" },
-  logoutText: { fontSize: 16, color: colors.textSoft },
-  avatarZone: { alignItems: "center", marginTop: spacing.xl },
-  // 回覆改可捲動（2026-07-18）：短回覆置中、長回覆或大系統字級可上滑看完整，字級不縮。
-  replyZone: { flex: 1 },
-  replyContent: { flexGrow: 1, justifyContent: "center", paddingVertical: spacing.s },
-  replyText: {
-    fontSize: elder.fontBig,
-    lineHeight: elder.fontBig * 1.4,
-    color: colors.text,
-    textAlign: "center",
-    fontWeight: "600",
+  logoutButton: {
+    minWidth: 88,
+    minHeight: 48,
+    paddingHorizontal: 12,
+    borderWidth: 3,
+    borderColor: talkColors.ink,
+    borderRadius: 16,
+    backgroundColor: talkColors.paper,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    boxShadow: `0 4px 0 ${talkColors.shadow}`,
   },
-  // 圓形麥克風主鍵（2026-07-18）：取代整條大按鈕，讓出垂直空間給回覆；仍是超大觸控目標。
+  logoutButtonPressed: {
+    transform: [{ translateY: 3 }],
+    boxShadow: `0 1px 0 ${talkColors.shadow}`,
+  },
+  logoutText: { fontSize: 19, color: talkColors.coral, fontWeight: "900" },
+  internalTesting: { alignItems: "center", gap: spacing.xs },
+  debugPermissions: { fontSize: 13, color: colors.textSoft, textAlign: "center" },
+  companionSection: { alignItems: "stretch", gap: spacing.xs },
+  companionTitle: {
+    color: talkColors.ink,
+    fontSize: elder.fontHuge,
+    fontWeight: "900",
+    letterSpacing: -2,
+    lineHeight: elder.fontHuge * 1.08,
+  },
+  statusBand: {
+    minHeight: 70,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderWidth: 3,
+    borderColor: talkColors.ink,
+    borderRadius: 20,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 13,
+    boxShadow: `0 5px 0 ${talkColors.shadow}`,
+  },
+  statusIdle: { backgroundColor: talkColors.blue },
+  statusListening: { backgroundColor: talkColors.yellow },
+  statusThinking: { backgroundColor: talkColors.thinking },
+  statusSpeaking: { backgroundColor: talkColors.speaking },
+  statusError: { backgroundColor: talkColors.error },
+  statusIcon: {
+    width: 48,
+    height: 48,
+    borderWidth: 3,
+    borderColor: talkColors.ink,
+    borderRadius: 24,
+    backgroundColor: talkColors.paper,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  statusLabel: {
+    flex: 1,
+    color: talkColors.ink,
+    fontSize: 29,
+    fontWeight: "900",
+    letterSpacing: -1,
+    lineHeight: 33,
+  },
+  statusLabelError: { color: talkColors.errorText },
+  // 全頁可捲動：保留大字與完整回覆，也讓較小裝置／系統大字能滑到主要說話鍵。
+  replyZone: { minHeight: 70, paddingHorizontal: 6, justifyContent: "center" },
+  replyText: {
+    fontSize: elder.fontMin,
+    lineHeight: elder.fontMin * 1.5,
+    color: talkColors.ink,
+    textAlign: "center",
+    fontWeight: "700",
+  },
+  voiceAction: { alignItems: "center", gap: 6 },
   talkButton: {
     width: 104,
     height: 104,
     borderRadius: 52,
-    backgroundColor: colors.primary,
-    alignSelf: "center",
+    borderWidth: 4,
+    borderColor: talkColors.ink,
+    backgroundColor: talkColors.coral,
     alignItems: "center",
     justifyContent: "center",
+    boxShadow: `0 7px 0 ${talkColors.shadow}`,
   },
-  talkButtonActive: { backgroundColor: colors.primaryPressed },
-  talkButtonDisabled: { opacity: 0.5 },
+  talkButtonActive: {
+    backgroundColor: talkColors.coralPressed,
+    transform: [{ translateY: 5 }, { scale: 0.985 }],
+    boxShadow: `0 2px 0 ${talkColors.shadow}`,
+  },
+  talkButtonDisabled: { opacity: 0.7 },
+  actionLabel: {
+    maxWidth: 330,
+    color: talkColors.ink,
+    fontSize: 26,
+    fontWeight: "900",
+    letterSpacing: 0.65,
+    lineHeight: 31,
+    textAlign: "center",
+  },
 });
