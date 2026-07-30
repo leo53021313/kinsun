@@ -51,7 +51,11 @@ export function GuardianApp() {
   const canGoBack = stack.depth > 1;
 
   function renderScreen() {
-    switch (stack.current.name) {
+    // ⚠️ 先存成 const 再拿去 switch：narrowing 對 const 會存活進下面的 closure
+    // （例如 onManageSchedules），不必再用型別斷言去繞過 TS 對 stack.current 這種
+    // 屬性存取的保守判斷。
+    const route = stack.current;
+    switch (route.name) {
       case "login":
         return (
           <LoginScreen
@@ -71,11 +75,9 @@ export function GuardianApp() {
       case "elder":
         return (
           <ElderDetailScreen
-            elderId={stack.current.elderId}
-            elderName={stack.current.elderName}
-            onManageSchedules={() =>
-              stack.push({ name: "schedules", elderId: (stack.current as { elderId: string }).elderId })
-            }
+            elderId={route.elderId}
+            elderName={route.elderName}
+            onManageSchedules={() => stack.push({ name: "schedules", elderId: route.elderId })}
           />
         );
       default:

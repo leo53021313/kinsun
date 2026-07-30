@@ -63,6 +63,10 @@ export function toOccurrences(
       return null;
     }
     const day = new Date(`${date}T00:00:00`);
+    // ⚠️ 用毫秒減一天，不是 new Date(y, m, d - 1)：在「午夜換日光節約時間」的時區
+    // （例如 America/Santiago、Asia/Tehran）當天實際上不足 24 小時，減 86400000
+    // 毫秒會少算一天。台灣沒有日光節約時間，這裡碰不到，故不改算法；但下一個把
+    // 這段邏輯複製到別處（尤其是要支援其他時區）的人要知道這個邊界。
     const before = new Date(day.getTime() - 86400000);
     return {
       occurrences: [

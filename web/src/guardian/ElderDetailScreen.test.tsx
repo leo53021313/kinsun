@@ -12,6 +12,10 @@ function envelope(data: unknown) {
   return { success: true, data, error: null, meta: null };
 }
 
+function failure(code: string, message: string) {
+  return { success: false, data: null, error: { code, message }, meta: null };
+}
+
 /** 依請求路徑回不同的資料——這一頁一次打三支端點。 */
 function mockByPath(map: Record<string, unknown>) {
   vi.stubGlobal(
@@ -22,6 +26,21 @@ function mockByPath(map: Record<string, unknown>) {
         status: 200,
         json: async () => envelope(key ? map[key] : null),
       });
+    }),
+  );
+}
+
+/**
+ * 依請求路徑回不同的狀態碼與內容——用來驗證三支端點其中一支失敗時，其餘兩支
+ * 照常顯示，不是全部一起卡住（見「三支端點其中一支失敗」測試）。
+ */
+function mockMixedByPath(map: Record<string, { status: number; body: unknown }>) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockImplementation((path: string) => {
+      const key = Object.keys(map).find((k) => path.includes(k));
+      const entry = key ? map[key] : { status: 200, body: envelope(null) };
+      return Promise.resolve({ status: entry.status, json: async () => entry.body });
     }),
   );
 }
@@ -113,6 +132,36 @@ describe("ElderDetailScreen", () => {
     expect(save).toBeDisabled();
     await userEvent.type(screen.getByLabelText("密碼（至少 8 碼）"), "correct-horse-8");
     expect(save).toBeEnabled();
+  });
+
+  it("三支端點其中一支失敗時，其餘兩支照常顯示，失敗的那個區塊顯示錯誤而不是卡在載入中", async () => {
+    mockMixedByPath({
+      "health-report": { status: 500, body: failure("server_error", "系統忙碌，請稍後再試") },
+      "daily-summaries": {
+        status: 200,
+        body: envelope([{ date: "2026-07-29", content: "今天心情不錯", created_at: 1754000000 }]),
+      },
+      schedules: {
+        status: 200,
+        body: envelope([
+          {
+            group_id: "g1",
+            kind: "custom",
+            title: "散步",
+            created_by: "guardian",
+            event_at: null,
+            occurrences: [
+              { schedule_id: "s1", repeat: "daily", time: "17:00", weekday: null, scheduled_at: null },
+            ],
+          },
+        ]),
+      },
+    });
+    renderDetail();
+    expect(await screen.findByText("今天心情不錯")).toBeInTheDocument();
+    expect(screen.getByText("散步（每天 17:00）")).toBeInTheDocument();
+    expect(screen.getByText("載入失敗，請稍後再試。")).toBeInTheDocument();
+    expect(screen.queryByText("載入中…")).not.toBeInTheDocument();
   });
 
   it("產生家屬邀請碼後顯示出來", async () => {

@@ -133,3 +133,33 @@ describe("家屬註冊", () => {
     );
   });
 });
+
+describe("長輩詳情與返回", () => {
+  // ⚠️ 這條釘住 GuardianApp 的 case "elder" 與 BackBar 兩件事：現有唯一碰
+  // GuardianApp 的測試（上面兩個 describe）只走到 login／register／home 三個
+  // 路由，從未點進長輩詳情頁、也從未按過返回鍵——把 canGoBack 改成 false、或把
+  // case "elder" 整個拿掉，先前 138 條測試依然全線（已用變異驗證證實：見報告）。
+  it("登入後點長輩可以看到詳情，按返回可以回到我的長輩", async () => {
+    // ⚠️ key 順序刻意把較具體的路徑放前面：mockByPath 用 path.includes(key) 找
+    // 第一個符合的 key，而 /elders/e1/health-report 這種子資源路徑本身就包含
+    // "elders" 這個子字串——若 elders 排在前面，會讓三支長輩詳情的端點全部誤配
+    // 到「長輩列表」那筆假資料（已實測：symptom 是 report.risk_events undefined）。
+    mockByPath({
+      sessions: { guardian_id: "g1", name: "兒子", token: "tok" },
+      "health-report": { risk_events: [], reminders: [] },
+      "daily-summaries": [],
+      schedules: [],
+      elders: [{ elder_id: "e1", name: "王阿嬤", nickname: "" }],
+    });
+    renderApp();
+    await userEvent.type(screen.getByLabelText("Email"), "a@example.com");
+    await userEvent.type(screen.getByLabelText("密碼"), "correct-horse-8");
+    await userEvent.click(screen.getByRole("button", { name: "登入" }));
+
+    await userEvent.click(await screen.findByRole("button", { name: /王阿嬤/ }));
+    expect(await screen.findByRole("heading", { name: "王阿嬤" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "返回" }));
+    expect(await screen.findByRole("heading", { name: "我的長輩" })).toBeInTheDocument();
+  });
+});

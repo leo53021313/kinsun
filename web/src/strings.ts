@@ -123,6 +123,7 @@ export const strings = {
       "幫長輩設定手機號碼＋密碼。換手機或登出後，長輩用這組帳密登入即可，不用再掃碼；" +
       "忘記密碼時在這裡重設一次就好。",
     accountPhoneLabel: "長輩手機號碼",
+    accountPhonePlaceholder: "09xxxxxxxx",
     accountPasswordLabel: "密碼（至少 8 碼）",
     saveAccount: "儲存帳密",
     inviteSection: "邀請其他家屬",

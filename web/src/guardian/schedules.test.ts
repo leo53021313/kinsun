@@ -63,6 +63,12 @@ describe("toOccurrences：回診", () => {
     // （UTC 與美洲都算得對），在 UTC 跑的 CI 因此永遠看不到它。用 vi.stubEnv 明確
     // 釘住 TZ，讓這條測試不論在哪一台機器、哪個 CI 環境執行都有辨別力，不必依賴
     // 執行機器剛好被設成 Asia/Taipei（已用變異驗證證實：見報告）。
+    //
+    // ⚠️ **這招只在 Node runner 有效**：它的辨別力依賴 Node 執行期重讀
+    // `process.env.TZ`（已在 Node 24 驗證成立）。若日後這個專案改用 vitest
+    // browser mode 跑測試，`process.env.TZ` 不存在也不會生效，這條測試會安靜地
+    // 退化成依賴 ambient 時區——不報錯、不變紅，只是失去辨別力，換 runner 時
+    // 要重新驗證。
     afterEach(() => vi.unstubAllEnvs());
 
     it("回診的「前一天」在 UTC+8 也算得對", () => {
@@ -149,5 +155,26 @@ describe("describeGroup", () => {
 
   it("沒有任何鬧鐘時只講標題，不擲例外", () => {
     expect(describeGroup(group({ occurrences: [] }))).toBe("散步");
+  });
+
+  describe("時區", () => {
+    // ⚠️ 這條守的是 describeGroup 的回診分支也共用 isoDate：時分用 event.getHours()
+    // ／getMinutes()（本地時間），日期若還用 toISOString()（UTC）就會兩者不一致
+    // ——凡是台北時間 00:00～07:59 的回診，家屬看到的日期本來就會少一天。這是
+    // 修 toOccurrences 的「前一天」bug 時一併修掉的第二個既有 bug，之前沒有測試
+    // 釘住。同樣用 vi.stubEnv 明確釘住 TZ，不依賴執行機器的 ambient 時區。
+    afterEach(() => vi.unstubAllEnvs());
+
+    it("回診顯示的日期依本地時間，不是 UTC——台北時間 07:00 的回診不會顯示成前一天", () => {
+      vi.stubEnv("TZ", "Asia/Taipei");
+      // 2026-08-05 07:00 台北時間（UTC+8）＝ 2026-08-04 23:00 UTC——用 UTC 取日期
+      // 會顯示成前一天。用 Date.UTC 明確以 UTC 分量組出這個 epoch，避免測試本身
+      // 又踩到「用本地時間解析字串」這個同一類地雷。
+      const event_at = Date.UTC(2026, 7, 4, 23, 0, 0) / 1000;
+      const text = describeGroup(
+        group({ kind: "appointment", title: "心臟科回診", event_at }),
+      );
+      expect(text).toBe("心臟科回診（2026-08-05 07:00）");
+    });
   });
 });

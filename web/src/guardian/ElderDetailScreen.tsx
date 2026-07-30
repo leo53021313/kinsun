@@ -36,6 +36,11 @@ export function ElderDetailScreen(props: {
   const [report, setReport] = useState<HealthReport | null>(null);
   const [summaries, setSummaries] = useState<DailySummary[] | null>(null);
   const [groups, setGroups] = useState<ScheduleGroup[] | null>(null);
+  // 三個區塊各自的失敗旗標（非共用 error）：某一支端點失敗時，只有那個區塊要顯示
+  // 錯誤，另外兩支已經成功回來的資料要照常顯示，不能被一支拖累。
+  const [reportError, setReportError] = useState(false);
+  const [summariesError, setSummariesError] = useState(false);
+  const [groupsError, setGroupsError] = useState(false);
   const [error, setError] = useState("");
 
   const [phone, setPhone] = useState("");
@@ -51,22 +56,31 @@ export function ElderDetailScreen(props: {
       return;
     }
     let alive = true;
-    // 三支一起發：它們互不相依，逐支等會讓這一頁多兩趟往返的空白。
-    Promise.all([
+    // 三支一起發、各自獨立降級：它們互不相依，逐支等會讓這一頁多兩趟往返的空白；
+    // 用 allSettled 而非 all，是因為某一支失敗（例如逾時、500）不該連累另外兩支
+    // 已經成功回來的資料——那樣會讓整頁卡在「載入中…」，看起來像系統當掉。
+    Promise.allSettled([
       getHealthReport(elderId, token),
       listDailySummaries(elderId, token),
       listSchedules(elderId, token),
-    ])
-      .then(([hr, daily, schedules]) => {
-        if (!alive) return;
-        setReport(hr);
-        setSummaries(daily);
-        setGroups(schedules);
-      })
-      .catch((exc) => {
-        if (signOutOn401(exc)) return;
-        if (alive) setError(strings.common.loadFailed);
-      });
+    ]).then(([hr, daily, schedules]) => {
+      if (!alive) return;
+      if (hr.status === "fulfilled") {
+        setReport(hr.value);
+      } else if (!signOutOn401(hr.reason)) {
+        setReportError(true);
+      }
+      if (daily.status === "fulfilled") {
+        setSummaries(daily.value);
+      } else if (!signOutOn401(daily.reason)) {
+        setSummariesError(true);
+      }
+      if (schedules.status === "fulfilled") {
+        setGroups(schedules.value);
+      } else if (!signOutOn401(schedules.reason)) {
+        setGroupsError(true);
+      }
+    });
     return () => {
       alive = false;
     };
@@ -96,7 +110,9 @@ export function ElderDetailScreen(props: {
       <ErrorText message={error} />
 
       <Section title={strings.elderDetail.healthReportSection}>
-        {report === null ? (
+        {reportError ? (
+          <ErrorText message={strings.common.loadFailed} />
+        ) : report === null ? (
           <EmptyHint text={strings.common.loading} />
         ) : report.risk_events.length === 0 ? (
           <p className="text-sm text-success">{strings.elderDetail.noRiskEvents}</p>
@@ -104,9 +120,13 @@ export function ElderDetailScreen(props: {
           report.risk_events.map((event, index) => (
             <p key={index} className="text-sm text-danger">
               {formatTime(event.created_at)}
+              {" "}
               <span aria-hidden>｜</span>
+              {" "}
               {tierLabel(event.tier)}
+              {" "}
               <span aria-hidden>｜</span>
+              {" "}
               {event.reason}
             </p>
           ))
@@ -119,7 +139,9 @@ export function ElderDetailScreen(props: {
       </Section>
 
       <Section title={strings.elderDetail.dailySummarySection}>
-        {summaries === null ? (
+        {summariesError ? (
+          <ErrorText message={strings.common.loadFailed} />
+        ) : summaries === null ? (
           <EmptyHint text={strings.common.loading} />
         ) : summaries.length === 0 ? (
           <EmptyHint text={strings.elderDetail.noSummaries} />
@@ -134,7 +156,9 @@ export function ElderDetailScreen(props: {
       </Section>
 
       <Section title={strings.elderDetail.schedulesSection}>
-        {groups === null ? (
+        {groupsError ? (
+          <ErrorText message={strings.common.loadFailed} />
+        ) : groups === null ? (
           <EmptyHint text={strings.common.loading} />
         ) : groups.length === 0 ? (
           <EmptyHint text={strings.elderDetail.noSchedules} />
@@ -162,6 +186,7 @@ export function ElderDetailScreen(props: {
           value={phone}
           onChange={setPhone}
           type="tel"
+          placeholder={strings.elderDetail.accountPhonePlaceholder}
         />
         <Field
           label={strings.elderDetail.accountPasswordLabel}
