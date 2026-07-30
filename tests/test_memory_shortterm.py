@@ -67,3 +67,27 @@ def test_append_without_a_speak_time_keeps_the_previous_behaviour():
     store.append("e1", Message("user", "阿公早安"))
     store.append("e1", Message("assistant", "早安喔"))
     assert [m.content for m in store.recent("e1")] == ["阿公早安", "早安喔"]
+
+
+def test_recent_wrapped_with_span(monkeypatch):
+    """今日對話查詢一顆 span（2026-07-30 spec）：memory_assemble 三段串行裡
+    唯一沒露臉的一段。output 關（TurnContext.history 已含同一份內容）。"""
+    import opik
+
+    from kinsun.memory.shortterm import PgMemoryStore
+    from kinsun.tracing import client as tracing_client
+    from kinsun.tracing import decorators as tracing_decorators
+
+    tracing_client.reset_for_test()
+    seen: list[dict] = []
+    monkeypatch.setattr(opik, "track", lambda **kw: (seen.append(kw), lambda f: f)[1])
+    monkeypatch.setattr(tracing_decorators, "is_enabled", lambda: True)
+
+    class _Db:
+        def query(self, sql, params=()):
+            return []
+
+    store = PgMemoryStore(_Db(), clock=lambda: datetime(2026, 7, 30, 12, 0, tzinfo=TPE))
+    assert store.recent("e1") == []
+    spans = [kw for kw in seen if kw["name"] == "shortterm_recent"]
+    assert spans and spans[0]["capture_output"] is False
