@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime, timedelta, timezone
 from itertools import count
 
@@ -86,6 +87,13 @@ class _VoiceTts:
     def synthesize(self, text: str) -> TtsResult:
         self.calls.append(text)
         return TtsResult(text=text, audio=b"fake-m4a", duration_ms=1200)
+
+
+class _TextOnlyTts:
+    """TTS 失敗退純文字的替身（audio=None）：C1 的內嵌路徑不該被走到。"""
+
+    def synthesize(self, text: str) -> TtsResult:
+        return TtsResult(text=text, audio=None)
 
 
 class _FakePublisher:
@@ -181,8 +189,24 @@ def _client(
     return TestClient(app)
 
 
+def _receive_frame(ws) -> dict:
+    """收一個下行 frame，JSON 與 binary（內嵌音檔，C1）都吃。
+
+    binary frame 的 header 攤成一般的 dict 回傳，音檔本體放在 `audio` 鍵——這樣既有
+    的斷言（`frame["type"]`／`frame["text"]`）一字不必改，新增的斷言看得到音檔。
+    協定見 `channels/app/ws.py` 模組 docstring。
+    """
+    message = ws.receive()
+    if message.get("text") is not None:
+        return json.loads(message["text"])
+    raw = message["bytes"]
+    header_length = int.from_bytes(raw[:4], "big")
+    header = json.loads(raw[4 : 4 + header_length].decode("utf-8"))
+    return {**header, "audio": raw[4 + header_length :]}
+
+
 def _frames(ws, count_wanted: int) -> list[dict]:
-    return [ws.receive_json() for _ in range(count_wanted)]
+    return [_receive_frame(ws) for _ in range(count_wanted)]
 
 
 # ── 認證與同意複核 ──────────────────────────────────────────────────────
@@ -231,12 +255,114 @@ def test_one_turn_sends_a_reply_frame():
     client = _client(svc)
     with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
         ws.send_bytes(b"\x00fake-audio")
-        reply = ws.receive_json()
+        reply = _receive_frame(ws)
     assert reply["type"] == "reply"
     assert reply["turn_id"] == "turn-1"
     assert "今天有什麼新消息" in reply["text"]
-    assert reply["audio_url"].startswith("https://cdn.example/reply-")
     assert reply["duration_ms"] == 1200
+
+
+# ── 音檔隨 binary frame 直送（2026-07-30 延遲優化 C1）────────────────────
+
+
+def test_reply_audio_rides_the_same_frame_so_the_app_never_downloads_it():
+    """⭐ 這一刀的全部價值：音檔本體就在 frame 裡，App 不必再向 Supabase 下載一趟。
+
+    `audio_url` 刻意留空——留著它等於邀請 App 去下載，那正是要省掉的那一趟。
+    """
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    client = _client(svc)
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_bytes(b"\x00fake-audio")
+        reply = _receive_frame(ws)
+    assert reply["audio"] == b"fake-m4a"
+    assert reply["audio_url"] == ""
+
+
+def test_the_audio_is_pushed_before_the_archival_upload_runs():
+    """順序即價值：長輩先聽到聲音，存證上傳排在後面。
+
+    反過來（先上傳再推）等於白做這一刀——長輩照樣要等完那 0.54 秒（尖峰 2.37 秒）。
+
+    ⚠️ 量法刻意不是「兩件事各記一筆時間戳再比大小」：那要從客戶端觀測伺服器端的順序，
+    而「送出完成」與「測試收到」之間有排程空窗，上傳可能在空窗裡插進來——第一版就是
+    這樣寫的，會偶發紅燈。改成**讓上傳卡住**：若音檔是在上傳之後才推的，這裡就永遠
+    收不到訊框而逾時失敗；收到了就證明推送確實排在上傳之前。
+    """
+    upload_started = threading.Event()
+    release_upload = threading.Event()
+
+    class _BlockingPublisher(_FakePublisher):
+        def publish(self, audio: bytes, *, content_type: str) -> str:
+            upload_started.set()
+            release_upload.wait(timeout=5)
+            return super().publish(audio, content_type=content_type)
+
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    client = _client(svc, publisher=_BlockingPublisher())
+    try:
+        with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+            ws.send_bytes(b"\x00fake-audio")
+            # 上傳被卡住（或還沒輪到它跑），卻已經收到音檔＝推送排在上傳之前。
+            frame = _receive_frame(ws)
+            assert frame["audio"] == b"fake-m4a"
+            # ⚠️ 這一行必須是 `wait` 而不是 `is_set`：收到訊框的那一刻，工作執行緒可能
+            # 還沒走到上傳那一行——而那正是我們要的順序，不是缺陷。
+            assert upload_started.wait(timeout=5), "存證上傳始終沒被呼叫，後台將無回放"
+    finally:
+        release_upload.set()
+
+
+def test_archival_upload_failure_does_not_cost_the_elder_the_reply():
+    """存證上傳失敗只是後台少一筆回放——長輩已經收到音檔，這一輪對他完全成功。
+
+    ⚠️ 與非內嵌那條路刻意不同：那裡上傳失敗等於長輩什麼都拿不到，所以必須退回文字。
+    """
+
+    class _BoomPublisher:
+        def publish(self, audio: bytes, *, content_type: str) -> str:
+            raise RuntimeError("Supabase 掛了")
+
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    client = _client(svc, publisher=_BoomPublisher())
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_bytes(b"\x00fake-audio")
+        reply = _receive_frame(ws)
+
+    assert reply["type"] == "reply"
+    assert reply["audio"] == b"fake-m4a"
+
+
+def test_a_text_only_turn_still_arrives_as_a_json_frame():
+    """TTS 失敗退純文字時沒有音檔可內嵌，照舊走 JSON frame——App 兩種都要能收。"""
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    client = _client(svc, tts=_TextOnlyTts())
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_bytes(b"\x00fake-audio")
+        reply = _receive_frame(ws)
+    assert reply["type"] == "reply"
+    assert "audio" not in reply  # 純 JSON frame
+    assert reply["audio_url"] == ""
+
+
+def test_the_elder_never_gets_two_replies_for_one_turn():
+    """音檔 frame 推出去之後不可再補一則 JSON reply——播放佇列會把同一句話唸兩次。"""
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    client = _client(svc)
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_bytes(b"\x00fake-audio")
+        first = _receive_frame(ws)
+        # 再送一輪；若上一輪補了第二則 reply，這裡收到的會是它而不是新一輪的。
+        ws.send_bytes(b"\x00second-audio")
+        second = _receive_frame(ws)
+    assert first["type"] == "reply"
+    assert second["type"] == "reply"
+    assert second["audio"] == b"fake-m4a"
 
 
 def test_ack_arrives_before_the_reply_when_a_tool_is_called():
@@ -288,7 +414,7 @@ def test_no_ack_when_the_cache_is_still_cold():
     )
     with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
         ws.send_bytes(b"\x00fake-audio")
-        reply = ws.receive_json()
+        reply = _receive_frame(ws)
     assert reply["type"] == "reply"
 
 
@@ -300,7 +426,7 @@ def test_no_ack_when_no_tool_is_called():
     client = _client(svc, ack_audio=ack_audio)
     with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
         ws.send_bytes(b"\x00fake-audio")
-        reply = ws.receive_json()
+        reply = _receive_frame(ws)
     assert reply["type"] == "reply"
     assert ack_audio.asked == []
 
@@ -320,7 +446,7 @@ def test_location_frame_is_saved_before_the_turn_runs():
     with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
         ws.send_text(json.dumps({"location": "台南市", "latitude": 22.99, "longitude": 120.21}))
         ws.send_bytes(b"\x00fake-audio")
-        ws.receive_json()
+        _receive_frame(ws)
     assert locations.get_for_elder(elder.elder_id) == ElderLocation(
         elder.elder_id, "台南市", NOW.timestamp(), 22.99, 120.21
     )
@@ -335,7 +461,7 @@ def test_location_needs_all_three_fields():
     with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
         ws.send_text(json.dumps({"location": "台南市"}))
         ws.send_bytes(b"\x00fake-audio")
-        ws.receive_json()
+        _receive_frame(ws)
     assert locations.get_for_elder(elder.elder_id) is None
 
 
@@ -347,7 +473,7 @@ def test_malformed_location_frame_does_not_kill_the_connection():
     with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
         ws.send_text("這不是 JSON {{{")
         ws.send_bytes(b"\x00fake-audio")
-        reply = ws.receive_json()
+        reply = _receive_frame(ws)
     assert reply["type"] == "reply"
 
 
@@ -366,10 +492,10 @@ def test_a_failing_turn_sends_an_error_frame_and_keeps_the_connection():
     client = _client(svc, asr=_BrokenAsr())
     with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
         ws.send_bytes(b"\x00fake-audio")
-        first = ws.receive_json()
+        first = _receive_frame(ws)
         # 連線還活著：再送一輪照樣有回應。
         ws.send_bytes(b"\x00fake-audio")
-        second = ws.receive_json()
+        second = _receive_frame(ws)
     assert first["type"] in {"reply", "error"}
     assert second["type"] in {"reply", "error"}
 
@@ -380,10 +506,10 @@ def test_oversized_audio_is_rejected_without_closing_the_connection():
     client = _client(svc)
     with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
         ws.send_bytes(b"x" * (10 * 1024 * 1024 + 1))
-        frame = ws.receive_json()
+        frame = _receive_frame(ws)
         assert frame["type"] == "error"
         ws.send_bytes(b"\x00fake-audio")
-        assert ws.receive_json()["type"] == "reply"
+        assert _receive_frame(ws)["type"] == "reply"
 
 
 # ── 併發輪（spec 2026-07-28 P3）────────────────────────────────────────
@@ -453,12 +579,12 @@ def test_too_many_concurrent_turns_gets_a_busy_reply_not_silence():
     with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
         for _ in range(4):  # 上限 3，第四次應被婉拒
             ws.send_bytes(b"\x00fake-audio")
-        busy = ws.receive_json()
+        busy = _receive_frame(ws)
         assert busy["type"] == "error"
         assert "還在忙" in busy["text"]
         gate.set()
         # 前三輪照樣各自回答，沒有被第四次影響。
-        replies = [ws.receive_json() for _ in range(3)]
+        replies = [_receive_frame(ws) for _ in range(3)]
     assert [r["type"] for r in replies] == ["reply"] * 3
 
 
@@ -506,7 +632,7 @@ def test_a_second_question_sees_the_first_one_still_in_flight():
                 break
             _t.Event().wait(0.01)
         gate.set()
-        [ws.receive_json() for _ in range(2)]
+        [_receive_frame(ws) for _ in range(2)]
     assert session.histories[0] == [], "第一輪不該看到自己"
     assert session.histories[1] == ["今天有什麼新消息"], (
         f"第二輪沒看到在途的第一句：{session.histories}"
@@ -540,7 +666,7 @@ def test_wrong_typed_location_frame_does_not_kill_the_connection(payload, why):
     with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
         ws.send_text(json.dumps(payload))
         ws.send_bytes(b"\x00fake-audio")
-        reply = ws.receive_json()
+        reply = _receive_frame(ws)
     assert reply["type"] == "reply", why
     assert locations.get_for_elder(elder.elder_id) is None, why
 
@@ -555,7 +681,7 @@ def test_a_good_location_frame_after_a_bad_one_still_works():
         ws.send_text(json.dumps({"location": 123, "latitude": 22.99, "longitude": 120.21}))
         ws.send_text(json.dumps({"location": "台南市", "latitude": 22.99, "longitude": 120.21}))
         ws.send_bytes(b"\x00fake-audio")
-        ws.receive_json()
+        _receive_frame(ws)
     assert locations.get_for_elder(elder.elder_id) == ElderLocation(
         elder.elder_id, "台南市", NOW.timestamp(), 22.99, 120.21
     )
@@ -570,7 +696,7 @@ def test_boolean_coordinates_are_rejected_rather_than_coerced_to_one():
     with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
         ws.send_text(json.dumps({"location": "台南市", "latitude": True, "longitude": 120.21}))
         ws.send_bytes(b"\x00fake-audio")
-        reply = ws.receive_json()
+        reply = _receive_frame(ws)
     assert reply["type"] == "reply"
     assert locations.get_for_elder(elder.elder_id) is None
 
@@ -597,7 +723,7 @@ def test_out_of_range_coordinates_are_not_written(lat, lon, why):
     with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
         ws.send_text(json.dumps({"location": "台南市", "latitude": lat, "longitude": lon}))
         ws.send_bytes(b"\x00fake-audio")
-        reply = ws.receive_json()
+        reply = _receive_frame(ws)
     assert reply["type"] == "reply", why
     assert locations.get_for_elder(elder.elder_id) is None, why
 
@@ -611,7 +737,36 @@ def test_boundary_coordinates_are_accepted():
     with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
         ws.send_text(json.dumps({"location": "北極點", "latitude": 90.0, "longitude": 180.0}))
         ws.send_bytes(b"\x00fake-audio")
-        ws.receive_json()
+        _receive_frame(ws)
     assert locations.get_for_elder(elder.elder_id) == ElderLocation(
         elder.elder_id, "北極點", NOW.timestamp(), 90.0, 180.0
     )
+
+
+# ── binary frame 編碼（C1 協定）─────────────────────────────────────────
+
+
+def test_encode_reply_frame_round_trips_with_chinese_and_hostile_audio_bytes():
+    """長度前綴而非分隔符：音檔內容可以是任何位元組，掃分隔符遲早會被炸掉。
+
+    這裡刻意讓音檔本身含有 `}`、換行與 header 的片段。
+    """
+    from kinsun.channels.app.ws import encode_reply_frame
+
+    header = {"type": "reply", "turn_id": "t1", "text": "阿公早安，今天天氣不錯喔"}
+    audio = b'}\n{"type": "reply"}\x00\xff'
+
+    raw = encode_reply_frame(header, audio)
+
+    header_length = int.from_bytes(raw[:4], "big")
+    assert json.loads(raw[4 : 4 + header_length].decode("utf-8")) == header
+    assert raw[4 + header_length :] == audio
+
+
+def test_encode_reply_frame_keeps_chinese_readable_rather_than_escaped():
+    """`ensure_ascii=False`：header 直接是 UTF-8，不必讓 App 解 \\uXXXX。"""
+    from kinsun.channels.app.ws import encode_reply_frame
+
+    raw = encode_reply_frame({"text": "阿公"}, b"")
+
+    assert "阿公".encode() in raw

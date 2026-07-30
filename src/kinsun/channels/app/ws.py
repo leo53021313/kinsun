@@ -21,8 +21,22 @@
 
 下行（皆帶 `turn_id`）：
 - `ack`——模型決定要查東西時。欄位：`text`、`audio_url`、`duration_ms`
-- `reply`——答案算完。欄位：`text`、`audio_url`、`duration_ms`、`chunk_count`、`reply_digest`
+- `reply`——答案算完但**沒有音檔**（TTS 失敗退純文字）。欄位：`text`、`audio_url`（空）、
+  `duration_ms`、`chunk_count`、`reply_digest`
 - `error`——任一段失敗。欄位：`text`（回退話術）
+- **binary frame**——答案算完且有音檔（2026-07-30 延遲優化 C1）。格式：
+  `[4 bytes 大端序 header 長度][UTF-8 JSON header][m4a bytes]`，header 欄位與 `reply`
+  完全相同（`type` 亦為 `"reply"`）。
+
+⚠️ **為什麼 header 要嵌在 binary frame 裡，而不是「先送 JSON 再送 binary」**：同一條
+連線最多三輪併發（`_MAX_CONCURRENT_TURNS`），兩輪幾乎同時算完時，「JSON(A)、JSON(B)、
+binary(A)、binary(B)」的交錯是完全可能的——App 就會把 A 的音檔配上 B 的字幕。把 header
+放進同一個 frame 讓每個 frame 自我描述，交錯就不再是問題，也不需要任何關聯狀態。
+
+⚠️ 為什麼值得做（2026-07-30 十輪實測）：原本的路是「後端上傳 Supabase→取簽章 URL→
+App 拿到 URL→App 再向 Supabase 下載」，音檔在網路上走兩趟，長輩要等完第一趟（實測
+0.54 秒，尖峰 2.37 秒）才**開始**下載第二趟。改成 bytes 直送後，上傳降級為存證、
+排在推送之後（見 `VoiceReplyDelivery._deliver_inline`）。
 
 `POST /turns` 保留不動：LINE 通道仍走 `dispatch`，且 WebSocket 連不上時必須有降級路徑。
 
@@ -40,6 +54,7 @@ TTS、落庫）全是同步阻塞呼叫，留在讀迴圈裡等於長輩在等�
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import threading
 import time
@@ -52,6 +67,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from kinsun.accounts.models import Channel, PrincipalType
 from kinsun.accounts.service import AccountService
 from kinsun.agent import SYSTEM_TROUBLE_REPLY
+from kinsun.channels.app.inbound_audio import start_inbound_upload
 from kinsun.channels.inbound import InboundMessage, dispatch
 from kinsun.locations.store import ElderLocation, is_valid_coordinate, is_valid_place
 from kinsun.turn_context import (
@@ -94,12 +110,20 @@ class _NullBinding:
 
 
 class _TurnCollector:
-    """收集 dispatch 的回覆：文字與（若有）公開音檔 URL（與 `turns.py` 相同）。"""
+    """收集 dispatch 的回覆：文字與（若有）公開音檔 URL（與 `turns.py` 相同）。
 
-    def __init__(self) -> None:
+    C1 之後多一條路：`reply_audio` 直接把音檔 frame 推出去（不經 `audio_url`），
+    並登記 `audio_sent`——`_run_turn` 據此不再補送 JSON `reply`，否則長輩會收到兩份
+    同一輪的回覆（音檔一份、文字一份），播放佇列會把同一句話唸兩次。
+    """
+
+    def __init__(self, sender: _Sender | None = None, turn_id: str = "") -> None:
         self.text = ""
         self.audio_url = ""
         self.duration_ms: int | None = None
+        self.audio_sent = False
+        self._sender = sender
+        self._turn_id = turn_id
 
     def reply(self, text: str) -> None:
         self.text = text
@@ -109,6 +133,30 @@ class _TurnCollector:
         self.duration_ms = duration_ms
         if text:
             self.text = text
+
+    def reply_audio(
+        self,
+        audio: bytes,
+        duration_ms: int,
+        text: str | None,
+        chunk_count: int,
+        reply_digest: str,
+    ) -> None:
+        """把音檔本體隨 binary frame 直接推給 App（C1）。例外原樣往外拋（見 `_Sender`）。"""
+        self.duration_ms = duration_ms
+        if text:
+            self.text = text
+        header = {
+            "type": "reply",
+            "turn_id": self._turn_id,
+            "text": self.text,
+            "audio_url": "",  # 音檔就在同一個 frame 裡，App 不必再下載
+            "duration_ms": duration_ms,
+            "chunk_count": chunk_count,
+            "reply_digest": reply_digest,
+        }
+        self._sender.send_reply_audio(header, audio)
+        self.audio_sent = True
 
 
 class _InFlight:
@@ -161,6 +209,16 @@ class _InFlight:
             return not self._order or self._order[-1] == turn_id
 
 
+def encode_reply_frame(header: dict, audio: bytes) -> bytes:
+    """把 header 與音檔打包成自我描述的 binary frame（見模組 docstring 的協定說明）。
+
+    4 bytes 大端序長度前綴而非分隔符：JSON 裡可以出現任何位元組序列，用分隔符掃描
+    遲早會被長輩講的某句話炸掉。
+    """
+    raw = json.dumps(header, ensure_ascii=False).encode("utf-8")
+    return len(raw).to_bytes(4, "big") + raw + audio
+
+
 class _Sender:
     """從工作執行緒把訊息送回 WebSocket。
 
@@ -180,6 +238,18 @@ class _Sender:
             future.result(timeout=5)
         except Exception:  # noqa: BLE001 - 連線斷掉不可中斷那一輪的其餘工作
             logger.warning("WebSocket 送出失敗 type=%s", payload.get("type"))
+
+    def send_reply_audio(self, header: dict, audio: bytes) -> None:
+        """送出內嵌音檔的回覆 frame（C1）。
+
+        ⚠️ 失敗必須**往外拋**（與 `send` 相反）：呼叫端是
+        `VoiceReplyDelivery._deliver_inline`，它接到例外才會退回文字泡泡——吞掉的話
+        長輩這一輪就什麼都收不到，而回覆絕不可消失。
+        """
+        future = asyncio.run_coroutine_threadsafe(
+            self._websocket.send_bytes(encode_reply_frame(header, audio)), self._loop
+        )
+        future.result(timeout=5)
 
 
 def create_app_ws_router(
@@ -230,15 +300,6 @@ def create_app_ws_router(
         except Exception:  # noqa: BLE001 - 位置是加分項，寫入失敗不可中斷對話
             logger.warning("長輩地點寫入失敗")
 
-    def _publish_inbound(audio: bytes) -> str:
-        if inbound_audio is None:
-            return ""
-        try:
-            return inbound_audio.publish(audio, content_type="audio/m4a")
-        except Exception:  # noqa: BLE001 - 上傳失敗不可中斷對話
-            logger.warning("App 進站音檔上傳失敗")
-            return ""
-
     def _ack_sender(sender: _Sender, turn_id: str) -> Callable[[list[str]], None]:
         """做出「模型決定要查什麼」時要跑的那件事：挑一句安撫話立刻送出去。
 
@@ -279,7 +340,9 @@ def create_app_ws_router(
         流程與 `turns.py::_run_turn` 一致，差別只在：回覆用 `sender` 推出去而不是
         當成 HTTP 回應，且中途多一則安撫話。
         """
-        collector = _TurnCollector()
+        # 背景上傳，不等網址：見 `channels/app/inbound_audio.py`（延遲優化 B1）。
+        start_inbound_upload(inbound_audio, traces, audio, turn_id)
+        collector = _TurnCollector(sender, turn_id)
         msg = InboundMessage(
             Channel.APP,
             external_id,
@@ -289,8 +352,11 @@ def create_app_ws_router(
             collector.reply,
             collector.reply_voice,
             trace_id=turn_id,
-            audio_url=_publish_inbound(audio),
+            audio_url="",
             received_at=received_at,
+            # 音檔本體直接走這條連線回去（C1）：投遞層據此走內嵌路徑、跳過
+            # 「上傳→簽章→App 再下載」兩趟網路。
+            reply_audio=collector.reply_audio,
         )
         # 晚到回指（spec P3）：長輩在這一輪還沒回來之前又講了別的，答案回去時
         # 要讓他知道在回哪一個問題。判斷點在**開跑前**——那時已經知道自己是不是
@@ -320,6 +386,10 @@ def create_app_ws_router(
             # ⚠️ 一定要在 finally：這一輪失敗時若沒有解除登記，名額會一直被佔著，
             # 長輩問滿三次之後就再也得不到回應。
             in_flight.finish(turn_id)
+        if collector.audio_sent:
+            # 音檔 frame 已經在投遞當下推出去了（含完整 header），不可再補一則 JSON
+            # reply——長輩會收到同一輪的兩份回覆，播放佇列把同一句話唸兩次。
+            return
         chunk_count = outcome.chunk_count if outcome else 0
         sender.send(
             {

@@ -22,6 +22,7 @@ from starlette.concurrency import run_in_threadpool
 from kinsun import tracing
 from kinsun.accounts.models import Channel, PrincipalType
 from kinsun.accounts.service import AccountService
+from kinsun.channels.app.inbound_audio import start_inbound_upload
 from kinsun.channels.inbound import InboundMessage, dispatch
 from kinsun.locations.store import ElderLocation, is_valid_coordinate, is_valid_place
 from kinsun.speech.chunking import reply_digest, split_for_speech
@@ -115,15 +116,6 @@ def create_app_turns_router(
             raise HTTPException(status_code=401, detail=ErrorCode.INVALID_TOKEN)
         return auth.principal_id
 
-    def _publish_inbound(audio: bytes) -> str:
-        if inbound_audio is None:
-            return ""
-        try:
-            return inbound_audio.publish(audio, content_type="audio/m4a")
-        except Exception:  # noqa: BLE001 - 上傳失敗不可中斷對話
-            logger.warning("App 進站音檔上傳失敗")
-            return ""
-
     @router.post("/turns", status_code=201)
     async def create_turn(
         request: Request,
@@ -179,6 +171,9 @@ def create_app_turns_router(
         # 排在後面等於永遠慢一輪——而「慢一輪」在對講機上的表現就是他問第一次
         # 還是被反問，功能等於沒做。
         _save_location(elder_id, location, latitude, longitude)
+        trace_id = make_id()
+        # 背景上傳，不等網址：見 `channels/app/inbound_audio.py`（延遲優化 B1）。
+        start_inbound_upload(inbound_audio, traces, audio, trace_id)
         collector = _TurnCollector()
         msg = InboundMessage(
             Channel.APP,
@@ -188,8 +183,8 @@ def create_app_turns_router(
             audio,
             collector.reply,
             collector.reply_voice,
-            trace_id=make_id(),
-            audio_url=_publish_inbound(audio),
+            trace_id=trace_id,
+            audio_url="",
             received_at=received_at,
         )
         outcome = dispatch(
