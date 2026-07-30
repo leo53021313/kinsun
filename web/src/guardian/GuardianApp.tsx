@@ -15,6 +15,7 @@ import { strings } from "@/strings";
 import { ElderDetailScreen } from "./ElderDetailScreen";
 import { HomeScreen } from "./HomeScreen";
 import { LoginScreen } from "./LoginScreen";
+import { NotificationsScreen } from "./NotificationsScreen";
 import { RegisterScreen } from "./RegisterScreen";
 import { SchedulesScreen } from "./SchedulesScreen";
 
@@ -83,9 +84,13 @@ export function GuardianApp() {
         );
       case "schedules":
         return <SchedulesScreen elderId={route.elderId} />;
-      default:
-        // notifications 由下一個工項接上。
-        return <div className="p-5 text-ink-soft">{strings.common.notImplementedYet}</div>;
+      case "notifications":
+        return <NotificationsScreen />;
+      default: {
+        // 走到這裡代表新增了路由卻忘了接畫面。編譯期就會抓到（never 型別）。
+        const unreachable: never = route;
+        throw new Error(`未接線的家屬端畫面：${JSON.stringify(unreachable)}`);
+      }
     }
   }
 
