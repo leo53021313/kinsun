@@ -365,6 +365,11 @@ class Settings(_BaseEnvSettings):
     # 攔截門檻：判違規且信心達此值才攔，低於則放行（見 moderation.AbuseModerator）。
     # 刻意高於 safety_confidence_mid——誤攔長輩的代價遠大於放過一次綁架。
     safety_moderation_min_confidence: float = 0.7
+    # 危急分級＋濫用審核合併成一次 Gemini 呼叫（2026-07-30 延遲優化 C2）：省一次
+    # Gemini 網路往返（~0.8 秒）與一次 RPM 配額。⚠️ 預設關——兩個 prompt 各自獨立
+    # 調校過，合併後互相牽動，須先跑 evals 比對兩種模式的判準品質再決定要不要開
+    # （與 LONGTERM_RERANK_ENABLED 同一套「先關、evals 驗證再開」紀律）。
+    safety_combined_classifier_enabled: Bool = False
     auth_rate_limit_window_seconds: float = 300.0
     asr_debug_show_transcript: Bool = False
     # ✅ D-11（甲-4）：文字輸入為正式功能（與語音同等對待），預設開；關閉為維運逃生口。

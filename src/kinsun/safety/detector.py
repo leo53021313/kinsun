@@ -60,12 +60,21 @@ class RiskDetector:
         self._mid = mid
 
     def assess(self, text: str) -> RiskAssessment:
-        kw_tier, kw_emergency = classify_keywords(text)
         try:
             llm = self._classifier.classify(text)
         except Exception:  # noqa: BLE001 - 偵測絕不可中斷對話
             llm = RiskAssessment(RiskTier.L0, 0.0, "分級器例外", ["llm:error"])
+        return self.combine_with_llm(text, llm)
 
+    def combine_with_llm(self, text: str, llm: RiskAssessment) -> RiskAssessment:
+        """把關鍵詞地板與**已經取得**的 LLM 判斷合併成最終分級。
+
+        獨立成方法（2026-07-30 延遲優化 C2）：分級與審核合併成一次 Gemini 呼叫時，
+        呼叫端已經有現成的 `llm` 判斷（不必也不該再呼叫 `self._classifier`），只需要
+        套用與 `assess()` 完全相同的關鍵詞地板／降級規則——兩條路徑必須共用同一份
+        決策邏輯，不可各寫一份，否則遲早會分岔。
+        """
+        kw_tier, kw_emergency = classify_keywords(text)
         signals: list[str] = []
         if kw_tier > RiskTier.L0:
             # `keyword:emergency` 只影響家屬簡訊要不要附 119 提示（notifier._format_alert），

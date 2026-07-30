@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import uuid
 from datetime import datetime
@@ -35,6 +36,7 @@ from kinsun.logging_setup import setup_logging
 from kinsun.pipeline import VoicePipeline
 from kinsun.rag.releases import PgRagReleaseStore
 from kinsun.safety.classifier import LlmRiskClassifier
+from kinsun.safety.combined_classifier import LlmCombinedSafetyClassifier
 from kinsun.safety.deliveries import PgRiskNotificationLogStore
 from kinsun.safety.detector import RiskDetector
 from kinsun.safety.moderation import AbuseModerator, LlmAbuseClassifier
@@ -55,6 +57,8 @@ from kinsun.web.routers import (
     create_meta_router,
 )
 from kinsun.web.security import install_security_headers
+
+logger = logging.getLogger("kinsun.app")
 
 
 def build_app() -> FastAPI:
@@ -111,6 +115,20 @@ def build_app() -> FastAPI:
         if settings.safety_moderation_enabled
         else None
     )
+    # 分級＋審核合併成一次 Gemini 呼叫（2026-07-30 延遲優化 C2）：預設關，見
+    # settings.safety_combined_classifier_enabled 的說明。單獨開合併分類器沒有
+    # 意義（moderator 為 None 時管線不會用到它），故一併判斷審核是否啟用。
+    combined_classifier = (
+        LlmCombinedSafetyClassifier(safety_llm)
+        if settings.safety_combined_classifier_enabled and settings.safety_moderation_enabled
+        else None
+    )
+    if settings.safety_combined_classifier_enabled and not settings.safety_moderation_enabled:
+        # 半開狀態靜默失效最難查（維運者以為開了）：留一行明確的 warning。
+        logger.warning(
+            "SAFETY_COMBINED_CLASSIFIER_ENABLED=true 但 SAFETY_MODERATION_ENABLED=false，"
+            "合併分類器不會生效（合併的目的是同時省下審核那次呼叫）"
+        )
     # TTS 分段串流（2026-07-26 延遲優化）：只對 App 通道啟用。
     # ⚠️ LINE 不可加入——它一輪只能回一則語音訊息，給它第一句等於把後面的話吞掉；
     # 分段需要投遞端「逐段拉、接著播」的配合，目前只有 App 對講機做得到。
@@ -139,6 +157,7 @@ def build_app() -> FastAPI:
         # 一輪的總時間上限（辛-21）：逐次逾時攔不住三次呼叫相加。
         turn_budget_seconds=settings.turn_budget_seconds,
         moderator=moderator,
+        combined_classifier=combined_classifier,
     )
     binding_sessions = PgBindingSessionStore(db)
     schedule_menu = ScheduleMenu(

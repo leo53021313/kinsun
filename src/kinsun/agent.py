@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from kinsun import tracing
+from kinsun import background, tracing
 from kinsun.llm import LLMClient, Message, ToolCall, ToolResult
 from kinsun.memory.models import FactSection, InjectedContext, format_injected_context
 from kinsun.memory.recall import SessionMemory
@@ -425,6 +425,9 @@ class PreparedTurn:
     ) -> None:
         self._context: object | None = None
         self._error: BaseException | None = None
+        # 本輪記憶寫入的完成訊號（`handle()` 寫入、`pipeline` 讀取，2026-07-30 B2）。
+        # None＝這一輪還沒走到寫記憶那一步（被審核攔下、或管線提早失敗）。
+        self.record_handle: object | None = None
         # 這一輪長輩開口的時刻，供記憶寫入當排序鍵（spec 2026-07-28 P3）。
         # ⚠️ 掛在這裡而不是加 `handle` 的參數，是因為 `prepare` 本來就在本輪最開頭
         # 被呼叫——那正是最接近「長輩開口」的時間點，且 `handle(prepared=…)` 已經
@@ -458,9 +461,22 @@ class PreparedTurn:
         ⚠️ **逾時不等於取消**：`join(timeout)` 只是讓呼叫端不再等，背景那條執行緒
         還活著，仍握著 mem0 的連線與那個 httpx socket 直到它自己結束。這是刻意接受的
         殘餘風險，因為另一邊是「整個請求連同 uvicorn worker 一起卡死」——嚴格更糟。
-        殘餘風險有界：mem0 走的是它自己的連線（`mem0_factory` 直接把 `database_url`
-        交給 supabase 向量庫），不佔 `db.py` 那個上限 5 的 psycopg 池，所以卡住的
-        組裝執行緒不會連帶讓其他長輩查不到資料；且執行緒是 daemon，不擋行程關閉。
+
+        ⚠️ 殘餘風險的界在哪裡，2026-07-30（A2 三段並行）之後與之前**不同**，這段
+        必須照實寫（原文說「不佔 psycopg 池」已不成立）：
+        - mem0 那一路仍走它自己的連線（`mem0_factory` 直接把 `database_url` 交給
+          supabase 向量庫），不佔 `db.py` 的 psycopg 池。
+        - 但 A2 之後 `_gather_facts` 與 mem0 **同時啟動**，所以逾時放棄時可能留下
+          最多 6 條正在等 psycopg 連線的事實執行緒，而正式環境的池只有 3 條
+          （`DATABASE_POOL_MAX_SIZE=3`）。孤兒會與活著的輪搶同一批連線，形成
+          「逾時→孤兒→更容易逾時」的正回饋。故 `_gather_facts` 每一路都加了
+          `_FACT_TIMEOUT_SECONDS` 上限讓孤兒壽命有界——見該處說明。
+        - 執行緒是 daemon，但 `concurrent.futures` 的 worker **不是**，且該模組以
+          `_register_atexit` 在解譯器結束時 join 每一條 worker。也就是說「daemon＝
+          不擋行程關閉」對走 `ThreadPoolExecutor` 的這條路並不成立：一次卡住的
+          mem0 檢索仍可能把部署重啟拖住（mem0 完全沒有逾時可設，見上）。這是已知
+          殘餘風險，真正的解法是給 mem0 逾時，屬獨立工項。
+
         真的開始堆積時，訊號會是這裡的 warning——先看到那個再談在途上限。
         """
         self._thread.join(self._timeout)
@@ -570,8 +586,45 @@ class CareAgent:
         # 兩道都跑完才寫進記憶，隔天 recall 讀到的就不會是冒名內容。
         reply = _no_fake_source(_speakable(reply), found)
         # 以**長輩開口的時刻**當排序鍵，併發輪的對話順序才不會顛倒（spec P3）。
-        self._session.record_turn(elder_id, user_msg, Message("assistant", reply), at=spoke_at)
+        # handle 掛在本輪的 `prepared` 上（有的話），交給 `pipeline` 在送出回應前
+        # 收斂——見 `_record_turn_background` 的 ⚠️ 說明。
+        record_handle = self._record_turn_background(
+            elder_id, user_msg, Message("assistant", reply), at=spoke_at
+        )
+        if prepared is not None:
+            prepared.record_handle = record_handle
         return reply
+
+    def _record_turn_background(
+        self, elder_id: str, *messages: Message, at: datetime | None
+    ) -> background.Handle:
+        """背景寫入本輪對話（2026-07-30 延遲優化 B2）。回傳完成訊號給呼叫端收斂。
+
+        兩筆 `append` 各一次 Supabase 跨網往返（0.2～1 秒實測），回覆此刻已經算完，
+        卻擋在 TTS 之前。`at`＝長輩開口的時刻，本來就是 `shortterm.append` 的排序鍵，
+        所以背景寫入不影響對話順序。兩筆包在**同一個** closure 裡＝同一個佇列項目、
+        由同一條 worker 依序執行，不會被兩條 worker 亂序。
+
+        ⚠️ **「沒有人在等」並不成立，故 handle 非回傳不可**（2026-07-30 審查 H2）：
+        `channels/app/turns.py::get_turn_chunk` 讀 `turns` 表拿「今天最後一則金孫
+        回覆」來算 digest，這筆寫入落後時它會取到**上一輪**的回覆、digest 不符而回
+        409，App 端 `talkSocket` 收到就停止續拉——**長輩只聽到第一句，其餘無聲消失，
+        兩端都沒有任何訊號**。TTS 首段實測 8.2 秒確實給了背景寫入很大的領先，但那是
+        偶然的屏障、不是保證（佇列積壓、Supabase 突刺、或佇列滿被丟棄時就會踩到）。
+        故由 `pipeline` 在交出回應前 `wait`——正常情況零成本（早就寫完了）。
+
+        寫入失敗只留警告、不往外拋：回覆已經通過安全防線、正要說給長輩聽，不該
+        為了這兩筆記憶寫入把整輪打回回退話術（與 `pipeline._mark_reminder_responded`
+        同一套紀律）。
+        """
+
+        def write() -> None:
+            try:
+                self._session.record_turn(elder_id, *messages, at=at)
+            except Exception:  # noqa: BLE001 - 背景寫入失敗不可讓已算好的回覆消失
+                logger.warning("本輪對話記憶寫入失敗 elder=%s", elder_id)
+
+        return background.run(write)
 
     def _repair_empty_promise(
         self,

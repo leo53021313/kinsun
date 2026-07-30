@@ -1,13 +1,20 @@
+import threading
 import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from kinsun import background
 from kinsun.agent import NOT_HEARD_REPLY, CareAgent
 from kinsun.llm import LLMError, Message, report_llm_usage
 from kinsun.pipeline import VoicePipeline
 from kinsun.reports.reminders import REMINDER_KIND_MEDICATION
-from kinsun.safety.moderation import AbuseCategory, ModerationResult, reply_for
+from kinsun.safety.combined_classifier import (
+    CombinedSafetyResult,
+    LlmCombinedSafetyClassifier,
+)
+from kinsun.safety.detector import RiskDetector
+from kinsun.safety.moderation import AbuseCategory, AbuseModerator, ModerationResult, reply_for
 from kinsun.safety.tiers import FAILSAFE_EVENT_REASON, RiskAssessment, RiskTier
 from kinsun.speech.asr import MockAsrClient
 from kinsun.speech.tts import TextBubbleTts, TTSError, TtsResult
@@ -358,7 +365,16 @@ class _ExplodingAsr:
         raise AssertionError("process_text 不應呼叫 ASR")
 
 
-def _text_pipeline(detector, notifier, risk_events=None, *, reminder_logs=None, moderator=None):
+def _text_pipeline(
+    detector,
+    notifier,
+    risk_events=None,
+    *,
+    reminder_logs=None,
+    moderator=None,
+    combined_classifier=None,
+    traces=None,
+):
     return VoicePipeline(
         asr=_ExplodingAsr(),
         agent=CareAgent(EchoLLM(), NullSession()),
@@ -369,6 +385,8 @@ def _text_pipeline(detector, notifier, risk_events=None, *, reminder_logs=None, 
         reminder_logs=reminder_logs,
         response_window_seconds=3600,
         moderator=moderator,
+        combined_classifier=combined_classifier,
+        traces=traces,
     )
 
 
@@ -977,3 +995,408 @@ def test_no_budget_configured_means_no_limit(monkeypatch):
     pipeline.process(b"\x00", elder_id="u1")
 
     assert llm.seen == [None]
+
+
+# ── 分級＋審核合併成一次 Gemini 呼叫（2026-07-30 延遲優化 C2） ──────────────
+
+
+class _FakeCombinedClassifier:
+    """測試替身：依建構時給的結果原樣回傳，記下每次被呼叫的原話。"""
+
+    def __init__(self, result: CombinedSafetyResult) -> None:
+        self._result = result
+        self.calls: list[str] = []
+
+    def classify(self, text: str) -> CombinedSafetyResult:
+        self.calls.append(text)
+        return self._result
+
+
+class _BoomRiskClassifier:
+    """走錯路徑的探針：合併模式下不該有人呼叫分級器本體。"""
+
+    def classify(self, text: str) -> RiskAssessment:
+        raise AssertionError("走錯路徑：合併模式應呼叫 combine_with_llm，不是分級器本體")
+
+
+class _BoomAbuseClassifier:
+    """走錯路徑的探針：合併模式下不該有人呼叫審核分類器本體。"""
+
+    def classify(self, text: str) -> ModerationResult:
+        raise AssertionError("走錯路徑：合併模式應呼叫 apply_threshold，不是審核分類器本體")
+
+
+def test_combined_classifier_replaces_both_separate_calls():
+    """兩者都設定時，只呼叫一次合併分類器；分級器與審核分類器本體完全不會被呼叫到。"""
+    combined = _FakeCombinedClassifier(
+        CombinedSafetyResult(
+            risk=RiskAssessment(RiskTier.L0, 0.9, "一般閒聊", ["llm"]),
+            moderation=ModerationResult(AbuseCategory.NONE, 0.9, "正常發話", ["llm"]),
+        )
+    )
+    pipeline = _text_pipeline(
+        RiskDetector(_BoomRiskClassifier()),
+        SpyNotifier(),
+        moderator=AbuseModerator(_BoomAbuseClassifier()),
+        combined_classifier=combined,
+    )
+
+    result = pipeline.process_text("我想聊天", elder_id="u1")
+
+    assert combined.calls == ["我想聊天"]
+    assert result.text == "你說的是：我想聊天"
+
+
+def test_combined_classifier_ignored_when_moderation_disabled():
+    """單獨設定合併分類器（審核關閉）沒有意義：整段不使用，回到原本只分級的路徑。"""
+    combined = _FakeCombinedClassifier(
+        CombinedSafetyResult(
+            risk=RiskAssessment(RiskTier.L2, 0.9, "不該用到", ["llm"]),
+            moderation=ModerationResult(AbuseCategory.NONE, 0.9, "不該用到", ["llm"]),
+        )
+    )
+    notifier = SpyNotifier()
+    pipeline = _text_pipeline(
+        StubDetector(RiskTier.L0),
+        notifier,
+        moderator=None,
+        combined_classifier=combined,
+    )
+
+    pipeline.process_text("我想聊天", elder_id="u1")
+
+    assert combined.calls == []
+    assert notifier.calls == []
+
+
+def test_combined_path_blocked_turn_still_notifies_the_crisis():
+    """合併模式下的安全屬性與分開呼叫時等價（承上面被攔截仍照常通報那題）。
+
+    即使合併呼叫回傳的審核判斷判定攔截，危急落庫與家屬通報仍然照常先發生——
+    `moderation` 雖然已經在同一次呼叫裡拿到手，但要等這裡的落庫／通報跑完
+    才會被查看是否攔截（見 `combined_classifier` 模組頂端說明）。
+    """
+    notifier = SpyNotifier()
+    events = FakeRiskEventStore()
+    combined = _FakeCombinedClassifier(
+        CombinedSafetyResult(
+            risk=RiskAssessment(RiskTier.L2, 0.95, "求救", ["llm"]),
+            moderation=ModerationResult(AbuseCategory.ROLE_HIJACK, 0.95, "誤判", ["llm"]),
+        )
+    )
+    pipeline = _text_pipeline(
+        RiskDetector(_BoomRiskClassifier()),
+        notifier,
+        events,
+        moderator=AbuseModerator(_BoomAbuseClassifier()),
+        combined_classifier=combined,
+    )
+
+    result = pipeline.process_text("我不想活了", elder_id="u1", trace_id="t7")
+
+    assert notifier.calls == [("u1", RiskTier.L2)]
+    assert events.recorded_trace_ids == ["t7"]
+    assert result.text == reply_for(AbuseCategory.ROLE_HIJACK)
+
+
+def test_combined_path_applies_keyword_floor_and_confidence_threshold():
+    """合併模式仍套用與分開呼叫時完全相同的決策規則：關鍵詞地板、審核信心門檻。"""
+    # LLM 判 L0，但關鍵詞地板（症狀詞）撐住 L2；審核判違規但信心不足 0.5＜0.7 應放行。
+    combined = _FakeCombinedClassifier(
+        CombinedSafetyResult(
+            risk=RiskAssessment(RiskTier.L0, 0.9, "沒看出來", ["llm"]),
+            moderation=ModerationResult(AbuseCategory.ROLE_HIJACK, 0.5, "拿不準", ["llm"]),
+        )
+    )
+    notifier = SpyNotifier()
+    pipeline = _text_pipeline(
+        RiskDetector(_BoomRiskClassifier()),
+        notifier,
+        moderator=AbuseModerator(_BoomAbuseClassifier(), min_confidence=0.7),
+        combined_classifier=combined,
+    )
+
+    result = pipeline.process_text("我一直痛", elder_id="u1")
+
+    assert notifier.calls == [("u1", RiskTier.L2)]  # 關鍵詞地板撐住 L2、家屬應收到通知
+    assert result.text == "你說的是：我一直痛"  # 審核信心不足放行，照常進 agent
+
+
+class _BoomCombinedClassifier:
+    def classify(self, text: str) -> CombinedSafetyResult:
+        raise RuntimeError("boom")
+
+
+def test_combined_classifier_failure_falls_back_to_failsafe_and_failopen():
+    """合併分類器整段失敗（網路例外等）：風險面 fail-safe、審核面 fail-open，絕不中斷對話。"""
+    pipeline = _text_pipeline(
+        RiskDetector(_BoomRiskClassifier()),
+        SpyNotifier(),
+        moderator=AbuseModerator(_BoomAbuseClassifier()),
+        combined_classifier=_BoomCombinedClassifier(),
+    )
+
+    result = pipeline.process_text("今天天氣真好", elder_id="u1")
+
+    assert result.text == "你說的是：今天天氣真好"  # 審核 fail-open，照常進 agent
+
+
+class _OrderProbeModeration:
+    """`is_blocked` 被**讀取**的那一刻登記進共用序列，用來釘死查看時機。
+
+    這是 `test_moderation_runs_after_family_notification` 在合併模式下的真正對應：
+    合併之後審核結論在通報前就已經到手，能守的不再是「呼叫時刻」而是「查看時刻」。
+    """
+
+    def __init__(self, calls: list[str]) -> None:
+        self._calls = calls
+        self.category = AbuseCategory.NONE
+        self.confidence = 1.0
+        self.reason = "正常發話"
+        self.signals = ["llm"]
+
+    @property
+    def is_blocked(self) -> bool:
+        self._calls.append("read_blocked")
+        return False
+
+
+class _PassThroughModerator:
+    """`apply_threshold` 原樣回傳，讓探針物件能一路走到 `is_blocked` 的查看點。"""
+
+    def __init__(self, result) -> None:
+        self._result = result
+
+    def moderate(self, text):  # pragma: no cover - 合併模式不會走到
+        raise AssertionError("合併模式不應呼叫 moderate")
+
+    def apply_threshold(self, result):
+        return self._result
+
+
+def test_combined_path_reads_is_blocked_only_after_family_notification():
+    """合併模式的順序鐵律：審核結論**被查看**的時刻必須晚於家屬通報。
+
+    ⚠️ 這支測試取代不了 `test_moderation_runs_after_family_notification`——那支守的是
+    分開呼叫路徑（`moderate()` 的呼叫時刻），合併模式下它根本不會被呼叫到。兩條路各由
+    一支測試守，缺一不可。
+
+    ⚠️ 請不要「順手優化」把 `is_blocked` 檢查上移到 `_assess_and_moderate` 之後
+    （「反正結果已經拿到了，先擋掉可以省下落庫和通報」）——那正是本測試要擋的退化。
+    """
+    calls: list[str] = []
+    probe = _OrderProbeModeration(calls)
+    combined = _FakeCombinedClassifier(
+        CombinedSafetyResult(
+            risk=RiskAssessment(RiskTier.L2, 0.95, "求救", ["llm"]),
+            moderation=ModerationResult(AbuseCategory.NONE, 1.0, "正常發話", ["llm"]),
+        )
+    )
+    pipeline = _text_pipeline(
+        RiskDetector(_BoomRiskClassifier()),
+        _OrderedNotifier(calls),
+        moderator=_PassThroughModerator(probe),
+        combined_classifier=combined,
+    )
+
+    pipeline.process_text("我不想活了", elder_id="u1")
+
+    assert calls.index("notify") < calls.index("read_blocked")
+
+
+class _BoomThresholdModerator:
+    """`apply_threshold` 爆炸——審核側的任何失敗都不可擋住家屬通報。"""
+
+    def moderate(self, text):  # pragma: no cover - 合併模式不會走到
+        raise AssertionError("合併模式不應呼叫 moderate")
+
+    def apply_threshold(self, result):
+        raise RuntimeError("boom")
+
+
+def test_moderation_side_failure_cannot_block_the_family_notification():
+    """審核側計算爆炸時，危急落庫與家屬通報仍照常發生（2026-07-30 審查 M-1）。
+
+    分開呼叫時審核整段跑在通報**之後**，所以「審核側壞掉不可能擋住通報」是免費的
+    結構保證；合併之後門檻套用被搬到通報之前，那道保證得靠程式碼自己補回來。
+    """
+    notifier = SpyNotifier()
+    events = FakeRiskEventStore()
+    combined = _FakeCombinedClassifier(
+        CombinedSafetyResult(
+            risk=RiskAssessment(RiskTier.L2, 0.95, "求救", ["llm"]),
+            moderation=ModerationResult(AbuseCategory.NONE, 0.9, "正常", ["llm"]),
+        )
+    )
+    pipeline = _text_pipeline(
+        RiskDetector(_BoomRiskClassifier()),
+        notifier,
+        events,
+        moderator=_BoomThresholdModerator(),
+        combined_classifier=combined,
+    )
+
+    result = pipeline.process_text("我不想活了", elder_id="u1", trace_id="t8")
+
+    assert notifier.calls == [("u1", RiskTier.L2)]
+    assert events.recorded_trace_ids == ["t8"]
+    assert result.text == "你說的是：我不想活了"  # fail-open：照常進 agent
+
+
+class _BadCategoryLLM:
+    """模型把 tier 判對，但 `category` 吐列舉外的字串（實測會發生的格式失誤）。"""
+
+    def generate(self, *, system_prompt: str, messages: list[Message], response_schema=None) -> str:
+        return (
+            '{"tier": 2, "tier_confidence": 0.95, "tier_reason": "跌倒", '
+            '"category": "fall_risk", "moderation_confidence": 0.9, "moderation_reason": "x"}'
+        )
+
+
+def test_bad_category_still_notifies_the_family():
+    """端到端守 2026-07-30 審查的 CRITICAL：審核欄位的格式失誤不可吃掉危急通報。
+
+    這是本批唯一擋得住「線上漏通報」的測試。失效時的症狀極度隱蔽：長輩照樣拿到正常
+    回覆（審核 fail-open），只有家屬沒收到通知——沒有任何錯誤、沒有任何日誌指向它。
+    刻意走真的 `LlmCombinedSafetyClassifier`（不是替身），因為要守的正是它的解析邏輯。
+    """
+    notifier = SpyNotifier()
+    events = FakeRiskEventStore()
+    pipeline = _text_pipeline(
+        RiskDetector(_BoomRiskClassifier()),
+        notifier,
+        events,
+        moderator=AbuseModerator(_BoomAbuseClassifier()),
+        combined_classifier=LlmCombinedSafetyClassifier(_BadCategoryLLM()),
+    )
+
+    # 「我剛剛在浴室滑了一下」關鍵詞層只到 L1，tier=2 是家屬收到通知的唯一依據。
+    pipeline.process_text("我剛剛在浴室滑了一下", elder_id="u1", trace_id="t9")
+
+    assert notifier.calls == [("u1", RiskTier.L2)]
+    assert events.recorded_trace_ids == ["t9"]
+
+
+def test_combined_path_records_two_llm_calls_sharing_latency_without_double_counting_tokens():
+    """一次呼叫記兩筆 llm_call（kind 分別為分級／審核），共用同一個 latency_ms；
+    token 用量只記在分級那筆——兩邊都記會讓 admin 的跨 kind 用量加總把這次呼叫的
+    token 算兩遍（見 `pipeline._assess_and_moderate` 的說明）。
+    """
+
+    class _UsageReportingCombinedClassifier:
+        def classify(self, text: str) -> CombinedSafetyResult:
+            report_llm_usage(40, 8)
+            return CombinedSafetyResult(
+                risk=RiskAssessment(RiskTier.L0, 0.9, "一般", ["llm"]),
+                moderation=ModerationResult(AbuseCategory.NONE, 0.9, "正常", ["llm"]),
+            )
+
+    traces = FakeTraceStore()
+    pipeline = VoicePipeline(
+        asr=MockAsrClient("阿公早安"),
+        agent=CareAgent(EchoLLM(), NullSession()),
+        tts=TextBubbleTts(),
+        detector=RiskDetector(_BoomRiskClassifier()),
+        notifier=SpyNotifier(),
+        risk_events=FakeRiskEventStore(),
+        moderator=AbuseModerator(_BoomAbuseClassifier()),
+        combined_classifier=_UsageReportingCombinedClassifier(),
+        traces=traces,
+        safety_model_name="safety-model",
+        timer=iter([0.0, 0.1, 0.1, 0.1, 0.2, 0.3, 0.5, 0.6, 0.9, 1.0]).__next__,
+    )
+
+    pipeline.process(b"\x00", elder_id="u1", trace_id="t1")
+
+    safety_calls = [c for c in traces.llm_calls if c.model_name == "safety-model"]
+    assert len(safety_calls) == 2
+    risk_call = next(c for c in safety_calls if "風險分級" in c.content)
+    moderation_call = next(c for c in safety_calls if "濫用審核" in c.content)
+    assert risk_call.latency_ms == moderation_call.latency_ms
+    assert risk_call.input_tokens == 40
+    assert risk_call.output_tokens == 8
+    assert moderation_call.input_tokens is None
+    assert moderation_call.output_tokens is None
+
+
+# ── 記憶寫入在交出回應前收斂（2026-07-30 延遲優化 B2＋審查 H2）─────────
+
+
+class _TimedWriteSession:
+    """記下 `record_turn` 何時真的寫完，用來釘死「回應交出前記憶已落地」。"""
+
+    def __init__(self, delay: float = 0.0) -> None:
+        self.written: list[float] = []
+        self._delay = delay
+
+    def assemble(self, elder_id: str, query: str) -> _NullCtx:
+        return _NullCtx()
+
+    def record_turn(self, elder_id: str, *messages: Message, at=None) -> None:
+        if self._delay:
+            time.sleep(self._delay)
+        self.written.append(time.monotonic())
+
+
+def test_memory_is_settled_before_the_reply_is_handed_back():
+    """回應交出前，本輪記憶必須已經落地（審查 H2）。
+
+    ⚠️ 這條不變式是 `channels/app/turns.py::get_turn_chunk` 明文依賴的：它讀 `turns`
+    表拿「今天最後一則金孫回覆」算 digest，落後時 App 續拉會收到 409 而停止——
+    **長輩只聽到第一句，其餘無聲消失，兩端都沒有任何訊號**。
+    `record_turn` 背景化（B2）省的是 TTS 前的 0.4–1 秒，不是放棄這條不變式。
+    """
+    background.configure(max_workers=1)
+    try:
+        session = _TimedWriteSession(delay=0.05)
+        pipeline = VoicePipeline(
+            asr=MockAsrClient("阿公早安"),
+            agent=CareAgent(EchoLLM(), session),
+            tts=TextBubbleTts(),
+            detector=StubDetector(RiskTier.L0),
+            notifier=SpyNotifier(),
+            risk_events=FakeRiskEventStore(),
+        )
+
+        pipeline.process(b"\x00", elder_id="u1")
+        handed_back = time.monotonic()
+
+        assert session.written, "記憶根本沒寫"
+        assert session.written[0] <= handed_back, "回應交出時記憶還沒落地"
+    finally:
+        background.reset_for_test()
+
+
+def test_a_lagging_memory_write_warns_but_still_returns_the_reply(caplog):
+    """等不到也照樣把回覆交出去——長輩聽到回應永遠優先；但要留下看得見的 warning。"""
+    import kinsun.pipeline as pipeline_module
+
+    background.configure(max_workers=1)
+    try:
+        released = threading.Event()
+
+        class _StuckSession(_TimedWriteSession):
+            def record_turn(self, elder_id: str, *messages: Message, at=None) -> None:
+                released.wait(timeout=5)
+
+        original = pipeline_module._MEMORY_WRITE_SETTLE_SECONDS
+        pipeline_module._MEMORY_WRITE_SETTLE_SECONDS = 0.05
+        try:
+            pipeline = VoicePipeline(
+                asr=MockAsrClient("阿公早安"),
+                agent=CareAgent(EchoLLM(), _StuckSession()),
+                tts=TextBubbleTts(),
+                detector=StubDetector(RiskTier.L0),
+                notifier=SpyNotifier(),
+                risk_events=FakeRiskEventStore(),
+            )
+            with caplog.at_level("WARNING", logger="kinsun.pipeline"):
+                result = pipeline.process(b"\x00", elder_id="u1")
+        finally:
+            pipeline_module._MEMORY_WRITE_SETTLE_SECONDS = original
+            released.set()
+
+        assert result.text == "你說的是：阿公早安"
+        assert "尚未落地" in caplog.text
+    finally:
+        background.reset_for_test()

@@ -18,8 +18,8 @@ CLASSIFY_SYSTEM_PROMPT = (
     "注意區分身體不適與情緒因素，避免把口頭誇飾誤判為危急。只輸出 JSON，不要多餘文字。"
 )
 
-_FAILSAFE_REASON = "llm 無法判定"
-_FAILSAFE_SIGNALS = ["llm:error"]
+FAILSAFE_REASON = "llm 無法判定"
+FAILSAFE_SIGNALS = ["llm:error"]
 
 # 受控生成 schema：讓模型被約束為合法 JSON，減少「格式故障→fail-safe 誤退 L0」的
 # 危急假陰性。schema 只約束結構、不約束語意，tier 的 0-2 定義仍靠 CLASSIFY_SYSTEM_PROMPT。
@@ -55,7 +55,7 @@ def _parse_classification(raw: str) -> RiskAssessment:
         confidence = max(0.0, min(1.0, float(data.get("confidence", 0.0))))
         reason = str(data.get("reason", ""))
     except (json.JSONDecodeError, KeyError, ValueError, TypeError):
-        return RiskAssessment(RiskTier.L0, 0.0, _FAILSAFE_REASON, list(_FAILSAFE_SIGNALS))
+        return RiskAssessment(RiskTier.L0, 0.0, FAILSAFE_REASON, list(FAILSAFE_SIGNALS))
     return RiskAssessment(tier, confidence, reason, ["llm"])
 
 
@@ -72,5 +72,5 @@ class LlmRiskClassifier:
                 response_schema=_CLASSIFY_SCHEMA,
             )
         except LLMError:
-            return RiskAssessment(RiskTier.L0, 0.0, _FAILSAFE_REASON, list(_FAILSAFE_SIGNALS))
+            return RiskAssessment(RiskTier.L0, 0.0, FAILSAFE_REASON, list(FAILSAFE_SIGNALS))
         return _parse_classification(raw)

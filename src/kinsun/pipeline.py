@@ -19,6 +19,11 @@ from kinsun.observability.models import (
 )
 from kinsun.observability.store import TraceStore, safe_record
 from kinsun.reports.reminders import ReminderLogStore
+from kinsun.safety.combined_classifier import (
+    CombinedSafetyClassifier,
+    failopen_moderation,
+    failsafe_result,
+)
 from kinsun.safety.detector import RiskDetector
 from kinsun.safety.events import RiskEventStore
 from kinsun.safety.moderation import AbuseModerator, ModerationResult, reply_for
@@ -29,6 +34,13 @@ from kinsun.speech.chunking import split_for_speech
 from kinsun.speech.tts import TTSClient, TTSError, TtsResult
 
 logger = logging.getLogger("kinsun.pipeline")
+
+
+# 交出回應前，等本輪記憶落地的上限（秒）。見 `_settle_memory_write`。
+#
+# 0.5 秒是「正常情況根本用不到、真的落後時也不至於讓長輩多等」的折衷：兩筆寫入
+# 實測各約 0.2 秒，而它們早在 TTS（首段實測 8.2 秒）之前就送出。等不到就放行。
+_MEMORY_WRITE_SETTLE_SECONDS = 0.5
 
 
 def _has_recognizable_speech(text: str) -> bool:
@@ -57,6 +69,7 @@ class VoicePipeline:
         reminder_logs: ReminderLogStore | None = None,
         response_window_seconds: int = 3600,
         moderator: AbuseModerator | None = None,
+        combined_classifier: CombinedSafetyClassifier | None = None,
         chunked_channels: frozenset[str] = frozenset(),
         turn_budget_seconds: float = 0.0,
     ) -> None:
@@ -75,13 +88,19 @@ class VoicePipeline:
         self._response_window_seconds = response_window_seconds
         # 選填（預設 None＝不審核，等同 SAFETY_MODERATION_ENABLED=false）。
         self._moderator = moderator
+        # 選填（預設 None＝分級與審核各自呼叫一次 Gemini，原行為）。
+        # 2026-07-30 延遲優化 C2：只在與 `moderator` 同時設定時才會被使用
+        # （見 `_process_transcribed`）——單獨設定沒有意義，合併呼叫本來就是為了
+        # 同時省下審核那次網路往返，沒有審核就沒有第二次呼叫可省。
+        self._combined_classifier = combined_classifier
         # 啟用 TTS 分段串流的通道（2026-07-26 延遲優化）。預設空集合＝所有通道維持
         # 原行為（整段合成）。逐通道而非全域開關，是因為分段需要**投遞端配合**：
         # App 拿得到段數、會逐段拉並接著播；LINE 只能收一則語音訊息，給它第一句
         # 等於把後面的話吞掉。故 app.py 只把 "app" 放進來。
         self._chunked_channels = chunked_channels
         # 這一輪從長輩開口到必須交出回覆的總時間（秒）；0＝不限制，回到逐次逾時的
-        # 舊行為。⚠️ 它管的是**相加**：一輪會依序打三次 Gemini（分級→審核→生成），
+        # 舊行為。⚠️ 它管的是**相加**：一輪會依序打三次 Gemini（分級→審核→生成；
+        # 合併分類器啟用時是兩次），
         # 各自的 30 秒逾時攔得住一次呼叫，攔不住三次疊起來——2026-07-28 Gemini 3.5
         # 過載那晚，三次各卡滿 30 秒，長輩等了 96.6 秒才聽到回退話術。
         self._turn_budget_seconds = turn_budget_seconds
@@ -174,9 +193,20 @@ class VoicePipeline:
         # ⚠️ 這只改「何時開始組」，**決策順序一字未動**——底下的落庫／通報／攔截先後
         # 完全照舊。prepare 只讀不寫，故被攔的那一輪雖白做一次組裝，仍不會進記憶。
         prepared = self._agent.prepare(elder_id, user_text)
-        assessment = self._assess(
-            user_text, external_id=external_id, channel=channel, trace_id=trace_id
-        )
+        # 分級與審核合併成一次 Gemini 呼叫（2026-07-30 延遲優化 C2，預設關）：兩者
+        # 都設定時才走這條路——單獨開合併分類器沒有意義，見 `__init__` 的說明。
+        # ⚠️ 決策順序不變：`moderation` 這裡雖然已經拿到手，要等下面走完危急落庫／
+        # 家屬通報／提醒標記才會被查看，與分開呼叫時的安全屬性等價（見
+        # `combined_classifier` 模組頂端說明）。
+        moderation: ModerationResult | None = None
+        if self._combined_classifier is not None and self._moderator is not None:
+            assessment, moderation = self._assess_and_moderate(
+                user_text, external_id=external_id, channel=channel, trace_id=trace_id
+            )
+        else:
+            assessment = self._assess(
+                user_text, external_id=external_id, channel=channel, trace_id=trace_id
+            )
         tracing.update_trace_metadata(risk_tier=assessment.tier.name)
         # 危急通知須獨立於回覆生成：先落庫＋通知家屬，才產生回覆。
         # 否則 agent 生成回覆時若丟例外，會讓已偵測到的危急漏通知。
@@ -202,9 +232,10 @@ class VoicePipeline:
         # 被攔的這一輪刻意不寫進記憶（記憶只由 agent.handle 寫）：綁架企圖不該變成
         # 明天的對話脈絡，也不該進長期記憶。
         if self._moderator is not None:
-            moderation = self._moderate(
-                user_text, external_id=external_id, channel=channel, trace_id=trace_id
-            )
+            if moderation is None:  # 未走合併路徑，走原本的獨立審核呼叫
+                moderation = self._moderate(
+                    user_text, external_id=external_id, channel=channel, trace_id=trace_id
+                )
             if moderation.is_blocked:
                 tracing.update_trace_metadata(moderation=moderation.category.value)
                 blocked_reply = reply_for(moderation.category)
@@ -227,8 +258,34 @@ class VoicePipeline:
         result = self._synthesize(
             reply_text, external_id=external_id, channel=channel, trace_id=trace_id
         )
+        self._settle_memory_write(prepared)
         # 附上本輪的使用者原話（語音為 ASR 辨識、文字為輸入），供 debug 顯示。
         return replace(result, transcript=user_text)
+
+    def _settle_memory_write(self, prepared) -> None:
+        """交出回應前，確認本輪記憶已經落地（2026-07-30 審查 H2）。
+
+        `record_turn` 走背景寫入（延遲優化 B2），但它**不是**沒有人在等：
+        `channels/app/turns.py::get_turn_chunk` 靠 `turns` 表的最後一則金孫回覆算
+        digest，落後時 App 續拉會拿到 409、長輩只聽到第一句就無聲了。這裡把
+        「回應送出前 DB 已落地」這條不變式補回來——`get_turn_chunk` 的 docstring
+        一直是這樣寫的。
+
+        正常情況零成本：TTS 首段實測 8.2 秒，背景那兩筆（各約 0.2 秒）早就寫完，
+        `wait` 立刻回 True。真的落後才最多多等 `_MEMORY_WRITE_SETTLE_SECONDS`。
+
+        等不到也照樣把回覆交出去——長輩聽到回應永遠優先於稽核與續拉的完整性；
+        但留一行 warning，讓「這一輪的記憶落後或被丟棄」變成看得見的事實，而不是
+        日後某位長輩「後半句不見了」卻查不出原因。
+        """
+        handle = getattr(prepared, "record_handle", None)
+        if handle is None:  # 被審核攔下、或管線在寫記憶之前就走了回退話術
+            return
+        if not handle.wait(_MEMORY_WRITE_SETTLE_SECONDS):
+            logger.warning(
+                "本輪記憶尚未落地（等 %.1f 秒），續拉分段可能取到上一輪",
+                _MEMORY_WRITE_SETTLE_SECONDS,
+            )
 
     def _mark_reminder_responded(self, elder_id: str) -> None:
         """長輩開口＝可能在回應剛推的提醒（時間窗判定，不做內容比對）。
@@ -341,6 +398,81 @@ class VoicePipeline:
                 )
             )
         return moderation
+
+    @tracing.track(name="safety_combined", type="general", capture_input=True, capture_output=True)
+    def _assess_and_moderate(
+        self, user_text: str, *, external_id: str, channel: str, trace_id: str
+    ) -> tuple[RiskAssessment, ModerationResult]:
+        """危急分級＋濫用審核合併成一次 Gemini 呼叫（2026-07-30 延遲優化 C2）。
+
+        只在 `_process_transcribed` 判斷 `combined_classifier` 與 `moderator`
+        都設定時才會被呼叫。決策順序不變：關鍵詞地板／降級規則（`combine_with_llm`）
+        與信心門檻（`apply_threshold`）與分開呼叫時完全相同，只是兩份判斷來自同一次
+        `classify` 呼叫——見 `combined_classifier` 模組頂端關於安全順序的說明。
+
+        `combined_classifier.classify` 本身只捕捉 `LLMError`（見其實作）；這裡再包一層
+        `except Exception`，與 `RiskDetector.assess`／`AbuseModerator.moderate` 對自家
+        classifier 的防禦層級一致——分級與審核都絕不可因為安全檢查本身的例外而中斷對話。
+
+        ⚠️ **審核半邊的計算一律不可讓例外逃出去**（2026-07-30 審查 M-1）：分開呼叫時
+        審核整段跑在家屬通報**之後**，所以「審核側的任何程式碼都結構上不可能阻止通報」
+        是免費的；合併之後這段被搬到通報之前，那道結構保護就沒了。`apply_threshold`
+        讀 `is_blocked`／`confidence`／`category.value`，遇到不合規的 classifier 實作
+        （`confidence` 是 None、`category` 是裸字串）會拋例外，而它此刻若逃出去，
+        危急落庫與家屬通報一次都不會執行。故在此就地 fail-open 補回那道保護。
+        """
+        usage = LLMUsage()
+        started = self._timer()
+        try:
+            with collect_llm_usage(usage):
+                combined = self._combined_classifier.classify(user_text)
+        except Exception:  # noqa: BLE001 - 分級與審核都絕不可中斷對話
+            combined = failsafe_result()
+        assessment = self._detector.combine_with_llm(user_text, combined.risk)
+        try:
+            moderation = self._moderator.apply_threshold(combined.moderation)
+        except Exception:  # noqa: BLE001 - 審核側絕不可擋住家屬通報（見上方 ⚠️）
+            logger.warning("審核門檻套用失敗，本輪 fail-open 放行")
+            moderation = failopen_moderation()
+        if self._traces is not None:
+            traces = self._traces
+            latency_ms = self._latency_ms(started)
+            risk_is_error = "llm:error" in assessment.signals
+            moderation_is_error = "llm:error" in moderation.signals
+            safe_record(
+                lambda: traces.record_llm_call(
+                    trace_id=trace_id,
+                    external_id=external_id,
+                    channel=channel,
+                    status="error" if risk_is_error else "ok",
+                    latency_ms=latency_ms,
+                    model_name=self._safety_model_name,
+                    input_tokens=usage.input_tokens or None,
+                    output_tokens=usage.output_tokens or None,
+                    content=f"風險分級 {assessment.tier.name}：{assessment.reason}",
+                    error_message="分級器故障（fail-safe 留痕）" if risk_is_error else "",
+                    kind=LLM_CALL_KIND_RISK_CLASSIFY,
+                )
+            )
+            safe_record(
+                lambda: traces.record_llm_call(
+                    trace_id=trace_id,
+                    external_id=external_id,
+                    channel=channel,
+                    status="error" if moderation_is_error else "ok",
+                    latency_ms=latency_ms,
+                    model_name=self._safety_model_name,
+                    # token 用量只記在上面那筆 risk_classify：這兩筆其實是同一次
+                    # Gemini 呼叫，兩邊都記 usage 會讓 admin 的跨 kind 用量加總
+                    # （SELECT SUM(input_tokens)…）把這次呼叫的 token 算兩遍。
+                    input_tokens=None,
+                    output_tokens=None,
+                    content=f"濫用審核 {moderation.category.value}：{moderation.reason}",
+                    error_message="審核器故障（fail-open 放行）" if moderation_is_error else "",
+                    kind=LLM_CALL_KIND_MODERATION,
+                )
+            )
+        return assessment, moderation
 
     @contextmanager
     def _span(self, record: Callable[[TraceStore, str, int, str], object]) -> Iterator[None]:
