@@ -11,6 +11,7 @@
 
 import { memo, useState } from "react";
 
+import { GuardianApp } from "@/guardian/GuardianApp";
 import { ElderSession, GuardianSession } from "@/session/contexts";
 import { strings } from "@/strings";
 
@@ -65,7 +66,7 @@ export const StagePage = memo(function StagePage() {
             </div>
             <div className={pane === "guardian" ? "" : "hidden lg:block"}>
               <PhoneFrame title={strings.stage.guardianTitle} os="android">
-                <GuardianPanePlaceholder />
+                <GuardianApp />
               </PhoneFrame>
             </div>
           </div>
@@ -81,16 +82,6 @@ function ElderPanePlaceholder() {
   return (
     <div className="flex h-full items-center justify-center p-6 text-center text-elder-min text-ink-soft">
       {session ? session.display_name : "長輩端（尚未實作）"}
-    </div>
-  );
-}
-
-/** P2 換成完整的家屬端。 */
-function GuardianPanePlaceholder() {
-  const { session } = GuardianSession.useSession();
-  return (
-    <div className="flex h-full items-center justify-center p-6 text-center text-base text-ink-soft">
-      {session ? session.display_name : "家屬端（尚未實作）"}
     </div>
   );
 }
