@@ -152,6 +152,8 @@ export const strings = {
     whenRequired: "請填寫提醒時間，格式請照欄位下方的範例。",
     editHint: "修改後請重新填一次提醒時間。",
     byElder: "（長輩自己交代的）",
+    customTimePlaceholder: "07:30",
+    confirmDeleteButton: "確定刪除",
   },
   notifications: {
     title: "通知",

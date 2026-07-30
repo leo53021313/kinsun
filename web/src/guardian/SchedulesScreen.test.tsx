@@ -1,4 +1,4 @@
-/** 排程管理：三種類型 × 三種重複的新增、修改、刪除。 */
+/** 排程管理：用藥／回診／自訂三種提醒類型共用的新增、修改、刪除（各類型可用的重複方式不同，非三三對應）。 */
 
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -20,6 +20,17 @@ const WALK = {
   event_at: null,
   occurrences: [
     { schedule_id: "s1", repeat: "daily", time: "17:00", weekday: null, scheduled_at: null },
+  ],
+};
+
+const APPT = {
+  group_id: "g2",
+  kind: "appointment",
+  title: "心臟科回診",
+  created_by: "guardian",
+  event_at: 1754268000,
+  occurrences: [
+    { schedule_id: "s2", repeat: "once", time: "08:00", weekday: null, scheduled_at: 1754268000 },
   ],
 };
 
@@ -47,6 +58,22 @@ describe("SchedulesScreen", () => {
 
   it("沒有行程時顯示引導文字", async () => {
     renderScreen(vi.fn().mockResolvedValue({ status: 200, json: async () => envelope([]) }));
+    expect(await screen.findByText("還沒有任何提醒，從下方新增第一筆。")).toBeInTheDocument();
+  });
+
+  it("載入中會先顯示載入中，不會先閃過『還沒有任何提醒』", async () => {
+    // ⚠️ 用手動控制的 promise，不是 mockResolvedValue：後者在同一個 microtask
+    // 就解出結果，測試永遠只看得到「解完之後」那一瞬間，看不出畫面在「還沒解完
+    // 之前」顯示的是什麼——這正是 P1 抓過的同一種假測試手法。
+    let resolveFetch: (value: unknown) => void = () => {};
+    const pending = new Promise((resolve) => {
+      resolveFetch = resolve;
+    });
+    const fetchImpl = vi.fn().mockReturnValue(pending);
+    renderScreen(fetchImpl);
+    expect(await screen.findByText("載入中…")).toBeInTheDocument();
+    expect(screen.queryByText("還沒有任何提醒，從下方新增第一筆。")).not.toBeInTheDocument();
+    resolveFetch({ status: 200, json: async () => envelope([]) });
     expect(await screen.findByText("還沒有任何提醒，從下方新增第一筆。")).toBeInTheDocument();
   });
 
@@ -105,6 +132,49 @@ describe("SchedulesScreen", () => {
     expect(screen.getByRole("button", { name: "更新" })).toBeInTheDocument();
   });
 
+  it("按取消編輯回到新增模式時，重填提示要一併消失", async () => {
+    renderScreen(vi.fn().mockResolvedValue({ status: 200, json: async () => envelope([WALK]) }));
+    await userEvent.click(await screen.findByRole("button", { name: "編輯" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("修改後請重新填一次提醒時間。");
+    await userEvent.click(screen.getByRole("button", { name: "取消編輯" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("提醒內容")).toHaveValue("");
+  });
+
+  it("編輯後按更新：真的送出 PUT，且欄位對應被編輯那筆的類型", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 200, json: async () => envelope([APPT]) })
+      .mockResolvedValueOnce({ status: 200, json: async () => envelope(APPT) })
+      .mockResolvedValueOnce({ status: 200, json: async () => envelope([APPT]) });
+    renderScreen(fetchImpl);
+    await userEvent.click(await screen.findByRole("button", { name: "編輯" }));
+    // 釘住 setKind(group.kind)：編輯「回診」這筆時應該立刻換成回診日期欄，而不是
+    // 停在用藥預設的時段複選——欄位跟正在編輯的類型對不上，家屬會填錯地方。
+    expect(screen.getByLabelText("回診日期")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "早上" })).not.toBeInTheDocument();
+
+    await userEvent.clear(screen.getByLabelText("提醒內容"));
+    await userEvent.type(screen.getByLabelText("提醒內容"), "心臟科回診（改約）");
+    await userEvent.type(screen.getByLabelText("回診日期"), "2026-08-10");
+    await userEvent.click(screen.getByRole("button", { name: "更新" }));
+
+    await waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(3));
+    expect(fetchImpl.mock.calls[1][1].method).toBe("PUT");
+    expect(fetchImpl.mock.calls[1][0]).toBe("/api/v1/elders/e1/schedules/g2");
+    const body = JSON.parse(fetchImpl.mock.calls[1][1].body as string);
+    expect(body).toEqual({
+      kind: "appointment",
+      title: "心臟科回診（改約）",
+      occurrences: [
+        { repeat: "once", date: "2026-08-09", time: "08:00" },
+        { repeat: "once", date: "2026-08-10", time: "08:00" },
+      ],
+      event_date: "2026-08-10",
+      event_time: "",
+    });
+  });
+
   it("刪除要先確認，取消就不打後端", async () => {
     const fetchImpl = vi.fn().mockResolvedValue({ status: 200, json: async () => envelope([WALK]) });
     renderScreen(fetchImpl);
@@ -119,6 +189,9 @@ describe("SchedulesScreen", () => {
     fetchImpl.mockClear();
     await userEvent.click(screen.getByRole("button", { name: "取消" }));
     expect(fetchImpl).not.toHaveBeenCalled();
+    // 只驗證「沒打後端」不夠：確認列本身要真的關掉，否則使用者以為取消生效了，
+    // 但那個唯一能反悔的按鈕其實還卡在畫面上（或者，更糟，卡在畫面上卻按不動）。
+    expect(screen.queryByText("確定要刪除「散步」嗎？")).not.toBeInTheDocument();
   });
 
   it("確認刪除後才打 DELETE", async () => {
@@ -134,5 +207,10 @@ describe("SchedulesScreen", () => {
       expect(fetchImpl.mock.calls[1][1].method).toBe("DELETE");
       expect(fetchImpl.mock.calls[1][0]).toBe("/api/v1/elders/e1/schedules/g1");
     });
+    // 光打了 DELETE 不夠：清單要真的重新整理、被刪的那一列要從畫面上消失，
+    // 不然家屬會看著同一列以為沒刪成功，再按一次刪除鍵。
+    await waitFor(() =>
+      expect(screen.queryByText("散步（每天 17:00）")).not.toBeInTheDocument(),
+    );
   });
 });

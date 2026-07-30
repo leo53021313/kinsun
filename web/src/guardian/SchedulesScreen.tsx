@@ -9,7 +9,7 @@
  */
 
 import type { ScheduleGroup, ScheduleInput } from "kinsun-shared/types";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { ApiError } from "@/api";
 import { GuardianSession } from "@/session/contexts";
@@ -45,6 +45,11 @@ export function SchedulesScreen(props: { elderId: string }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // 刪除確認列（role="alertdialog"）：出現時要把焦點移進去，讀螢幕的人才聽得到
+  // 「確定要刪除…」這句話——它在 DOM 裡但焦點沒過去，螢幕報讀軟體不會朗讀它。
+  const confirmHeadingId = useId();
+  const confirmDialogRef = useRef<HTMLDivElement | null>(null);
+
   // 這支給送出（新增／修改／刪除）之後手動呼叫，用來重打清單；不是給下面的初次
   // 載入 effect 用——effect 裡直接呼叫這支 useCallback 出來的非同步函式會被
   // react-hooks/set-state-in-effect 判定為「在 effect 裡呼叫會 setState 的函式」
@@ -76,12 +81,23 @@ export function SchedulesScreen(props: { elderId: string }) {
     };
   }, [elderId, token, signOutOn401]);
 
+  // 按下「編輯」進來的紅字提示（「修改後請重新填一次提醒時間。」）若不在這裡一併
+  // 清掉，按「取消編輯」回到新增模式後那句提示會留在畫面上，跟眼前空白的表單對
+  // 不上——家屬會以為剛才什麼操作出錯了。
   function resetForm() {
     setTitle("");
     setSlots([]);
     setWhen("");
     setEditingId(null);
+    setError("");
   }
+
+  // 確認列一出現就把焦點移進去（見上面 confirmDialogRef 的說明）。
+  useEffect(() => {
+    if (pendingDelete) {
+      confirmDialogRef.current?.focus();
+    }
+  }, [pendingDelete]);
 
   function buildBody(): ScheduleInput | null {
     const trimmed = title.trim();
@@ -160,8 +176,19 @@ export function SchedulesScreen(props: { elderId: string }) {
                     setTitle(group.title);
                     setSlots([]);
                     setWhen("");
-                    // 後端回的是算好的鬧鐘，不是使用者當初打的那句話——反推不回去，
-                    // 所以誠實請他重填一次，而不是猜一個填進去讓他以為沒改到。
+                    // ⚠️ 這裡原本寫「後端回的是算好的鬧鐘，反推不回去」，是錯的根因：
+                    // daily／weekly／once 都可以無損反推——describeGroup 排出來的字串
+                    // （如「每週三 15:00」）本身就是 customOccurrences 吃得下的輸入格式，
+                    // 兩者互為映射，沒有資訊被丟掉。
+                    //
+                    // 真正有損的只有用藥的「時段勾選」：occurrences 只存得住展開後的
+                    // 時刻（如 08:00），存不住當初是「勾了早上」還是「手動打 08:00」；
+                    // slotLabelForTime 只能按時段區間反猜，猜錯或猜對都無法確認，而且
+                    // 多選時段（如早上＋晚上）展開成多筆 occurrence 後也回不去勾選狀態。
+                    //
+                    // 因為三種類型共用同一支表單、同一套「時間留空＋提示重填」的規則
+                    // 比替每種類型各寫一套精確反推邏輯單純得多，所以即使 daily／weekly／
+                    // once 技術上可以做到無損回填，這裡仍統一請家屬重填一次。
                     setError(strings.schedules.editHint);
                   }}
                 />
@@ -178,11 +205,25 @@ export function SchedulesScreen(props: { elderId: string }) {
       </Section>
 
       {pendingDelete ? (
-        <div className="flex flex-col gap-2 rounded-2xl border-2 border-danger bg-surface p-4">
-          <p className="text-sm text-ink">{strings.schedules.confirmDelete(pendingDelete.title)}</p>
+        <div
+          ref={confirmDialogRef}
+          tabIndex={-1}
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby={confirmHeadingId}
+          className="flex flex-col gap-2 rounded-2xl border-2 border-danger bg-surface p-4"
+        >
+          <p id={confirmHeadingId} className="text-sm text-ink">
+            {strings.schedules.confirmDelete(pendingDelete.title)}
+          </p>
           <div className="flex gap-2">
-            <Button label="確定刪除" onClick={confirmDelete} busy={busy} />
-            <Button label={strings.common.cancel} variant="outline" onClick={() => setPendingDelete(null)} />
+            <Button label={strings.schedules.confirmDeleteButton} onClick={confirmDelete} busy={busy} />
+            <Button
+              label={strings.common.cancel}
+              variant="outline"
+              disabled={busy}
+              onClick={() => setPendingDelete(null)}
+            />
           </div>
         </div>
       ) : null}
@@ -190,15 +231,19 @@ export function SchedulesScreen(props: { elderId: string }) {
       <Section title={editingId ? strings.schedules.editSection : strings.schedules.addSection}>
         <fieldset>
           <legend className="text-sm font-semibold text-ink-soft">{strings.schedules.kindLabel}</legend>
-          <div className="mt-2 flex flex-wrap gap-2">
+          <div role="radiogroup" aria-label={strings.schedules.kindLabel} className="mt-2 flex flex-wrap gap-2">
             {KIND_OPTIONS.map((option) => (
               <button
                 key={option.value}
                 type="button"
                 role="radio"
                 aria-checked={kind === option.value}
+                // 編輯模式下鎖住類型：中途改成別的類型再按更新，後端會因為新舊欄位對不
+                // 上而回 400（訊息本身沒問題），但這一趟本可省下——編輯中本來就該先把
+                // 現有那筆改完，要換類型就先取消編輯再新增一筆。
+                disabled={editingId !== null}
                 onClick={() => setKind(option.value)}
-                className={`min-h-12 rounded-full border-2 px-4 text-sm font-semibold ${
+                className={`min-h-12 rounded-full border-2 px-4 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${
                   kind === option.value
                     ? "border-primary bg-primary text-white"
                     : "border-line bg-surface text-ink"
@@ -250,7 +295,7 @@ export function SchedulesScreen(props: { elderId: string }) {
               label={strings.schedules.customTimeLabel}
               value={when}
               onChange={setWhen}
-              placeholder="07:30"
+              placeholder={strings.schedules.customTimePlaceholder}
             />
           </>
         ) : (
