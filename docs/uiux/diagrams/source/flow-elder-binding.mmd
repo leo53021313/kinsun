@@ -1,0 +1,29 @@
+---
+title: User Flow 02：長輩 QR／手動碼綁定
+---
+flowchart TD
+  subgraph L0["操作"]
+    L0N0["起點：選擇長輩"]
+    L0N1["畫面：綁定方式"]
+    L0N0 --> L0N1
+    L0N2["操作：掃 QR 或輸入碼"]
+    L0N1 --> L0N2
+  end
+  subgraph L1["系統"]
+    L1N0["決策：相機已允許？"]
+    L1N1["系統：送出綁定碼"]
+    L1N0 --> L1N1
+    L1N2["決策：代碼有效？"]
+    L1N1 --> L1N2
+  end
+  L0N2 -.-> L1N0
+  subgraph L2["結果"]
+    L2N0["成功：儲存 Session"]
+    L2N1["錯誤：無效／過期／已使用"]
+    L2N0 --> L2N1
+    L2N2["回復：改手動或重取碼"]
+    L2N1 --> L2N2
+    L2N3["取消：回角色頁"]
+    L2N2 --> L2N3
+  end
+  L1N2 -.-> L2N0
