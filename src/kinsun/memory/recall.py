@@ -39,6 +39,19 @@ class SessionMemory:
         self._short_term = short_term
         self._long_term = long_term
         self._facts = facts or []
+        # 逐提供者包 span（2026-07-30 spec）：索引＝注入順序——ScheduleFacts 註冊
+        # 三次（三種 kind），純類名會撞名；且順序本身是 prompt 契約，帶序號的
+        # waterfall 直接對得上段落順序。一次性包在建構時，wrapper 內的 lazy opik
+        # 快取才能跨輪重用。output 開是 capture 總原則的唯一例外：合併結果看不到
+        # 「哪一路回了 None（該段缺席）」，而缺席正是排查時要看的東西。
+        self._tracked_facts = [
+            tracing.track(
+                name=f"facts_{index}_{type(provider).__name__}",
+                capture_input=True,
+                capture_output=True,
+            )(provider.facts)
+            for index, provider in enumerate(self._facts)
+        ]
 
     # capture_output=True：回傳的 TurnContext（注入情境＋歷史）是乾淨資料、不含 self，
     # 攤在 span 上可直接看到模型當輪被餵了什麼記憶與事實。input 仍關（首參是 self）。
@@ -64,6 +77,7 @@ class SessionMemory:
         memories = self._long_term.search(elder_id, query)
         return InjectedContext(memories=memories, sections=self._gather_facts(elder_id))
 
+    @tracing.track(name="gather_facts", capture_input=True, capture_output=False)
     def _gather_facts(self, elder_id: str) -> list[FactSection]:
         """並行查所有事實提供者，結果仍按注入順序排列。
 
@@ -81,13 +95,13 @@ class SessionMemory:
         併發度＝提供者數量（目前 7 個），刻意不另設上限：真正的節流閥是 psycopg
         連線池（`DATABASE_POOL_MAX_SIZE`，預設 5），多出來的查詢自然在池上排隊。
         """
-        providers = self._facts
+        providers = self._tracked_facts
         if not providers:
             return []
 
-        def fetch(provider: FactProvider) -> FactSection | None:
+        def fetch(provider_facts) -> FactSection | None:
             try:
-                return provider.facts(elder_id)
+                return provider_facts(elder_id)
             except Exception:  # noqa: BLE001 - 事實提供者失敗不可中斷對話
                 logger.warning("事實提供者失敗，略過該段")
                 return None
@@ -95,8 +109,8 @@ class SessionMemory:
         contexts = [contextvars.copy_context() for _ in providers]
         with ThreadPoolExecutor(max_workers=len(providers)) as pool:
             futures = [
-                pool.submit(context.run, fetch, provider)
-                for context, provider in zip(contexts, providers, strict=True)
+                pool.submit(context.run, fetch, provider_facts)
+                for context, provider_facts in zip(contexts, providers, strict=True)
             ]
             sections = [future.result() for future in futures]
         return [section for section in sections if section is not None]

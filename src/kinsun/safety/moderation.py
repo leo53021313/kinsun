@@ -7,8 +7,8 @@
 
 ⚠️ 因為目標相反，接線順序是安全關鍵：本模組**必須排在危急偵測與家屬通知之後**。
 若排在前面，長輩說「我不想活了」一旦被誤判成違規就整輪被跳過，`risk_events` 不落庫、
-家屬永遠收不到 L2 通知——那些詞全都在 `keywords.ABSOLUTE_DANGER_WORDS` 裡。順序由
-`test_pipeline` 的 `test_moderation_runs_after_family_notification` 守住。
+家屬永遠收不到 L2 通知——那句話是 `keywords.classify_keywords` 必定判 L2 的求死意念。
+順序由 `test_pipeline` 的 `test_moderation_runs_after_family_notification` 守住。
 
 只擋三類（2026-07-25 Leo 核定）：角色綁架、洩漏系統設定、越權代工。刻意**不擋**兩類：
 

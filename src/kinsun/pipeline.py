@@ -196,8 +196,8 @@ class VoicePipeline:
         self._mark_reminder_responded(elder_id)
         # 濫用審核（2026-07-25）：⚠️ 位置有意義，請勿上移——必須排在危急落庫與家屬
         # 通報之後。攔截會整段跳過 agent，若排在前面，一句被誤判的「我不想活了」就會
-        # 讓 risk_events 不落庫、家屬永遠收不到 L2 通知（那些詞全在
-        # ABSOLUTE_DANGER_WORDS 裡）。順序由 test_pipeline 的
+        # 讓 risk_events 不落庫、家屬永遠收不到 L2 通知（那句話是 classify_keywords
+        # 必定判 L2 的求死意念）。順序由 test_pipeline 的
         # test_moderation_runs_after_family_notification 守住。
         # 被攔的這一輪刻意不寫進記憶（記憶只由 agent.handle 寫）：綁架企圖不該變成
         # 明天的對話脈絡，也不該進長期記憶。

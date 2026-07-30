@@ -6,6 +6,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
+from kinsun import tracing
 from kinsun.db import Database, _Errors
 from kinsun.llm import Message
 
@@ -87,6 +88,9 @@ class PgMemoryStore:
             (elder_id, message.role, message.content, created_at),
         )
 
+    # 一顆 span（2026-07-30 spec）：memory_assemble 三段串行裡唯一沒露臉的一段。
+    # output 關——TurnContext.history 已含同一份內容，重複攤只是燒儲存。
+    @tracing.track(name="shortterm_recent", capture_input=True, capture_output=False)
     def recent(self, elder_id: str) -> list[Message]:
         start = self._start_of_today()
         rows = self._db.query(
