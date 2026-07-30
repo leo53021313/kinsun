@@ -129,8 +129,8 @@ def load_labeled_utterances(path: Path) -> list[LabeledUtterance]:
 
 def keyword_only_assess(text: str) -> RiskAssessment:
     """離線詞表模式：只跑 classify_keywords，不需 LLM——量詞表本身的涵蓋率。"""
-    tier, is_absolute = classify_keywords(text)
-    signal = "keyword:absolute" if is_absolute else "keyword:symptom"
+    tier, is_emergency = classify_keywords(text)
+    signal = "keyword:emergency" if is_emergency else "keyword:symptom"
     return RiskAssessment(tier, 1.0, "詞表模式", [signal] if tier > RiskTier.L0 else [])
 
 

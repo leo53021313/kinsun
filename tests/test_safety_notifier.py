@@ -10,7 +10,7 @@ def test_log_notifier_logs_warning(caplog):
     notifier = LogNotifier()
     with caplog.at_level(logging.WARNING, logger="kinsun.safety"):
         notifier.notify(
-            "e-1", RiskAssessment(RiskTier.L2, 0.9, "求救", ["keyword:absolute"]), "救命"
+            "e-1", RiskAssessment(RiskTier.L2, 0.9, "求救", ["keyword:emergency"]), "救命"
         )
     assert any("L2" in r.message and "e-1" in r.message for r in caplog.records)
     # 原話與 reason 都是對話內容，不進 log（2026-07-27 政策）。
@@ -187,14 +187,18 @@ def test_no_guardians_no_push(caplog):
     assert all("救命" not in r.message for r in caplog.records)
 
 
-def test_absolute_keyword_message_mentions_119_plain_l2_does_not():
-    """✅ D-72（己-4）：L3 刪除後，119 提示改掛「絕對危急詞命中」訊號。"""
+def test_emergency_keyword_message_mentions_119_plain_l2_does_not():
+    """✅ D-72（己-4）：L3 刪除後，119 提示改掛關鍵詞層的訊號。
+
+    訊號名 2026-07-30 由 `keyword:absolute` 改為 `keyword:emergency`
+    ——語意從「不得翻案」變成「這是叫救護車的情境」。
+    """
     router = _SpyRouter()
     GuardianNotifier(_StubDirectory(["g1"]), router).notify(
-        "e-elder", RiskAssessment(RiskTier.L2, 0.9, "想不開", ["keyword:absolute"]), "我想不開"
+        "e-elder", RiskAssessment(RiskTier.L2, 0.9, "想不開", ["keyword:emergency"]), "我想不開"
     )
-    text_absolute = router.sent[0][2]
-    assert "119" in text_absolute and "醫療診斷" in text_absolute
+    text_emergency = router.sent[0][2]
+    assert "119" in text_emergency and "醫療診斷" in text_emergency
 
     router2 = _SpyRouter()
     GuardianNotifier(_StubDirectory(["g1"]), router2).notify(

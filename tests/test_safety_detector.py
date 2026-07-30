@@ -14,12 +14,16 @@ def _llm(tier, conf):
     return RiskAssessment(tier, conf, "r", ["llm"])
 
 
-def test_absolute_keyword_overrides_even_if_llm_low():
-    """✅ D-72（己-4）：絕對詞直判 L2 頂級，不受信心門檻影響。"""
+def test_emergency_keyword_overrides_even_if_llm_low():
+    """✅ D-72（己-4）：求救直判 L2 頂級，不受信心門檻影響。
+
+    `keyword:emergency` 訊號同時決定家屬簡訊要不要附 119 提示
+    （見 `notifier._format_alert`）。
+    """
     det = RiskDetector(FakeClassifier(_llm(RiskTier.L0, 0.0)))
     got = det.assess("救命")
     assert got.tier == RiskTier.L2
-    assert "keyword:absolute" in got.signals
+    assert "keyword:emergency" in got.signals
 
 
 def test_takes_max_of_keyword_and_llm():
@@ -84,27 +88,24 @@ def test_symptom_keyword_with_llm_error_reason_reflects_keyword():
     assert "症狀" in got.reason
 
 
-# ── 症狀詞翻案（2026-07-26 全流程模擬實測）──
-# 症狀詞是字面比對，讀不懂否定、時態與主詞；分級器讀得懂。實測 12 筆風險事件中
-# 4 筆是誤報且**真的送到家屬手機**，故有把握的分級器可以把症狀詞從 L2 翻到 L1
-# （留痕進每日摘要、不響警報）。絕對詞與分級器故障兩條紅線不動。
+# ── 關鍵詞層是地板，分級器只能往上加（2026-07-30 取代「症狀詞翻案」）──
+# 翻案是 2026-07-26 為了修四種誤報（否定／陳年往事／第三人稱／衛教提問）而加的。
+# 那四種現在由關鍵詞層的守門在**比對當下**就擋掉，翻案已無事可翻，故整段移除。
+# 本節改為守住新的不變式：**任何分級器判定都不得把關鍵詞層撐起來的等級拉低。**
 
-CONFIDENT = 0.9  # ≥ 翻案門檻（0.7）＝分級器很有把握
-UNSURE = 0.2  # 沒把握，不准翻案
-BARELY = 0.5  # 過得了 mid（0.4）但過不了翻案門檻（0.7）——刻意的不對稱
-
-
-def test_confident_classifier_downgrades_a_symptom_keyword_to_l1():
-    """「我沒有跌倒」不該吵到家屬——分級器有把握說不危急時，症狀詞降為留痕。"""
-    det = RiskDetector(FakeClassifier(_llm(RiskTier.L0, CONFIDENT)))
-    got = det.assess("你放心啦，我沒有跌倒，好好的")
-    assert got.tier == RiskTier.L1  # 落庫留痕、不通知家屬
-    assert "keyword:symptom" in got.signals
+CONFIDENT = 0.9  # 分級器很有把握
+UNSURE = 0.2  # 沒把握
+BARELY = 0.5  # 過得了 mid（0.4）但仍不足以動搖地板
 
 
-def test_the_four_real_world_false_positives_no_longer_alert_the_family():
-    """實測抓到的四種誤報形態：否定、陳年往事、第三人稱、衛教提問。"""
-    det = RiskDetector(FakeClassifier(_llm(RiskTier.L0, CONFIDENT)))
+def test_the_four_real_world_false_positives_never_reach_the_keyword_floor():
+    """實測抓到的四種誤報形態：否定、陳年往事、第三人稱、衛教提問。
+
+    ⚠️ 這裡用**故障的**分級器：這四句在關鍵詞層就判 L0，不需要任何 LLM 幫忙。
+    舊設計做不到這件事——它要等一個「沒故障且有把握」的分級器才翻得掉，
+    Gemini 掛掉的那半小時這四句照樣通知家屬。
+    """
+    det = RiskDetector(_BoomClassifier())
     for text in (
         "你放心啦，我沒有跌倒，好好的",
         "我十年前跌倒過一次，那時候住院一個月，現在都好了",
@@ -114,24 +115,18 @@ def test_the_four_real_world_false_positives_no_longer_alert_the_family():
         assert det.assess(text).tier < RiskTier.L2, text
 
 
-def test_an_unsure_classifier_cannot_overturn_a_symptom_keyword():
-    """沒把握就不准翻案：維持原本的保守判定，寧可誤報也不漏報。"""
-    det = RiskDetector(FakeClassifier(_llm(RiskTier.L0, UNSURE)))
-    assert det.assess("我剛剛跌倒了").tier == RiskTier.L2
+def test_no_classifier_verdict_can_pull_the_keyword_floor_down():
+    """★ 核心不變式：關鍵詞層判 L2 之後，分級器說什麼都拉不下來。
 
-
-def test_barely_confident_is_not_enough_to_turn_off_a_safety_floor():
-    """⚠️ 刻意的不對稱：翻案門檻（0.7）高於 mid（0.4）。
-
-    `mid` 管的是「要不要相信一個 L2 判定」，猜錯只是多吵家屬一次；
-    這裡管的是「要不要把已經亮起的安全地板關掉」，猜錯就是漏掉一次真的求救。
+    三種它可能說的話全試一次——沒把握、勉強有把握、非常有把握地說沒事。
     """
-    det = RiskDetector(FakeClassifier(_llm(RiskTier.L0, BARELY)))
-    assert det.assess("我剛剛跌倒了").tier == RiskTier.L2
+    for confidence in (UNSURE, BARELY, CONFIDENT):
+        det = RiskDetector(FakeClassifier(_llm(RiskTier.L0, confidence)))
+        assert det.assess("我剛剛跌倒了").tier == RiskTier.L2, confidence
 
 
-def test_a_confident_classifier_still_cannot_overturn_an_absolute_word():
-    """絕對詞是紅線：分級器再有把握也不能翻。"""
+def test_a_confident_classifier_cannot_overturn_a_crisis_utterance():
+    """求死意念是紅線：分級器再有把握也拉不下來。"""
     det = RiskDetector(FakeClassifier(_llm(RiskTier.L0, CONFIDENT)))
     for text in ("我不想活了", "我喘不過氣", "快叫救護車"):
         assert det.assess(text).tier == RiskTier.L2, text
@@ -143,34 +138,24 @@ def test_a_confident_classifier_that_says_l2_still_alerts():
     assert det.assess("我剛剛在浴室跌倒了，爬不起來").tier == RiskTier.L2
 
 
-def test_an_overturned_symptom_keyword_lands_on_l1_not_l0():
-    """翻案落在 L1（留痕不通知），不掉到 L0。
-
-    長輩確實講了症狀詞，這件事要留給每日摘要（✅ D-10 己-5）。
-    """
-    det = RiskDetector(FakeClassifier(_llm(RiskTier.L0, CONFIDENT)))
-    assert det.assess("我這幾天有點頭暈").tier == RiskTier.L1
+def test_the_classifier_can_still_raise_a_tier():
+    """只升不降：關鍵詞層沒看到的東西，分級器照樣拉得起來。"""
+    det = RiskDetector(FakeClassifier(_llm(RiskTier.L2, CONFIDENT)))
+    assert det.assess("今天天氣真好").tier == RiskTier.L2
 
 
 def test_a_weak_signal_from_the_classifier_still_alerts_the_family():
-    """⚠️ 只准 L0 翻案：分級器判 L1（它自己也覺得有小訊號）時照舊通報。
-
-    標注集實測：允許 L1 翻案會新漏掉「我好幾天沒睡，眼睛都花了」（L1／0.95）與
-    「最近都沒力氣，連菜都提不動」（L1／0.90）——兩句的標注都是應通報。
-    """
+    """分級器判 L1（它自己也覺得有小訊號）時，關鍵詞層的 L2 照舊通報。"""
     det = RiskDetector(FakeClassifier(_llm(RiskTier.L1, CONFIDENT)))
     assert det.assess("我這幾天有點頭暈").tier == RiskTier.L2
 
 
-def test_a_broken_classifier_cannot_overturn_a_symptom_keyword_even_if_it_sounds_sure():
-    """⚠️ 紅線回歸：`llm:error` 期間不准翻案，分級器自報的信心再高也不行。
-
-    故障時回傳的 confidence 是垃圾值（可能是解析失敗前的殘值），若不看 signals，
-    一個「故障但自稱很有把握」的判定就能把安全地板整個關掉。
-    拿掉 detector 裡的 `"llm:error" not in llm.signals` 這一行，本測試即紅。
+def test_a_broken_classifier_cannot_pull_down_a_keyword_floor_even_if_it_sounds_sure():
+    """⚠️ 紅線回歸：分級器故障時回傳的 confidence 是垃圾值（可能是解析失敗前的殘值），
+    不得因為它自稱 0.99 就把已經亮起的安全地板關掉。
     """
     broken = RiskAssessment(RiskTier.L0, 0.99, "分級器例外", ["llm:error"])
     det = RiskDetector(FakeClassifier(broken))
     got = det.assess("我剛剛跌倒了")
     assert got.tier == RiskTier.L2
-    assert "keyword:symptom" in got.signals
+    assert "keyword:emergency" in got.signals

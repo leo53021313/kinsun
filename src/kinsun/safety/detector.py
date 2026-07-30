@@ -6,53 +6,48 @@ from kinsun.safety.classifier import RiskClassifier
 from kinsun.safety.keywords import classify_keywords
 from kinsun.safety.tiers import FAILSAFE_EVENT_REASON, RiskAssessment, RiskTier
 
-# 翻掉症狀詞這道安全地板所需的信心；刻意高於 `mid`（見 RiskDetector docstring）。
-# 與 `safety_moderation_min_confidence` 同值同理由：關掉一道安全機制要比啟動它更難。
-_OVERTURN_MIN_CONFIDENCE = 0.7
-
 
 class RiskDetector:
-    """三級制（✅ D-72，己-4）：單一降級門檻 mid——純 LLM 判 L2 但信心不足降 L1；
-    **絕對詞**撐住的 L2 不受門檻影響。
+    """三級制（✅ D-72，己-4）：關鍵詞層是**地板**，分級器只能往上加、不能往下拉。
 
-    ## 症狀詞為什麼可以被有把握的分級器翻案（2026-07-26）
+    ## 為什麼把「症狀詞翻案」整段移除（2026-07-30）
 
-    症狀詞是字面比對，看不懂否定、時態與主詞。全流程模擬實測抓到四種必然誤報，
-    而且誤報**真的送到家屬手機**（12 筆風險事件有 4 筆是假的）：
+    翻案是 2026-07-26 為了修四種誤報而加的——字面比對讀不懂否定、時態與主詞，
+    而分級器讀得懂，所以讓有把握的分級器把症狀詞從 L2 降到 L1：
 
-    | 長輩說的話 | 分級器自己寫的理由 | 舊行為 |
-    | --- | --- | --- |
-    | 你放心啦，我沒有跌倒，好好的 | 明確表示沒有跌倒且身體狀況良好 | L2 通報 |
-    | 我十年前跌倒過一次，現在都好了 | 十年前的舊傷且已痊癒 | L2 通報 |
-    | 隔壁的陳太太昨天跌倒送醫院了 | 描述鄰居的狀況，並非自身 | L2 通報 |
-    | 老人家要怎麼預防跌倒？ | 一般健康衛教諮詢，無立即危險 | L2 通報 |
+    | 長輩說的話 | 為什麼會誤報 |
+    | --- | --- |
+    | 你放心啦，我沒有跌倒，好好的 | 讀不懂否定 |
+    | 我十年前跌倒過一次，現在都好了 | 讀不懂時態 |
+    | 隔壁的陳太太昨天跌倒送醫院了 | 讀不懂主詞 |
+    | 老人家要怎麼預防跌倒？ | 讀不懂這是提問 |
 
-    三分之一的警報是假的，家屬看到的文案又與真警報一模一樣——狼來了會讓真的那次被忽略。
+    這四種誤報現在由 `keywords.classify_keywords`（地端偵測器）在**比對當下**就擋掉，
+    否定／人稱／引述／時態四層守門是確定性的規則，不需要等分級器事後補救。
+    四句話在新的關鍵詞層全部判 L0，翻案已無事可翻。
 
-    故症狀詞改為：**分級器成功回覆、判定為 L0（完全沒事）、且信心達門檻時，降為 L1**
-    （落庫留痕、不通知）。專案標注集實測（`data/safety_eval/labeled_utterances.jsonl`，
-    60 句、應通報 27 句，真 Gemini 逐句判定後把同一份判定套新舊兩套規則）：
+    移除它換回三件事：
 
-    | | 舊規則 | 新規則 |
-    | --- | --- | --- |
-    | 應通報 27 句，漏掉 | 0 | **0**（一句都沒掉） |
-    | 不該通報 33 句，誤報 | 7 | **3**（剩下三筆全是絕對詞造成，見下） |
+    1. **降級只剩一條路，安全行為可以一眼看完。** 兩條降級路徑並存時，
+       「這句話為什麼沒通知家屬」要交叉比對關鍵詞層、分級器信心與 `llm:error`
+       三個變數；現在只剩「分級器自己判 L2 但沒把握」這一種。
+    2. **不再把安全地板的存廢交給一個機率性系統。** 實測同一句話、同一個模型
+       連跑兩次約有一成判定不同，換模型版本再變 6%——那正好是通知線兩側。
+       翻案門檻拉到 0.7 只是降低機率，不是消除它。
+    3. **誤報的修法從「事後翻案」變成「當下就不觸發」**，兩者對家屬的差別是
+       「收到通知再被降級為留痕」vs「根本不會產生這筆事件」。
 
-    真危急時分級器自己就判 L2（實測信心 0.99–1.00），關鍵詞地板是多餘的；
-    它唯一真正有價值的時刻是分級器故障，而那條路徑一字未改。
+    保留的兩條路徑，語意都不是「推翻關鍵詞層」：
 
-    三條紅線一步都沒動：
-    * **絕對詞**（想不開、喘不過氣、叫救護車…）仍然無條件 L2，不看分級器臉色。
-    * **分級器故障**（`llm:error`）時，症狀詞照舊撐 L2——fail-safe 一字未改。
-      （由 `test_a_broken_classifier_cannot_overturn_a_symptom_keyword_even_if_it_sounds_sure`
-      守住：故障時回傳的 confidence 是垃圾值，不看 signals 就會被它騙過去。）
-    * **信心不足**時不准翻案，維持原本的保守判定。
+    * **純分級器的 L2 信心不足降 L1**（`kw_tier < L2` 才適用）——降的是分級器
+      自己的判定，關鍵詞地板碰不到。
+    * **`llm:error` fail-safe**（✅ D-31 甲-5）——分級器故障時保守記 L1 留痕。
 
-    ⚠️ 翻案的信心門檻（`overturn_min_confidence`）**刻意高於** `mid`，理由與
-    `safety_moderation_min_confidence` 同源：兩個方向的代價不對稱。`mid` 管的是
-    「要不要相信一個 L2 判定」，猜錯只是多吵家屬一次；這裡管的是「要不要把已經
-    亮起的安全地板關掉」，猜錯就是漏掉一次真的求救。實測的誤報信心都在 0.90–1.00，
-    把門檻拉高不影響修復效果，只是把「勉強及格的把握」擋在外面。
+    ## 關鍵詞層換成地端偵測器的實測（2026-07-30）
+
+    kinsun 60 句標注集：應通報漏 13→**6**，不該通報卻報 7→**1**。
+    219 句兩邊都沒看過的真危機語料：接住 7.3%→**68.5%**。
+    代價是真人語料誤報 0.09%→0.37%（6,691 句）、0.58%→1.37%（1,895 句）。
     """
 
     def __init__(
@@ -60,14 +55,12 @@ class RiskDetector:
         classifier: RiskClassifier,
         *,
         mid: float = 0.4,
-        overturn_min_confidence: float = _OVERTURN_MIN_CONFIDENCE,
     ) -> None:
         self._classifier = classifier
         self._mid = mid
-        self._overturn_min = overturn_min_confidence
 
     def assess(self, text: str) -> RiskAssessment:
-        kw_tier, kw_absolute = classify_keywords(text)
+        kw_tier, kw_emergency = classify_keywords(text)
         try:
             llm = self._classifier.classify(text)
         except Exception:  # noqa: BLE001 - 偵測絕不可中斷對話
@@ -75,33 +68,17 @@ class RiskDetector:
 
         signals: list[str] = []
         if kw_tier > RiskTier.L0:
-            signals.append("keyword:absolute" if kw_absolute else "keyword:symptom")
+            # `keyword:emergency` 只影響家屬簡訊要不要附 119 提示（notifier._format_alert），
+            # 不再有「不得翻案」的語意——翻案機制已移除，見類別 docstring。
+            signals.append("keyword:emergency" if kw_emergency else "keyword:symptom")
         signals.extend(llm.signals)
 
-        if kw_absolute:
-            return RiskAssessment(RiskTier.L2, llm.confidence, "命中絕對危急詞", signals)
-
         final = max(kw_tier, llm.tier)
+        # 唯一的降級路徑：分級器自己判 L2 但沒把握。`kw_tier < L2` 這個條件是關鍵——
+        # 它保證這條路徑碰不到關鍵詞層撐起來的地板，降的永遠只是分級器自己的判定。
         if final == RiskTier.L2 and llm.confidence < self._mid and kw_tier < RiskTier.L2:
             final = RiskTier.L1
-        # 症狀詞翻案（2026-07-26 全流程模擬實測，見類別 docstring）：字面比對讀不懂
-        # 「我沒有跌倒」「十年前跌倒過」「隔壁陳太太跌倒」「怎麼預防跌倒」，而分級器讀得懂。
-        # 只在它**沒故障、有把握、且判定低於 L2** 時才准翻，翻到 L1 而非 L0——
-        # 長輩確實提到了症狀詞，這件事要留在每日摘要裡給家人看見，只是不必即刻響警報。
-        # （不必再檢查 kw_absolute：絕對詞在上面就 return 了，走到這裡必為 False。）
-        # ⚠️ 只准 `L0` 翻案，不准 `L1`：L1 的語意是「分級器自己也覺得有小訊號」，
-        # 那正是不該把家屬通知拿掉的時候。標注集實測（60 句、應通報 27 句）證明這個
-        # 分別是實的——允許 L1 翻案會新漏掉「我好幾天沒睡，眼睛都花了」與
-        # 「最近都沒力氣，連菜都提不動」兩句（分級器判 L1／信心 0.90–0.95）；
-        # 收緊成只准 L0 之後，**應通報的 27 句一句都沒掉**，誤報照樣從 7 降到 3。
-        elif (
-            kw_tier is RiskTier.L2
-            and "llm:error" not in llm.signals
-            and llm.tier is RiskTier.L0
-            and llm.confidence >= self._overturn_min
-        ):
-            final = RiskTier.L1  # llm.tier 已保證 < L2，一律落在留痕層
-        # 症狀詞撐住的等級遇分級器故障（✅ 庚-41／A-44）：reason 反映真正觸發原因
+        # 關鍵詞撐住的等級遇分級器故障（✅ 庚-41／A-44）：reason 反映真正觸發原因
         # ——reason 進 risk_events 留痕與每日摘要，寫「分級器例外」會誤導。
         # （家屬通知文案自 2026-07-29 起只引長輩原話，不再取 reason。）
         if "llm:error" in llm.signals and kw_tier >= final > RiskTier.L0:
