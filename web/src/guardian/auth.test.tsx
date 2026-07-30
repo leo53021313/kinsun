@@ -2,6 +2,7 @@
 
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GuardianSession } from "@/session/contexts";
@@ -56,14 +57,22 @@ describe("家屬登入", () => {
     expect(screen.getByRole("heading", { name: "家屬登入" })).toBeInTheDocument();
   });
 
-  it("重新掛載時記得已登入的身分", async () => {
+  it("已登入時第一次繪製就在長輩列表，不會先閃一次登入畫面", () => {
+    // ⚠️ **不要**用 render() 斷言最終畫面：它內部用 act() 包住掛載、會把 effect
+    // 一起 flush，所以「一律從登入起手、靠 effect 補到首頁」那種會閃一下的實作
+    // 也會通過（本工項的變異驗證證實了這件事）。renderToString 完全不跑 effect，
+    // 看到的就是第一次繪製的結果——那正是「會不會閃」的判準。
     localStorage.setItem(
       "kinsun_web_session_guardian",
       JSON.stringify({ role: "guardian", token: "tok", display_name: "兒子" }),
     );
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ status: 200, json: async () => envelope([]) }));
-    renderApp();
-    expect(await screen.findByRole("heading", { name: "我的長輩" })).toBeInTheDocument();
+    const html = renderToString(
+      <GuardianSession.Provider>
+        <GuardianApp />
+      </GuardianSession.Provider>,
+    );
+    expect(html).toContain("我的長輩");
+    expect(html).not.toContain("家屬登入");
   });
 });
 

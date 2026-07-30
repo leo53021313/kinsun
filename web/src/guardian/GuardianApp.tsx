@@ -10,6 +10,7 @@ import { useEffect } from "react";
 
 import { useScreenStack } from "@/nav/useScreenStack";
 import { GuardianSession } from "@/session/contexts";
+import { strings } from "@/strings";
 
 import { LoginScreen } from "./LoginScreen";
 import { RegisterScreen } from "./RegisterScreen";
@@ -54,5 +55,5 @@ export function GuardianApp() {
 
 /** Task 4 換成真的 HomeScreen。 */
 function HomePlaceholder() {
-  return <h1 className="p-5 text-lg font-bold text-ink">我的長輩</h1>;
+  return <h1 className="p-5 text-lg font-bold text-ink">{strings.guardianHome.title}</h1>;
 }
