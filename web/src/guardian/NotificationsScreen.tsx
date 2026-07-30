@@ -19,7 +19,12 @@ export function NotificationsScreen() {
   // 不會讓下面的 effect 反覆重打 API。
   const signOutOn401 = useMemo(() => makeSignOutOnAuthError(signOut), [signOut]);
   const [items, setItems] = useState<AppNotification[] | null>(null);
-  const [error, setError] = useState("");
+  // ⚠️ 布林旗標、不是字串訊息：錯誤文字一律用固定的 strings.common.loadFailed，
+  // 不把 items 一起清成 []——那樣會讓「查詢失敗」與「查了、真的沒有通知」這兩件
+  // 事在畫面上長得一樣，而後者的文案「金孫有事會第一時間放在這裡」在前者當下
+  // 是一句假話（見 ElderDetailScreen.tsx 的 reportError／summariesError／
+  // groupsError 三個旗標，此處沿用同一種寫法）。
+  const [hasError, setHasError] = useState(false);
 
   useEffect(() => {
     if (!token) return;
@@ -31,15 +36,24 @@ export function NotificationsScreen() {
         // 開啟即更新已讀水位：家屬不會去按「標示已讀」，看到就算看過。
         // 清單空的時候不要動水位——歸零會讓舊通知整批復活成未讀。
         if (list.length > 0) {
-          saveSeenAt(list[0].created_at, "guardian");
+          try {
+            // 用 Math.max 而非 list[0]：這裡不能假設 API 回傳一定是新到舊，
+            // 排序是後端的責任、不是這支元件的前提；就算哪天排序變了，水位
+            // 仍要落在真正最新的那一則，不能悄悄存成最舊的一則。
+            saveSeenAt(
+              Math.max(...list.map((item) => item.created_at)),
+              "guardian",
+            );
+          } catch {
+            // localStorage 寫入失敗（例如 iOS Safari 無痕模式、儲存配額滿）
+            // 不代表這輪讀取失敗——不可讓它被下面的 catch 誤判、把剛成功
+            // 載入的清單蓋掉。
+          }
         }
       })
       .catch((exc) => {
         if (signOutOn401(exc)) return;
-        if (alive) {
-          setItems([]);
-          setError(strings.common.loadFailedShort);
-        }
+        if (alive) setHasError(true);
       });
     return () => {
       alive = false;
@@ -49,8 +63,9 @@ export function NotificationsScreen() {
   return (
     <div className="flex flex-col gap-3 p-4">
       <h1 className="text-lg font-bold text-ink">{strings.notifications.title}</h1>
-      <ErrorText message={error} />
-      {items === null ? (
+      {hasError ? (
+        <ErrorText message={strings.common.loadFailed} />
+      ) : items === null ? (
         <EmptyHint text={strings.common.loading} />
       ) : items.length === 0 ? (
         <EmptyHint text={strings.notifications.empty} />

@@ -27,7 +27,6 @@ export const strings = {
     passwordPlaceholder: "至少 8 碼",
     emailLabel: "Email",
     emailPlaceholder: "you@example.com",
-    notImplementedYet: "尚未實作",
   },
   gate: {
     brand: "金孫",
