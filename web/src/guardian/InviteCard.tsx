@@ -40,11 +40,15 @@ export function InviteCard(props: { code: string; onSendToElder?: () => void }) 
       <Button
         label={copied ? strings.guardianHome.copied : strings.guardianHome.copyCode}
         variant="outline"
-        onClick={async () => {
-          // 剪貼簿在非安全來源與部分瀏覽器會失敗。失敗就維持原標籤——碼本來就
-          // 看得見，人可以自己抄，不必為此跳一個錯誤對話框嚇人。
-          await navigator.clipboard?.writeText(code).catch(() => undefined);
-          setCopied(true);
+        onClick={() => {
+          // ⚠️ 只在**成功**時才切成「已複製」。剪貼簿在非安全來源與部分瀏覽器會
+          // 失敗，而那正是這段程式碼要處理的情形——失敗卻顯示「已複製」，家屬就
+          // 不會想去手抄，但剪貼簿上什麼都沒有。仍然不跳錯誤對話框：碼本來就顯示
+          // 在畫面上，人可以自己抄，為此嚇他一跳不划算。
+          navigator.clipboard
+            ?.writeText(code)
+            .then(() => setCopied(true))
+            .catch(() => undefined);
         }}
       />
       {onSendToElder ? (
