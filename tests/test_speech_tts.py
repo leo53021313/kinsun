@@ -1,6 +1,15 @@
+import json
+
 import pytest
 
-from kinsun.speech.tts import DgxTtsClient, TextBubbleTts, TTSError, TtsResult, build_tts_client
+from kinsun.speech.tts import (
+    DgxTtsClient,
+    TextBubbleTts,
+    TTSError,
+    TtsResult,
+    VoiceReference,
+    build_tts_client,
+)
 from kinsun.transport import FakeTransport, Response, TransportError
 
 
@@ -67,3 +76,30 @@ def test_build_dgx_without_endpoint_raises():
 def test_build_dgx_returns_client():
     client = build_tts_client(_StubSettings(backend="dgx", endpoint="http://dgx:8002/synthesize"))
     assert isinstance(client, DgxTtsClient)
+
+
+def test_dgx_tts_without_voice_sends_only_text():
+    """向下相容：不帶 voice 時，JSON body 只有 text，不含 elder_id 等客製化欄位。"""
+    transport = FakeTransport([Response(200, {"X-Duration-Ms": "1234"}, b"AUDIOBYTES")])
+    client = DgxTtsClient("http://dgx:8002/synthesize", 30.0, transport=transport)
+    client.synthesize("阿公您好")
+    _, _, data, _, _ = transport.calls[0]
+    assert json.loads(data) == {"text": "阿公您好"}
+
+
+def test_dgx_tts_with_voice_includes_reference_fields():
+    """長輩客製化聲音複製（2026-07-30）：帶 voice 時 JSON body 含 elder_id／
+    prompt_audio_url／prompt_text。"""
+    transport = FakeTransport([Response(200, {"X-Duration-Ms": "1234"}, b"AUDIOBYTES")])
+    client = DgxTtsClient("http://dgx:8002/synthesize", 30.0, transport=transport)
+    voice = VoiceReference(
+        elder_id="e1", prompt_audio_url="https://example.test/v.wav", prompt_text="逐字稿"
+    )
+    client.synthesize("阿公您好", voice=voice)
+    _, _, data, _, _ = transport.calls[0]
+    assert json.loads(data) == {
+        "text": "阿公您好",
+        "elder_id": "e1",
+        "prompt_audio_url": "https://example.test/v.wav",
+        "prompt_text": "逐字稿",
+    }

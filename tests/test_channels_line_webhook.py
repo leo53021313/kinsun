@@ -303,7 +303,7 @@ class _VoiceMessenger(FakeMessenger):
 
 
 class _StubTts:
-    def synthesize(self, text):
+    def synthesize(self, text, *, voice=None):
         from kinsun.speech.tts import TtsResult
 
         return TtsResult(text=text, audio=b"AUDIO", duration_ms=700)

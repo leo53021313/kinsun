@@ -314,6 +314,18 @@ NEWS_MENTIONS_DDL = (
     "PRIMARY KEY (elder_id, news_item_id));"
 )
 
+# 長輩客製化聲音複製設定檔（聲音克隆，2026-07-30）：一位長輩最多一組「目前生效」的
+# 參考語音，PK 直接用 elder_id；revoked_at 非 NULL 視同無效，同 consents 表慣例。
+VOICE_PROFILES_DDL = (
+    "CREATE TABLE IF NOT EXISTS voice_profiles ("
+    "elder_id TEXT PRIMARY KEY, "
+    "prompt_audio_url TEXT NOT NULL, "
+    "prompt_text TEXT NOT NULL, "
+    "consented_by TEXT NOT NULL, "
+    "granted_at DOUBLE PRECISION NOT NULL, "
+    "revoked_at DOUBLE PRECISION);"
+)
+
 # 觀測五表以 external_id＋channel 記來源（✅ 庚-07／A-8）：欄位承載任一通道的外部
 # 識別碼（非僅 LINE），故正名為 external_id 並加 channel 標明來源通道。
 #
@@ -475,6 +487,7 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(CONVERSATION_SUMMARIES_DDL)
         conn.execute(NEWS_ITEMS_DDL)
         conn.execute(NEWS_MENTIONS_DDL)
+        conn.execute(VOICE_PROFILES_DDL)
         # 三段順序不可調換：建表（既有庫 no-op）→ 舊欄改名／補 channel → 建索引。
         # 索引引用 external_id，既有庫要先改完名才建得起來。
         conn.execute(OBSERVABILITY_TABLES_DDL)

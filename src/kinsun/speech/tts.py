@@ -21,14 +21,23 @@ class TtsResult:
     transcript: str = ""  # 本輪 ASR 辨識到的長者原話（debug 用，不進語音合成）
 
 
+@dataclass(frozen=True)
+class VoiceReference:
+    """長輩的客製化參考語音（聲音克隆用）；未提供則沿用 DGX 端全域預設聲音。"""
+
+    elder_id: str
+    prompt_audio_url: str
+    prompt_text: str
+
+
 class TTSClient(Protocol):
-    def synthesize(self, text: str) -> TtsResult: ...
+    def synthesize(self, text: str, *, voice: VoiceReference | None = None) -> TtsResult: ...
 
 
 class TextBubbleTts:
     """placeholder：回文字泡泡，不產音檔（audio=None）。"""
 
-    def synthesize(self, text: str) -> TtsResult:
+    def synthesize(self, text: str, *, voice: VoiceReference | None = None) -> TtsResult:
         return TtsResult(text=text, audio=None)
 
 
@@ -48,8 +57,13 @@ class DgxTtsClient:
         self._api_key = api_key
         self._transport = transport or HttpxTransport()
 
-    def synthesize(self, text: str) -> TtsResult:
-        body = json.dumps({"text": text}, ensure_ascii=False).encode("utf-8")
+    def synthesize(self, text: str, *, voice: VoiceReference | None = None) -> TtsResult:
+        payload: dict[str, str] = {"text": text}
+        if voice is not None:
+            payload["elder_id"] = voice.elder_id
+            payload["prompt_audio_url"] = voice.prompt_audio_url
+            payload["prompt_text"] = voice.prompt_text
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         headers = {"Content-Type": "application/json"}
         if self._api_key:  # 共用金鑰（✅ D-56 丙-10）；未設＝內網開發模式
             headers["X-Api-Key"] = self._api_key

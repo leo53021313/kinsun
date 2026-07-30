@@ -13,14 +13,33 @@
 | 項目 | 內容 |
 |------|------|
 | 路徑 | `POST /synthesize` |
-| 請求 | JSON `{"text": "<繁體國語漢字>"}` |
+| 請求 | JSON `{"text": "<繁體國語漢字>", "elder_id"?: "...", "prompt_audio_url"?: "...", "prompt_text"?: "..."}`；後三個欄位選填，用於長輩客製化聲音複製（2026-07-30，見下方「長輩客製化聲音」） |
 | 回應 | body 為 **m4a（AAC）bytes**、`Content-Type: audio/mp4`、header `X-Duration-Ms: <int>`（合成語音毫秒數） |
 | 健康檢查 | `GET /healthz` → `{"status": "ok", "model_loaded": <bool>}` |
 | 過載 | 等候請求數超過 `TTS_MAX_CONCURRENCY + TTS_MAX_QUEUE` → 回 503 |
 | 呼叫端 | `kinsun.speech.tts.DgxTtsClient`（已實作，見 [tts.py](../../src/kinsun/speech/tts.py)） |
 
 > `DgxTtsClient` 會把回應包成 `TtsResult(text=text, audio=<bytes>, duration_ms=<int>)`，
-> 介面與既有 `TTSClient.synthesize(text) -> TtsResult` 一致。
+> 介面與既有 `TTSClient.synthesize(text, *, voice=None) -> TtsResult` 一致。
+
+## 長輩客製化聲音（聲音克隆，2026-07-30）
+
+每位長輩可設定專屬的參考語音（例如家人的聲音），取代全域預設的金孫聲音，設定檔存在應用層
+`voice_profiles` 表（見 [`voice_profiles/store.py`](../../src/kinsun/voice_profiles/store.py)）。
+
+- 應用層 `VoicePipeline` 依 `elder_id` 查出該長輩生效中的 `VoiceProfile`（若有），組成
+  `VoiceReference` 傳給 `DgxTtsClient.synthesize`；`DgxTtsClient` 會把 `elder_id`／
+  `prompt_audio_url`／`prompt_text` 一併塞進 `/synthesize` 的 JSON body。
+- 本服務收到請求後：
+  1. 沒帶 `elder_id` → 沿用全域 `TTS_PROMPT_WAV`／`TTS_PROMPT_TEXT`（與今天行為一致）。
+  2. 帶 `elder_id` 且本機已快取該長輩的參考音檔 → 直接用快取，不重新下載。
+  3. 帶 `elder_id` 但快取沒有、且同時帶 `prompt_audio_url`／`prompt_text` → 下載一次
+     （標準庫 `urllib.request`，不新增第三方依賴）存進 `TTS_VOICE_CACHE_DIR`，之後同一
+     `elder_id` 重複請求就免下載。
+  4. 帶 `elder_id` 但快取沒有、也沒帶 `prompt_audio_url` → 退回全域預設聲音（容錯，不炸請求）。
+- 快取為簡單 FIFO（非 LRU），上限 `TTS_VOICE_CACHE_SIZE`，超過時淘汰最舊的一位長輩。
+- 已知限制：`prompt_audio_url` 目前是 Supabase 簽章 URL，會過期；過期後若快取又剛好失效
+  會下載失敗，需重新註冊該長輩的參考語音（詳見 `docs/dev/05_架構與設計.md` §8.1）。
 
 ## 部署（DGX）
 
@@ -60,6 +79,8 @@ mp4/m4a 的 `moov` atom 需可 seek 的輸出，故服務走可 seek 的暫存�
 | `TTS_API_KEY` | 空 | 共用金鑰（✅ D-56）：設定後驗 `X-Api-Key`（錯誤回 401）；留空＝內網不驗 |
 | `TTS_MAX_TEXT_CHARS` | `1000` | 合成文字長度上限；超過回 413、缺 text 回 400（✅ D-26） |
 | `TTS_PRELOAD` | `0` | 設 `1` 於服務啟動（lifespan）即載入模型，預設延遲載入（大小寫不敏感） |
+| `TTS_VOICE_CACHE_DIR` | 系統暫存目錄 | 長輩客製化參考音檔下載後的本機快取位置 |
+| `TTS_VOICE_CACHE_SIZE` | `20` | 最多同時快取幾位長輩的客製化參考音檔（FIFO 淘汰） |
 
 ## 接到應用層
 
@@ -81,6 +102,10 @@ TTS_ENDPOINT=http://<dgx-host>:8002/synthesize
 - [x] 併發與健康檢查（`GET /healthz`）——threadpool + semaphore + 佇列上限 503。
 - [x] 應用層新增 `TTS_BACKEND`／`TTS_ENDPOINT` 設定與 `DgxTtsClient`，取代 `TextBubbleTts`——已實作（`build_tts_client`）。
 - [x] wav→m4a 轉檔（可 seek 暫存檔）並經 `ffprobe` 確認為合法 m4a；`X-Duration-Ms` 與實際時長一致。
-- [ ] 錄製並定調正式**金孫參考語音**（目前驗證暫用 CosyVoice 內附範例聲）。
+- [x] 長輩客製化聲音複製（2026-07-30）：`/synthesize` 支援選填 `elder_id`／`prompt_audio_url`／
+      `prompt_text`，本機快取＋向下相容（見上方「長輩客製化聲音」）；應用層 `voice_profiles`
+      表與 `VoicePipeline` 串接已實作。家屬上傳／同意 UX 尚未建置（設計中，非本次範圍）。
+- [ ] 錄製並定調正式**金孫參考語音**（目前驗證暫用 CosyVoice 內附範例聲；作為缺客製化設定檔
+      時長輩聽到的全域預設聲音）。
 - [ ] 以真 LINE 帳號驗 `AudioMessage` 播放（需部署 app + 公開 URL；模型端 m4a 已確認可播）。
 - [ ] 服務端逐請求 timeout（目前僅呼叫端 `DgxTtsClient` 有 urlopen 逾時；模型卡住會佔住 semaphore 槽位）。

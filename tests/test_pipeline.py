@@ -10,7 +10,9 @@ from kinsun.reports.reminders import REMINDER_KIND_MEDICATION
 from kinsun.safety.moderation import AbuseCategory, ModerationResult, reply_for
 from kinsun.safety.tiers import FAILSAFE_EVENT_REASON, RiskAssessment, RiskTier
 from kinsun.speech.asr import MockAsrClient
-from kinsun.speech.tts import TextBubbleTts, TTSError, TtsResult
+from kinsun.speech.tts import TextBubbleTts, TTSError, TtsResult, VoiceReference
+from kinsun.voice_profiles.models import VoiceProfile
+from kinsun.voice_profiles.store import FakeVoiceProfileStore
 from tests.fakes import FakeReminderLogStore, FakeRiskEventStore, FakeTraceStore
 
 
@@ -165,7 +167,7 @@ def test_pipeline_record_failure_does_not_break():
 
 
 class _BoomTts:
-    def synthesize(self, text):
+    def synthesize(self, text, *, voice=None):
         raise TTSError("tts down")
 
 
@@ -217,7 +219,7 @@ class BoomLLM:
 
 
 class BoomTts:
-    def synthesize(self, text: str) -> TtsResult:
+    def synthesize(self, text: str, *, voice=None) -> TtsResult:
         raise TTSError("合成失敗")
 
 
@@ -310,7 +312,7 @@ def test_pipeline_records_tts_degradation_and_still_replies_text():
 
 
 class _NonTtsErrorTts:
-    def synthesize(self, text):
+    def synthesize(self, text, *, voice=None):
         raise RuntimeError("unexpected")
 
 
@@ -675,3 +677,67 @@ def test_pipeline_process_text_unchanged_when_tracing_disabled():
     )
     assert result.text  # 回覆照常產生
     assert traces.llm_calls  # 自建觀測（業務視角）照常記錄
+
+
+class SpyTts:
+    """記錄每次呼叫收到的 voice 參數，供斷言長輩客製化聲音複製有無正確傳入。"""
+
+    def __init__(self) -> None:
+        self.voices: list[VoiceReference | None] = []
+
+    def synthesize(self, text: str, *, voice: VoiceReference | None = None) -> TtsResult:
+        self.voices.append(voice)
+        return TtsResult(text=text, audio=b"AUDIO")
+
+
+def _voice_pipeline(voice_profiles=None):
+    return VoicePipeline(
+        asr=MockAsrClient("阿公早安"),
+        agent=CareAgent(EchoLLM(), NullSession()),
+        tts=SpyTts(),
+        detector=StubDetector(RiskTier.L0),
+        notifier=SpyNotifier(),
+        risk_events=FakeRiskEventStore(),
+        voice_profiles=voice_profiles,
+    )
+
+
+def test_pipeline_without_voice_profiles_passes_none():
+    """未設定 voice_profiles（預設 None）：所有長輩沿用 DGX 端全域預設聲音。"""
+    pipeline = _voice_pipeline()
+    tts = pipeline._tts
+    pipeline.process(b"\x00", elder_id="e1")
+    assert tts.voices == [None]
+
+
+def test_pipeline_with_voice_profile_passes_reference():
+    """長輩客製化聲音複製（2026-07-30）：elder 有生效中的設定檔時，TTS 收到對應的
+    VoiceReference。"""
+    profiles = FakeVoiceProfileStore()
+    profiles.save(
+        VoiceProfile(
+            elder_id="e1",
+            prompt_audio_url="https://example.test/e1.wav",
+            prompt_text="午安，我是小明。",
+            consented_by="孫子小明本人同意",
+            granted_at=1000.0,
+        )
+    )
+    pipeline = _voice_pipeline(profiles)
+    tts = pipeline._tts
+    pipeline.process(b"\x00", elder_id="e1")
+    assert tts.voices == [
+        VoiceReference(
+            elder_id="e1",
+            prompt_audio_url="https://example.test/e1.wav",
+            prompt_text="午安，我是小明。",
+        )
+    ]
+
+
+def test_pipeline_with_voice_profiles_but_no_profile_for_elder_passes_none():
+    """設定了 voice_profiles，但這位長輩沒有客製化設定檔：沿用全域預設聲音。"""
+    pipeline = _voice_pipeline(FakeVoiceProfileStore())
+    tts = pipeline._tts
+    pipeline.process(b"\x00", elder_id="e1")
+    assert tts.voices == [None]

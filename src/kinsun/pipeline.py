@@ -24,7 +24,8 @@ from kinsun.safety.moderation import AbuseModerator, ModerationResult, reply_for
 from kinsun.safety.notifier import Notifier
 from kinsun.safety.tiers import RiskAssessment, RiskTier
 from kinsun.speech.asr import ASRClient
-from kinsun.speech.tts import TTSClient, TTSError, TtsResult
+from kinsun.speech.tts import TTSClient, TTSError, TtsResult, VoiceReference
+from kinsun.voice_profiles.store import VoiceProfileStore
 
 logger = logging.getLogger("kinsun.pipeline")
 
@@ -55,6 +56,7 @@ class VoicePipeline:
         reminder_logs: ReminderLogStore | None = None,
         response_window_seconds: int = 3600,
         moderator: AbuseModerator | None = None,
+        voice_profiles: VoiceProfileStore | None = None,
     ) -> None:
         self._asr = asr
         self._agent = agent
@@ -68,6 +70,9 @@ class VoicePipeline:
         self._timer = timer
         # 選填（預設 None＝不標記）：既有呼叫端與測試不受影響。
         self._reminder_logs = reminder_logs
+        # 選填（預設 None＝所有長輩皆用 DGX 端全域預設聲音）：長輩客製化聲音複製
+        # （2026-07-30），未設定時不影響既有呼叫端與測試。
+        self._voice_profiles = voice_profiles
         self._response_window_seconds = response_window_seconds
         # 選填（預設 None＝不審核，等同 SAFETY_MODERATION_ENABLED=false）。
         self._moderator = moderator
@@ -130,7 +135,11 @@ class VoicePipeline:
             tracing.update_trace_metadata(fallback="empty_speech")
             tracing.set_current_trace_io(user_input=user_text, assistant_output=FALLBACK_REPLY)
             result = self._synthesize(
-                FALLBACK_REPLY, external_id=external_id, channel=channel, trace_id=trace_id
+                FALLBACK_REPLY,
+                elder_id=elder_id,
+                external_id=external_id,
+                channel=channel,
+                trace_id=trace_id,
             )
             return replace(result, transcript=user_text)
         assessment = self._assess(
@@ -168,7 +177,11 @@ class VoicePipeline:
                 blocked_reply = reply_for(moderation.category)
                 tracing.set_current_trace_io(user_input=user_text, assistant_output=blocked_reply)
                 result = self._synthesize(
-                    blocked_reply, external_id=external_id, channel=channel, trace_id=trace_id
+                    blocked_reply,
+                    elder_id=elder_id,
+                    external_id=external_id,
+                    channel=channel,
+                    trace_id=trace_id,
                 )
                 return replace(result, transcript=user_text)
         reply_text = self._generate(
@@ -182,7 +195,11 @@ class VoicePipeline:
         # 對話原話＋回覆寫進 trace I/O，Opik Threads 才顯示 First／Last message。
         tracing.set_current_trace_io(user_input=user_text, assistant_output=reply_text)
         result = self._synthesize(
-            reply_text, external_id=external_id, channel=channel, trace_id=trace_id
+            reply_text,
+            elder_id=elder_id,
+            external_id=external_id,
+            channel=channel,
+            trace_id=trace_id,
         )
         # 附上本輪的使用者原話（語音為 ASR 辨識、文字為輸入），供 debug 顯示。
         return replace(result, transcript=user_text)
@@ -381,8 +398,9 @@ class VoicePipeline:
 
     @tracing.track(name="tts", type="general", capture_input=False, capture_output=False)
     def _synthesize(
-        self, reply_text: str, *, external_id: str, channel: str, trace_id: str
+        self, reply_text: str, *, elder_id: str, external_id: str, channel: str, trace_id: str
     ) -> TtsResult:
+        voice = self._resolve_voice(elder_id)
         try:
             with self._span(
                 lambda traces, status, latency_ms, error_message: traces.record_tts_call(
@@ -395,7 +413,21 @@ class VoicePipeline:
                     error_message=error_message,
                 )
             ):
-                return self._tts.synthesize(reply_text)
+                return self._tts.synthesize(reply_text, voice=voice)
         except TTSError:
             logger.warning("TTS 合成失敗，退化為純文字回覆")
             return TtsResult(text=reply_text, audio=None)
+
+    def _resolve_voice(self, elder_id: str) -> VoiceReference | None:
+        """長輩客製化聲音複製（2026-07-30）：無設定檔或未設 voice_profiles 則回 None
+        （TTSClient 沿用 DGX 端全域預設聲音）。"""
+        if self._voice_profiles is None:
+            return None
+        profile = self._voice_profiles.get_active(elder_id)
+        if profile is None:
+            return None
+        return VoiceReference(
+            elder_id=profile.elder_id,
+            prompt_audio_url=profile.prompt_audio_url,
+            prompt_text=profile.prompt_text,
+        )
