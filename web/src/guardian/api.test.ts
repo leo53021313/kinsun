@@ -16,6 +16,7 @@ import {
   listElders,
   listSchedules,
   loginGuardian,
+  logoutGuardian,
   registerGuardian,
   setElderAccount,
   updateSchedule,
@@ -46,10 +47,21 @@ describe("家屬端 API", () => {
     });
   });
 
-  it("登入打 sessions", async () => {
+  it("登入送 email 與 password 兩個鍵", async () => {
     const spy = mockFetch({ guardian_id: "g1", name: "兒子", token: "t" });
     await loginGuardian("a@example.com", "correct-horse-8");
     expect(spy.mock.calls[0][0]).toBe("/api/v1/sessions");
+    expect(spy.mock.calls[0][1].method).toBe("POST");
+    expect(bodyOf(spy)).toEqual({ email: "a@example.com", password: "correct-horse-8" });
+  });
+
+  it("登出撤銷目前的 token，用 DELETE 打 sessions", async () => {
+    const spy = vi.fn().mockResolvedValue({ status: 204, json: async () => ({}) });
+    vi.stubGlobal("fetch", spy);
+    await expect(logoutGuardian("tok")).resolves.toBeUndefined();
+    expect(spy.mock.calls[0][0]).toBe("/api/v1/sessions");
+    expect(spy.mock.calls[0][1].method).toBe("DELETE");
+    expect((spy.mock.calls[0][1].headers as Headers).get("Authorization")).toBe("Bearer tok");
   });
 
   it("列長輩帶 token", async () => {
@@ -67,8 +79,10 @@ describe("家屬端 API", () => {
   });
 
   it("產生家屬邀請碼回的是碼本身，不是整包物件", async () => {
-    mockFetch({ invite_code: "CD34" });
+    const spy = mockFetch({ invite_code: "CD34" });
     expect(await createGuardianInvite("e1", "tok")).toBe("CD34");
+    expect(spy.mock.calls[0][0]).toBe("/api/v1/elders/e1/guardian-invites");
+    expect(spy.mock.calls[0][1].method).toBe("POST");
   });
 
   it("列排程可以帶類型篩選", async () => {
@@ -103,12 +117,14 @@ describe("家屬端 API", () => {
     await updateSchedule("e1", "g9", { kind: "custom", title: "散步", occurrences: [] }, "tok");
     expect(spy.mock.calls[0][0]).toBe("/api/v1/elders/e1/schedules/g9");
     expect(spy.mock.calls[0][1].method).toBe("PUT");
+    expect(bodyOf(spy)).toEqual({ kind: "custom", title: "散步", occurrences: [] });
   });
 
   it("刪除排程用 DELETE 且回應是 204 無內容", async () => {
     const spy = vi.fn().mockResolvedValue({ status: 204, json: async () => ({}) });
     vi.stubGlobal("fetch", spy);
     await expect(deleteSchedule("e1", "g9", "tok")).resolves.toBeUndefined();
+    expect(spy.mock.calls[0][0]).toBe("/api/v1/elders/e1/schedules/g9");
     expect(spy.mock.calls[0][1].method).toBe("DELETE");
   });
 
