@@ -30,7 +30,10 @@ const STAGE_PATH = "/stage";
 function Demo() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const onStage = pathname === STAGE_PATH;
+  // 尾斜線容忍：貼網址給別人時多一個斜線很常見，而後端的單頁應用回退
+  // （_SpaStaticFiles）對 /stage 與 /stage/ 兩者都成立——不容忍的話 /stage/
+  // 會載入 SPA 但停在開場頁。
+  const onStage = pathname.replace(/\/+$/, "") === STAGE_PATH;
   const [tearing, setTearing] = useState(false);
   // 進了舞台仍持續輪詢：使用者按瀏覽器的上一頁回到開場時，看到的是新的狀態而不是
   // 十分鐘前那一份。成本是每十秒一次、伺服器端還有五秒快取擋著。

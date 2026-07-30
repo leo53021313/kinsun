@@ -8,6 +8,26 @@ import { App } from "./App";
 import { TEAR_DURATION_MS } from "./stage/TearTransition";
 import { strings } from "./strings";
 
+/**
+ * 渲染計數探針：`StagePage` 有沒有被 `memo` 擋下來，從外面看不出結果差異
+ * （畫面長得一樣），所以借用它一定會渲染到的葉節點 `PhoneFrame` 來計數。
+ * `StagePage` 若真的被 `memo` 擋下（bail out），React 連子樹都不會重新呼叫，
+ * 這裡的計數就不會動；若沒被擋下，兩張 `PhoneFrame`（長輩／家屬）每次都會
+ * 重新呼叫一次，計數必定往上跳。
+ */
+let phoneFrameRenderCount = 0;
+
+vi.mock("./stage/PhoneFrame", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./stage/PhoneFrame")>();
+  return {
+    ...actual,
+    PhoneFrame: (props: Parameters<typeof actual.PhoneFrame>[0]) => {
+      phoneFrameRenderCount += 1;
+      return actual.PhoneFrame(props);
+    },
+  };
+});
+
 const STATUS_BODY = {
   status: 200,
   json: async () => ({
@@ -74,6 +94,17 @@ describe("App", () => {
     render(<App />);
     expect(await screen.findByRole("region", { name: "長輩的手機" })).toBeInTheDocument();
     expect(screen.queryByTestId("tear-left")).not.toBeInTheDocument();
+  });
+
+  it("舞台網址帶尾斜線時仍是舞台，不是開場頁", async () => {
+    // ⚠️ 後端的單頁應用回退（_SpaStaticFiles）對 /demo/stage 與 /demo/stage/
+    // 兩者都回 200 html——使用者貼網址給別人時多打一個斜線很常見。onStage 若用
+    // 嚴格相等比對 pathname，尾斜線版本就不算「在舞台」，畫面會停在開場頁。
+    mockAvailable();
+    window.history.pushState({}, "", "/demo/stage/");
+    render(<App />);
+    expect(await screen.findByRole("region", { name: "長輩的手機" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "開始使用" })).not.toBeInTheDocument();
   });
 
   it("不認得的網址回開場", async () => {
@@ -159,5 +190,42 @@ describe("App", () => {
     expect(left.getByText(strings.gate.overall.available)).toBeInTheDocument();
     expect(left.getByText(strings.gate.start)).toBeEnabled();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("輪詢造成 Demo 重繪時，舞台不會跟著重繪", async () => {
+    // ⚠️ 站上舞台後 useDemoStatus 仍每十秒輪詢一次（見 App.tsx 註解：使用者按上一頁
+    // 回開場時要看到新的狀態）。每次輪詢回來都是 setState 一個新物件，Demo 因此
+    // 重繪；StagePage 若沒有 memo，會跟著整棵重繪——這對現在的佔位元件無感，但
+    // P2／P3 接上表單與對講機之後，就是長輩正在講話的那棵樹每十秒被無條件重繪一次。
+    // 用一個渲染計數探針（見檔案開頭的 PhoneFrame mock）驗證：舞台掛好之後，
+    // 輪詢重繪不該讓 PhoneFrame 被重新呼叫。
+    // shouldAdvanceTime：讓 findByRole 內部用來輪詢的 setTimeout 仍能隨著真實時間
+    // 前進，否則假時鐘會連它一起卡住，測試會逾時而不是給出真正有辨別力的失敗。
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { fetchMock, settleAll } = deferredStatusFetch();
+    window.history.pushState({}, "", "/demo/stage");
+    render(<App />);
+
+    await act(async () => {
+      settleAll();
+    });
+    await screen.findByRole("region", { name: "長輩的手機" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const rendersAfterMount = phoneFrameRenderCount;
+    expect(rendersAfterMount).toBeGreaterThan(0);
+
+    // 推進到下一輪輪詢，並讓它回應——這就是「Demo 因輪詢重繪」的那一下。
+    await act(async () => {
+      vi.advanceTimersByTime(10_000);
+    });
+    await act(async () => {
+      settleAll();
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    expect(phoneFrameRenderCount).toBe(rendersAfterMount);
+
+    vi.useRealTimers();
   });
 });

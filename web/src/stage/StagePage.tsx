@@ -9,7 +9,7 @@
  * （家屬端操作完立刻叫長輩端重載）需要兩邊都在同一棵樹底下。
  */
 
-import { useState } from "react";
+import { memo, useState } from "react";
 
 import { ElderSession, GuardianSession } from "@/session/contexts";
 import { strings } from "@/strings";
@@ -18,7 +18,15 @@ import { PhoneFrame } from "./PhoneFrame";
 
 type Pane = "elder" | "guardian";
 
-export function StagePage() {
+/**
+ * ⚠️ `memo` 是刻意的：這裡不收任何 props，父層（`Demo`）每十秒一次的運營狀態
+ * 輪詢會 setState 一個新物件而整棵重繪，沒有 `memo` 的話 `StagePage` 會跟著
+ * 白白重繪一次。P1 的佔位元件無感，但 P2／P3 接上表單與對講機之後，那是長輩
+ * 正在講話的那棵樹每十秒被無條件重繪——不要為了「省輪詢」改成上舞台後停止
+ * 輪詢，那會讓使用者按上一頁回開場時看到「正在確認服務狀態…」（見 App.tsx 對
+ * `useDemoStatus` 那段註解，是剛修好的 I2）。
+ */
+export const StagePage = memo(function StagePage() {
   const [pane, setPane] = useState<Pane>("elder");
 
   return (
@@ -65,7 +73,7 @@ export function StagePage() {
       </GuardianSession.Provider>
     </ElderSession.Provider>
   );
-}
+});
 
 /** P3 換成完整的長輩端。此處先佔位，讓版面與 session 接線可以先驗收。 */
 function ElderPanePlaceholder() {
