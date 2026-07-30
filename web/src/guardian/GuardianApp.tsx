@@ -12,6 +12,7 @@ import { useScreenStack } from "@/nav/useScreenStack";
 import { GuardianSession } from "@/session/contexts";
 import { strings } from "@/strings";
 
+import { ElderDetailScreen } from "./ElderDetailScreen";
 import { HomeScreen } from "./HomeScreen";
 import { LoginScreen } from "./LoginScreen";
 import { RegisterScreen } from "./RegisterScreen";
@@ -46,25 +47,60 @@ export function GuardianApp() {
     }
   }, [loggedIn, reset]);
 
-  switch (stack.current.name) {
-    case "login":
-      return (
-        <LoginScreen
-          onRegister={() => stack.push({ name: "register" })}
-          onDone={() => reset({ name: "home" })}
-        />
-      );
-    case "register":
-      return <RegisterScreen onLogin={() => stack.back()} onDone={() => reset({ name: "home" })} />;
-    case "home":
-      return (
-        <HomeScreen
-          onOpenElder={(elderId, elderName) => stack.push({ name: "elder", elderId, elderName })}
-          onOpenNotifications={() => stack.push({ name: "notifications" })}
-        />
-      );
-    default:
-      // elder／schedules／notifications 由 Task 5、6 接上。
-      return <div className="p-5 text-ink-soft">{strings.common.notImplementedYet}</div>;
+  // stack.depth > 1 才顯示返回鍵：初始畫面（登入或首頁）沒有上一層可退。
+  const canGoBack = stack.depth > 1;
+
+  function renderScreen() {
+    switch (stack.current.name) {
+      case "login":
+        return (
+          <LoginScreen
+            onRegister={() => stack.push({ name: "register" })}
+            onDone={() => reset({ name: "home" })}
+          />
+        );
+      case "register":
+        return <RegisterScreen onLogin={() => stack.back()} onDone={() => reset({ name: "home" })} />;
+      case "home":
+        return (
+          <HomeScreen
+            onOpenElder={(elderId, elderName) => stack.push({ name: "elder", elderId, elderName })}
+            onOpenNotifications={() => stack.push({ name: "notifications" })}
+          />
+        );
+      case "elder":
+        return (
+          <ElderDetailScreen
+            elderId={stack.current.elderId}
+            elderName={stack.current.elderName}
+            onManageSchedules={() =>
+              stack.push({ name: "schedules", elderId: (stack.current as { elderId: string }).elderId })
+            }
+          />
+        );
+      default:
+        // schedules／notifications 由 Task 6 接上。
+        return <div className="p-5 text-ink-soft">{strings.common.notImplementedYet}</div>;
+    }
   }
+
+  return (
+    <>
+      {canGoBack ? <BackBar onBack={stack.back} /> : null}
+      {renderScreen()}
+    </>
+  );
+}
+
+function BackBar(props: { onBack: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={props.onBack}
+      className="flex min-h-12 w-full items-center gap-1 border-b border-line bg-surface px-4 text-left text-sm font-semibold text-ink"
+    >
+      <span aria-hidden>‹</span>
+      {strings.common.back}
+    </button>
+  );
 }
