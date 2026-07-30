@@ -2,14 +2,35 @@
 
 import { render, screen } from "@testing-library/react";
 import { formatTime } from "kinsun-shared/format";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 
+beforeEach(() => {
+  localStorage.clear();
+  window.history.pushState({}, "", "/demo/");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({
+      status: 200,
+      json: async () => ({
+        success: true,
+        data: { overall: "available", components: { asr: "ok" } },
+        error: null,
+        meta: null,
+      }),
+    }),
+  );
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 describe("工具鏈", () => {
-  it("渲染得動 React 元件", () => {
+  it("渲染得動 React 元件", async () => {
     render(<App />);
-    expect(screen.getByText("金孫")).toBeInTheDocument();
+    expect(await screen.findByText("金孫")).toBeInTheDocument();
   });
 
   it("引得到共用包 kinsun-shared", () => {
