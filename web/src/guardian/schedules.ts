@@ -91,8 +91,22 @@ function customOccurrences(when: string): Built | null {
   return DATE_RE.test(head) ? { occurrences: [{ repeat: "once", date: head, time: tail }] } : null;
 }
 
+/**
+ * 把 Date 格式化成 `YYYY-MM-DD`。
+ *
+ * ⚠️ **用本地日期分量，不可用 `toISOString()`**：這裡拿到的 Date 是用
+ * `new Date("2026-08-05T00:00:00")` 依**本地時區**解析出來的，而 `toISOString()`
+ * 轉的是 **UTC**。在 UTC+8（本專案使用者所在時區），本地午夜是前一天的 16:00Z，
+ * 於是「回診前一天」會算成前兩天——提醒提早兩天響，長輩白跑一趟。
+ *
+ * 這個 bug 自 2026-07-25 存在於 `app/src/lib/schedules.ts`，因為它**只在 UTC 以東
+ * 的時區發作**（UTC 與美洲都算得對），而且從來沒有測試涵蓋。
+ */
 function isoDate(value: Date): string {
-  return value.toISOString().slice(0, 10);
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function slotLabelForTime(time: string): string {

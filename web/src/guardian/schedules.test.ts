@@ -6,7 +6,7 @@
  */
 
 import type { ScheduleGroup } from "kinsun-shared/types";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { describeGroup, toOccurrences } from "./schedules";
 
@@ -56,6 +56,20 @@ describe("toOccurrences：回診", () => {
 
   it("日期格式不對回 null", () => {
     expect(toOccurrences("appointment", { slots: [], when: "2026/08/05" })).toBeNull();
+  });
+
+  describe("時區", () => {
+    // ⚠️ 這條守的是 isoDate 不可用 toISOString()：這個 bug 只在 UTC 以東的時區發作
+    // （UTC 與美洲都算得對），在 UTC 跑的 CI 因此永遠看不到它。用 vi.stubEnv 明確
+    // 釘住 TZ，讓這條測試不論在哪一台機器、哪個 CI 環境執行都有辨別力，不必依賴
+    // 執行機器剛好被設成 Asia/Taipei（已用變異驗證證實：見報告）。
+    afterEach(() => vi.unstubAllEnvs());
+
+    it("回診的「前一天」在 UTC+8 也算得對", () => {
+      vi.stubEnv("TZ", "Asia/Taipei");
+      const built = toOccurrences("appointment", { slots: [], when: "2026-08-05" });
+      expect(built?.occurrences[0].date).toBe("2026-08-04");
+    });
   });
 });
 
