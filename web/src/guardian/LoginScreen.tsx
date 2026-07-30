@@ -39,7 +39,14 @@ export function LoginScreen(props: { onRegister: () => void; onDone: () => void 
   return (
     <div className="flex flex-col gap-4 p-5">
       <h1 className="text-lg font-bold text-ink">{strings.guardianLogin.title}</h1>
-      <Field label="Email" value={email} onChange={setEmail} type="email" autoComplete="email" placeholder="you@example.com" />
+      <Field
+        label={strings.common.emailLabel}
+        value={email}
+        onChange={setEmail}
+        type="email"
+        autoComplete="email"
+        placeholder={strings.common.emailPlaceholder}
+      />
       <Field
         label={strings.common.passwordLabel}
         value={password}

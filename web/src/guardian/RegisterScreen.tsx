@@ -51,7 +51,14 @@ export function RegisterScreen(props: { onLogin: () => void; onDone: () => void 
         onChange={setName}
         placeholder={strings.guardianRegister.namePlaceholder}
       />
-      <Field label="Email" value={email} onChange={setEmail} type="email" autoComplete="email" placeholder="you@example.com" />
+      <Field
+        label={strings.common.emailLabel}
+        value={email}
+        onChange={setEmail}
+        type="email"
+        autoComplete="email"
+        placeholder={strings.common.emailPlaceholder}
+      />
       <Field
         label={strings.common.passwordLabel}
         value={password}

@@ -25,6 +25,8 @@ export const strings = {
     back: "返回",
     passwordLabel: "密碼",
     passwordPlaceholder: "至少 8 碼",
+    emailLabel: "Email",
+    emailPlaceholder: "you@example.com",
   },
   gate: {
     brand: "金孫",
