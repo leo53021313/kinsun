@@ -17,12 +17,31 @@ function renderApp() {
   );
 }
 
-function mockOnce(status: number, body: unknown) {
+/**
+ * 每一次 fetch 都回同一個值——只適合「這個測試只會打一次網路」的情境。
+ *
+ * ⚠️ 舊名 `mockOnce` 是錯的：它其實用 `mockResolvedValue`（不是
+ * `mockResolvedValueOnce`），之後每一次呼叫都拿到同一個回應。`HomeScreen`
+ * 接上 `home` 路由之後，登入成功會再打一次 `/elders`；那個情境要改用下面的
+ * `mockByPath`，讓兩次呼叫各自拿到正確的回應，否則第二次呼叫會誤吃第一次
+ * 的回應（登入回應物件被當成長輩陣列，`elders.map` 就炸了）。
+ */
+function mockAllRequests(status: number, body: unknown) {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ status, json: async () => body }));
 }
 
-function envelope(data: unknown) {
-  return { success: true, data, error: null, meta: null };
+/** 依請求路徑回不同的資料——登入成功後首頁會立刻打 /elders。 */
+function mockByPath(map: Record<string, unknown>, status = 200) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockImplementation((path: string) => {
+      const key = Object.keys(map).find((k) => String(path).includes(k));
+      return Promise.resolve({
+        status,
+        json: async () => ({ success: true, data: key ? map[key] : null, error: null, meta: null }),
+      });
+    }),
+  );
 }
 
 function failure(code: string, message: string) {
@@ -39,7 +58,10 @@ describe("家屬登入", () => {
   });
 
   it("登入成功後進到長輩列表", async () => {
-    mockOnce(200, envelope({ guardian_id: "g1", name: "兒子", token: "tok" }));
+    mockByPath({
+      sessions: { guardian_id: "g1", name: "兒子", token: "tok" },
+      elders: [],
+    });
     renderApp();
     await userEvent.type(screen.getByLabelText("Email"), "a@example.com");
     await userEvent.type(screen.getByLabelText("密碼"), "correct-horse-8");
@@ -48,7 +70,7 @@ describe("家屬登入", () => {
   });
 
   it("帳密錯誤時顯示訊息，不把人踢走", async () => {
-    mockOnce(401, failure("invalid_credentials", "帳號或密碼不正確"));
+    mockAllRequests(401, failure("invalid_credentials", "帳號或密碼不正確"));
     renderApp();
     await userEvent.type(screen.getByLabelText("Email"), "a@example.com");
     await userEvent.type(screen.getByLabelText("密碼"), "wrong-password");
@@ -99,7 +121,7 @@ describe("家屬註冊", () => {
   });
 
   it("Email 已註冊過時顯示可操作的訊息", async () => {
-    mockOnce(400, failure("email_taken", "這個 email 已經註冊過了"));
+    mockAllRequests(400, failure("email_taken", "這個 email 已經註冊過了"));
     renderApp();
     await userEvent.click(screen.getByRole("button", { name: "還沒有帳號？註冊" }));
     await userEvent.type(screen.getByLabelText("您的稱呼"), "兒子");

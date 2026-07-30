@@ -1,0 +1,55 @@
+/**
+ * 綁定碼卡片：碼、QR 圖、複製、以及「送到左邊」。
+ *
+ * ⚠️ 「送到左邊的長輩手機」是刻意加的內測捷徑（spec W-15 附記）：在同一個瀏覽器
+ * 頁面裡，要用左欄的相機去掃右欄螢幕上的 QR 實務上很蠢。真實掃碼路徑完整保留，
+ * 實機展示或用手機開這個網址時仍然走那條。
+ */
+
+import QRCode from "qrcode";
+import { useEffect, useState } from "react";
+
+import { strings } from "@/strings";
+import { Button } from "@/ui/Button";
+
+export function InviteCard(props: { code: string; onSendToElder?: () => void }) {
+  const { code, onSendToElder } = props;
+  const [dataUrl, setDataUrl] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    // QR 產生是非同步的；產不出來就只是沒有圖，綁定碼本身照樣可以用手打。
+    QRCode.toDataURL(code, { width: 200, margin: 1 })
+      .then((url) => {
+        if (alive) setDataUrl(url);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [code]);
+
+  return (
+    <div className="flex flex-col items-center gap-3 rounded-2xl bg-background p-4">
+      <p className="self-start text-sm text-ink-soft">{strings.guardianHome.inviteHint}</p>
+      <p className="text-2xl font-extrabold tracking-widest text-primary">{code}</p>
+      {dataUrl ? (
+        <img src={dataUrl} alt={strings.guardianHome.qrAlt} className="rounded-xl bg-white p-2" />
+      ) : null}
+      <Button
+        label={copied ? strings.guardianHome.copied : strings.guardianHome.copyCode}
+        variant="outline"
+        onClick={async () => {
+          // 剪貼簿在非安全來源與部分瀏覽器會失敗。失敗就維持原標籤——碼本來就
+          // 看得見，人可以自己抄，不必為此跳一個錯誤對話框嚇人。
+          await navigator.clipboard?.writeText(code).catch(() => undefined);
+          setCopied(true);
+        }}
+      />
+      {onSendToElder ? (
+        <Button label={strings.guardianHome.sendToElder} variant="outline" onClick={onSendToElder} />
+      ) : null}
+    </div>
+  );
+}

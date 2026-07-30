@@ -27,6 +27,7 @@ export const strings = {
     passwordPlaceholder: "至少 8 碼",
     emailLabel: "Email",
     emailPlaceholder: "you@example.com",
+    notImplementedYet: "尚未實作",
   },
   gate: {
     brand: "金孫",
@@ -102,6 +103,7 @@ export const strings = {
     copied: "已複製",
     sendToElder: "送到左邊的長輩手機",
     empty: "還沒有長輩檔案，先在上面建立一位吧。",
+    qrAlt: "長輩綁定用的 QR 圖",
   },
   elderDetail: {
     title: "長輩詳情",

@@ -12,6 +12,7 @@ import { useScreenStack } from "@/nav/useScreenStack";
 import { GuardianSession } from "@/session/contexts";
 import { strings } from "@/strings";
 
+import { HomeScreen } from "./HomeScreen";
 import { LoginScreen } from "./LoginScreen";
 import { RegisterScreen } from "./RegisterScreen";
 
@@ -55,13 +56,15 @@ export function GuardianApp() {
       );
     case "register":
       return <RegisterScreen onLogin={() => stack.back()} onDone={() => reset({ name: "home" })} />;
+    case "home":
+      return (
+        <HomeScreen
+          onOpenElder={(elderId, elderName) => stack.push({ name: "elder", elderId, elderName })}
+          onOpenNotifications={() => stack.push({ name: "notifications" })}
+        />
+      );
     default:
-      // home 與其後的畫面由 Task 4～6 接上。
-      return <HomePlaceholder />;
+      // elder／schedules／notifications 由 Task 5、6 接上。
+      return <div className="p-5 text-ink-soft">{strings.common.notImplementedYet}</div>;
   }
-}
-
-/** Task 4 換成真的 HomeScreen。 */
-function HomePlaceholder() {
-  return <h1 className="p-5 text-lg font-bold text-ink">{strings.guardianHome.title}</h1>;
 }
