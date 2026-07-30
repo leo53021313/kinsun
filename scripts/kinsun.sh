@@ -26,10 +26,10 @@ RUN_DIR="$ROOT/.run"
 # 啟動順序（GPU 服務先起、載模型較慢）；停止則反序。
 # opik＝Opik 公開隧道（Cloudflare Quick Tunnel）；隨堆疊一起起停。啟動需本機 Opik（:5273）
 # 已在跑，否則 launch_opik 會警告並略過。⚠️ 公開且無認證，見 launch_opik 與 docs/dev/14。
-START_ORDER=(asr tts webhook scheduler rag_worker frontend app ngrok opik)
-STOP_ORDER=(opik ngrok app frontend rag_worker scheduler webhook tts asr)
+START_ORDER=(asr tts webhook scheduler rag_worker frontend web app ngrok opik)
+STOP_ORDER=(opik ngrok app web frontend rag_worker scheduler webhook tts asr)
 
-declare -A PORT=([asr]=8001 [tts]=8002 [webhook]=8000 [frontend]=5173 [app]=8081)
+declare -A PORT=([asr]=8001 [tts]=8002 [webhook]=8000 [frontend]=5173 [web]=5174 [app]=8081)
 
 # Opik 後端（docker）自架位置；隧道與後端啟停都在此執行 ./opik.sh（見「Opik 複合服務」段）。
 OPIK_DIR="${OPIK_DIR:-/home/leo29/opik}"
@@ -274,6 +274,22 @@ launch_frontend() {
   [ -f "$ROOT/frontend/.env" ] || warn "前端：frontend/.env 不存在（VITE_LIFF_ID 未設，LIFF 於瀏覽器初始化會失敗），仍照常啟動 dev server"
   info "啟動 前端 LIFF dev (port ${PORT[frontend]})…"
   _bg frontend npm --prefix "$ROOT/frontend" run dev
+}
+
+# 網頁版全功能前端（spec 2026-07-30）：App 與 LIFF 凍結後，前端展示由它承擔。
+# 開發用 dev server；對外展示走 `npm --prefix web run build` 之後由後端掛在 /demo。
+launch_web() {
+  _precheck web "${PORT[web]}" || return 0
+  if ! command -v npm >/dev/null 2>&1; then
+    warn "網頁版：找不到 npm，跳過"
+    return 0
+  fi
+  if [ ! -d "$ROOT/web/node_modules" ]; then
+    warn "網頁版：web/node_modules 不存在，請先 npm --prefix web install，跳過"
+    return 0
+  fi
+  info "啟動 網頁版前端 dev (port ${PORT[web]})…"
+  _bg web npm --prefix "$ROOT/web" run dev
 }
 
 # App（Expo dev server）：手機裝 Expo Go 掃 status 顯示的 exp:// 位址即可開發，免簽章。
@@ -666,7 +682,7 @@ _health_note() {
       if _http_ok "http://127.0.0.1:${port}/healthz"; then echo "healthz OK :${port}"
       elif _port_open "$port"; then echo "埠開啟、模型載入中 :${port}"
       else echo "—"; fi ;;
-    webhook|frontend)
+    webhook|frontend|web)
       if _port_open "$port"; then echo "listening :${port}"; else echo "—"; fi ;;
     app)
       if _port_open "$port"; then

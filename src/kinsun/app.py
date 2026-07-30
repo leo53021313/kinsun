@@ -73,6 +73,20 @@ logger = logging.getLogger("kinsun.app")
 _DEMO_PROBE_TIMEOUT = 1.5
 
 
+def _static_mounts(root: Path) -> list[tuple[str, Path]]:
+    """回傳「掛載路徑 → 靜態目錄」清單，只含真的 build 過的。
+
+    ⚠️ 不存在就不掛（既有行為）：部署時若前端還沒 build，整個後端不該因此起不來。
+    """
+    candidates = [
+        ("/liff", root / "frontend" / "dist"),
+        ("/admin", root / "frontend" / "dist-admin"),
+        # 網頁版全功能前端（spec 2026-07-30 W-16）：與 API 同源，免 CORS。
+        ("/demo", root / "web" / "dist"),
+    ]
+    return [(path, directory) for path, directory in candidates if directory.is_dir()]
+
+
 def build_app() -> FastAPI:
     # ⚠️ 必須是第一行：在此之前發生的任何事（設定載入失敗、建表卡住）都印不出來。
     # 這個行程原本完全沒有日誌設定，39 個 kinsun.* logger 的 INFO 全數丟棄——見
@@ -419,10 +433,9 @@ def build_app() -> FastAPI:
         ),
         prefix="/api/v1",
     )
-    dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
-    if dist.is_dir():
-        app.mount("/liff", StaticFiles(directory=dist, html=True), name="liff")
-    admin_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist-admin"
-    if admin_dist.is_dir():
-        app.mount("/admin", StaticFiles(directory=admin_dist, html=True), name="admin")
+    root = Path(__file__).resolve().parents[2]
+    for mount_path, directory in _static_mounts(root):
+        app.mount(
+            mount_path, StaticFiles(directory=directory, html=True), name=mount_path.lstrip("/")
+        )
     return app

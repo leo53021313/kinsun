@@ -14,19 +14,19 @@
 | 02 | [專案簡報與PRD](02_專案簡報與PRD.md) | ✅ v1.4（US-C1／C2 改寫為統一排程、新增 US-C3 長輩用說的建立提醒；KPI 數值⏸實測後定；US-B3 問候自適應註記） | 2026-07-17 |
 | 03 | [BDD情境](03_BDD情境.md) | ✅ 定稿（D-72 三級制已落地） | 2026-07-09 |
 | 04 | [ADR（04_adr/）](04_adr/README.md) | ✅ 定稿（11 筆；ADR-003 補述 庚-54） | 2026-07-13 |
-| 05 | [架構與設計](05_架構與設計.md) | ✅ v1.56（C1 回覆音檔隨 WS binary 訊框直送＋H-1 合併分類器評測接線；延遲優化四刀：進站上傳背景化／assemble 三段並行／record_turn 背景化並在交出回應前收斂／分級與審核合併一次呼叫（旗標預設 false）） | 2026-07-30 |
-| 06 | [API設計規範](06_API設計規範.md) | ✅ v1.20（`WS /ws/talk` 回覆音檔改隨 binary 訊框直送——自我描述訊框省掉「上傳 Supabase→App 再下載」兩趟；header 嵌同一訊框以免併發輪交錯配錯） | 2026-07-30 |
+| 05 | [架構與設計](05_架構與設計.md) | ✅ v1.57（網頁版前端 P1 地基：前端由三端擴為四端，Container 清單新增 web/ 一列，`/demo` 靜態掛載收攏進 `_static_mounts`；C1 回覆音檔隨 WS binary 訊框直送＋H-1 合併分類器評測接線；延遲優化四刀：進站上傳背景化／assemble 三段並行／record_turn 背景化並在交出回應前收斂／分級與審核合併一次呼叫（旗標預設 false）） | 2026-07-31 |
+| 06 | [API設計規範](06_API設計規範.md) | ✅ v1.21（新增 `GET /api/v1/demo-status`：網頁版前端 P1 地基，公開免認證、快取 5 秒；`WS /ws/talk` 回覆音檔改隨 binary 訊框直送——自我描述訊框省掉「上傳 Supabase→App 再下載」兩趟；header 嵌同一訊框以免併發輪交錯配錯） | 2026-07-31 |
 | 07 | [模組規格與測試](07_模組規格與測試.md) | ✅ v1.59（C1 回覆音檔直送＋H-1 評測接線；延遲優化四刀＋審查修正；重數 Settings 102 欄／safety 11 檔／channels 11 檔／Protocol 50／後端測試 2511，六處 DbC 行號錨點更正） | 2026-07-30 |
-| 08 | [專案結構指南](08_專案結構指南.md) | ✅ v1.22（channels/app/inbound_audio.py＋safety/combined_classifier.py 入目錄樹；safety／channels 兩行補齊漏列檔案並附檔數） | 2026-07-30 |
-| 09 | [模組依賴關係](09_模組依賴關係.md) | ✅ v1.13（Protocol 48→50 重掃；background 消費者 3→4（agent 因 record_turn 背景化）；合併分類器只走既有 LLMClient seam） | 2026-07-30 |
+| 08 | [專案結構指南](08_專案結構指南.md) | ✅ v1.23（網頁版前端 P1 地基：頂層新增 web/、§6 補 web/src 目錄樹；channels/app/inbound_audio.py＋safety/combined_classifier.py 入目錄樹；safety／channels 兩行補齊漏列檔案並附檔數） | 2026-07-31 |
+| 09 | [模組依賴關係](09_模組依賴關係.md) | ✅ v1.14（web/ 依賴 shared/（kinsun-shared alias），未新增第三方套件；Protocol 48→50 重掃；background 消費者 3→4（agent 因 record_turn 背景化）；合併分類器只走既有 LLMClient seam） | 2026-07-31 |
 | 10 | [類別關係](10_類別關係.md) | ✅ v1.25（CombinedSafetyClassifier／LlmCombinedSafetyClassifier／CombinedSafetyResult 入圖，RiskDetector＋combine_with_llm、AbuseModerator＋apply_threshold；Protocol 總表 50 並補回漏列的 AbuseClassifier） | 2026-07-30 |
 | 11 | [審查與重構指南](11_審查與重構指南.md) | ✅ v1.1（CI 已落地；docs/dev 同步鐵律入自查） | 2026-07-17 |
-| 12 | [前端架構規範](12_前端架構規範.md) | ✅ v1.8（App 端接內嵌音檔：新增 lib/replyAudio.ts 落地 cache 暫存 .m4a、talkSocket 以注入點保住離線可測性；新增 expo-file-system 依賴，組員需重跑 npm install） | 2026-07-30 |
+| 12 | [前端架構規範](12_前端架構規範.md) | ✅ v1.9（網頁版前端 P1 地基：三端擴為四端，新增 web/ 雙 session 工廠（與 App 單例的差異）與 CSP 兩處放寬理由；App 端接內嵌音檔：新增 lib/replyAudio.ts 落地 cache 暫存 .m4a、talkSocket 以注入點保住離線可測性；新增 expo-file-system 依賴，組員需重跑 npm install） | 2026-07-31 |
 | 13 | [安全與就緒檢查](13_安全與就緒檢查.md) | ✅ v1.6（日誌脫敏結案：只記系統事實、內容進 Opik；新增工具寫入授權與語音後端誤設兩列；日誌脫敏需重驗；§G 補外呼逾時與 D-22 部分落地；位置隱私列；依賴掃描與 healthz 結案） | 2026-07-27 |
 | 14 | [部署與運維](14_部署與運維.md) | ✅ v1.26（**§3.5 pool_size 15→25＋爆線症狀補「近滿載＝排隊變慢」**；**kinsun.sh 新增 update 指令**（僅 opik）；**Opik 啟動不再問 registry**：opik.sh 本地加 `--pull missing`，registry 瞬斷不再讓整組起不來，映像改明確手動升級；**新增裝置推播章節**：五個前置步驟、iOS 需付費 Apple 會員、推播沒響的判讀順序；**連線超賣已治本：池 5→3＋CLI 小池 2**；**§3.5 連線上限更正＝15 非 60**（DATABASE_URL 走 pooler session mode，預設 4 進程×5 已超賣）；RAG Runbook 補四則實戰前提：CLI 連線額度、免費層每日嵌入約 1,000 條／金鑰、評測撞配額會偽裝成品質問題、golden set 指定來源須與內容政策一致；Opik 觀測定期重探；排程器 systemd unit；排程停擺根因＝浮點等值比對；RAG 週更 hpa 憑證 bundle 與爬深 ≥100） | 2026-07-30 |
 | 15 | [文檔與維護指南](15_文檔與維護指南.md) | ✅ v1.2（同步鐵律＋前端／WBS／排程宣告三列） | 2026-07-27 |
 | 16 | [WBS開發計畫](16_WBS開發計畫.md) | ✅ v1.25（庚-11（A-10 有字無聲）由「不改」改判並完成——07-28 的安撫話快取讓成本由 M 降到 S，且「螢幕有字」對純語音長輩不成立；新增辛-22 修未註冊工具導致的退化輸出已完成（B 提示詞動態化留待辦）；新增辛-21 一輪總時間預算已完成；新增辛-20 修對講機改走 WS 後定位失效已完成；辛-19 非同步工具調用與併發對話已完成；新增辛-18 附近地點搜尋已完成；辛-17 工具回合思考層級已完成；辛-15 架構對比後六項邊界補強已完成、辛-16 第二批未施工）（辛-14 三項修復完成；辛-13 全流程模擬實測完成；辛-10 濫用審核＋辛-11 觀測與評測強化＋辛-12 防呆待施工；RAG 個人庫驗收；甲～庚結案＋辛批 12 項；⚠ 庚-09 待 Leo 確認） | 2026-07-29 |
-| 17 | [前端資訊架構](17_前端資訊架構.md) | ✅ v1.13（**新增 /elder/notifications 長輩提醒頁＋對講機鈴鐺未讀 badge**（X-01）；對講機資料需求對齊 WS 長連線＋位置鍵名兩路徑一律 `location`；雙手勢＋admin 7 頁 D-74 話題新聞頁） | 2026-07-29 |
+| 17 | [前端資訊架構](17_前端資訊架構.md) | ✅ v1.14（網頁版前端 P1 地基：§7 路由表新增 web/ 的 `/demo`／`/demo/stage` 兩條路由，框內長輩／家屬畫面待 P2／P3；**新增 /elder/notifications 長輩提醒頁＋對講機鈴鐺未讀 badge**（X-01）；對講機資料需求對齊 WS 長連線＋位置鍵名兩路徑一律 `location`；雙手勢＋admin 7 頁 D-74 話題新聞頁） | 2026-07-31 |
 
 狀態圖例：⬜ 未開始｜🟡 進行中／待議中｜✅ 定稿
 

@@ -101,3 +101,24 @@ def test_build_app_installs_security_headers_and_envelope(monkeypatch):
     assert body["success"] is False
     assert body["error"]["code"]
     assert "content-security-policy" in res.headers
+
+
+def test_網頁版前端在_dist_存在時掛在_demo(tmp_path, monkeypatch):
+    """比照既有的 /liff 與 /admin：dist 不存在就不掛，不讓部署因為沒 build 而起不來。"""
+    from kinsun.app import _static_mounts
+
+    root = tmp_path
+    (root / "web" / "dist").mkdir(parents=True)
+    (root / "web" / "dist" / "index.html").write_text("<html></html>", encoding="utf-8")
+    mounts = dict(_static_mounts(root))
+    assert "/demo" in mounts
+    assert mounts["/demo"] == root / "web" / "dist"
+
+
+def test_網頁版前端未_build_時不掛載():
+    from pathlib import Path
+
+    from kinsun.app import _static_mounts
+
+    mounts = dict(_static_mounts(Path("/nonexistent-root")))
+    assert mounts == {}
