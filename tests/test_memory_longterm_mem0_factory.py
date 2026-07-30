@@ -1,6 +1,12 @@
 from kinsun.config import load_settings
-from kinsun.memory.longterm.mem0_factory import _disable_telemetry, build_mem0_config
+from kinsun.memory.longterm.mem0_factory import (
+    _disable_telemetry,
+    _instrument_tracing,
+    build_mem0_config,
+)
 from kinsun.memory.longterm.provenance import CUSTOM_FACT_EXTRACTION_PROMPT
+from kinsun.tracing import client as tracing_client
+from kinsun.tracing import decorators as tracing_decorators
 
 _ENV = {
     "LINE_CHANNEL_SECRET": "s",
@@ -52,6 +58,93 @@ def test_config_pins_history_db_under_repo_data():
     from pathlib import Path
 
     assert Path(config["history_db_path"]).parts[-3:] == ("data", "mem0", "history.db")
+
+
+class _StubEmbedder:
+    def embed(self, text, memory_action=None):
+        return [0.0]
+
+
+class _StubVectorStore:
+    def search(self, query, vectors, top_k=5, filters=None):
+        return ["hit"]
+
+
+class _StubReranker:
+    def rerank(self, query, documents, top_k=None):
+        return documents
+
+
+class _StubMemory:
+    def __init__(self, reranker=None):
+        self.embedding_model = _StubEmbedder()
+        self.vector_store = _StubVectorStore()
+        self.reranker = reranker
+
+
+def test_instrument_tracing_passthrough_when_disabled():
+    """停用時所有包裝點必須是 identity——行為與未包裝一字不差。"""
+    tracing_client.reset_for_test()
+    memory = _StubMemory(reranker=_StubReranker())
+    assert _instrument_tracing(memory) is memory
+    assert memory.embedding_model.embed("你好", "search") == [0.0]
+    assert memory.vector_store.search(query="q", vectors=[0.1]) == ["hit"]
+    assert memory.reranker.rerank("q", ["d"], 1) == ["d"]
+
+
+def test_instrument_tracing_span_names_and_capture_policy(monkeypatch):
+    """三個包裝點的 span 名與 capture 策略（2026-07-30 spec）：向量／候選集不進 span。"""
+    import opik
+
+    tracing_client.reset_for_test()
+    seen: list[dict] = []
+    monkeypatch.setattr(opik, "track", lambda **kw: (seen.append(kw), lambda f: f)[1])
+    monkeypatch.setattr(tracing_decorators, "is_enabled", lambda: True)
+    memory = _instrument_tracing(_StubMemory(reranker=_StubReranker()))
+    memory.embedding_model.embed("你好", "search")
+    memory.vector_store.search(query="q", vectors=[0.1])
+    memory.reranker.rerank("q", ["doc"], 1)
+    by_name = {kw["name"]: kw for kw in seen}
+    assert by_name["mem0_embed"]["capture_output"] is False
+    assert by_name["mem0_vector_search"]["ignore_arguments"] == ["vectors"]
+    assert by_name["mem0_vector_search"]["capture_output"] is False
+    assert by_name["mem0_rerank"]["ignore_arguments"] == ["documents"]
+    assert by_name["mem0_rerank"]["capture_output"] is False
+
+
+def test_instrument_tracing_skips_absent_reranker(monkeypatch):
+    """LONGTERM_RERANK_ENABLED=false 時 reranker 是 None：只包兩處、不炸。"""
+    import opik
+
+    tracing_client.reset_for_test()
+    seen: list[dict] = []
+    monkeypatch.setattr(opik, "track", lambda **kw: (seen.append(kw), lambda f: f)[1])
+    monkeypatch.setattr(tracing_decorators, "is_enabled", lambda: True)
+    memory = _instrument_tracing(_StubMemory(reranker=None))
+    memory.embedding_model.embed("你好", "search")
+    memory.vector_store.search(query="q", vectors=[0.1])
+    assert {kw["name"] for kw in seen} == {"mem0_embed", "mem0_vector_search"}
+
+
+def test_instrument_tracing_survives_missing_attributes():
+    """mem0 升版屬性改名時：warning 後原樣回傳，觀測絕不可壞掉記憶功能。"""
+
+    class _Weird:
+        pass
+
+    weird = _Weird()
+    assert _instrument_tracing(weird) is weird
+
+
+def test_build_mem0_memory_instruments_instance(monkeypatch):
+    """工廠出貨的實例必須已經過包裝（接線驗證，不連真庫）。"""
+    import mem0
+
+    stub = _StubMemory()
+    monkeypatch.setattr(mem0.Memory, "from_config", staticmethod(lambda cfg: stub))
+    from kinsun.memory.longterm.mem0_factory import build_mem0_memory
+
+    assert build_mem0_memory(load_settings(_ENV)) is stub
 
 
 def test_reranker_config_present_when_enabled():
