@@ -423,6 +423,43 @@ _opik_backend_stop() {
   ( cd "$OPIK_DIR" && ./opik.sh --stop ) >> "$LOG_DIR/opik-backend.log" 2>&1
 }
 
+# ── Opik 更新（目前唯一支援 update 的服務）────────────────────────────────
+# 設計原則（2026-07-30）：「更新」與「啟動」徹底分離。opik.sh 已有本地 patch
+# `up -d --pull missing`（該 repo commit 52eb68a）讓啟動零 registry 依賴——代價是
+# 映像不再自動更新，由本指令補上：只抓新東西（repo＋映像），絕不碰運行中的服務，
+# 新映像等下次 restart opik 才生效。pull 失敗（registry 瞬斷）也只是這次沒更新到，
+# 運行中的 Opik 毫髮無傷，稍後重跑即可。
+_opik_update() {
+  if [ ! -d "$OPIK_DIR/.git" ]; then
+    err "opik：$OPIK_DIR 不是 git repo（自架位置見 docs/dev/14）"
+    return 1
+  fi
+  # 1) repo 更新（opik.sh 與 compose 檔）。本地 patch 以 rebase 重放；工作樹不乾淨
+  #    或 rebase 撞衝突都當場停下並還原，絕不留半套狀態給下一個人。
+  if [ -n "$(cd "$OPIK_DIR" && git status --porcelain)" ]; then
+    err "opik：$OPIK_DIR 工作樹不乾淨，先處理未提交變更再更新"
+    return 1
+  fi
+  info "更新 Opik repo（git pull --rebase；本地 patch --pull missing 會自動重放）…"
+  if ! (cd "$OPIK_DIR" && git pull --rebase); then
+    (cd "$OPIK_DIR" && git rebase --abort 2>/dev/null)
+    err "opik：上游與本地 patch 撞衝突，已還原原狀。請手動處理：cd $OPIK_DIR &&"
+    err "  git pull --rebase，解掉 opik.sh 的 'up -d --pull missing' 那行後重跑本指令"
+    return 1
+  fi
+  # 2) 映像更新：與 opik.sh 預設模式同一份 compose 檔＋profile。pull 只下載不動容器；
+  #    進度直接印在終端（可能數分鐘），同時留一份進 log。
+  info "拉取 Opik 映像（不影響運行中的服務，可能需要幾分鐘）…"
+  if ! (cd "$OPIK_DIR" && NGINX_PORT=5273 SERVER_ADMIN_PORT=8091 PYTHON_BACKEND_PORT=8010 \
+      docker compose -f deployment/docker-compose/docker-compose.yaml --profile opik pull) \
+      2>&1 | tee -a "$LOG_DIR/opik-backend.log"; then
+    err "opik：映像拉取失敗（多半是 registry 瞬斷）；運行中的服務不受影響，稍後重跑"
+    err "  scripts/kinsun.sh update opik 即可（詳見 logs/opik-backend.log）"
+    return 1
+  fi
+  ok "Opik 已更新。新映像於下次重啟才生效：scripts/kinsun.sh restart opik"
+}
+
 # 隧道是否在跑（is_running(opik) 已被特化為「後端是否在」，隧道另用 pidfile 判斷）。
 _opik_tunnel_running() {
   local p; p="$(_pid_of opik)"
@@ -717,6 +754,8 @@ usage() {
   restart [服務]   先 stop 再 start
   status           檢視各服務狀態（PID／埠／健康）＋ Opik 觀測後台連結
   dump [服務]      把執行中服務的全執行緒堆疊倒進它的 log（目前只支援 scheduler）
+  update [opik]    更新 Opik（repo＋映像）；只下載、不碰運行中的服務，
+                   新映像等下次 restart opik 才生效（啟動本身永遠走本機映像）
 
 服務名：asr　tts　webhook　scheduler　rag_worker　frontend　app　ngrok　opik
 
@@ -809,12 +848,21 @@ cmd_dump() {
 }
 
 # ── 進入點 ────────────────────────────────────────────────────────────
+cmd_update() {
+  local name="${1:-opik}"
+  case "$name" in
+    opik) _opik_update ;;
+    *) err "update 目前只支援 opik"; exit 2 ;;
+  esac
+}
+
 case "${1:-}" in
   start)   cmd_start "${2:-}" ;;
   stop)    cmd_stop "${2:-}" ;;
   status)  cmd_status ;;
   restart) cmd_restart "${2:-}" ;;
   dump)    cmd_dump "${2:-}" ;;
+  update)  cmd_update "${2:-}" ;;
   ""|-h|--help|help) usage ;;
   *) err "未知指令：$1"; echo; usage; exit 2 ;;
 esac
