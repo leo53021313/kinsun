@@ -5,7 +5,7 @@
  * 瀏覽器網址只會互相覆蓋——右欄進到排程頁，左欄的網址也跟著變。
  */
 
-import { act, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
