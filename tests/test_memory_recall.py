@@ -103,3 +103,38 @@ def test_record_turn_appends_each_message():
         ("u1", Message("user", "嗨")),
         ("u1", Message("assistant", "您好")),
     ]
+
+
+def test_gather_facts_spans_carry_injection_index_and_class_name(monkeypatch):
+    """七路事實各成一顆 span（2026-07-30 spec）：索引＝注入順序（ScheduleFacts
+    註冊三次、純類名會撞名），順序契約不受包裝影響。"""
+    import opik
+
+    from kinsun.tracing import client as tracing_client
+    from kinsun.tracing import decorators as tracing_decorators
+
+    tracing_client.reset_for_test()
+    seen: list[dict] = []
+    monkeypatch.setattr(opik, "track", lambda **kw: (seen.append(kw), lambda f: f)[1])
+    monkeypatch.setattr(tracing_decorators, "is_enabled", lambda: True)
+    s1 = FactSection("\nA：\n", ["a"])
+    s2 = FactSection("\nB：\n", ["b"])
+    ctx = _session(facts=[_FakeFacts(s1), _FakeFacts(s2)]).assemble("s", "x")
+    assert ctx.injected.sections == [s1, s2]
+    names = {kw["name"] for kw in seen}
+    assert {"gather_facts", "facts_0__FakeFacts", "facts_1__FakeFacts"} <= names
+
+
+def test_gather_facts_span_wrapping_keeps_failure_isolation(monkeypatch):
+    """包裝後單一提供者失敗仍只略過該段，不中斷對話（既有 fail-safe 不得退化）。"""
+    import opik
+
+    from kinsun.tracing import client as tracing_client
+    from kinsun.tracing import decorators as tracing_decorators
+
+    tracing_client.reset_for_test()
+    monkeypatch.setattr(opik, "track", lambda **kw: lambda f: f)
+    monkeypatch.setattr(tracing_decorators, "is_enabled", lambda: True)
+    section = FactSection("\nA：\n", ["a"])
+    ctx = _session(facts=[_BoomFacts(), _FakeFacts(section)]).assemble("s", "x")
+    assert ctx.injected.sections == [section]

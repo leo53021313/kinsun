@@ -66,9 +66,46 @@ SYMPTOM_WORDS = (
 )
 
 
-def classify_keywords(text: str) -> tuple[RiskTier, bool]:
+# 地端偵測器（`local_detector.py`）：把字面比對升級成「比對＋守門」。
+#   關掉即完全回到下方 `_legacy_classify` 的原始行為——這是回退路徑，
+#   兩個詞表常數也因此保留不動（`strategies/policy.py` 與測試仍在使用）。
+_USE_LOCAL_DETECTOR = True
+
+
+def _legacy_classify(text: str) -> tuple[RiskTier, bool]:
+    """原始的純字面比對（2026-07-30 前的行為），保留為回退路徑。"""
     if any(word in text for word in ABSOLUTE_DANGER_WORDS):
         return RiskTier.L2, True
     if any(word in text for word in SYMPTOM_WORDS):
         return RiskTier.L2, False
     return RiskTier.L0, False
+
+
+def classify_keywords(text: str) -> tuple[RiskTier, bool]:
+    """回 (tier, is_emergency)。
+
+    ⚠️ 第二個值的語意在 2026-07-30 換掉了：舊語意是「絕對詞，分級器不得翻案」，
+    新語意是「**家屬簡訊要不要附 119 提示**」——純文案，不影響分級。
+    翻案機制連同絕對詞旗標一起移除，理由見 `detector.RiskDetector` docstring。
+
+    ## 為什麼改用地端偵測器（2026-07-30）
+
+    字面比對讀不懂否定、人稱、時態與引述，那正是 `detector.py` docstring
+    記錄的四種誤報的成因——原本靠分級器事後翻案補救，現在在比對當下就擋掉。
+
+    kinsun 自己的 60 句標注集（`data/safety_eval/labeled_utterances.jsonl`）：
+
+    | | 應通報 27 句，漏掉 | 不該通報 33 句，誤報 |
+    | --- | --- | --- |
+    | 原本的 46 詞 | 13 | 7 |
+    | 地端偵測器 | **6** | **1** |
+
+    另在 219 句**兩邊都沒看過**的真危機語料上（來源與本專案標注集無關）：
+    原本的 46 詞接住 7.3%，地端偵測器 68.5%。代價是真人語料誤報率
+    0.09% → 0.37%（6,691 句一般看板）、0.58% → 1.37%（1,895 句憂鬱症看板）。
+    """
+    if not _USE_LOCAL_DETECTOR:
+        return _legacy_classify(text)
+    from kinsun.safety.local_detector import screen
+
+    return screen(text)
