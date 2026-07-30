@@ -71,7 +71,13 @@ def create_demo_status_router(
                 result[name] = probe()
             except Exception:  # noqa: BLE001 - 探針是對外呼叫，它一定會失敗；不可讓它帶走整頁
                 logger.warning("運營狀態探針失敗：%s", name)
-                result[name] = UNKNOWN
+                # 關鍵項（database／asr）連例外都拋出來，代表真的連不上（例如
+                # OperationalError、httpx.ConnectError 沒被探針自己接住），不是
+                # 「這個部署沒接這個服務」——那種情形探針會明確回傳 unknown，不會
+                # 拋例外，此處完全不動那條路。關鍵項在此一律當成停機：寧可錯殺、
+                # 不可放過，誤擋的代價是使用者多等幾秒重查，誤放的代價是讓人以為
+                # 對講機能用、一開口才發現連不上。非關鍵項則維持 unknown。
+                result[name] = DOWN if name in _CRITICAL else UNKNOWN
         return result
 
     @router.get("/demo-status")

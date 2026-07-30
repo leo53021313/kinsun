@@ -109,8 +109,13 @@ def test_快取期間內不重複呼叫探針():
     assert len(calls) == 2, "快取過期後應該重新探測"
 
 
-def test_探針自己爆掉時該分項為不明_而不是整支端點掛掉():
-    """探針是對外呼叫，它會失敗。失敗時這一頁必須還開得起來。"""
+def test_關鍵項探針爆掉時該分項為停機_且整體亦為停機():
+    """探針是對外呼叫，連線失敗時很常見地會直接拋例外、而不是自己接住改回傳
+    down（例如 OperationalError、httpx.ConnectError 沒被接住）。資料庫與語音
+    辨識是這一頁存在的理由，問不出來就必須當成停機——若誤判成 unknown、
+    overall 卻不受影響，按鈕會保持可按，讓人以為對講機能用，一開口才發現
+    根本連不上。
+    """
 
     def exploding_probe() -> str:
         raise RuntimeError("連不上")
@@ -127,4 +132,51 @@ def test_探針自己爆掉時該分項為不明_而不是整支端點掛掉():
     )
     res = TestClient(app).get("/api/v1/demo-status")
     assert res.status_code == 200
-    assert res.json()["data"]["components"]["asr"] == "unknown"
+    body = res.json()
+    assert body["data"]["components"]["asr"] == "down"
+    assert body["data"]["overall"] == "down"
+
+
+def test_非關鍵項探針爆掉時該分項為不明_整體仍為可用():
+    """語音合成不是這一頁的關鍵項——問不出來只代表「不知道」，不該連帶把
+    整體判定成停機，否則會在非核心服務短暫抖動時錯誤地擋掉使用者。"""
+
+    def exploding_probe() -> str:
+        raise RuntimeError("連不上")
+
+    app = FastAPI()
+    install_error_envelope(app)
+    app.include_router(
+        create_demo_status_router(
+            probes={"database": lambda: "ok", "asr": lambda: "ok", "tts": exploding_probe},
+            clock=lambda: 0.0,
+            cache_seconds=5.0,
+        ),
+        prefix="/api/v1",
+    )
+    res = TestClient(app).get("/api/v1/demo-status")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["data"]["components"]["tts"] == "unknown"
+    assert body["data"]["overall"] == "available"
+
+
+def test_探針爆掉不會讓端點本身掛掉():
+    """不論爆掉的是關鍵項還是非關鍵項，端點都必須還開得起來——這一頁存在的
+    目的就是在系統出問題時仍然能顯示狀態，不能自己先掛點。"""
+
+    def exploding_probe() -> str:
+        raise RuntimeError("連不上")
+
+    app = FastAPI()
+    install_error_envelope(app)
+    app.include_router(
+        create_demo_status_router(
+            probes={"database": exploding_probe, "asr": exploding_probe, "tts": exploding_probe},
+            clock=lambda: 0.0,
+            cache_seconds=5.0,
+        ),
+        prefix="/api/v1",
+    )
+    res = TestClient(app).get("/api/v1/demo-status")
+    assert res.status_code == 200
