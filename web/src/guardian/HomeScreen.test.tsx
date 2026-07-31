@@ -125,7 +125,15 @@ describe("HomeScreen", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
+  // ⚠️ 重打列表那趟故意用手動控制的 promise、且刻意留在半空中不解出（見下面
+  // resolveReload）：若第三趟像先前那樣提早解出且內容含「阿公」，`getByRole` 的
+  // 斷言不管樂觀追加有沒有做都會通過——「阿公」到底是樂觀追加出來的、還是重打
+  // 列表帶回來的，測試分不出來。留著半空中的 promise，斷言當下重打列表根本還沒
+  // 回來，「阿公」就只可能是 `HomeScreen.tsx` 樂觀追加那段（`setElders((prev) =>
+  // [...(prev ?? []), ...])`）寫進去的。變異驗證：拿掉那段樂觀追加，這條測試會紅
+  // （斷言當下 `elders` 仍是建立前的空陣列，畫不出「阿公」）。
   it("建立成功後把新長輩加進列表，並顯示綁定碼", async () => {
+    let resolveReload: (value: unknown) => void = () => {};
     const spy = vi
       .fn()
       .mockResolvedValueOnce({ status: 200, json: async () => envelope([]) })
@@ -134,11 +142,12 @@ describe("HomeScreen", () => {
         json: async () =>
           envelope({ elder_id: "e9", name: "阿公", nickname: "阿公", invite_code: "AB12CD" }),
       })
-      // 建立成功後會重打一次列表（見 HomeScreen 的 addElder）。
-      .mockResolvedValueOnce({
-        status: 200,
-        json: async () => envelope([{ elder_id: "e9", name: "阿公", nickname: "阿公" }]),
-      });
+      // 建立成功後會重打一次列表（見 HomeScreen 的 addElder）；這裡刻意不立刻解出。
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveReload = resolve;
+        }),
+      );
     vi.stubGlobal("fetch", spy);
     renderHome();
     await screen.findByText("還沒有長輩檔案，先在上面建立一位吧。");
@@ -146,6 +155,8 @@ describe("HomeScreen", () => {
     await userEvent.click(screen.getByRole("button", { name: "建立長輩檔案" }));
     expect(await screen.findByText("AB12CD")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /阿公/ })).toBeInTheDocument();
+    // 收尾：讓重打列表的請求完成，避免懸而未決的 promise 影響下一條測試。
+    resolveReload({ status: 200, json: async () => envelope([]) });
   });
 
   // ⚠️ 這一條守的是「錯誤旗標不可以蓋掉家屬剛建立成功的長輩」。列表載入失敗之後
