@@ -12,6 +12,10 @@ function envelope(data: unknown) {
   return { success: true, data, error: null, meta: null };
 }
 
+function failure(code: string, message: string) {
+  return { success: false, data: null, error: { code, message }, meta: null };
+}
+
 function renderHome(props: Partial<Parameters<typeof HomeScreen>[0]> = {}) {
   localStorage.setItem(
     "kinsun_web_session_guardian",
@@ -43,6 +47,56 @@ describe("HomeScreen", () => {
   it("沒有長輩時顯示引導文字", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ status: 200, json: async () => envelope([]) }));
     renderHome();
+    expect(await screen.findByText("還沒有長輩檔案，先在上面建立一位吧。")).toBeInTheDocument();
+  });
+
+  // ⚠️ 這一條守的是「錯誤取代空狀態」——本前端最貴的一種失效。後端抖一下（展示
+  // 當天最可能的故障）時，若首頁對已經有兩位長輩的家屬說「還沒有長輩檔案，先在
+  // 上面建立一位吧」，他會照著做，而後端恢復後那是第三筆**重複且刪不掉**的長輩
+  // 檔案（後端沒有 DELETE /elders）。空狀態的文案在連不上的當下是一句假話。
+  it("列表載入失敗時只說載入失敗，不可同時說「還沒有長輩檔案」", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        status: 500,
+        json: async () => failure("server_error", "系統忙碌，請稍後再試"),
+      }),
+    );
+    renderHome();
+    expect(await screen.findByText("載入失敗，請稍後再試。")).toBeInTheDocument();
+    expect(screen.queryByText("還沒有長輩檔案，先在上面建立一位吧。")).not.toBeInTheDocument();
+  });
+
+  // 「載入失敗」若掛在新增長輩表單底下，讀起來像「建立失敗」，但真正失敗的是列表。
+  // 用 DOM 包含關係斷言位置——只比對文字內容守不住這件事。
+  it("「載入失敗」不長在新增長輩表單裡面，那會被讀成建立失敗", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        status: 500,
+        json: async () => failure("server_error", "系統忙碌，請稍後再試"),
+      }),
+    );
+    renderHome();
+    const message = await screen.findByText("載入失敗，請稍後再試。");
+    const addSection = screen.getByRole("heading", { name: "新增長輩" }).closest("section");
+    expect(addSection).not.toBeNull();
+    expect(addSection?.contains(message)).toBe(false);
+  });
+
+  it("載入中先顯示載入中，不會先閃過「還沒有長輩檔案」", async () => {
+    // ⚠️ 用手動控制的 promise，不是 mockResolvedValue：後者在同一個 microtask 就
+    // 解出結果，測試永遠只看得到「解完之後」那一瞬間，看不出載入途中畫面顯示的是
+    // 什麼——而「載入途中誤報空狀態」正是上面那條重複建檔的另一半路徑。
+    let resolveFetch: (value: unknown) => void = () => {};
+    const pending = new Promise((resolve) => {
+      resolveFetch = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn().mockReturnValue(pending));
+    renderHome();
+    expect(await screen.findByText("載入中…")).toBeInTheDocument();
+    expect(screen.queryByText("還沒有長輩檔案，先在上面建立一位吧。")).not.toBeInTheDocument();
+    resolveFetch({ status: 200, json: async () => envelope([]) });
     expect(await screen.findByText("還沒有長輩檔案，先在上面建立一位吧。")).toBeInTheDocument();
   });
 
