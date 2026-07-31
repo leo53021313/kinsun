@@ -15,7 +15,7 @@ import { ElderSession } from "@/session/contexts";
 import { strings } from "@/strings";
 
 import { logoutSession } from "./api";
-import { BindScreen } from "./BindScreen";
+import { BindScreen, type ElderCodeDelivery } from "./BindScreen";
 import { LoginScreen } from "./LoginScreen";
 import { NotificationsScreen } from "./NotificationsScreen";
 import { TalkScreen } from "./TalkScreen";
@@ -42,18 +42,19 @@ const BACK_LABELS: Partial<Record<ElderRoute["name"], string>> = {
 
 /**
  * ⚠️ `prefilledCode` 是「家屬欄把剛產生的碼直接送到長輩欄」那條內測捷徑的**接收端**
- *（spec W-15，P4 Task 3 接上發送端：`stage/StagePage.tsx` 持有這個字串狀態，往下
+ *（spec W-15，P4 Task 3 接上發送端：`stage/StagePage.tsx` 持有這個狀態，往下
  * 傳給這裡，並把 `guardian/GuardianApp.tsx` 的 `onSendCodeToElder` 一路轉交給
  * `HomeScreen`／`ElderDetailScreen`，最終掛在 `InviteCard` 的 `onSendToElder`）。
  *
- * ⚠️ **這裡本身不需要改**（往下轉交給 `BindScreen` 即可），但發送端接上之後才
- * 現形一個 P3 時沒測到的坑：這個畫面多半是**先掛著**、家屬才**之後**按下送出
- * （雙欄舞台一開場兩欄就都在），`prefilledCode` 是掛載之後才從 `undefined` 變成
- * 有值的，不是掛載當下就有值——`BindScreen` 原本只用 `useState(() =>
- * props.prefilledCode ?? "")` 這種只在首次掛載讀一次的惰性初始化，已補上
- * `useEffect` 讓已經掛著的畫面也能同步（見該檔說明）。
+ * ⚠️ **這裡本身不需要改**（往下轉交給 `BindScreen` 即可）。`prefilledCode` 的
+ * 型別是 `ElderCodeDelivery`（`{ code, seq }`，見 `BindScreen.tsx` 的型別說明）
+ * ——**送出是一次事件，不是單純的值**：全分支審查發現若只當成 `string`，會
+ * 讓「長輩配對成功又被登出、重新掛回這個畫面」誤讀到舊碼、以及「同一組碼再送
+ * 一次」被誤判成沒有變化而略過同步。`BindScreen` 以 render 期間比對 `seq`
+ * 是否變動來決定要不要同步，不在掛載時把 props 目前的值當成初始值（見該檔
+ * 說明）。
  */
-export function ElderApp(props: { prefilledCode?: string; visible?: boolean }) {
+export function ElderApp(props: { prefilledCode?: ElderCodeDelivery; visible?: boolean }) {
   const { visible = true } = props;
   const { session, signOut } = ElderSession.useSession();
   const stack = useScreenStack<ElderRoute>(session ? { name: "talk" } : { name: "bind" });

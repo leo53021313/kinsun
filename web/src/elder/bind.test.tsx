@@ -143,23 +143,14 @@ describe("長輩配對", () => {
     );
   });
 
-  it("家屬端送過來的碼會直接填好", () => {
-    render(
-      <ElderSession.Provider>
-        <ElderApp prefilledCode="XY99ZZ" />
-      </ElderSession.Provider>,
-    );
-    expect(screen.getByLabelText("綁定碼")).toHaveValue("XY99ZZ");
-    expect(screen.getByText("已從家屬手機收到號碼")).toBeInTheDocument();
-  });
-
   // ⚠️ 這條守的是「跨欄連動」實際會發生的形狀：長輩欄在家屬按下「送到長輩的
   // 手機」之前多半早就掛著（雙欄舞台一開場兩欄就都在），`prefilledCode` 是家屬
-  // 按下去那一刻才從 `undefined` 變成有值的——不是像上一條測試那樣「掛載當下
-  // 就已經有值」。`useState(() => props.prefilledCode ?? "")` 這種惰性初始化只在
-  // 「第一次掛載」讀一次，之後 props 再怎麼變都不會讓它重新算；若沒有另外接
-  // 「prop 變了就同步」，家屬送出的碼在畫面上完全不會出現。
-  it("配對畫面掛著的時候，家屬端才送過來的碼也要即時填好（不是只有掛載當下就有值才算）", () => {
+  // 按下去那一刻才從 `undefined` 變成有值的——不是「掛載當下就已經有值」。
+  // ⚠️ 全分支審查修正：`prefilledCode` 是**事件**（帶遞增 `seq` 的
+  // `{ code, seq }`）不是單純的值——同一個碼被重複送出時，字串本身不會變，
+  // 若只比較字串會判斷成「沒有變化」而略過同步（見下面「同一組碼再送一次」
+  // 那條測試）。
+  it("家屬端送過來的碼會直接填好", () => {
     const { rerender } = render(
       <ElderSession.Provider>
         <ElderApp />
@@ -169,11 +160,64 @@ describe("長輩配對", () => {
     expect(screen.queryByText("已從家屬手機收到號碼")).not.toBeInTheDocument();
     rerender(
       <ElderSession.Provider>
-        <ElderApp prefilledCode="AB12CD" />
+        <ElderApp prefilledCode={{ code: "AB12CD", seq: 1 }} />
       </ElderSession.Provider>,
     );
     expect(screen.getByLabelText("綁定碼")).toHaveValue("AB12CD");
     expect(screen.getByText("已從家屬手機收到號碼")).toBeInTheDocument();
+  });
+
+  // ⚠️ 全分支審查發現的 Important 1、失效情境 1：長輩用這組碼配對成功、進了
+  // 對講機，後來被登出（家屬重新產生綁定碼，或他自己登出）——`ElderApp` 的
+  // 路由把 `BindScreen` 換掉又換回來，是全新的一次掛載，不是同一個元件實例的
+  // rerender。此時 `StagePage` 那份 `prefilledCode` 狀態沒有人清掉，仍是舊值；
+  // 若把「掛載當下 props 裡已經存在的碼」直接當成剛剛發生的事件，長輩會在毫無
+  // 預兆的情況下看到一個已經用掉的舊碼、以及「已從家屬手機收到號碼」的假綠字。
+  it("已經送過的舊碼在全新一次掛載時不會被當成剛剛才發生的事（審查情境 1：配對成功又被登出）", () => {
+    const delivery = { code: "AB12CD", seq: 1 };
+    const first = render(
+      <ElderSession.Provider>
+        <ElderApp prefilledCode={delivery} />
+      </ElderSession.Provider>,
+    );
+    first.unmount();
+    render(
+      <ElderSession.Provider>
+        <ElderApp prefilledCode={delivery} />
+      </ElderSession.Provider>,
+    );
+    expect(screen.getByLabelText("綁定碼")).toHaveValue("");
+    expect(screen.queryByText("已從家屬手機收到號碼")).not.toBeInTheDocument();
+  });
+
+  // ⚠️ 全分支審查發現的 Important 1、失效情境 2：長輩自己把欄位改壞或清掉是
+  // 現場常見的情形（他會先試著自己打），家屬發現後切回去再按一次同一顆「送到
+  // 長輩的手機」——這一次送出的碼字串與上次相同，若只比較字串本身會被判斷成
+  // 「沒有變化」而不同步，按鈕看起來像壞了。`seq` 遞增才能分辨「這是新的一次
+  // 送出」。
+  it("家屬對同一組碼再送一次（seq 遞增），就算碼相同也要能再次蓋掉長輩自己打的內容（審查情境 2）", async () => {
+    // ⚠️ 從 `undefined` 開始、用 `rerender` 送出第一次——跟「掛載當下就已經有
+    // 值」（不會在真實舞台發生的情境）不同，這裡模擬的是配對畫面本來就掛著、
+    // 家屬才按下第一次送出。
+    const { rerender } = render(
+      <ElderSession.Provider>
+        <ElderApp />
+      </ElderSession.Provider>,
+    );
+    rerender(
+      <ElderSession.Provider>
+        <ElderApp prefilledCode={{ code: "AB12CD", seq: 1 }} />
+      </ElderSession.Provider>,
+    );
+    expect(screen.getByLabelText("綁定碼")).toHaveValue("AB12CD");
+    await userEvent.clear(screen.getByLabelText("綁定碼"));
+    await userEvent.type(screen.getByLabelText("綁定碼"), "打壞了");
+    rerender(
+      <ElderSession.Provider>
+        <ElderApp prefilledCode={{ code: "AB12CD", seq: 2 }} />
+      </ElderSession.Provider>,
+    );
+    expect(screen.getByLabelText("綁定碼")).toHaveValue("AB12CD");
   });
 
   it("可以切到帳密登入再切回來", async () => {

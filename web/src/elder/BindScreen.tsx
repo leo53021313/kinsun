@@ -48,8 +48,27 @@ const SCANNER_ERRORS: Record<QrScannerError, string> = {
   "no-signal": strings.elderBind.cameraNoSignal,
 };
 
+/**
+ * 「家屬欄把碼送到長輩欄」這件事是**一次性事件**，不是單純的值——`seq` 每次
+ * 送出都要遞增（即使 `code` 字串跟上一次相同）。
+ *
+ * ⚠️ **全分支審查修正（Important 1）**：原本設計是 `prefilledCode?: string`，
+ * 把「送出」直接模型化成一個值。React 對「相同的值」會 bail out（同一支
+ * 元件實例、字串沒變就不重新同步），而元件重新掛載時則會**重讀當下的值**
+ * ——同一個根因長出兩種症狀：①長輩配對成功、進了對講機、後來被登出（家屬
+ * 重新產生綁定碼，或他自己登出），`BindScreen` 是全新的一次掛載，此時
+ * `StagePage` 那份狀態沒有人清掉、仍是舊值，若把「掛載當下 props 裡已經存在
+ * 的碼」直接當成剛剛發生的事件，長輩會在毫無預兆的情況下看到一個已經用掉的
+ * 舊碼、以及「已從家屬手機收到號碼」的假綠字，跟同一時間出現的「家人幫您重新
+ * 設定了」互相矛盾；②長輩自己把欄位改壞或清掉（現場常見），家屬切回去對
+ * **同一組碼**再按一次「送到長輩的手機」，若只比較字串本身會判斷成「沒有
+ * 變化」而略過同步，按鈕看起來像壞了。改用帶遞增 `seq` 的事件形狀，`seq`
+ * 才是「這是不是一次新的送出」的唯一依據，`code` 字串本身不作比較用途。
+ */
+export type ElderCodeDelivery = { code: string; seq: number };
+
 export function BindScreen(props: {
-  prefilledCode?: string;
+  prefilledCode?: ElderCodeDelivery;
   /**
    * 「他是被登出才回到這個畫面的」要講的那句話（見 `ElderApp` 的 `signedOutNotice`）。
    *
@@ -73,29 +92,40 @@ export function BindScreen(props: {
 }) {
   const { visible = true } = props;
   const { signIn } = ElderSession.useSession();
-  const [code, setCode] = useState(props.prefilledCode ?? "");
+  const [code, setCode] = useState("");
   const [error, setError] = useState(props.signedOutNotice ?? "");
   const [busy, setBusy] = useState(false);
   const [scanning, setScanning] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  // 「已從家屬手機收到號碼」那句綠字由**狀態**驅動，不是直接讀 `props.prefilledCode`
+  // 是否有值——用 prop truthy 判斷的話，全新一次掛載時只要 prop 裡還留著上一次的
+  // 舊事件（`StagePage` 沒有義務清掉），這句話會跟著一起假性重現（見下方 Important
+  // 1 情境 1）。只有真的同步過一次 `seq`，才算「收到」。
+  const [receivedFromGuardian, setReceivedFromGuardian] = useState(false);
 
-  // ⚠️ 這個畫面在家屬按下「送到長輩的手機」之前多半早就掛著（雙欄舞台一開場
-  // 兩欄就都在，見 stage/StagePage.tsx）——`prefilledCode` 是那一刻才從
-  // `undefined` 變成有值的，不是掛載當下就已經有值。上面那行的 `useState` 只在
-  // 第一次掛載時讀一次 `props.prefilledCode`，之後 props 再怎麼變都不會讓它重新
-  // 算（已用 `rerender` 實測證實：不接這段的話，畫面上的綁定碼欄永遠是空的）。
+  // ⚠️ **全分支審查修正（Important 1）**：`prefilledCode` 現在是帶 `seq` 的
+  // 事件（見 `ElderCodeDelivery` 型別說明），不是單純的值。`lastSeq` 的初始值
+  // 刻意設成「掛載當下 props 裡已經存在的 seq」（而不是 `undefined`）——
+  // 這代表「這支元件實例被創造出來的那一刻，props 裡已經有的東西一律視為
+  // 『早就看過了』，不是剛剛才發生的事件」；只有掛載**之後**、`seq` 真的往上
+  // 動過，才算一次新的送出、才同步。這樣同一套比對邏輯同時處理三種情形：
+  // ①掛載時 `prefilledCode` 是 `undefined`（黃金路徑：家屬還沒送）——之後
+  // `seq` 第一次出現即同步；②全新一次掛載時 `prefilledCode` 已經是舊事件
+  // （長輩配對成功又被登出）——`lastSeq` 一開始就等於它，不會誤判成新事件；
+  // ③同一組碼再送一次（`seq` 遞增但 `code` 字串相同）——`seq` 仍然變了，照樣
+  // 同步，蓋掉長輩自己打壞的內容。
   //
-  // ⚠️ 用「render 期間比對＋調整」（React 官方文件「Adjusting some state when a
-  // prop changes」的既定寫法，`notify/useNotificationFeed.ts` 的 `lastSession`
-  // 已是同一套），不是 `useEffect`：在 effect 裡直接呼叫 `setCode` 會先掛著舊值
-  // 多畫一次畫面、下一輪 render 才收掉（`react-hooks/set-state-in-effect` 擋下的
-  // 正是這種會多一輪 cascading render 的寫法）。
-  const [lastPrefilledCode, setLastPrefilledCode] = useState(props.prefilledCode);
-  if (props.prefilledCode !== lastPrefilledCode) {
-    setLastPrefilledCode(props.prefilledCode);
-    if (props.prefilledCode !== undefined) {
-      setCode(props.prefilledCode);
-    }
+  // ⚠️ 用「render 期間比對＋調整」（React 官方文件「Adjusting some state when
+  // a prop changes」的既定寫法，`notify/useNotificationFeed.ts` 的
+  // `lastSession` 已是同一套），不是 `useEffect`：在 effect 裡直接呼叫
+  // `setCode` 會先掛著舊值多畫一次畫面、下一輪 render 才收掉
+  // （`react-hooks/set-state-in-effect` 擋下的正是這種會多一輪 cascading
+  // render 的寫法）。
+  const [lastSeq, setLastSeq] = useState(props.prefilledCode?.seq);
+  if (props.prefilledCode !== undefined && props.prefilledCode.seq !== lastSeq) {
+    setLastSeq(props.prefilledCode.seq);
+    setCode(props.prefilledCode.code);
+    setReceivedFromGuardian(true);
   }
 
   async function submit(raw: string) {
@@ -184,7 +214,7 @@ export function BindScreen(props: {
   return (
     <div className="flex h-full flex-col justify-center gap-5 p-6">
       <p className="text-center text-elder-min text-ink">{strings.elderBind.hint}</p>
-      {props.prefilledCode ? (
+      {receivedFromGuardian ? (
         <p className="text-center text-elder-min text-success">
           {strings.elderBind.receivedFromGuardian}
         </p>

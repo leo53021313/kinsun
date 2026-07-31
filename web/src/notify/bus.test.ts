@@ -26,6 +26,14 @@ describe("跨欄事件", () => {
     expect(result.current).toBe(before);
   });
 
+  // ⚠️ **全分支審查修正（Minor）**：這條測試守不住 `bus.ts` cleanup 裡的
+  // `set.delete(listener)`——把那行清空成空函式（不移除訂閱者）之後，這條測試
+  // 仍然通過（已實測），是等價變異，不是「這行沒用」。React 19 對「已卸載元件
+  // 呼叫 setState」既不拋錯也不印 `console.error`（已用獨立探測測試證實），
+  // `renderHook` 的 `result.current` 只反映最後一次真正 commit 的 render，
+  // 卸載後不會再 commit，殘留監聽器即使仍被呼叫也看不出差異。這行仍有單獨
+  // 承重的路徑——見 `bus.ts` 的說明（長時間反覆掛載／卸載會讓模組層級的
+  // `Map` 無界累積死掉的閉包），只是這條測試證明不了。
   it("卸載後不再更新，不會對已卸載的元件 setState", () => {
     const { result, unmount } = renderHook(() => useStageEvent("guardian-wrote"));
     const before = result.current;

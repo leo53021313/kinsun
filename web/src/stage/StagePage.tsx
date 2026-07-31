@@ -16,8 +16,9 @@
  * 綁在一起。
  */
 
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 
+import { type ElderCodeDelivery } from "@/elder/BindScreen";
 import { ElderApp } from "@/elder/ElderApp";
 import { GuardianApp } from "@/guardian/GuardianApp";
 import { ElderSession, GuardianSession } from "@/session/contexts";
@@ -91,7 +92,15 @@ export const StagePage = memo(function StagePage() {
   // 家屬欄產生的綁定碼（新建長輩／重新產生綁定碼）直接送到長輩欄（spec W-15
   // 內測捷徑，接收端見 `elder/BindScreen.tsx`）：省去在同一個瀏覽器分頁裡「拿
   // 一欄的相機去掃另一欄螢幕上的 QR」這種不切實際的操作。
-  const [prefilledCode, setPrefilledCode] = useState<string | undefined>(undefined);
+  //
+  // ⚠️ **全分支審查修正（Important 1）**：這是一次性**事件**，不是單純的值
+  // ——`seq` 每次送出都要遞增（`sendSeqRef` 這支 ref 不放進 state，純粹用來
+  // 產生單調遞增的序號，本身不驅動任何畫面）。若只送 `code` 字串本身，同一組
+  // 碼被家屬重複送出（例如長輩自己把欄位改壞、家屬切回去再按一次同一顆鈕）會
+  // 因為字串沒變而被 `BindScreen` 判斷成「沒有變化」而略過同步。詳見
+  // `elder/BindScreen.tsx` 的 `ElderCodeDelivery` 型別說明。
+  const [prefilledCode, setPrefilledCode] = useState<ElderCodeDelivery | undefined>(undefined);
+  const sendSeqRef = useRef(0);
 
   // ⚠️ 審查發現的 Critical：長輩欄按下「掃描 QR 碼」後，若在窄螢幕切到
   // 「家屬端」頁籤，非活動欄只是被 CSS `hidden` 蓋住——元件仍掛著，
@@ -104,6 +113,15 @@ export const StagePage = memo(function StagePage() {
   // 同時可見、與 `pane` 無關，而寬窄本身會在使用中改變（縮放視窗、Ctrl+ 放大字級）。
   // 只看 `pane` 的話，會出現「畫面看起來完全正常、麥克風卻永遠打不開，而且沒有任何
   // UI 能把它撥回來」的死路——詳見 `useIsWideScreen` 的說明。
+  //
+  // ⚠️ **給 Task 4 的接線提醒（全分支審查 Minor）**：目前只有 `elderVisible`，
+  // 沒有對稱的 `guardianVisible`。本輪（P4 Task 3）審查已 grep 確認家屬欄目前
+  // 沒有任何長生命週期資源（相機／麥克風／長連線），所以缺這條線不會造成資源
+  // 洩漏；但 Task 4 要把 `notify/useNotificationFeed.ts`（兩秒輪詢）接進家屬欄
+  // 時，這條線就會變成真實需求——同一種坑 `elderVisible` 已經在 `BindScreen`／
+  // `TalkScreen` 修過（窄螢幕頁籤模式下非活動欄只是 CSS `hidden`、元件仍掛著，
+  // 輪詢會繼續打）。算法應與 `elderVisible` 對稱：
+  // `const guardianVisible = isWide || pane === "guardian";`。
   const elderVisible = isWide || pane === "elder";
 
   // ⚠️ 窄螢幕頁籤模式下另一欄不在畫面上，光是把碼傳下去，家屬按下去什麼都
@@ -111,7 +129,8 @@ export const StagePage = memo(function StagePage() {
   // 條內測捷徑要做給人看的效果（「你看，長輩那邊出現了」）。寬螢幕兩欄本來就
   // 都看得見，`setPane` 在那裡是無害的（下次縮窄視窗時頁籤會自然停在長輩端）。
   function sendCodeToElder(code: string) {
-    setPrefilledCode(code);
+    sendSeqRef.current += 1;
+    setPrefilledCode({ code, seq: sendSeqRef.current });
     setPane("elder");
   }
 
