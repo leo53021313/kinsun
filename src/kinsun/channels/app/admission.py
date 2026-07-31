@@ -76,11 +76,19 @@ class TurnAdmission:
         走，讓已經排隊的人平白多等一輪——`on_queued` 回報的位置就形同虛設的謊言。
 
         ⚠️ `on_queued` 在**沒有持鎖**時呼叫（取號、算好位置之後才呼叫，見下方實作）：
-        它的用途是把一則訊框丟進送出佇列，即使呼叫端做的是會阻塞的 I/O（例如
-        `ws.py` 的 `_Sender.send` 走 `future.result(timeout=5)`、最長等 5 秒），
-        也只會拖到呼叫者自己這一輪，不會拖住整個閘門——若改回持鎖時呼叫，一位
-        WebSocket 訊號不穩的長輩就能讓所有人的 `admit()`／`active()`／`waiting()`
-        一起被鎖住長達 5 秒。
+        它的用途是把一則訊框丟進送出佇列。鎖確實不會被持有——`active()`／
+        `waiting()`／釋放路徑都不受影響——**但排在這位之後的每一位都會被連帶
+        卡住**：這位還沒真正進入下面的 `wait_for` 排隊之前，名額只能空等他，
+        故 `on_queued` 仍應盡量短（例如 `ws.py` 的 `_Sender.send` 走
+        `future.result(timeout=5)`、最長等 5 秒，就會讓隊伍裡的每一位多等 5 秒）。
+
+        ⚠️ `on_queued` **可以拋例外**（呼叫端不保證一定成功，例如底層連線已斷
+        掉——`ws.py` 的 `_Sender.send_reply_audio` 就是刻意會拋的同類回呼）；
+        拋出時這個號碼會被立刻從佇列移除並喚醒其他排隊者重新核對，例外原樣
+        往外拋（呼叫端會看到），不會讓這個名額額度永久卡死。少了這一步，卡住
+        的號碼會讓 `waiting()` 永遠多算一位、快速通道永遠失效、佇列最前面的
+        死號碼讓後面每一位的述詞永遠對不上——GPU 全空、`active()` 顯示 0、
+        監控全綠，長輩卻全部排隊到逾時被婉拒，是最難查的一種故障。
 
         ⚠️ 名額的釋放放在 finally。漏放一次那個名額就永久消失，漏放到滿之後
         所有人從此都在排隊，而伺服器看起來完全健康——那是最難查的一種故障。
@@ -97,7 +105,21 @@ class TurnAdmission:
 
         if my_ticket is not None:
             if on_queued is not None:
-                on_queued(position)
+                try:
+                    on_queued(position)
+                except BaseException:
+                    # ⚠️ on_queued 拋例外時，這個號碼還沒進入下面的 wait_for，
+                    # 不會被那裡的 finally 清掉——不在這裡補一次，號碼就永久
+                    # 卡在佇列裡：waiting() 永遠多算一位、快速通道永遠失效、
+                    # 佇列最前面的死號碼讓後面每一位的述詞永遠對不上。
+                    with self._cond:
+                        if my_ticket in self._queue:
+                            self._queue.remove(my_ticket)
+                        # 名額若原本就有空位（只是排在別人後面等 FIFO），移除
+                        # 這個號碼可能讓下一位的述詞剛好轉真，必須喚醒讓他
+                        # 重新核對，不能等下一次真正的釋放才順便叫醒他。
+                        self._cond.notify_all()
+                    raise
             with self._cond:
                 try:
                     granted = self._cond.wait_for(

@@ -471,3 +471,170 @@ def test_釋放後真正輪到號的人要被立即叫醒_不能只notify一位(
         "真正輪到號的人在名額釋放後 0.3 秒內仍未被放行——"
         "notify() 只叫醒一位時，叫醒的可能不是輪到號的那位"
     )
+
+
+def test_on_queued拋例外後號碼要釋放_不能讓閘門永久卡死():
+    """`on_queued` 沒有『保證不拋例外』這件事——它是往外部送資料的回呼，
+    連線斷掉就可能拋錯（`ws.py` 的 `_Sender.send_reply_audio` 就是刻意會拋的
+    同類回呼）。拋出的當下若沒把號碼從佇列移除，佇列從此卡著一個永遠拿不出來
+    的號碼：`waiting()` 永遠多算一位、快速通道永遠失效（佇列非空）、佇列
+    最前面的死號碼讓後面每一位的述詞永遠對不上——GPU 全空、`active()` 顯示
+    0、監控全綠，長輩卻全部排隊到逾時被婉拒。這是重寫成 FIFO 取號時新引入的
+    缺陷，舊版（`_waiting` 純計數）同一情境只會讓計數漂移，不會讓閘門死掉。
+    """
+    gate = TurnAdmission(1, queue_timeout=0.3)
+
+    def raising_on_queued(_position):
+        raise RuntimeError("送出失敗")
+
+    with gate.admit():
+        with pytest.raises(RuntimeError):
+            with gate.admit(on_queued=raising_on_queued):
+                pass
+        # 外層還握著名額，但排隊佇列這裡應該完全乾淨——沒有殘留的死號碼。
+        assert gate.waiting() == 0
+
+    # 外層也放掉之後，閘門必須是空的、且能正常再放行，而不是卡死。
+    assert gate.active() == 0
+    assert gate.waiting() == 0
+    for _ in range(3):
+        with gate.admit():
+            pass
+
+
+def test_on_queued拋例外後要喚醒排在後面的人_不能等下一次真正釋放才順便叫醒():
+    """上一條測試守住『號碼有沒有從佇列移除』，這條守住一個更細的次一階問題：
+    移除號碼那一刻若名額其實已經空著（名額釋放發生在這位排隊者的 `on_queued`
+    真正拋例外之前），排在他後面、已經真正卡在 `wait_for` 裡睡著的人，述詞
+    在號碼被移除的瞬間就會轉真——但除非有人 `notify_all()`，他不會自己醒來
+    重新核對，只能等到自己的逾時，等於名額明明空著卻沒人拿到（跟『只 notify
+    一位』是同一種活鎖，只是觸發路徑不同）。
+    """
+    gate = TurnAdmission(1, queue_timeout=1.0)
+    holder_inside = threading.Event()
+    release_holder = threading.Event()
+    front_registered = threading.Event()
+    release_front_on_queued = threading.Event()
+    victim_queued = threading.Event()
+    victim_granted = threading.Event()
+
+    def holder():
+        with gate.admit():
+            holder_inside.set()
+            release_holder.wait(2.0)
+
+    def blocking_then_raising_on_queued(_position):
+        front_registered.set()
+        release_front_on_queued.wait(2.0)
+        raise RuntimeError("送出失敗")
+
+    def front():
+        with pytest.raises(RuntimeError):
+            with gate.admit(on_queued=blocking_then_raising_on_queued):
+                pass
+
+    def victim():
+        assert front_registered.wait(2.0)
+
+        def on_queued(_position):
+            victim_queued.set()
+
+        with gate.admit(on_queued=on_queued):
+            victim_granted.set()
+
+    t_holder = threading.Thread(target=holder)
+    t_holder.start()
+    assert holder_inside.wait(2.0)
+
+    t_front = threading.Thread(target=front)
+    t_front.start()
+    assert front_registered.wait(2.0)
+
+    t_victim = threading.Thread(target=victim)
+    t_victim.start()
+    assert victim_queued.wait(2.0)
+
+    # 讓 victim 真正進入 wait_for、睡著等待（此刻名額仍被 holder 佔著）。
+    time.sleep(0.05)
+    # 釋放 holder：名額空出來，但佇列最前面仍是還沒真正失敗的 front 號碼。
+    release_holder.set()
+    time.sleep(0.05)
+    # 現在才讓 front 的 on_queued 真正拋例外——這一刻名額其實已經空著。
+    release_front_on_queued.set()
+
+    # 觀察窗：遠短於 victim 自己的 1.0 秒逾時，確認他是否已被放行。
+    t_victim.join(0.3)
+    victim_still_blocked = t_victim.is_alive()
+
+    t_holder.join(2.0)
+    t_front.join(2.0)
+    t_victim.join(2.0)
+    assert not t_holder.is_alive()
+    assert not t_front.is_alive()
+    assert not t_victim.is_alive()
+
+    assert not victim_still_blocked, (
+        "名額其實已經空著，但排在後面的人在 0.3 秒內仍未被放行——"
+        "on_queued 拋例外後移除號碼時沒有 notify_all，造成活鎖"
+    )
+    assert victim_granted.is_set()
+
+
+def test_排隊時回報位置_第二位應該看到位置2():
+    """`position = len(self._queue)` 若被寫死成常數 `1`（例如複製貼上時筆誤），
+    只測一位排隊者的既有測試完全抓不到——這條測試釘住『第二位排隊者確實被
+    告知位置 2』，這是 `on_queued` 這個回呼存在的唯一理由：讓使用者知道自己
+    前面還有幾位，不是只知道『有沒有在排隊』。
+    """
+    gate = TurnAdmission(1, queue_timeout=2.0)
+    positions: dict[str, int] = {}
+    holder_inside = threading.Event()
+    release_holder = threading.Event()
+    first_queued = threading.Event()
+    second_queued = threading.Event()
+
+    def holder():
+        with gate.admit():
+            holder_inside.set()
+            release_holder.wait(2.0)
+
+    def first_waiter():
+        def on_queued(position):
+            positions["first"] = position
+            first_queued.set()
+
+        with gate.admit(on_queued=on_queued):
+            pass
+
+    def second_waiter():
+        assert first_queued.wait(2.0)
+
+        def on_queued(position):
+            positions["second"] = position
+            second_queued.set()
+
+        with gate.admit(on_queued=on_queued):
+            pass
+
+    t_holder = threading.Thread(target=holder)
+    t_holder.start()
+    assert holder_inside.wait(2.0)
+
+    t_first = threading.Thread(target=first_waiter)
+    t_first.start()
+    assert first_queued.wait(2.0)
+
+    t_second = threading.Thread(target=second_waiter)
+    t_second.start()
+    assert second_queued.wait(2.0)
+
+    # 兩位都已真正排進佇列（此刻仍同時卡在阻塞等待，持有者尚未釋放）才斷言。
+    assert positions == {"first": 1, "second": 2}
+
+    release_holder.set()
+    t_holder.join(2.0)
+    t_first.join(2.0)
+    t_second.join(2.0)
+    assert not t_holder.is_alive()
+    assert not t_first.is_alive()
+    assert not t_second.is_alive()
