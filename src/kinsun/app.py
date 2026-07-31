@@ -26,6 +26,7 @@ from kinsun.audio.publisher import build_audio_publisher
 from kinsun.binding.flow import BindingFlow
 from kinsun.binding.gate import AllowAllGate, ConsentGate
 from kinsun.binding.session import PgBindingSessionStore
+from kinsun.channels.app.admission import TurnAdmission
 from kinsun.channels.app.turns import create_app_turns_router
 from kinsun.channels.app.ws import create_app_ws_router
 from kinsun.channels.inbound import FALLBACK_PROMPT, VoiceReplyDelivery
@@ -51,7 +52,7 @@ from kinsun.speech.asr import build_asr_client
 from kinsun.speech.tts import build_tts_client
 from kinsun.web.auth import LineIdTokenVerifier
 from kinsun.web.envelope import install_error_envelope
-from kinsun.web.ratelimit import PgRateLimiter
+from kinsun.web.ratelimit import PgRateLimiter, SlidingWindowRateLimiter
 from kinsun.web.routers import (
     create_admin_jobs_router,
     create_admin_router,
@@ -389,6 +390,19 @@ def build_app() -> FastAPI:
         ),
         prefix="/api/v1",
     )
+    # 對講機容量閘門（spec 2026-07-30 §10 B2）：POST /turns 與 WS /ws/talk 共用
+    # **同一個**閘門物件——各自建一個的話，兩條路徑合計的併發可以繞過對方的上限，
+    # 而 GPU 不在乎請求是從哪條路進來的。⚠️ `turn_concurrency_limit` 是**每個
+    # worker 各自**的上限，實際全域上限＝本值×`WEB_WORKERS`（見 admission.py
+    # 模組 docstring）。
+    turn_admission = TurnAdmission(
+        settings.turn_concurrency_limit,
+        queue_timeout=settings.turn_queue_timeout_seconds,
+    )
+    # 每位長輩每分鐘的輪數保險絲：純粹防前端 bug（重連迴圈狂送），對真人操作
+    # 等同無限（單進程記憶體實作，多 worker 下各進程獨立計數——與認證節流的
+    # `SlidingWindowRateLimiter` 同一種前提，見 `web/ratelimit.py`）。
+    turn_rate_limiter = SlidingWindowRateLimiter(settings.turn_rate_limit_per_minute, 60.0)
     # App 對講機：JSON 回應固定帶文字（include_text 與 LINE 的訊息額度考量無關）。
     app.include_router(
         create_app_turns_router(
@@ -412,6 +426,8 @@ def build_app() -> FastAPI:
             memory=core.memory,
             tts=tts_client,
             audio_publisher=publisher,
+            admission=turn_admission,
+            rate_limiter=turn_rate_limiter,
         ),
         prefix="/api/v1",
     )
@@ -437,6 +453,8 @@ def build_app() -> FastAPI:
             new_id=lambda: uuid.uuid4().hex,
             clock=clock,
             max_audio_bytes=settings.audio_max_upload_bytes,
+            admission=turn_admission,
+            rate_limiter=turn_rate_limiter,
         ),
         prefix="/api/v1",
     )

@@ -21,6 +21,7 @@ from kinsun.accounts.models import ConsentBy, InviteRole
 from kinsun.accounts.service import AccountService
 from kinsun.agent import CareAgent
 from kinsun.binding.gate import ConsentGate
+from kinsun.channels.app.admission import TurnAdmission
 from kinsun.channels.app.ws import create_app_ws_router
 from kinsun.channels.inbound import VoiceReplyDelivery
 from kinsun.llm import Message, ToolCall, ToolSpec, ToolTurn
@@ -163,6 +164,8 @@ def _client(
     ack_audio=None,
     locations=None,
     asr=None,
+    admission=None,
+    rate_limiter=None,
 ):
     pipeline = VoicePipeline(
         asr=asr or MockAsrClient("今天有什麼新消息"),
@@ -183,6 +186,8 @@ def _client(
             locations=locations,
             new_id=lambda: "turn-1",
             clock=lambda: NOW,
+            admission=admission,
+            rate_limiter=rate_limiter,
         ),
         prefix="/api/v1",
     )
@@ -770,3 +775,166 @@ def test_encode_reply_frame_keeps_chinese_readable_rather_than_escaped():
     raw = encode_reply_frame({"text": "阿公"}, b"")
 
     assert "阿公".encode() in raw
+
+
+# ── 容量閘門（spec 2026-07-30 §10 B2）──────────────────────────────────
+
+
+class _BlockingAsr:
+    """卡在辨識裡不出來的 ASR：用來讓第一輪一直佔著名額。"""
+
+    def __init__(self, transcript: str = "今天有什麼新消息") -> None:
+        self._transcript = transcript
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def transcribe(self, audio: bytes, *, content_type: str) -> str:
+        self.entered.set()
+        self.release.wait(5.0)
+        return self._transcript
+
+
+def test_併發超過上限時先送排隊訊框_不靜默丟掉那句話():
+    """⚠️ 靜默排隊與當機在畫面上長得一模一樣。長輩只會覺得金孫不理他，然後
+    再講一次——那會讓已經滿載的 GPU 雪上加霜。"""
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    asr = _BlockingAsr()
+    client = _client(svc, asr=asr, admission=TurnAdmission(1, queue_timeout=5.0))
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_bytes(b"audio-1")
+        assert asr.entered.wait(5.0), "第一輪應該已經進到辨識裡"
+        ws.send_bytes(b"audio-2")
+        frame = _receive_frame(ws)
+        assert frame["type"] == "queued"
+        assert frame["position"] == 1, "前面有 1 位"
+        asr.release.set()
+
+
+def test_名額夠時不送排隊訊框_不要嚇沒有在等的人():
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    client = _client(svc, admission=TurnAdmission(2, queue_timeout=5.0))
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_bytes(b"audio-1")
+        frame = _receive_frame(ws)
+        assert frame["type"] != "queued"
+
+
+def test_排隊逾時回一句人話_不是靜默也不是裸錯():
+    """長輩看不懂 429，也等不到一個永遠不會來的回應。"""
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    asr = _BlockingAsr()
+    client = _client(svc, asr=asr, admission=TurnAdmission(1, queue_timeout=0.2))
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_bytes(b"audio-1")
+        assert asr.entered.wait(5.0)
+        ws.send_bytes(b"audio-2")
+        assert _receive_frame(ws)["type"] == "queued"
+        timeout_frame = _receive_frame(ws)
+        assert timeout_frame["type"] == "error"
+        # 是人話不是狀態碼；文字內容沿用本檔既有的「還在忙」婉拒文案（`_BUSY_REPLY`），
+        # 而不是管線一般性失敗的 `SYSTEM_TROUBLE_REPLY`——兩者都是「人話」、都不含
+        # 「429」，只看這兩條斷言測不出 `AdmissionTimeout` 是否被接到正確的分支
+        # （已用 mutation 驗證：把 `except AdmissionTimeout` 拿掉、讓它落進泛用的
+        # `except Exception`，這兩條斷言仍然通過）。
+        assert timeout_frame["text"]
+        assert "429" not in timeout_frame["text"]
+        assert "還在忙" in timeout_frame["text"]
+        asr.release.set()
+
+
+def test_名額在一輪失敗時也要釋放():
+    """⚠️ 管線炸掉時若沒釋放名額，那個名額就永久消失；漏到滿之後所有人從此
+    排隊，而伺服器看起來完全健康。
+
+    ⚠️ **這裡刻意讓兩輪真的重疊**（第一輪炸掉之前，第二輪已經真的排上隊）：
+    brief 原始版本是「先送第一輪、等它完全結束（拿到 reply／error）才送第二輪」，
+    兩輪之間毫無時間重疊——那種寫法下即使閘門完全沒接上（例如忘了寫 `with`，
+    見 `admission.py` docstring 的警告），`active()` 從頭到尾都是 0、
+    `second["type"] != "queued"` 也照樣成立，測試一樣全綠但完全沒測到「例外
+    釋放」這件事（已用 mutation 驗證：把 `with turn_gate.admit(...)` 換成
+    `contextlib.nullcontext()` 整段繞過閘門，brief 原始版本的斷言仍然通過）。
+    改成「第一輪持有名額時炸掉、第二輪已經真的在排隊」才能證明例外真的觸發了
+    閘門的釋放路徑，而不只是連線沒被打斷。
+
+    ⚠️ 刻意拋 `RuntimeError` 而非 `ASRError`：`channels/inbound.py::_run_pipeline`
+    把 `ASRError`／`LLMError`／`MemoryStoreError` 三種**內部就地接住**、改送回退
+    語音（`voice.deliver_standby`）後正常回傳，例外根本不會冒出 `dispatch()`，
+    `_run_turn` 也就走不到 `except Exception` 那支——沿用 brief 原本的 `ASRError`
+    只會測到「回退話術」這條既有路徑（`test_a_failing_turn_...` 已經測過），
+    測不到閘門在**未預期例外**時是否正確釋放。
+    """
+
+    class _ExplodingAsr:
+        """卡住直到被釋放、釋放後拋出管線不會就地接住的例外（模擬持有名額時真的炸掉）。"""
+
+        def __init__(self) -> None:
+            self.entered = threading.Event()
+            self.release = threading.Event()
+
+        def transcribe(self, audio: bytes, *, content_type: str) -> str:
+            self.entered.set()
+            self.release.wait(5.0)
+            raise RuntimeError("這一輪炸了（非 ASRError，管線不會就地接住）")
+
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    asr = _ExplodingAsr()
+    admission = TurnAdmission(1, queue_timeout=5.0)
+    client = _client(svc, asr=asr, admission=admission)
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_bytes(b"audio-1")
+        assert asr.entered.wait(5.0), "第一輪應該已經進到辨識裡、正持有名額"
+        ws.send_bytes(b"audio-2")
+        queued = _receive_frame(ws)
+        assert queued["type"] == "queued", "第二輪必須真的排上隊，才測得到釋放"
+        assert queued["position"] == 1
+        asr.release.set()
+        # 順序不保證（兩輪炸掉後各自送 error 是真併發，先後由排程決定）：
+        # 只斷言兩則都收得到、都是 error，沒有人卡在排隊或逾時。
+        remaining = {_receive_frame(ws)["type"] for _ in range(2)}
+    assert remaining == {"error"}, "兩輪都該回錯誤訊框，不該有人卡在排隊或逾時"
+    assert admission.active() == 0
+
+
+# ── 每位長輩的輪數保險絲（spec 2026-07-30 §10 B2）──────────────────────
+#
+# ⚠️ brief 本身沒有給這一段的測試案例（只給了容量閘門四條）；`rate_limiter` 是
+# 這一輪額外接的另一個對外行為（每分鐘輪數保險絲），沒有測試會是接線但沒人守。
+
+
+class _DenyingRateLimiter:
+    """一律回絕的節流器替身：不必真的一分鐘打 31 次，就能確認保險絲真的接上。"""
+
+    def hit(self, key: str) -> bool:
+        return False
+
+
+def test_每分鐘輪數保險絲觸發時回一句人話_不是靜默丟掉():
+    """對真人操作等同無限，但前端重連迴圈狂送時不能任由它一路打穿到 GPU。"""
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    client = _client(svc, rate_limiter=_DenyingRateLimiter())
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_bytes(b"audio-1")
+        frame = _receive_frame(ws)
+    assert frame["type"] == "error"
+    assert "還在忙" in frame["text"]
+
+
+def test_節流放行時不受影響_對真人操作等同無限():
+    """一律放行的節流器不該讓既有行為變樣——保險絲對真人操作必須是無感的。"""
+
+    class _AllowingRateLimiter:
+        def hit(self, key: str) -> bool:
+            return True
+
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    client = _client(svc, rate_limiter=_AllowingRateLimiter())
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_bytes(b"\x00fake-audio")
+        frame = _receive_frame(ws)
+    assert frame["type"] == "reply"

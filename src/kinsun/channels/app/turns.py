@@ -6,6 +6,10 @@ prefix 由組裝處統一指定（✅ D-28）。
 InboundMessage(Channel.APP, …) 進既有 dispatch——閘門（同意複核）、危急偵測、
 記憶、觀測、語音回覆全部重用；reply／reply_voice 為收集器，dispatch 結束後
 轉成 JSON 回應（同步請求／回應，無 LINE 的 webhook／reply 兩段式）。
+
+⚠️ 容量閘門（spec 2026-07-30 §10 B2）：與 `ws.py` 共用同一個 `TurnAdmission`
+物件（由 `app.py` 建立並分別注入兩條路徑），滿載時排隊、逾時回 503——沿用
+`ws.py` 的 `_BUSY_REPLY` 文案，兩條路徑對長輩說的話不該有兩種版本。
 """
 
 from __future__ import annotations
@@ -22,7 +26,9 @@ from starlette.concurrency import run_in_threadpool
 from kinsun import tracing
 from kinsun.accounts.models import Channel, PrincipalType
 from kinsun.accounts.service import AccountService
+from kinsun.channels.app.admission import AdmissionTimeout, TurnAdmission
 from kinsun.channels.app.inbound_audio import start_inbound_upload
+from kinsun.channels.app.ws import _BUSY_REPLY, _DEFAULT_TURN_CONCURRENCY
 from kinsun.channels.inbound import InboundMessage, dispatch
 from kinsun.locations.store import ElderLocation, is_valid_coordinate, is_valid_place
 from kinsun.speech.chunking import reply_digest, split_for_speech
@@ -76,10 +82,17 @@ def create_app_turns_router(
     memory=None,
     tts=None,
     audio_publisher=None,
+    admission: TurnAdmission | None = None,
+    rate_limiter=None,
 ) -> APIRouter:
     router = APIRouter(tags=["turns"])
     make_id = new_id or (lambda: uuid.uuid4().hex)
     now = clock or (lambda: datetime.now(UTC))
+    # ⚠️ 刻意不叫 `gate`：本函式的 `gate` 參數是 `ConsentGate`（同意複核），命名
+    # 相撞會讓 dispatch 的 `gate=gate` 悄悄改傳錯物件。與 `ws.py` 同一顆
+    # `TurnAdmission`（由 `app.py` 建立並分別注入兩條路徑）才擋得住「同一時間
+    # 兩條路徑合計超過容量」；各自建一個的話，兩條路徑可以互相繞過對方的閘門。
+    turn_gate = admission or TurnAdmission(_DEFAULT_TURN_CONCURRENCY)
 
     def _save_location(elder_id: str, place: str, lat: float | None, lon: float | None) -> None:
         """記下長輩這輪回報的地點與模糊座標（約 0.01 度／1.1 公里，手機端已捨去精度）。
@@ -138,23 +151,46 @@ def create_app_turns_router(
         audio = await request.body()
         if len(audio) > max_audio_bytes:
             raise HTTPException(status_code=413, detail=ErrorCode.AUDIO_TOO_LARGE)
+        # 每位長輩的保險絲（spec 2026-07-30 §10 B2）：純粹防前端 bug（重連迴圈狂送），
+        # 對真人操作等同無限，走到這裡幾乎一定是程式在打自己。排在容量閘門之前——
+        # 被擋下的這一輪不該去佔用容量閘門的名額。
+        if rate_limiter is not None and not rate_limiter.hit(f"turn:{elder_id}"):
+            logger.warning("長輩輪數超過每分鐘上限 elder=%s", elder_id)
+            raise HTTPException(
+                status_code=429,
+                detail={"code": ErrorCode.TOO_MANY_REQUESTS, "message": _BUSY_REPLY},
+            )
+
+        def _run_with_admission() -> dict:
+            # ⚠️ 在執行緒池裡取名額：這個 handler 是 async 的，在事件迴圈上阻塞
+            # 等待會讓**所有人**的請求一起停住——包含那些根本沒有要用對講機的。
+            with turn_gate.admit():
+                return _run_turn(
+                    audio=audio,
+                    elder_id=elder_id,
+                    external_id=external_id,
+                    location=location,
+                    latitude=latitude,
+                    longitude=longitude,
+                    received_at=received_at,
+                )
+
         # ⚠️ 一定要交給執行緒池：底下整段（進站上傳、ASR、Gemini、TTS、落庫）全是
         # 同步阻塞呼叫，留在 async handler 裡就是佔住事件迴圈。實測（2026-07-26 全流程
         # 模擬）一輪對話進行中，連 GET /healthz 都要等 2.89 秒——整台後端一次只服務得了
         # 一位長輩，第二位開口就得排隊，家屬 App 與後台也一起卡住。FastAPI 對所有同步
         # handler 本來就是這樣跑的，這裡只是把這支端點放回同一條路上。
-        return ok(
-            await run_in_threadpool(
-                _run_turn,
-                audio=audio,
-                elder_id=elder_id,
-                external_id=external_id,
-                location=location,
-                latitude=latitude,
-                longitude=longitude,
-                received_at=received_at,
-            )
-        )
+        try:
+            result = await run_in_threadpool(_run_with_admission)
+        except AdmissionTimeout:
+            # 長輩看不懂 429。回既有的婉拒文案，與 WS 路徑同一句——兩條路徑對長輩
+            # 說的話不該有兩種版本。
+            logger.warning("排隊逾時，婉拒這一輪 elder=%s", elder_id)
+            raise HTTPException(
+                status_code=503,
+                detail={"code": ErrorCode.TOO_MANY_REQUESTS, "message": _BUSY_REPLY},
+            ) from None
+        return ok(result)
 
     def _run_turn(
         *,

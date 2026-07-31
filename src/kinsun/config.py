@@ -414,6 +414,16 @@ class Settings(_BaseEnvSettings):
     # 你的 push token 後冒名發送；值在 Expo 後台的 Access Tokens 產生。
     push_expo_access_token: str = ""
     push_timeout_seconds: float = 10.0
+    # 對講機容量閘門（spec 2026-07-30 §10 B2）。⚠️ 這不是節流是容量管理：ASR 與
+    # TTS 共用一顆 GPU，同時湧入只會排隊、讓每個人都慢。⚠️ 進程內計數，是「每個
+    # worker 各自」的上限，不是全域上限——正式模式跑 `WEB_WORKERS`（預設 2）個
+    # worker，實際全域上限＝本值×WEB_WORKERS（見 `channels/app/admission.py`
+    # 模組 docstring）。預設 6 為**暫定值、未經核定**，須於彩排時實測「N 人同時
+    # 講話，往返延遲何時開始難看」後定案。
+    turn_concurrency_limit: int = 6
+    turn_queue_timeout_seconds: float = 30.0
+    # 每位長輩每分鐘的輪數上限。純粹防前端 bug（重連迴圈狂送），對真人操作等同無限。
+    turn_rate_limit_per_minute: int = 30
 
     @model_validator(mode="before")
     @classmethod

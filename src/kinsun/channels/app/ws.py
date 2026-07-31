@@ -21,9 +21,12 @@
 
 下行（皆帶 `turn_id`）：
 - `ack`——模型決定要查東西時。欄位：`text`、`audio_url`、`duration_ms`
+- `queued`——容量閘門滿載時排隊告知位置（spec 2026-07-30 §10 B2，P3 Task 2）。
+  欄位：`position`（前面還有幾位）。
 - `reply`——答案算完但**沒有音檔**（TTS 失敗退純文字）。欄位：`text`、`audio_url`（空）、
   `duration_ms`、`chunk_count`、`reply_digest`
-- `error`——任一段失敗。欄位：`text`（回退話術）
+- `error`——任一段失敗，或排隊逾時／每分鐘輪數保險絲觸發。欄位：`text`（回退話術，
+  三種情形共用同一句 `_BUSY_REPLY`）
 - **binary frame**——答案算完且有音檔（2026-07-30 延遲優化 C1）。格式：
   `[4 bytes 大端序 header 長度][UTF-8 JSON header][m4a bytes]`，header 欄位與 `reply`
   完全相同（`type` 亦為 `"reply"`）。
@@ -67,6 +70,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from kinsun.accounts.models import Channel, PrincipalType
 from kinsun.accounts.service import AccountService
 from kinsun.agent import SYSTEM_TROUBLE_REPLY
+from kinsun.channels.app.admission import AdmissionTimeout, TurnAdmission
 from kinsun.channels.app.inbound_audio import start_inbound_upload
 from kinsun.channels.inbound import InboundMessage, dispatch
 from kinsun.locations.store import ElderLocation, is_valid_coordinate, is_valid_place
@@ -92,6 +96,11 @@ _CLOSE_UNAUTHORIZED = 1008
 # 併發兩輪已經是少見情形。
 _MAX_CONCURRENT_TURNS = 3
 _BUSY_REPLY = "金孫還在忙前面那幾句，等一下下再跟您說好嗎？"
+
+# 容量閘門（spec 2026-07-30 §10 B2）未被注入 `TurnAdmission` 時的備援併發上限
+# ——正式環境一律由 `app.py` 注入 `Settings.turn_concurrency_limit`，這裡只是
+# 讓沒有特別關心閘門的呼叫端（大多數既有測試）維持「幾乎不會排隊」的舊行為。
+_DEFAULT_TURN_CONCURRENCY = 6
 
 # 晚到答案的回指指示。⚠️ 走系統提示而不是程式層硬前綴——拼接出來的句子 TTS 唸起來
 # 會斷裂，而這句話要讓長輩覺得是金孫自己想起來的。
@@ -265,10 +274,17 @@ def create_app_ws_router(
     new_id: Callable[[], str] | None = None,
     clock: Callable[[], datetime] | None = None,
     max_audio_bytes: int = _DEFAULT_MAX_AUDIO_BYTES,
+    admission: TurnAdmission | None = None,
+    rate_limiter=None,
 ) -> APIRouter:
     router = APIRouter(tags=["turns"])
     make_id = new_id or (lambda: uuid.uuid4().hex)
     now = clock or (lambda: datetime.now(UTC))
+    # ⚠️ 刻意不叫 `gate`：本函式的 `gate` 參數是 `ConsentGate`（同意複核），命名
+    # 相撞會讓 `dispatch(gate=gate, ...)` 悄悄改傳錯物件。一定要在這裡（工廠層級）
+    # 建立一次並讓所有輪次共用——放進 `_run_turn` 內部會讓每一輪各自算一個新的
+    # `TurnAdmission`，閘門就永遠不會真的擋到人。
+    turn_gate = admission or TurnAdmission(_DEFAULT_TURN_CONCURRENCY)
 
     def _resolve_elder(token: str) -> tuple[str, str] | None:
         """token → (elder_id, external_id)；認證或同意複核失敗回 None。
@@ -339,6 +355,10 @@ def create_app_ws_router(
 
         流程與 `turns.py::_run_turn` 一致，差別只在：回覆用 `sender` 推出去而不是
         當成 HTTP 回應，且中途多一則安撫話。
+
+        ⚠️ 容量閘門（spec §10 B2）包住的是 `dispatch(...)`（真正打 ASR／TTS 的那一
+        段），而不是這裡的上傳與物件組裝——閘門要擋的是「同時打到 GPU 的輪數」，
+        排在它之前的都不吃 GPU，提早佔位只會讓排隊位置變得不誠實。
         """
         # 背景上傳，不等網址：見 `channels/app/inbound_audio.py`（延遲優化 B1）。
         start_inbound_upload(inbound_audio, traces, audio, turn_id)
@@ -362,29 +382,45 @@ def create_app_ws_router(
         # 要讓他知道在回哪一個問題。判斷點在**開跑前**——那時已經知道自己是不是
         # 最新的一輪，而系統提示必須在 LLM 呼叫之前就備好。
         directive = "" if in_flight.is_latest(turn_id) else _LATE_REPLY_DIRECTIVE
+
+        def notify_queued(position: int) -> None:
+            # 只把訊框丟進送出佇列，不做其他 I/O：這個回呼在閘門**沒有持鎖**時被
+            # 呼叫（見 `admission.py::admit` docstring），但仍會讓排在這位之後的
+            # 每一位多等 `_Sender.send` 最長 5 秒的 `future.result(timeout=5)`——
+            # 這是刻意接受的代價，換來位置回報對長輩是「真話」而不是收到訊框時
+            # 已經過期的猜測值。
+            sender.send({"type": "queued", "turn_id": turn_id, "position": position})
+
         try:
-            with (
-                tool_announcer(_ack_sender(sender, turn_id)),
-                transcript_listener(lambda text: in_flight.set_utterance(turn_id, text)),
-                pending_utterances(lambda: in_flight.others(turn_id)),
-                turn_directive(directive),
-            ):
-                outcome = dispatch(
-                    msg,
-                    pipeline=pipeline,
-                    binding=_NullBinding(),
-                    gate=gate,
-                    voice=voice,
-                    traces=traces,
-                    elder_id=elder_id,  # 入口已解析並複核同意（✅ 庚-12）
-                )
-        except Exception:  # noqa: BLE001 - 一輪失敗不可打斷整條連線
-            logger.exception("WebSocket 對話輪失敗 turn=%s", turn_id)
-            sender.send({"type": "error", "turn_id": turn_id, "text": SYSTEM_TROUBLE_REPLY})
-            return
+            try:
+                with turn_gate.admit(on_queued=notify_queued):
+                    with (
+                        tool_announcer(_ack_sender(sender, turn_id)),
+                        transcript_listener(lambda text: in_flight.set_utterance(turn_id, text)),
+                        pending_utterances(lambda: in_flight.others(turn_id)),
+                        turn_directive(directive),
+                    ):
+                        outcome = dispatch(
+                            msg,
+                            pipeline=pipeline,
+                            binding=_NullBinding(),
+                            gate=gate,
+                            voice=voice,
+                            traces=traces,
+                            elder_id=elder_id,  # 入口已解析並複核同意（✅ 庚-12）
+                        )
+            except AdmissionTimeout:
+                logger.warning("排隊逾時，婉拒這一輪 elder=%s turn=%s", elder_id, turn_id)
+                sender.send({"type": "error", "turn_id": turn_id, "text": _BUSY_REPLY})
+                return
+            except Exception:  # noqa: BLE001 - 一輪失敗不可打斷整條連線
+                logger.exception("WebSocket 對話輪失敗 turn=%s", turn_id)
+                sender.send({"type": "error", "turn_id": turn_id, "text": SYSTEM_TROUBLE_REPLY})
+                return
         finally:
-            # ⚠️ 一定要在 finally：這一輪失敗時若沒有解除登記，名額會一直被佔著，
-            # 長輩問滿三次之後就再也得不到回應。
+            # ⚠️ 一定要在 finally：這一輪失敗或排隊逾時時若沒有解除登記，`in_flight`
+            # 的名額會一直被佔著，長輩問滿三次之後就再也得不到回應。閘門本身的名額
+            # 由 `turn_gate.admit()` 自己的 finally 釋放，不必在這裡重複處理。
             in_flight.finish(turn_id)
         if collector.audio_sent:
             # 音檔 frame 已經在投遞當下推出去了（含完整 header），不可再補一則 JSON
@@ -444,6 +480,13 @@ def create_app_ws_router(
                     pending.get("longitude"),
                 )
                 turn_id = make_id()
+                # 每位長輩的保險絲（spec §10 B2）：純粹防前端 bug（重連迴圈狂送），
+                # 對真人操作等同無限，走到這裡幾乎一定是程式在打自己。排在 `in_flight`
+                # 之前——被擋下的這一輪不該去佔用途中清單的名額。
+                if rate_limiter is not None and not rate_limiter.hit(f"turn:{elder_id}"):
+                    logger.warning("長輩輪數超過每分鐘上限 elder=%s", elder_id)
+                    sender.send({"type": "error", "turn_id": turn_id, "text": _BUSY_REPLY})
+                    continue
                 if not in_flight.start(turn_id):
                     # 連按太多次：回一句「還在忙」而不是靜默丟掉，長輩才知道發生什麼事。
                     logger.warning("併發輪達上限，婉拒這一輪 elder=%s", elder_id)
