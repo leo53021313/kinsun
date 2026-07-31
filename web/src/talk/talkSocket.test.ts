@@ -384,6 +384,11 @@ describe("網頁端差異", () => {
     (socket as unknown as FakeSocket).emitText(
       JSON.stringify({ type: "queued", turn_id: "t1", position: 2 }),
     );
-    expect(frames).toEqual([{ type: "queued", turn_id: "t1", position: 2 }]);
+    // ⚠️ 期望值宣告成有型別的 TalkFrame 常數（審查回合二 Important）：onFrame 的
+    // 轉發邏輯本就不檢查 type 字面值是否落在聯集內，光靠執行期斷言測不出
+    // `queued` 聯集成員被誰無聲刪掉——刪掉後這裡會變成 TS2322，typecheck 這道
+    // gate 會先紅，而不必等到有人真的寫 `case "queued":` 才發現契約鏡射不見了。
+    const expected: TalkFrame = { type: "queued", turn_id: "t1", position: 2 };
+    expect(frames).toEqual([expected]);
   });
 });

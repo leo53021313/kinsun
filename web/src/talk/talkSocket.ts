@@ -59,6 +59,11 @@ export type RetryHandle = number | ReturnType<typeof setTimeout>;
  * `base64.toByteArray(ev.data).buffer`，而 iOS／Android 原生端一律送 `'binary'`）。
  * `binaryType` 預設是 `undefined`——與瀏覽器預設 `"blob"` 不同，本專案不設，故永遠
  * 拿到 ArrayBuffer。TypedArray 那一支只是防禦性處理，不是預期路徑。
+ *
+ * ⚠️ 上一段描述的是 App／React Native 版本的既有事實（本函式逐字未改）。網頁端
+ * 本檔已於 `connect()`（見下）明確把 `binaryType` 設為 `"arraybuffer"`——瀏覽器
+ * 預設值就是 `"blob"`，若讀者只看到這裡就以為「本專案不設」，在別處新開一條
+ * WebSocket 時忘了設，會重演這個修法要解決的症狀（訊框連字幕一起被丟掉）。
  */
 export function asArrayBuffer(data: unknown): ArrayBuffer | null {
   if (data instanceof ArrayBuffer) {
