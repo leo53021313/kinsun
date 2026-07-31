@@ -3,19 +3,28 @@
  *
  * ⚠️ 為什麼是輪詢而不是 WebSocket：長輩端的 WS 是對講機專用的，家屬端根本沒有
  * 連線。替家屬端另開一條下行通道是後端的新工作，而這個規模的併發（展示現場
- * 十幾個人）用兩秒輪詢完全吃得住。
+ * 十幾個人）用兩秒輪詢完全吃得住。⚠️ **量化備查（審查要求）**：兩欄（長輩＋
+ * 家屬）同時輪詢＝每個瀏覽器 1 req/s，後端每次請求約跑三段查詢（token 驗證＋
+ * `app_external_ids_of_*`／`app_external_id_of_elder`＋`list_for_external_ids`）；
+ * 展示現場十幾人約 **15 req/s、40+ 次 DB 查詢/秒**。吃得住，但值得記下來供
+ * 日後評估是否要調大 `intervalMs` 或改真推播。
  *
- * ⚠️ **第一次載入不補播歷史**：那是展示現場最尷尬的失敗——一進站就滑進十幾張
- * 橫幅、蓋滿整個手機。第一次的用途是「記下目前的水位」。
+ * ⚠️ **第一次載入不補播歷史，且這件事跟使用者有沒有開過提醒列表無關**（審查
+ * 發現第二個阻斷性缺陷，見下方「brief 缺陷 2」）：那是展示現場最尷尬的失敗——
+ * 一進站就滑進十幾張橫幅、蓋滿整個手機。「第一次」的判斷**不是**看
+ * `notify/seen.ts` 的已讀水位是不是 0，是看**這支 hook 自己有沒有為目前這組
+ * audience／token 成功跑過至少一輪輪詢**：只要還沒跑過第一輪，不管既有已讀
+ * 水位多舊、水位之後累積了多少通知，一律不當成新的補播出來。
  *
  * ⚠️ **本檔的「水位」跟 `notify/seen.ts` 的已讀水位是兩件不同的東西，刻意不共用
- * 寫入權**（修正 brief 缺陷；見下方「brief 缺陷」段）：`loadSeenAt`／`saveSeenAt`
- * 的寫入權**只**屬於 `elder/NotificationsScreen.tsx`／`guardian/NotificationsScreen.tsx`
- * ——那兩支畫面「開啟即更新已讀水位」，代表使用者真的把清單捲過一遍，未讀徽章
- * 才因此有意義。這裡只**讀**已讀水位（算 `unread` 用），另外自己養一支純記憶體
- * 的游標（`shownUpTo`），只管「這則有沒有已經變成橫幅播過」。
+ * 寫入權**：`loadSeenAt`／`saveSeenAt` 的寫入權**只**屬於
+ * `elder/NotificationsScreen.tsx`／`guardian/NotificationsScreen.tsx`——那兩支
+ * 畫面「開啟即更新已讀水位」，代表使用者真的把清單捲過一遍，未讀徽章才因此
+ * 有意義。這裡只**讀**已讀水位（算 `unread` 用），另外自己養一支純記憶體的
+ * 游標（`shownUpTo`），只管「這則有沒有已經變成橫幅播過」——這支游標**不從
+ * 已讀水位起跳**（見下方 brief 缺陷 2），一律從 0（從未跑過）開始。
  *
- * brief 缺陷（已修，阻斷性——`unread` 原本恆為 0）：brief 原始版本在同一個
+ * brief 缺陷 1（已修，阻斷性——`unread` 原本恆為 0）：brief 原始版本在同一個
  * `seenAt` 上又讀又寫——`poll()` 每輪都把 `seenAt.current` 推到「這一批資料裡
  * 最新一則」再存回 `localStorage`，緊接著才用 `loadSeenAt()` 讀回剛剛存的同一個
  * 值去算 `unread`。可以證明這樣算出來的 `unread` **永遠是 0**：`loadSeenAt()`
@@ -23,11 +32,47 @@
  * 因此無論如何都不成立。徽章的意義就此消失——使用者連提醒列表都還沒點開，
  * 紅點卻已經自己歸零。已改為徽章只讀 `notify/seen.ts` 的已讀水位（隨輪詢即時
  * 反映使用者「真的看過」與否），輪詢本身完全不寫這支水位。
+ *
+ * brief 缺陷 2（已修，阻斷性——**審查發現**，第一版修正的「第一次不補播歷史」
+ * 沒有真的成立）：第一版修正把 `shownUpTo` 的初始值與換人時的重設都設成
+ * `loadSeenAt(audience)`——用意是「至少從已讀水位開始算」，但兩支
+ * `NotificationsScreen` 開啟時會把已讀水位存成「當時最新一則」，所以只要使用者
+ * 曾經開過一次提醒列表、之後有任何新通知累積，水位就不是 0，這支 hook 掛載時
+ * 會把「上次開列表之後的全部通知」整批當成新的一次播完（審查實測：已讀水位
+ * 存在時掛載即播出 7 則，20 則上限下最壞可以連播 70 秒）——這正是本檔與 brief
+ * 都稱為「展示現場最尷尬的失敗」的那件事，只是換了個時機發生而已。已改為
+ * `shownUpTo` 一律從 `0` 起跳（掛載與換人皆同，不再讀已讀水位）；第一輪輪詢
+ * 只用來記下目前的水位，不管當下已經累積了多少通知都不播。
+ *
+ * ⚠️ **接線提醒（給 Task 3／4，只寫在這裡，簽章尚未反映）**：
+ * 1) `visible?: boolean`：窄螢幕頁籤模式下，非活動欄（同 `elder/useTalk.ts` 的
+ *    `visible` 語意）目前**沒有**暫停輪詢的機制，只有瀏覽器分頁真的切到背景
+ *    才會暫停（見下）。若接線後發現非活動欄持續輪詢造成佇列與畫面顯示的欄位
+ *    不同步、或想省下非活動欄的請求量，需要幫本 hook 加上同款 `visible`
+ *    參數並在 `poll()` 前比照擋掉——目前刻意不加，是因為呼叫端怎麼接還沒
+ *    定案，避免加一個沒有真實呼叫端的推測性參數。
+ * 2) `onTokenRevoked?: () => void`（本輪已加進簽章）：401（後端不認這支
+ *    token，例如家屬按了「重新產生長輩綁定碼」）時會呼叫這個 callback，但
+ *    **目前沒有任何呼叫端傳它**——接線時務必比照 `elder/TalkScreen.tsx`／
+ *    `elder/NotificationsScreen.tsx` 接上 `session/useSignOutOnAuthError.ts`，
+ *    否則長輩／家屬被撤銷 token 後，這支 hook 會每 `intervalMs` 打一次註定
+ *    失敗的 401、畫面上卻沒有任何反應，直到使用者自己觸發別的路徑（如按下
+ *    麥克風）才會被踢出去，後端也會平白多收這些必敗的請求。
+ *
+ * ⚠️ **已知限制（非本工項新缺陷，W-13 同款）**：窄螢幕頁籤模式下，橫幅在被
+ * CSS 蓋住的那一欄一樣會照常播出、3.5 秒後照樣自動消失——使用者切過去看的
+ * 時候已經錯過了。資料本身不會遺失（仍在提醒列表與未讀數裡），只有「即時跳
+ * 出來」這個效果會被錯過；是否要在非活動欄暫停或補播，見上方接線提醒 1)。
+ *
+ * ⚠️ **已知限制（後端）**：`unread` 徽章依賴的 `list_for_external_ids` 後端
+ * 有 `LIMIT 50`（`src/kinsun/notifications/store.py`），未開放成可調整的查詢
+ * 參數。展示規模碰不到這個上限，記錄備查。
  */
 
 import type { AppNotification } from "kinsun-shared/types";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { ApiError } from "@/api";
 import { listElderNotifications } from "@/elder/api";
 import { listNotifications } from "@/guardian/api";
 import { strings } from "@/strings";
@@ -67,8 +112,14 @@ export function useNotificationFeed(options: {
   intervalMs?: number;
   /** 值一變就立刻重拉一次（供未來跨欄連動使用，如「家屬剛設了新排程」）。 */
   reloadSignal?: number;
+  /**
+   * 後端不認這支 token（401，例如家屬按了「重新產生長輩綁定碼」）。目前尚未
+   * 有任何呼叫端傳入——見檔頭「接線提醒 2」，Task 3／4 接線時務必補上。
+   */
+  onTokenRevoked?: () => void;
 }) {
-  const { audience, token, intervalMs = DEFAULT_INTERVAL_MS, reloadSignal = 0 } = options;
+  const { audience, token, intervalMs = DEFAULT_INTERVAL_MS, reloadSignal = 0, onTokenRevoked } =
+    options;
   const [banner, setBanner] = useState<BannerItem | null>(null);
   const [unread, setUnread] = useState(0);
   // 佇列而非直接覆寫：一次輪詢可能拿到兩則新的（排程提醒剛好與危急警報同時），
@@ -76,11 +127,11 @@ export function useNotificationFeed(options: {
   const queue = useRef<BannerItem[]>([]);
   /**
    * 純記憶體游標：「這則有沒有已經變成橫幅播過」，跟 `notify/seen.ts` 的已讀
-   * 水位是兩回事（見檔頭說明）。掛載或換人時從已讀水位起跳，只是為了讓「第一次
-   * 不補播歷史」這條規則對新的這個人一樣成立；之後就不再回頭寫 `localStorage`。
-   * 換人時的重設見下方「render 期間比對」那段；這裡的初始值只服務掛載那一刻。
+   * 水位是兩回事（見檔頭說明）。**一律從 0 起跳**（掛載與換人皆同，見下方
+   * 「render 期間比對」那段），不讀已讀水位——讀已讀水位曾經是這裡的寫法，
+   * 審查抓到那樣「第一次不補播歷史」並不會真的成立（見檔頭 brief 缺陷 2）。
    */
-  const shownUpTo = useRef(loadSeenAt(audience));
+  const shownUpTo = useRef(0);
   /**
    * 卸載後才回來的輪詢結果整批丟棄用（審查發現：brief 原始版本的 `alive` 只擋得住
    * 「排下一次」，擋不住「已經在飛的這一次」——`run()` 在卸載前那一刻被觸發、卻在
@@ -94,11 +145,31 @@ export function useNotificationFeed(options: {
    * 一樣會照跑，若不比對就會拿著上一位使用者的資料去更新新使用者的橫幅／
    * 已讀游標／佇列（用手動控制的 promise 實測證實過這條路徑真的會發生，見
    * 測試「換人時，前一位使用者還在飛的輪詢結果晚到」）。
+   *
+   * ⚠️ **已知殘留窗口（審查標明，時序論證非實測，jsdom 無法重現）**：這裡的
+   * 更新（見下方 effect）走 passive effect，發生在 commit 之後；而
+   * `poll()` 的 continuation 是 microtask、passive effect 的 flush 走的是
+   * macrotask。理論上存在一個約一個 frame 寬的窗口——`poll()` 剛好在
+   * `sessionRef` 被更新**之前**的那個瞬間 resolve——這條檢查仍會誤判為
+   * 「還是同一個人」。尚未找到能在 jsdom 重現的辦法，記錄在此讓下一個人
+   * 知道這條路徑還沒完全關死，不是宣稱它已經無懈可擊。
    */
   const sessionRef = useRef({ audience, token });
+  /**
+   * `banner` 狀態的鏡射，供 `poll()` 判斷「現在有沒有橫幅正在顯示」用（審查
+   * 發現的 Important 2）：brief 與第一版修正都直接在 `setBanner` 的 updater
+   * 函式裡呼叫 `queue.current.shift()`——`<StrictMode>`（`main.tsx` 已掛）在
+   * 開發模式下會把 updater 函式**呼叫兩次**以偵測不純的更新邏輯，`shift()`
+   * 因此被呼叫兩次、佇列裡排在中間的那一則被無聲丟掉，只有第二次呼叫的
+   * 結果被採用。改為只把**值**傳給 `setBanner`（不是函式），`current` 這個
+   * 判斷改讀這支 ref——ref 永遠只被呼叫一次，不受 `<StrictMode>` 雙呼叫影響。
+   */
+  const bannerRef = useRef<BannerItem | null>(null);
 
   const shift = useCallback(() => {
-    setBanner(queue.current.shift() ?? null);
+    const next = queue.current.shift() ?? null;
+    bannerRef.current = next;
+    setBanner(next);
   }, []);
 
   const poll = useCallback(async () => {
@@ -130,40 +201,82 @@ export function useNotificationFeed(options: {
       // 滿了丟最舊的：slice(-QUEUE_MAX) 保留陣列尾端（較新的那些）。積壓愈久
       // 愈舊的通知，時效性愈低，寧可讓使用者看到「最近發生的事」。
       queue.current = [...queue.current, ...incoming].slice(-QUEUE_MAX);
-      setBanner((current) => current ?? queue.current.shift() ?? null);
+      // ⚠️ 讀 bannerRef 而非把函式傳給 setBanner（見該 ref 的說明）：只有目前
+      // 沒有橫幅在顯示才從佇列拿一個出來，且只呼叫一次 shift()。
+      if (bannerRef.current === null) {
+        const next = queue.current.shift() ?? null;
+        if (next !== null) {
+          bannerRef.current = next;
+          setBanner(next);
+        }
+      }
     }
   }, [audience, token]);
 
   /**
-   * 換人（audience 或 token 換掉）：橫幅立刻清空，不讓上一位使用者的殘留畫面
-   * 留到新的這個人身上。
+   * 401（後端不認這支 token）與其餘錯誤（網路抖動、5xx）分開處理（審查發現的
+   * Important 4）：brief 與第一版修正的 `.catch(() => undefined)` 對所有例外
+   * 一視同仁地靜默吞掉。web 裡其餘六支會打網路的模組全部接了
+   * `session/useSignOutOnAuthError.ts`（P3 全分支審查訂下的架構結論，12 §4）
+   * ——本 hook 是唯一的例外。401 最常見的觸發情境：家屬按「重新產生長輩綁定
+   * 碼」（後端撤銷長輩全部 token）之後，長輩若停在對講機畫面不說話，
+   * `useTalk` 的 401 判定掛在 `postTurn` 的 catch、觸發不到；若沒有其他畫面
+   * 正在打後端，這支輪詢就是**唯一**還在打的請求，會每 `intervalMs` 收到一次
+   * 註定失敗的 401、完全靜默丟棄，長輩畫面上不會有任何提示。網路抖動、5xx
+   * 仍然完全靜默（通知是加分項，不該在畫面上留紅字）。
+   */
+  const handlePollError = useCallback(
+    (exc: unknown) => {
+      if (exc instanceof ApiError && exc.status === 401) {
+        onTokenRevoked?.();
+      }
+    },
+    [onTokenRevoked],
+  );
+
+  /**
+   * 換人（audience 或 token 換掉，含登出＝token 變 ""）：橫幅與未讀徽章立刻
+   * 歸零，不讓上一位使用者的殘留畫面留到新的這個人身上（審查發現的
+   * Important 3：原本只歸零 `banner`，`unread` 沒有——登出後 `poll()` 因
+   * `!token` 直接 return，`unread` 因此會停在上一位使用者的數字上，直到
+   * 下一位使用者的第一輪輪詢才會被蓋掉；現在兩者一起歸零）。
    *
    * ⚠️ 這段刻意寫成「render 期間比對＋調整」（React 官方文件「Adjusting some
    * state when a prop changes」的既定寫法），不是 `useEffect`：改在 `useEffect`
    * 裡直接呼叫 `setBanner` 會先掛著上一位使用者的殘留橫幅多畫一次畫面、下一輪
    * render 才收掉（`react-hooks/set-state-in-effect` 擋下的正是這種會多一輪
    * cascading render 的寫法）。`lastSession` 只用來偵測「這一輪的 audience／token
-   * 跟上一輪比對是否換了」，一旦換了就在同一次 render 內把 `banner` 歸零，
-   * 使用者不會看到殘留橫幅先閃一下才消失。
+   * 跟上一輪比對是否換了」，一旦換了就在同一次 render 內把 `banner`／`unread`
+   * 歸零，使用者不會看到殘留橫幅或舊未讀數先閃一下才消失。
    *
-   * ⚠️ 佇列／游標（`queue`／`shownUpTo`／`sessionRef`）不能放在這裡一起歸零：
-   * 這幾個是 ref，`react-hooks/refs` 不准在 render 期間讀寫 ref（會讓 React
-   * 判斷「這個元件要不要更新」的邏輯跟著亂掉）。改放到下面那顆只碰 ref、
-   * 完全不呼叫任何 state setter 的獨立 `useEffect`。
+   * ⚠️ 佇列／游標（`queue`／`shownUpTo`／`sessionRef`／`bannerRef`）不能放在
+   * 這裡一起歸零：這幾個是 ref，`react-hooks/refs` 不准在 render 期間讀寫 ref
+   * （會讓 React 判斷「這個元件要不要更新」的邏輯跟著亂掉）。改放到下面那顆
+   * 只碰 ref、完全不呼叫任何 state setter 的獨立 `useEffect`。
    */
   const [lastSession, setLastSession] = useState({ audience, token });
   if (lastSession.audience !== audience || lastSession.token !== token) {
     setLastSession({ audience, token });
     setBanner(null);
+    setUnread(0);
   }
 
-  // 上面那段的 ref 版本：佇列／游標／「現在是誰」都在這裡歸零，讓「第一次不
-  // 補播歷史」對新的這個人同樣成立。effect 本身完全不呼叫任何 state setter。
+  // 上面那段的 ref 版本：佇列／游標／「現在是誰」／橫幅鏡射都在這裡歸零，
+  // 讓「第一次不補播歷史」對新的這個人同樣成立（一律從 0 起跳，不讀已讀
+  // 水位，見檔頭 brief 缺陷 2）。effect 本身完全不呼叫任何 state setter。
   useEffect(() => {
     sessionRef.current = { audience, token };
     queue.current = [];
-    shownUpTo.current = loadSeenAt(audience);
+    shownUpTo.current = 0;
+    bannerRef.current = null;
   }, [audience, token]);
+
+  // bannerRef 與 banner 狀態同步（見該 ref 的說明）：`shift()` 已經會同步
+  // 更新它，這裡是保險——`banner` 若未來透過其他路徑（如上方 render 期間
+  // 比對的 `setBanner(null)`）改變，也要讓 `poll()` 讀到最新值。
+  useEffect(() => {
+    bannerRef.current = banner;
+  }, [banner]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -176,8 +289,7 @@ export function useNotificationFeed(options: {
     if (!token) return;
     let alive = true;
     const run = () => {
-      // 輪詢失敗完全靜默：通知是加分項，網路抖一下不該在畫面上留紅字。
-      void poll().catch(() => undefined);
+      void poll().catch(handlePollError);
     };
     const tick = () => {
       // 瀏覽器分頁被切到背景時不打這一輪：展示現場常見「開著但沒在看」，
@@ -196,7 +308,7 @@ export function useNotificationFeed(options: {
       clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [poll, token, intervalMs, reloadSignal]);
+  }, [poll, token, intervalMs, reloadSignal, handlePollError]);
 
   // 橫幅自動消失。3.5 秒足夠看完一句話，又不會擋住底下的操作太久。
   //
@@ -209,5 +321,10 @@ export function useNotificationFeed(options: {
     return () => clearTimeout(timer);
   }, [banner, shift]);
 
-  return { banner, unread, dismiss: shift, reload: () => void poll().catch(() => undefined) };
+  return {
+    banner,
+    unread,
+    dismiss: shift,
+    reload: () => void poll().catch(handlePollError),
+  };
 }

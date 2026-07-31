@@ -14,6 +14,7 @@ import {
   createSchedule,
   deleteSchedule,
   listElders,
+  listNotifications,
   listSchedules,
   loginGuardian,
   logoutGuardian,
@@ -147,5 +148,18 @@ describe("家屬端 API", () => {
     expect(spy.mock.calls[0][0]).toBe("/api/v1/elders/e1/device-bindings");
     expect(spy.mock.calls[0][1].method).toBe("DELETE");
     expect((spy.mock.calls[0][1].headers as Headers).get("Authorization")).toBe("Bearer tok");
+  });
+
+  it("列 App 內通知帶 token", async () => {
+    // ⚠️ 補審查發現的 Minor 3：長輩端對稱的 listElderNotifications 早有這條
+    // method／URL 斷言（elder/api.test.ts），家屬端這支自 P2 起就沒有——而
+    // notify/useNotificationFeed.ts（P4 Task 2）是它上線後最高頻的呼叫端，
+    // 每兩秒打一次。鍵名／路徑打錯的症狀是後端安靜地收到空值或 404，同
+    // 2026-07-28 對講機定位失效那種「測試全綠、功能早就壞了」的失效形狀。
+    const spy = mockFetch([{ content: "該吃血壓藥囉", created_at: 1 }]);
+    const items = await listNotifications("tok");
+    expect(spy.mock.calls[0][0]).toBe("/api/v1/notifications");
+    expect((spy.mock.calls[0][1].headers as Headers).get("Authorization")).toBe("Bearer tok");
+    expect(items).toEqual([{ content: "該吃血壓藥囉", created_at: 1 }]);
   });
 });
