@@ -174,6 +174,40 @@ describe("被撤銷的登入", () => {
     );
   });
 
+  /**
+   * ⚠️ **全分支審查發現的 Minor 4（2026-08-01）**：這正是人工驗收清單 G10 之後的
+   * 展示主路徑——家屬按「重新產生長輩綁定碼」（長輩被登出、紅字叫他再掃一次）→
+   * 家屬按「送到長輩的手機」。同步 `prefilledCode` 時若不清掉 `error`，長輩欄會
+   * 同框掛著綠字「已從家屬手機收到號碼」、已經填好的新碼、以及那句叫他再去掃一次
+   * 的紅字，投影出來自打嘴巴。
+   */
+  it("被登出後家屬把新碼送過來，「請再掃一次」的紅字要跟著收掉，不與綠字同框", async () => {
+    localStorage.setItem(
+      "kinsun_web_session_elder",
+      JSON.stringify({ role: "elder", token: "tok", display_name: "王阿嬤" }),
+    );
+    const { rerender } = render(
+      <ElderSession.Provider>
+        <ElderApp />
+      </ElderSession.Provider>,
+    );
+    await screen.findByRole("button", { name: "按住說話，或按一下開始、再按一下結束" });
+    act(() => (talkOptions.current?.onTokenRevoked as () => void)());
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "家人幫您重新設定了，請再掃一次他給的方塊圖，或輸入新的號碼。",
+    );
+
+    rerender(
+      <ElderSession.Provider>
+        <ElderApp prefilledCode={{ code: "AB12CD", seq: 1 }} />
+      </ElderSession.Provider>,
+    );
+
+    expect(screen.getByLabelText("綁定碼")).toHaveValue("AB12CD");
+    expect(screen.getByText("已從家屬手機收到號碼")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("重新綁定成功之後，下次自己按登出不會再看到「家人幫您重新設定了」", async () => {
     // ⚠️ 那句話是有時效的：他重綁完、之後自己按登出時再看到它，會以為家人又動了
     // 什麼——而那時根本沒有人動過任何東西。

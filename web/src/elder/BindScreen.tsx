@@ -121,11 +121,20 @@ export function BindScreen(props: {
   // `setCode` 會先掛著舊值多畫一次畫面、下一輪 render 才收掉
   // （`react-hooks/set-state-in-effect` 擋下的正是這種會多一輪 cascading
   // render 的寫法）。
+  //
+  // ⚠️ **全分支審查修正（Minor 4，2026-08-01）——同步時一併清掉 `error`**：這正是
+  // 人工驗收清單 G10 之後的展示主路徑。家屬按「重新產生綁定碼」→ 長輩被登出、
+  // 錯誤欄掛著「家人幫您重新設定了，請再掃一次他給的方塊圖…」→ 家屬按「送到長輩
+  // 的手機」→ 若不清 `error`，長輩欄會**同框**掛著綠字「已從家屬手機收到號碼」、
+  // 已經填好的新碼、以及那句叫他再去掃一次的紅字，三句話互相矛盾。功能是對的，
+  // 投影出來的畫面自打嘴巴——而上方 `signedOutNotice` 的說明（把它當錯誤欄初始值
+  // 而不是另外畫一段）本來就是為了避免這種同框。
   const [lastSeq, setLastSeq] = useState(props.prefilledCode?.seq);
   if (props.prefilledCode !== undefined && props.prefilledCode.seq !== lastSeq) {
     setLastSeq(props.prefilledCode.seq);
     setCode(props.prefilledCode.code);
     setReceivedFromGuardian(true);
+    setError("");
   }
 
   async function submit(raw: string) {
