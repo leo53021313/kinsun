@@ -248,7 +248,9 @@ $env:PYTHONPATH="src"; uv run python -m kinsun.rag.ingest --reset --source hpa_e
    npm --prefix web run dev
    ```
 
-3. 開啟 `http://localhost:5173/demo/`（開場運營狀態頁）或 `http://localhost:5173/demo/stage`（雙欄舞台，可直接分享網址、重整仍留在舞台）。
+3. 開啟 `http://localhost:5174/demo/`（開場運營狀態頁）或 `http://localhost:5174/demo/stage`（雙欄舞台，可直接分享網址、重整仍留在舞台）。
+
+   > ⚠️ 埠是 **5174** 不是 5173：`web/vite.config.ts` 刻意避開 `frontend/` 的 5173 與 Opik 的 5273。
 
 ### 部署
 
