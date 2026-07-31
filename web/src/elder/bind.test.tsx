@@ -69,15 +69,11 @@ describe("長輩配對", () => {
     expect(screen.getByText("掃描家人給的方塊圖，或輸入號碼")).toBeInTheDocument();
   });
 
-  it("輸入綁定碼成功後離開配對畫面（對講機由 Task 8 接上）", async () => {
-    // ⚠️ 修正 brief 缺陷：Step 1 給定的這條測試原本斷言綁定成功後會看到
-    // 「按住說話」按鈕，但 Task 7 的檔案清單只有 BindScreen／LoginScreen／
-    // ElderApp 三個檔案——對講機（talk 路由）要等 Task 8 才會接上真正的畫面；
-    // 在那之前 `ElderApp` 的 `default` 分支（涵蓋 talk／notifications 兩個
-    // 路由）一律顯示佔位文字（見 `ElderApp.tsx` 的註解與 `strings.common.
-    // comingSoon`）。原始斷言在目前程式碼下必定逾時失敗，故改為斷言這個
-    // 任務範圍內真正做得到、也真正該驗證的行為：綁定成功後**離開了配對畫面**
-    // （不再看得到「綁定碼」欄位），並顯示佔位文字而非停在原地或報錯。
+  it("輸入綁定碼成功後進到對講機", async () => {
+    // ⚠️ Task 7 當時對講機還沒接上（`ElderApp` 的 talk 路由是佔位文字），這條
+    // 測試因此暫時改成斷言「離開了配對畫面」。P3 Task 8 接上 `TalkScreen` 之後
+    // 恢復成 brief 原本要驗的事：綁定成功後**真的到得了對講機**，麥克風鍵就在
+    // 眼前——這才是長輩走完配對之後唯一在意的結果。
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -88,7 +84,7 @@ describe("長輩配對", () => {
     renderApp();
     await userEvent.type(screen.getByLabelText("綁定碼"), "AB12CD");
     await userEvent.click(screen.getByRole("button", { name: "開始使用" }));
-    await screen.findByText("這裡還在準備，請再等一下。");
+    await screen.findByRole("button", { name: "按住說話，或按一下開始、再按一下結束" });
     expect(screen.queryByLabelText("綁定碼")).not.toBeInTheDocument();
   });
 
@@ -107,7 +103,7 @@ describe("長輩配對", () => {
     renderApp();
     await userEvent.type(screen.getByLabelText("綁定碼"), "AB12CD");
     await userEvent.click(screen.getByRole("button", { name: "開始使用" }));
-    await screen.findByText("這裡還在準備，請再等一下。");
+    await screen.findByRole("button", { name: "按住說話，或按一下開始、再按一下結束" });
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/device-bindings",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ code: "AB12CD" }) }),
@@ -216,7 +212,7 @@ describe("長輩配對", () => {
     await userEvent.type(screen.getByLabelText("手機號碼"), "0912345678");
     await userEvent.type(screen.getByLabelText("密碼"), "correct-horse-8");
     await userEvent.click(screen.getByRole("button", { name: "登入" }));
-    await screen.findByText("這裡還在準備，請再等一下。");
+    await screen.findByRole("button", { name: "按住說話，或按一下開始、再按一下結束" });
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/elder-sessions",
       expect.objectContaining({
@@ -253,7 +249,7 @@ describe("忙碌狀態防連按", () => {
       status: 201,
       json: async () => envelope({ elder_id: "e1", name: "王阿嬤", token: "tok" }),
     });
-    await screen.findByText("這裡還在準備，請再等一下。");
+    await screen.findByRole("button", { name: "按住說話，或按一下開始、再按一下結束" });
   });
 
   it("登入送出期間按鈕忙碌中，連點兩下只送出一次請求", async () => {
@@ -273,7 +269,7 @@ describe("忙碌狀態防連按", () => {
       status: 201,
       json: async () => envelope({ elder_id: "e1", name: "王阿嬤", token: "tok" }),
     });
-    await screen.findByText("這裡還在準備，請再等一下。");
+    await screen.findByRole("button", { name: "按住說話，或按一下開始、再按一下結束" });
   });
 });
 
@@ -328,7 +324,7 @@ describe("QR 掃碼的相機資源釋放", () => {
     });
     // 掃到就收工：相機立刻關閉，不必等送出結果回來才關。
     expect(scannerState.stop).toHaveBeenCalled();
-    await screen.findByText("這裡還在準備，請再等一下。");
+    await screen.findByRole("button", { name: "按住說話，或按一下開始、再按一下結束" });
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/device-bindings",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ code: "QR9987" }) }),

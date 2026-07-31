@@ -3,9 +3,9 @@
  *
  * ⚠️ 與家屬端同樣不進瀏覽器網址列（見 nav/useScreenStack）。
  * ⚠️ 返回鍵比家屬端大：56px，而且字更大——長輩手指粗又常戴老花。
- * ⚠️ `visible` prop 單純轉交給 `BindScreen`（見該檔說明）：雙欄舞台窄螢幕
- * 頁籤模式下，這一欄被切到背景時要停止相機，但不能卸載（會丟掉打到一半的
- * 號碼）。`ElderApp` 自己不需要這個資訊，只有 `BindScreen` 的相機邏輯需要。
+ * ⚠️ `visible` prop 轉交給 `BindScreen` 與 `TalkScreen`（見各自說明）：雙欄舞台
+ * 窄螢幕頁籤模式下，這一欄被切到背景時要停止相機／麥克風與長連線，但不能卸載
+ *（會丟掉打到一半的號碼）。`ElderApp` 自己不需要這個資訊。
  */
 
 import { useEffect } from "react";
@@ -14,8 +14,10 @@ import { useScreenStack } from "@/nav/useScreenStack";
 import { ElderSession } from "@/session/contexts";
 import { strings } from "@/strings";
 
+import { logoutSession } from "./api";
 import { BindScreen } from "./BindScreen";
 import { LoginScreen } from "./LoginScreen";
+import { TalkScreen } from "./TalkScreen";
 
 export type ElderRoute =
   | { name: "bind" }
@@ -25,7 +27,7 @@ export type ElderRoute =
 
 export function ElderApp(props: { prefilledCode?: string; visible?: boolean }) {
   const { visible = true } = props;
-  const { session } = ElderSession.useSession();
+  const { session, signOut } = ElderSession.useSession();
   const stack = useScreenStack<ElderRoute>(session ? { name: "talk" } : { name: "bind" });
   const { reset } = stack;
 
@@ -51,9 +53,27 @@ export function ElderApp(props: { prefilledCode?: string; visible?: boolean }) {
         );
       case "login":
         return <LoginScreen onDone={() => reset({ name: "talk" })} />;
+      case "talk":
+        return (
+          <TalkScreen
+            token={session?.token ?? ""}
+            // P4 接上通知輪詢時換成真的數字（Task 9 補提醒列表本身）。
+            unread={0}
+            visible={visible}
+            onOpenNotifications={() => stack.push({ name: "notifications" })}
+            onLogout={async () => {
+              // 先撤伺服器端的 token（✅ 庚-42 長輩自助登出）；撤不掉也不擋本機
+              // 登出——網路不通時長輩仍然要能把手機交還給家人。
+              await logoutSession(session?.token ?? "").catch(() => undefined);
+              signOut();
+            }}
+            // 403＝這台手機的綁定失效了。清掉 session，上面的守衛會把他導回配對。
+            onBindingLost={signOut}
+          />
+        );
       default:
-        // talk 與 notifications 由 Task 8、9 接上。文案仍走 strings.ts——
-        // 即使是暫時性的佔位畫面，元件裡也不可出現裸中文字串。
+        // notifications 由 Task 9 接上。文案仍走 strings.ts——即使是暫時性的
+        // 佔位畫面，元件裡也不可出現裸中文字串。
         return <div className="p-5 text-elder-min text-ink-soft">{strings.common.comingSoon}</div>;
     }
   })();
