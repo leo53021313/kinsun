@@ -9,7 +9,7 @@
  * （家屬端操作完立刻叫長輩端重載）需要兩邊都在同一棵樹底下。
  */
 
-import { memo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 
 import { ElderApp } from "@/elder/ElderApp";
 import { GuardianApp } from "@/guardian/GuardianApp";
@@ -21,6 +21,56 @@ import { PhoneFrame } from "./PhoneFrame";
 type Pane = "elder" | "guardian";
 
 /**
+ * 兩欄並排的斷點。
+ *
+ * ⚠️ **這個數字與版面的 `lg:` 前綴是同一件事的兩種寫法**（`lg:hidden` 的頁籤、
+ * `lg:grid-cols-2` 的兩欄、`lg:block` 的非活動欄）——Tailwind 的 `lg` 是 1024
+ * **CSS px**。改版面就要改這裡，反之亦然；對不上的後果見 `useIsWideScreen`。
+ */
+const WIDE_SCREEN_QUERY = "(min-width: 1024px)";
+
+/**
+ * 現在是不是「兩欄同時看得到」的寬螢幕。
+ *
+ * ⚠️ **為什麼需要它**（全分支審查的 Important 2）：`elderVisible` 原本直接寫
+ * `pane === "elder"`，理由是「寬螢幕沒有任何 UI 能把 `pane` 撥走（頁籤本身
+ * `lg:hidden`），所以 `pane` 只可能在窄螢幕被撥走」。那個推論漏掉了**寬窄本身會變**
+ * ——組員把視窗縮窄、或按 Ctrl+ 放大投影字級（Tailwind 的 `lg` 是 CSS px，縮放直接
+ * 改變它）→ 頁籤出現 → 點「家屬端」→ 再放大視窗／縮回字級 → 兩欄又同時可見，而
+ * `pane` 仍是 `"guardian"`。此時長輩欄看起來完全正常（`useTalk` 的 cleanup 把字幕
+ * 重設回「按住下面的麥克風說話」、avatar 是 😊），但麥克風、播放器與長連線全被收掉
+ * 了：按下去只會顯示「麥克風打不開，請再按一次試試看。」，再按一次還是一樣，而
+ * `lg` 以上頁籤是 `display:none`——**畫面上不存在任何能把 `pane` 撥回來的 UI**。
+ * 而投影機上的那一欄，正是所有人在看的那一欄。
+ *
+ * Task 7 當時把這條列為「已接受取捨」，理由是「失效良性、可自行恢復（再按一次
+ * 掃描）」；Task 8 把麥克風接上同一個開關之後，那個理由不再成立。
+ *
+ * ⚠️ 選 `matchMedia` 而不是聽 `resize` 讀 `innerWidth`：斷點的判定要與 CSS 用的是
+ * 同一套（含縮放、含 `zoom` 造成的 CSS px 變化），自己算像素一定會漂。
+ * ⚠️ jsdom 沒有 `window.matchMedia`（實測 `typeof` 是 `undefined`），拿不到就當成
+ * 「不是寬螢幕」——那正好是頁籤模式的語意，測試環境因此維持原本的行為。
+ */
+function useIsWideScreen(): boolean {
+  const [isWide, setIsWide] = useState(() => window.matchMedia?.(WIDE_SCREEN_QUERY).matches ?? false);
+
+  useEffect(() => {
+    const query = window.matchMedia?.(WIDE_SCREEN_QUERY);
+    if (!query) {
+      return;
+    }
+    const update = () => setIsWide(query.matches);
+    // 掛載與訂閱之間仍可能已經變過（首次繪製到 effect 執行中間隔了一次版面計算），
+    // 先對一次答案再開始聽。
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+
+  return isWide;
+}
+
+/**
  * ⚠️ `memo` 是刻意的：這裡不收任何 props，父層（`Demo`）每十秒一次的運營狀態
  * 輪詢會 setState 一個新物件而整棵重繪，沒有 `memo` 的話 `StagePage` 會跟著
  * 白白重繪一次。P1 的佔位元件無感，但 P2／P3 接上表單與對講機之後，那是長輩
@@ -30,6 +80,7 @@ type Pane = "elder" | "guardian";
  */
 export const StagePage = memo(function StagePage() {
   const [pane, setPane] = useState<Pane>("elder");
+  const isWide = useIsWideScreen();
 
   // ⚠️ 審查發現的 Critical：長輩欄按下「掃描 QR 碼」後，若在窄螢幕切到
   // 「家屬端」頁籤，非活動欄只是被 CSS `hidden` 蓋住——元件仍掛著，
@@ -38,13 +89,11 @@ export const StagePage = memo(function StagePage() {
   // 停止掃描（見該檔說明），而不是卸載這一欄（卸載會丟掉長輩打到一半的
   // 號碼）。
   //
-  // `pane === "elder"` 在寬螢幕（`lg` 以上）看似不精確——`lg:block` 會讓
-  // 兩欄同時可見，與 `pane` 狀態無關——但頁籤按鈕本身也是 `lg:hidden`
-  // （見下方 `tablist`），寬螢幕下沒有任何 UI 能把 `pane` 從初始值 `"elder"`
-  // 撥走，故 `pane` 只可能在使用者親手切過頁籤（也就是已經在窄螢幕）之後
-  // 才會變成 `"guardian"`；那個當下長輩欄確實是被 `hidden` 蓋住、沒有
-  // `lg:block` 生效。`pane === "elder"` 因此是這個互動模型下的準確訊號。
-  const elderVisible = pane === "elder";
+  // ⚠️ 這個值必須反映**真實可見性**，不是 `pane` 狀態：寬螢幕時 `lg:block` 讓兩欄
+  // 同時可見、與 `pane` 無關，而寬窄本身會在使用中改變（縮放視窗、Ctrl+ 放大字級）。
+  // 只看 `pane` 的話，會出現「畫面看起來完全正常、麥克風卻永遠打不開，而且沒有任何
+  // UI 能把它撥回來」的死路——詳見 `useIsWideScreen` 的說明。
+  const elderVisible = isWide || pane === "elder";
 
   return (
     <ElderSession.Provider>
