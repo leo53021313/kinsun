@@ -5,7 +5,7 @@ import { strings } from "@/strings";
 import { Button } from "@/ui/Button";
 import { ErrorText } from "@/ui/Feedback";
 import { Field } from "@/ui/Field";
-import { ApiError } from "@/api";
+import { apiErrorMessage, ApiError } from "@/api";
 
 import { loginGuardian } from "./api";
 
@@ -36,7 +36,11 @@ export function LoginScreen(props: { onRegister: () => void; onDone: () => void 
         // `min_length=1` 觸發 422、回「輸入資料格式不正確」，而畫面說連線失敗，
         // 使用者於是去查網路、重按十次都一樣。真正連不上（fetch 自己擲的
         // TypeError，不是 ApiError）才留給 connectionFailed。
-        setError(exc instanceof ApiError ? exc.message : strings.common.connectionFailed);
+        //
+        // ⚠️ apiErrorMessage 多擋一層：後端回應不是合法 JSON（隧道抖動的 502
+        // HTML、未捕捉例外的 500 text/plain）時，exc.message 會是 shared/client.ts
+        // 自造的英文字面值（如 `HTTP 502`），這裡一律退回 connectionFailed。
+        setError(apiErrorMessage(exc, strings.common.connectionFailed));
       }
     } finally {
       setBusy(false);

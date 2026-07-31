@@ -34,3 +34,20 @@ export type DemoStatus = {
 export function getDemoStatus(): Promise<DemoStatus> {
   return request<DemoStatus>("/api/v1/demo-status");
 }
+
+/**
+ * 取出 ApiError 給人看的訊息；非後端信封訊息一律退回 `fallback`。
+ *
+ * `shared/client.ts` 在後端回應不是合法 JSON 時（Cloudflare 隧道抖動回的 502
+ * HTML、或後端未捕捉例外走 Starlette 預設處理的 text/plain 500），會自造一個
+ * `http_<status>` 開頭的 code，訊息內容是英文字面值（如 `HTTP 502`），不是給人看
+ * 的話——直接顯示會讓使用者在畫面上看到「HTTP 502」。只有後端真的解出信封、
+ * 帶著繁中 `message` 的 ApiError 才直接顯示；其餘（含這種自造錯誤、以及非
+ * ApiError 的例外，如 fetch 自己擲的 TypeError）一律用呼叫端指定的繁中預設訊息。
+ */
+export function apiErrorMessage(exc: unknown, fallback: string): string {
+  if (exc instanceof ApiError && !exc.code.startsWith("http_")) {
+    return exc.message;
+  }
+  return fallback;
+}

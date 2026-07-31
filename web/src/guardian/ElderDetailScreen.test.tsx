@@ -218,6 +218,37 @@ describe("ElderDetailScreen", () => {
     ).not.toBeInTheDocument();
   });
 
+  // ⚠️ 隧道抖動回的 502 HTML 不是 JSON；shared/client.ts 的 json() 解析失敗會
+  // 自造 `http_502` / `HTTP 502`，不可把這種英文字面值照實顯示給家屬看。
+  it("儲存帳密時後端回非 JSON（如隧道抖動的 502），顯示繁中的設定失敗，不印出 HTTP 502", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((path: string) => {
+        if (String(path).includes("/account")) {
+          return Promise.resolve({
+            status: 502,
+            json: async () => {
+              throw new SyntaxError("Unexpected token '<'");
+            },
+          });
+        }
+        if (String(path).includes("health-report")) {
+          return Promise.resolve({
+            status: 200,
+            json: async () => envelope({ risk_events: [], reminders: [] }),
+          });
+        }
+        return Promise.resolve({ status: 200, json: async () => envelope([]) });
+      }),
+    );
+    renderDetail();
+    await userEvent.type(await screen.findByLabelText("長輩手機號碼"), "0912345678");
+    await userEvent.type(screen.getByLabelText("密碼（至少 8 碼）"), "correct-horse-8");
+    await userEvent.click(screen.getByRole("button", { name: "儲存帳密" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("設定失敗，請稍後再試。");
+    expect(screen.queryByText(/HTTP 502/)).not.toBeInTheDocument();
+  });
+
   it("改動號碼或密碼時清掉上一次的結果訊息", async () => {
     // 舊的「已設定完成」掛在新輸入的號碼旁邊，家屬會以為新號碼也已經存好了。
     mockMixedByPath({

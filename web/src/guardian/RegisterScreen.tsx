@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { ApiError } from "@/api";
+import { apiErrorMessage, ApiError } from "@/api";
 import { GuardianSession } from "@/session/contexts";
 import { strings } from "@/strings";
 import { Button } from "@/ui/Button";
@@ -42,7 +42,10 @@ export function RegisterScreen(props: { onLogin: () => void; onDone: () => void 
       if (exc instanceof ApiError && exc.code === "email_taken") {
         setError(strings.guardianRegister.emailTaken);
       } else {
-        setError(exc instanceof ApiError ? exc.message : strings.common.connectionFailed);
+        // ⚠️ apiErrorMessage 多擋一層：後端回應不是合法 JSON（隧道抖動的 502
+        // HTML、未捕捉例外的 500 text/plain）時，exc.message 會是 shared/client.ts
+        // 自造的英文字面值（如 `HTTP 502`），這裡一律退回 connectionFailed。
+        setError(apiErrorMessage(exc, strings.common.connectionFailed));
       }
     } finally {
       setBusy(false);

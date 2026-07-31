@@ -102,6 +102,28 @@ describe("家屬登入", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("連線失敗，請稍後再試。");
   });
 
+  // ⚠️ 這條守的是「後端非 JSON 回應不可把英文字面值印給使用者看」。畢典當天
+  // demo 對外走 Cloudflare Quick Tunnel，隧道抖動時回的是 502 的 HTML，不是
+  // JSON；shared/client.ts 的 json() 解析失敗會自造 `http_502` / `HTTP 502`，
+  // 若照實顯示 exc.message，家屬看到的就是「HTTP 502」而不是一句繁中的話。
+  it("後端回非 JSON（如隧道抖動的 502）時說連線失敗，不印出 HTTP 502 這種英文字面值", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        status: 502,
+        json: async () => {
+          throw new SyntaxError("Unexpected token '<'");
+        },
+      }),
+    );
+    renderApp();
+    await userEvent.type(screen.getByLabelText("Email"), "a@example.com");
+    await userEvent.type(screen.getByLabelText("密碼"), "correct-horse-8");
+    await userEvent.click(screen.getByRole("button", { name: "登入" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("連線失敗，請稍後再試。");
+    expect(screen.queryByText(/HTTP 502/)).not.toBeInTheDocument();
+  });
+
   it("已登入時第一次繪製就在長輩列表，不會先閃一次登入畫面", () => {
     // ⚠️ **不要**用 render() 斷言最終畫面：它內部用 act() 包住掛載、會把 effect
     // 一起 flush，所以「一律從登入起手、靠 effect 補到首頁」那種會閃一下的實作
@@ -169,6 +191,28 @@ describe("家屬註冊", () => {
     await userEvent.type(screen.getByLabelText("密碼"), "correct-horse-8");
     await userEvent.click(screen.getByRole("button", { name: "註冊並登入" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("輸入資料格式不正確");
+  });
+
+  // 與登入頁同一個失效情境：隧道抖動回的 502 HTML 不是 JSON，不可把
+  // shared/client.ts 自造的 `HTTP 502` 印給使用者看。
+  it("後端回非 JSON（如隧道抖動的 502）時說連線失敗，不印出 HTTP 502 這種英文字面值", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        status: 502,
+        json: async () => {
+          throw new SyntaxError("Unexpected token '<'");
+        },
+      }),
+    );
+    renderApp();
+    await userEvent.click(screen.getByRole("button", { name: "還沒有帳號？註冊" }));
+    await userEvent.type(screen.getByLabelText("您的稱呼"), "兒子");
+    await userEvent.type(screen.getByLabelText("Email"), "a@example.com");
+    await userEvent.type(screen.getByLabelText("密碼"), "correct-horse-8");
+    await userEvent.click(screen.getByRole("button", { name: "註冊並登入" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("連線失敗，請稍後再試。");
+    expect(screen.queryByText(/HTTP 502/)).not.toBeInTheDocument();
   });
 });
 

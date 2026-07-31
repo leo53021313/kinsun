@@ -205,6 +205,27 @@ describe("SchedulesScreen", () => {
     });
   });
 
+  // ⚠️ 隧道抖動回的 502 HTML 不是 JSON；shared/client.ts 的 json() 解析失敗會
+  // 自造 `http_502` / `HTTP 502`，不可把這種英文字面值照實顯示給家屬看。
+  it("新增時後端回非 JSON（如隧道抖動的 502），顯示繁中的儲存失敗，不印出 HTTP 502", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 200, json: async () => envelope([]) })
+      .mockResolvedValueOnce({
+        status: 502,
+        json: async () => {
+          throw new SyntaxError("Unexpected token '<'");
+        },
+      });
+    renderScreen(fetchImpl);
+    await screen.findByText("還沒有任何提醒，從下方新增第一筆。");
+    await userEvent.type(screen.getByLabelText("提醒內容"), "降血壓藥");
+    await userEvent.click(screen.getByRole("checkbox", { name: "早上" }));
+    await userEvent.click(screen.getByRole("button", { name: "新增" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("儲存失敗，請稍後再試。");
+    expect(screen.queryByText(/HTTP 502/)).not.toBeInTheDocument();
+  });
+
   it("刪除要先確認，取消就不打後端", async () => {
     const fetchImpl = vi.fn().mockResolvedValue({ status: 200, json: async () => envelope([WALK]) });
     renderScreen(fetchImpl);

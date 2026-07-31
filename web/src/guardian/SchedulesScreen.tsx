@@ -11,7 +11,7 @@
 import type { ScheduleGroup, ScheduleInput } from "kinsun-shared/types";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
-import { ApiError } from "@/api";
+import { apiErrorMessage } from "@/api";
 import { GuardianSession } from "@/session/contexts";
 import { makeSignOutOnAuthError } from "@/session/useSignOutOnAuthError";
 import { strings } from "@/strings";
@@ -141,8 +141,10 @@ export function SchedulesScreen(props: { elderId: string; elderName: string }) {
       await reload();
     } catch (exc) {
       if (signOutOn401(exc)) return;
-      // 後端的排程驗證訊息是寫給人看的繁中句子（A-01），直接顯示。
-      setError(exc instanceof ApiError ? exc.message : strings.common.saveFailed);
+      // 後端的排程驗證訊息是寫給人看的繁中句子（A-01），直接顯示；
+      // ⚠️ apiErrorMessage 多擋一層：後端回應不是合法 JSON 時 exc.message 會是
+      // shared/client.ts 自造的英文字面值（如 `HTTP 502`），一律退回 saveFailed。
+      setError(apiErrorMessage(exc, strings.common.saveFailed));
     } finally {
       setBusy(false);
     }

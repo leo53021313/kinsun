@@ -5,7 +5,7 @@ import { tierLabel } from "kinsun-shared/terms";
 import type { DailySummary, HealthReport, ScheduleGroup } from "kinsun-shared/types";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
-import { ApiError } from "@/api";
+import { apiErrorMessage } from "@/api";
 import { GuardianSession } from "@/session/contexts";
 import { makeSignOutOnAuthError } from "@/session/useSignOutOnAuthError";
 import { strings } from "@/strings";
@@ -137,10 +137,10 @@ export function ElderDetailScreen(props: {
       setPassword("");
     } catch (exc) {
       if (signOutOn401(exc)) return;
-      // 後端的驗證訊息已經是繁中人話（D-24），直接顯示比自己重寫一句準確。
-      setAccountError(
-        exc instanceof ApiError ? exc.message : strings.elderDetail.accountSaveFailed,
-      );
+      // 後端的驗證訊息已經是繁中人話（D-24），直接顯示比自己重寫一句準確；
+      // ⚠️ apiErrorMessage 多擋一層：後端回應不是合法 JSON 時 exc.message 會是
+      // shared/client.ts 自造的英文字面值（如 `HTTP 502`），一律退回 accountSaveFailed。
+      setAccountError(apiErrorMessage(exc, strings.elderDetail.accountSaveFailed));
     } finally {
       setAccountBusy(false);
     }
