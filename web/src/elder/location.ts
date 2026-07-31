@@ -1,5 +1,24 @@
 /**
- * 取長輩目前所在的地名與模糊座標。
+ * 取長輩目前所在的地名與模糊座標——目前**一律回 `null`，且完全不碰定位 API**。
+ *
+ * ⚠️ **為什麼連 `getCurrentPosition` 都不呼叫**（全分支審查的 Critical 2）：三條
+ * 回呼（成功、失敗、逾時）全部 `resolve(null)` 之後，那通呼叫換到的東西是零，
+ * 代價卻是**在錄音進行中跳出一個權限對話框**——`useTalk::startRecording` 是在
+ * `recorder.start()` 解出**之後**才發動取位的，那一刻長輩的手指正按在麥克風鍵上。
+ * 系統面板搶走指標，iOS Safari 送 `pointercancel`，`TalkScreen` 把它轉成
+ * `pressOut`：未達 500ms 門檻時手勢切成點按模式（他以為還按著），已達門檻時直接
+ * 送出約 0.3 秒的錄音，後端回一句「沒聽清楚」。而那正是畢典展示的開場那一句。
+ *
+ * ⚠️ 同一支 `useTalk` 自己在麥克風權限那段寫著「不能等長輩按下去才問——權限對話框
+ * 跳出來的當下他的手指正按在鍵上，第一次錄音會被對話框吃掉」（App 在 iOS 上踩過
+ * 同一個坑，見 docs/dev/17 的 2026-07-18 故障）。`probeMicrophone` 為此被搬到掛載
+ * 時，取位卻在按下去的那一刻引進了第二個權限對話框。
+ *
+ * ⚠️ **F-17 補上之後要恢復取位**（見下），但**屆時必須把權限請求移到安全的時機**
+ * ——例如進畫面時與麥克風權限一起問（`useTalk` 的 `probeMicrophone` effect 旁），
+ * **不可以放在開錄的當下**。恢復時原本的取位參數是 `{ timeout: 3000（不可拖住長輩
+ * 講話）, maximumAge: 300_000（五分鐘內的快取直接算數，長輩不會五分鐘內走到另一個
+ * 縣市）}`，`location.test.ts` 那條「不呼叫」的測試要一併改回。
  *
  * ⚠️ 網頁沒有反查地名的 API（App 用的是 expo-location 的 reverseGeocodeAsync，
  * 那是作業系統提供的）。後端 `channels/app/turns.py::_save_location` 要求地名
@@ -22,20 +41,9 @@
 
 import type { ElderPlace } from "./api";
 
-/** 取位不可以拖住長輩講話。超過這個時間就當作沒有位置。 */
-const TIMEOUT_MS = 3000;
-
 export function currentPlace(): Promise<ElderPlace | null> {
-  if (!navigator.geolocation) {
-    return Promise.resolve(null);
-  }
-  return new Promise((resolve) => {
-    navigator.geolocation.getCurrentPosition(
-      // 拿到座標也一律回 null：沒有地名可配，送半套換不到任何後端行為，
-      // 卻已經讓座標離開瀏覽器——見本檔開頭的隱私與功能落差說明。
-      () => resolve(null),
-      () => resolve(null),
-      { timeout: TIMEOUT_MS, maximumAge: 300_000 },
-    );
-  });
+  // ⚠️ 這裡**不呼叫** `navigator.geolocation.getCurrentPosition`：回傳值 100% 會被
+  // 丟棄（沒有地名可配，見上），而那通呼叫會在長輩按著麥克風錄音的當下跳出權限
+  // 對話框，把他的第一句話吃掉。恢復條件與正確時機見本檔開頭。
+  return Promise.resolve(null);
 }

@@ -1,10 +1,16 @@
 /**
- * currentPlace 目前一律回 null（見 location.ts 開頭說明：網頁拿不到反查地名
- * API，送半套座標換不到任何後端行為卻已經讓座標離開瀏覽器，故連「成功取得
- * 座標」這條路徑都刻意回 null，不是遺漏）。「一律降級」這種設計若被不小心
- * 改掉（比如有人以為「拿到座標就該送出去」），症狀是長輩每一句話都在瀏覽器
- * 端多打一次定位、卻毫無對話品質改善，且精確座標可能就此離開裝置，沒有
- * 測試永遠抓不到。
+ * currentPlace 目前一律回 null，而且**完全不碰定位 API**（見 location.ts 開頭：
+ * 網頁拿不到反查地名 API，送半套座標換不到任何後端行為卻已經讓座標離開瀏覽器，
+ * 故連「成功取得座標」這條路徑都刻意回 null，不是遺漏）。
+ *
+ * ⚠️ **這份測試上一版釘住的是錯的那一邊**：它斷言
+ * `getCurrentPosition.mock.calls[0][2]` 等於 `{timeout: 3000, maximumAge: 300_000}`
+ * ——也就是**要求那通呼叫必須發生**。那通呼叫的回傳值 100% 被丟棄，代價卻是在長輩
+ * 按著麥克風錄音的當下跳出定位權限對話框，把他的第一句話吃掉（全分支審查的
+ * Critical 2）。一條有辨別力的測試釘住錯的那一邊，比「恰好通過」更難發現。
+ *
+ * ⚠️ F-17 補上、恢復取位時要一併改回這裡——但屆時權限請求必須移到進畫面時（與麥克風
+ * 權限一起問），不可以放在開錄的當下，見 location.ts 開頭。
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -19,7 +25,7 @@ describe("currentPlace", () => {
     await expect(currentPlace()).resolves.toBeNull();
   });
 
-  it("即使成功取得座標也回 null——網頁沒有反查地名，送半套座標換不到任何後端行為", async () => {
+  it("瀏覽器有定位 API 也回 null——網頁沒有反查地名，送半套座標換不到任何後端行為", async () => {
     const getCurrentPosition = vi.fn((success: PositionCallback) => {
       success({ coords: { latitude: 22.99, longitude: 120.21 } } as GeolocationPosition);
     });
@@ -28,23 +34,17 @@ describe("currentPlace", () => {
     await expect(currentPlace()).resolves.toBeNull();
   });
 
-  it("使用者拒絕定位或逾時，回 null 而非往外拋", async () => {
-    const getCurrentPosition = vi.fn(
-      (_success: PositionCallback, error: PositionErrorCallback) => {
-        error({ code: 1, message: "denied" } as GeolocationPositionError);
-      },
-    );
-    vi.stubGlobal("navigator", { geolocation: { getCurrentPosition } });
-
-    await expect(currentPlace()).resolves.toBeNull();
-  });
-
-  it("取位帶入逾時與快取上限選項，不可拖住長輩講話", async () => {
+  it("不可以去要定位權限——權限對話框會在長輩錄音進行中跳出來，把他的第一句話吃掉", async () => {
+    // ⚠️ 這條守的是 Critical 2。`useTalk::startRecording` 是在 `recorder.start()`
+    // 解出**之後**才發動取位的，那一刻長輩的手指正按在麥克風鍵上；系統面板搶走
+    // 指標，iOS Safari 送 `pointercancel`，那一句話就沒了——與 2026-07-18 App 端
+    // 「iPhone 錄音全部 ≤0.72 秒」是同一個坑（見 docs/dev/17）。既然回傳值 100%
+    // 被丟棄，就連問都不要問。
     const getCurrentPosition = vi.fn();
     vi.stubGlobal("navigator", { geolocation: { getCurrentPosition } });
 
-    currentPlace();
+    await expect(currentPlace()).resolves.toBeNull();
 
-    expect(getCurrentPosition.mock.calls[0][2]).toEqual({ timeout: 3000, maximumAge: 300_000 });
+    expect(getCurrentPosition).not.toHaveBeenCalled();
   });
 });

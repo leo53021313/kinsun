@@ -540,6 +540,12 @@ export function useTalk(options: {
     }
     // 錄音一開始就發動取位、不 await：長輩講話的那幾秒剛好把它蓋掉，送出時
     // 通常已經好了。currentPlace 永不拋，不需要 catch。
+    //
+    // ⚠️ `currentPlace` 目前一律回 `null` 且**完全不碰定位 API**（見
+    // `elder/location.ts` 開頭）：在這個時機真的去要定位權限，對話框會在錄音進行中
+    // 跳出來，把長輩的第一句話吃掉——與上面 `probeMicrophone` 那段警告是同一個坑。
+    // F-17 補上、恢復取位時，權限請求要移到進畫面時（與麥克風權限一起問），這一行
+    // 只能留下「拿已經有的值」的部分。
     placeRef.current = deps.currentPlace();
     setAvatarBoth("listening");
     setReplyText(strings.talk.listening);
