@@ -14,6 +14,12 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./src/test-setup.ts"],
     globals: true,
+    // ⚠️ Vitest 預設 include 為 `**/*.{test,spec}.?(c|m)[jt]s?(x)`、預設 exclude 只有
+    // node_modules／.git——`e2e/journey.spec.ts`（Playwright）會被這個萬用字元一併
+    // 撿走，用 vitest 的 test runner 執行 Playwright 的 `test()`/`page` fixture 必然
+    // 整批炸掉（`page` 從未被注入）。E2E 走獨立的 `npm run e2e`（playwright test），
+    // 不進 `vitest run`。
+    exclude: ["**/node_modules/**", "**/.git/**", "e2e/**"],
   },
   resolve: {
     alias: {

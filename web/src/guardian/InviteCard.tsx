@@ -38,7 +38,12 @@ export function InviteCard(props: { code: string; onSendToElder?: () => void }) 
   return (
     <div className="flex flex-col items-center gap-3 rounded-2xl bg-background p-4">
       <p className="self-start text-sm text-ink-soft">{strings.guardianHome.inviteHint}</p>
-      <p className="text-2xl font-extrabold tracking-widest text-primary">{code}</p>
+      {/* data-testid（非 role/label）：這串碼本身沒有適合的可及角色可用——它不是
+          標題也不是表單欄位，純粹是一段要給 E2E 測試讀取的文字內容
+          （見 e2e/journey.spec.ts）。 */}
+      <p data-testid="invite-code" className="text-2xl font-extrabold tracking-widest text-primary">
+        {code}
+      </p>
       {dataUrl ? (
         <img src={dataUrl} alt={strings.guardianHome.qrAlt} className="rounded-xl bg-white p-2" />
       ) : null}
