@@ -474,7 +474,7 @@ class VoicePipeline:
         （短回覆、回退話術、被攔的回絕話術）不分段，因為分段的代價（多一次往返）
         換不到任何東西。分段與長輩客製化聲音（2026-07-30）彼此獨立、可同時生效。
         """
-        voice = self._resolve_voice(elder_id)
+        voice = self.resolve_voice(elder_id)
         chunks = split_for_speech(reply_text) if channel in self._chunked_channels else []
         chunked = len(chunks) > 1
         spoken = chunks[0] if chunked else reply_text
@@ -496,9 +496,14 @@ class VoicePipeline:
             logger.warning("TTS 合成失敗，退化為純文字回覆")
             return TtsResult(text=reply_text, audio=None)
 
-    def _resolve_voice(self, elder_id: str) -> VoiceReference | None:
+    def resolve_voice(self, elder_id: str) -> VoiceReference | None:
         """長輩客製化聲音複製（2026-07-30）：無設定檔或未設 voice_profiles 則回 None
-        （TTSClient 沿用 DGX 端全域預設聲音）。"""
+        （TTSClient 沿用 DGX 端全域預設聲音）。
+
+        公開而非私有：分段串流的續段走 `channels/app/turns.py` 的獨立端點合成，
+        不經本類別的 speak 流程，得自己解析同一位長輩的參考語音——否則第 0 段是
+        客製化聲音、第 1 段起換回預設聲音，長輩會聽到回覆講到一半換人。
+        """
         if self._voice_profiles is None:
             return None
         profile = self._voice_profiles.get_active(elder_id)

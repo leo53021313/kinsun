@@ -252,8 +252,13 @@ def create_app_turns_router(
             # 續段的優先權低於「長輩正在等的第一段」（spec 2026-07-28 P1）：這一段還在
             # 播前一段的時候取，有餘裕；讓它排在別位長輩的第一段之後，才不會把
             # 「多快聽到第一個聲音」這件事賠掉。
+            #
+            # voice 不可省：省略等同傳 None，DgxTtsClient 就不帶 elder_id、DGX 端退回全域
+            # 預設聲音，於是第 0 段（經 VoicePipeline.speak）是客製化聲音、第 1 段起變回
+            # 預設聲音，長輩聽到回覆講到一半換人。分段串流與客製化聲音是分批上線的兩個
+            # 功能，此處為當時漏接的接縫。
             with tts_priority(TtsPriority.CHUNK):
-                result = tts.synthesize(chunks[index])
+                result = tts.synthesize(chunks[index], voice=pipeline.resolve_voice(elder_id))
         except TTSError:
             # 合成失敗不給假資料：App 收到 502 就停止續播，長輩至少聽完前面幾段。
             logger.warning("分段語音合成失敗 index=%s", index)

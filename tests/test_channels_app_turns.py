@@ -20,6 +20,8 @@ from kinsun.pipeline import VoicePipeline
 from kinsun.safety.detector import RiskDetector
 from kinsun.speech.asr import MockAsrClient
 from kinsun.speech.tts import TextBubbleTts, TtsResult
+from kinsun.voice_profiles.models import VoiceProfile
+from kinsun.voice_profiles.store import FakeVoiceProfileStore
 from kinsun.web.envelope import install_error_envelope
 from tests.fakes import FakeAccountStore, FakeLocationStore, FakeRiskEventStore, FakeTraceStore
 
@@ -281,9 +283,12 @@ class _ChunkedLLM:
 class _SpyChunkTts:
     def __init__(self) -> None:
         self.spoken: list[str] = []
+        # 每段用了哪個參考語音：分段與客製化聲音是分批上線的兩個功能，接縫會漏。
+        self.voices: list[object] = []
 
     def synthesize(self, text: str, *, voice=None) -> TtsResult:
         self.spoken.append(text)
+        self.voices.append(voice)
         return TtsResult(text=text, audio=b"fake-m4a", duration_ms=900)
 
 
@@ -314,7 +319,7 @@ class _SpyPublisher:
         return f"https://cdn.test/chunk-{self.count}.m4a"
 
 
-def _chunking_client(svc, memory, tts, publisher):
+def _chunking_client(svc, memory, tts, publisher, voice_profiles=None):
     pipeline = VoicePipeline(
         asr=MockAsrClient("阿公早安"),
         agent=CareAgent(_ChunkedLLM(), memory),
@@ -323,6 +328,7 @@ def _chunking_client(svc, memory, tts, publisher):
         notifier=_NullNotifier(),
         risk_events=FakeRiskEventStore(),
         chunked_channels=frozenset({"app"}),
+        voice_profiles=voice_profiles,
     )
     app = FastAPI()
     install_error_envelope(app)
@@ -375,6 +381,41 @@ def test_fetching_the_second_chunk_synthesizes_only_that_sentence():
     assert res.json()["data"]["text"] == "今天天氣不錯，要不要出去走走？"
     assert res.json()["data"]["audio_url"] == "https://cdn.test/chunk-2.m4a"
     assert tts.spoken == ["阿公今天早上好嗎。", "今天天氣不錯，要不要出去走走？"]
+
+
+def test_every_chunk_uses_the_elders_custom_voice():
+    """設了客製化聲音的長輩，續段也要用同一個聲音。
+
+    迴歸測試（2026-07-31 實測踩到）：續段走獨立端點、不經 VoicePipeline.speak，
+    當初漏了解析參考語音 → 第 0 段是客製化聲音、第 1 段起悄悄換回 DGX 全域預設，
+    長輩會聽到回覆講到一半換人。全程無錯誤訊息，只能靠聽或比對服務日誌發現。
+    """
+    svc = _service()
+    elder, token = _bound_elder_token(svc)
+    profiles = FakeVoiceProfileStore()
+    profiles.save(
+        VoiceProfile(
+            elder_id=elder.elder_id,
+            prompt_audio_url="https://cdn.test/grandson.wav",
+            prompt_text="阿嬤我是小明",
+            consented_by="孫子小明本人同意",
+            granted_at=NOW.timestamp(),
+        )
+    )
+    memory, tts, publisher = _RecordingMemory(), _SpyChunkTts(), _SpyPublisher()
+    client = _chunking_client(svc, memory, tts, publisher, voice_profiles=profiles)
+
+    body = _post_audio(client, token).json()["data"]
+    client.get(
+        f"/api/v1/turns/chunks/1?digest={body['reply_digest']}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert len(tts.voices) == 2, "應該合成了兩段"
+    assert tts.voices[0] is not None and tts.voices[1] is not None
+    # 兩段必須是同一個聲音——不是「都有值」就好，換成別人的聲音一樣是錯的。
+    assert tts.voices[0] == tts.voices[1]
+    assert tts.voices[1].prompt_audio_url == "https://cdn.test/grandson.wav"
 
 
 def test_stale_digest_is_rejected_so_the_app_stops_playing_the_old_turn():
