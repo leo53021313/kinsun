@@ -151,6 +151,16 @@ describe("TalkScreen", () => {
     expect(logout.className).toContain("min-h-14");
     expect(logout.className).toContain("text-elder-min");
   });
+
+  it("未讀紅點的數字同樣不小於 22px——那顆紅點是給看得見的長輩的捷徑", () => {
+    // ⚠️ 全分支審查抓到的 Minor：紅點原本是 `text-sm`（14px）。它是 `aria-hidden`
+    // 的捷徑、真正的數字在 aria-label 裡，但那條捷徑正是給**看得見的長輩**用的，
+    // 14px 的數字他看不清，捷徑就不存在。
+    // ⚠️ 目前 `ElderApp` 寫死 `unread={0}`，這一段在正式畫面上還不會渲染，P4 接上
+    // 輪詢時才會現形——沒有這條測試，那時不會有人記得回來看它的字級。
+    renderScreen({ unread: 3 });
+    expect(screen.getByText("3").className).toContain("text-elder-min");
+  });
 });
 
 describe("麥克風鍵真的把手勢交出去", () => {

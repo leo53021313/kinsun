@@ -84,8 +84,28 @@ describe("長輩端框內導覽", () => {
     expect(await screen.findByRole("heading", { name: "金孫的提醒" })).toBeInTheDocument();
     expect(screen.getByText("該吃降血壓藥囉")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "返回" }));
+    // ⚠️ 返回鍵說的是「回去講話」而不是「返回」：長輩端每一句都要告訴他下一步，
+    // 而「返回」是這個原則下唯一一句抽象詞（`strings.elderNotifications.back`
+    // 在 Task 9 就寫好了，只是沒有人接上，是一支死鍵）。
+    await userEvent.click(screen.getByRole("button", { name: "回去講話" }));
     await screen.findByRole("button", { name: "按住說話，或按一下開始、再按一下結束" });
+  });
+});
+
+describe("登出", () => {
+  it("伺服器沒有回應時照樣登出——不可以卡在對講機畫面等一個不會回來的請求", async () => {
+    // ⚠️ 全分支審查抓到的 Minor：原本寫成 `await logoutSession(...).catch(...)`。
+    // `.catch()` 擋得住 reject，**擋不住 hang**——Cloudflare 隧道「接受連線後不回應」
+    // 正是這個形狀，而 `fetch` 沒有逾時。長輩按下「確定登出」之後畫面就停在對講機，
+    // 不會有任何反應，而他按這顆鍵通常是因為要把手機交還給家人。
+    // ⚠️ 用永遠不解出的 promise，不是 mockRejectedValue：後者測到的是「擋得住
+    // reject」——那件事本來就沒壞。
+    vi.stubGlobal("fetch", vi.fn().mockReturnValue(new Promise(() => {})));
+    renderSignedIn();
+    await userEvent.click(await screen.findByRole("button", { name: "登出" }));
+    await userEvent.click(screen.getByRole("button", { name: "確定登出" }));
+    expect(await screen.findByLabelText("綁定碼")).toBeInTheDocument();
+    expect(localStorage.getItem("kinsun_web_session_elder")).toBeNull();
   });
 });
 

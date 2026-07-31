@@ -6,6 +6,7 @@
  */
 
 import { render, screen, waitFor } from "@testing-library/react";
+import { formatTime } from "kinsun-shared/format";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { loadSeenAt } from "@/notify/seen";
@@ -129,7 +130,20 @@ describe("NotificationsScreen（長輩版）", () => {
     ).toBeInTheDocument();
   });
 
-  it("載入失敗時說一句話，不留白畫面", async () => {
+  it("提醒的時間字級不低於長輩端下限——那一行寫的是「幾點吃藥」", async () => {
+    // ⚠️ 全分支審查抓到的 Minor：這一行原本是 `text-base`（16px），低於
+    // `--text-elder-min`（22px），是長輩端唯一一處低於下限的已渲染內容。
+    // ⚠️ 斷言 class 而非實際尺寸：jsdom 沒有版面計算（同 `TalkScreen.test.tsx`
+    // 那條適老化尺寸測試的理由），class 名是這一層唯一測得到的契約。
+    renderScreen([{ content: "該吃降血壓藥囉", created_at: 1754000100 }]);
+    const time = await screen.findByText(formatTime(1754000100));
+    expect(time.className).toContain("text-elder-min");
+  });
+
+  it("載入失敗時說的是長輩專用的那句，不是家屬端的「載入失敗，請稍後再試。」", async () => {
+    // ⚠️ 全分支審查抓到的 Important：借用 `common.loadFailed` 的話，長輩看完仍然
+    // 不知道今天到底有沒有藥要吃——而整條「錯誤取代空狀態」不變量的目的就是不讓
+    // 他推論「今天沒事」。這句話要替他排除那個推論，並告訴他還可以問誰。
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network")));
     setSession();
     render(
@@ -137,7 +151,9 @@ describe("NotificationsScreen（長輩版）", () => {
         <NotificationsScreen onTokenRevoked={onTokenRevoked} />
       </ElderSession.Provider>,
     );
-    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "現在讀不到您的提醒，這不代表今天沒有事。請等一下再看一次，或打電話問家人。",
+    );
   });
 
   it("載入失敗時不會同時謊稱『現在沒有要提醒您的事』", async () => {

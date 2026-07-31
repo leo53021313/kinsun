@@ -87,7 +87,10 @@ export function NotificationsScreen(props: {
     <div className="flex h-full flex-col gap-4 p-5">
       <h1 className="text-elder-min font-bold text-ink">{strings.elderNotifications.title}</h1>
       {hasError ? (
-        <ErrorText message={strings.common.loadFailed} size="big" />
+        // ⚠️ 用長輩端專用的那句，不是家屬端的「載入失敗，請稍後再試。」：長輩看完
+        // 那句話仍然不知道今天到底有沒有藥要吃，而這整條不變量的目的就是不讓他推論
+        // 「今天沒事」（見本檔開頭）。這是長輩端唯一一句借用 `common.*` 的錯誤。
+        <ErrorText message={strings.elderNotifications.loadFailed} size="big" />
       ) : items === null ? (
         <p className="text-elder-min text-ink-soft">{strings.common.loading}</p>
       ) : items.length === 0 ? (
@@ -101,7 +104,10 @@ export function NotificationsScreen(props: {
               key={`${item.created_at}-${item.content}`}
               className="flex flex-col gap-1 rounded-2xl border border-line bg-surface p-5"
             >
-              <span className="text-base text-ink-soft">{formatTime(item.created_at)}</span>
+              {/* ⚠️ 22px 起跳（`--text-elder-min`）：這是長輩端唯一一處曾經低於下限的
+                  已渲染內容，而它偏偏是「幾點吃藥」。次要資訊用顏色（ink-soft）分層，
+                  不用縮字級。 */}
+              <span className="text-elder-min text-ink-soft">{formatTime(item.created_at)}</span>
               <span className="text-elder-min leading-relaxed text-ink">{item.content}</span>
             </li>
           ))}

@@ -126,6 +126,11 @@ export const StagePage = memo(function StagePage() {
           <div className="mx-auto grid w-full max-w-5xl gap-8 lg:grid-cols-2">
             <div className={pane === "elder" ? "" : "hidden lg:block"}>
               <PhoneFrame title={strings.stage.elderTitle} os="ios">
+                {/* ⚠️ 這裡**還沒有**傳 `prefilledCode`：「家屬欄產生的碼直接送到長輩
+                    欄」那條內測捷徑（spec W-15）的接收端在 P3 已經建好並有測試
+                    （`ElderApp`／`BindScreen`），但發送端待 P4——`InviteCard` 的
+                    `onSendToElder` 目前沒有任何呼叫端傳進來。P4 接上時要在這裡把碼
+                    往下傳，長輩端不需要改。 */}
                 <ElderApp visible={elderVisible} />
               </PhoneFrame>
             </div>

@@ -26,6 +26,28 @@ export type ElderRoute =
   | { name: "talk" }
   | { name: "notifications" };
 
+/**
+ * 返回鍵要說的話，依「現在在哪個畫面」查——長輩端每一句都要告訴他下一步，
+ * 而「返回」是這個原則下唯一一句抽象詞（`strings.elderNotifications.back`
+ * 「回去講話」在 Task 9 就寫好了，只是沒有人接上）。
+ *
+ * ⚠️ **不把標籤塞進 `ElderRoute` 型別**：那會讓 `push`／`reset` 的每一個呼叫端
+ * 都得帶一串字，而那串字跟「要去哪一頁」是兩回事。查不到就退回
+ * `strings.common.back`——新增路由時漏了這裡，最差也只是回到現況。
+ */
+const BACK_LABELS: Partial<Record<ElderRoute["name"], string>> = {
+  notifications: strings.elderNotifications.back,
+  login: strings.elderLogin.back,
+};
+
+/**
+ * ⚠️ `prefilledCode` 是「家屬欄把剛產生的碼直接送到長輩欄」那條內測捷徑的**接收端**
+ *（spec W-15）。**接收端已就緒並有測試，發送端待 P4**：`stage/StagePage.tsx` 目前
+ * 沒有傳它，`guardian/InviteCard.tsx` 的 `onSendToElder` 兩個呼叫端
+ *（`HomeScreen`／`ElderDetailScreen`）也都沒有傳，所以整條鏈連同
+ * `strings.elderBind.receivedFromGuardian` 目前都還沒有人走過。P4 接上發送端時，
+ * 這一側不需要任何改動。
+ */
 export function ElderApp(props: { prefilledCode?: string; visible?: boolean }) {
   const { visible = true } = props;
   const { session, signOut } = ElderSession.useSession();
@@ -87,10 +109,17 @@ export function ElderApp(props: { prefilledCode?: string; visible?: boolean }) {
             unread={0}
             visible={visible}
             onOpenNotifications={() => stack.push({ name: "notifications" })}
-            onLogout={async () => {
-              // 先撤伺服器端的 token（✅ 庚-42 長輩自助登出）；撤不掉也不擋本機
-              // 登出——網路不通時長輩仍然要能把手機交還給家人。
-              await logoutSession(session?.token ?? "").catch(() => undefined);
+            onLogout={() => {
+              // 撤伺服器端的 token（✅ 庚-42 長輩自助登出），但**不等它**：撤不掉
+              // 也不擋本機登出——網路不通時長輩仍然要能把手機交還給家人。
+              //
+              // ⚠️ 原本寫成 `await …catch(() => undefined)`：`.catch()` 擋得住
+              // reject，**擋不住 hang**。Cloudflare 隧道「接受連線後不回應」正是這個
+              // 形狀，而 `fetch` 沒有逾時——那條路上按下「確定登出」之後畫面就停在
+              // 對講機，不會有任何反應。註解寫的「撤不掉也不擋本機登出」與程式行為
+              // 因此在 hang 這條路上對不起來。不等它，兩者就一致了：請求照樣送出去，
+              // 成不成功都不影響長輩把手機交還給家人。
+              void logoutSession(session?.token ?? "").catch(() => undefined);
               signOut();
             }}
             // 403＝家屬撤回了同意（token 還在，但閘門不讓這一輪過）。
@@ -126,7 +155,7 @@ export function ElderApp(props: { prefilledCode?: string; visible?: boolean }) {
           className="flex min-h-14 w-full items-center gap-1 border-b border-line bg-surface px-5 text-left text-elder-min text-ink"
         >
           <span aria-hidden>‹</span>
-          {strings.common.back}
+          {BACK_LABELS[stack.current.name] ?? strings.common.back}
         </button>
       ) : null}
       <div className="min-h-0 flex-1">{body}</div>

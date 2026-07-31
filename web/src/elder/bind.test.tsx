@@ -157,7 +157,9 @@ describe("長輩配對", () => {
     renderApp();
     await userEvent.click(screen.getByRole("button", { name: "用過金孫？帳號密碼登入" }));
     expect(screen.getByLabelText("手機號碼")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "返回" }));
+    // ⚠️ 返回鍵說的是「回去輸入號碼」而不是「返回」——從這裡按返回是回到配對畫面，
+    // 不是回到對講機，兩個畫面的返回鍵各講各的下一步。
+    await userEvent.click(screen.getByRole("button", { name: "回去輸入號碼" }));
     expect(screen.getByLabelText("綁定碼")).toBeInTheDocument();
   });
 
