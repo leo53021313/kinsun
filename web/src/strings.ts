@@ -171,4 +171,60 @@ export const strings = {
     title: "通知",
     empty: "目前沒有通知。金孫有事會第一時間放在這裡。",
   },
+  // 長輩端文案沿用 app/src/lib/strings.ts 的既有措辭（用字更白話，不用「通知」
+  // 「綁定」這類詞），並補上網頁端獨有的三條：receivedFromGuardian／queued／
+  // micUnsupported（App 沒有這三種情境）。
+  elderBind: {
+    inviteNotFound: "找不到這組號碼，請跟家人再確認一次。",
+    inviteUsed: "這組號碼已經用過了，請家人重新產生一組。",
+    inviteExpired: "這組號碼過期了，請家人重新產生一組。",
+    tooManyAttempts: "試太多次了，請家人重新產生一組。",
+    bindFailed: "連不上金孫，請稍後再試一次。",
+    cameraPermission: "需要相機權限才能掃描，也可以直接輸入號碼。",
+    scanHint: "把家人給的方塊圖對準框框",
+    switchToManual: "改用輸入號碼",
+    hint: "掃描家人給的方塊圖，或輸入號碼",
+    scanQr: "掃描 QR 碼",
+    codePlaceholder: "綁定碼",
+    start: "開始使用",
+    loginLink: "用過金孫？帳號密碼登入",
+    // 網頁端獨有：兩欄舞台的長輩欄可以直接看到家屬欄產生的碼，App 沒有這個情境。
+    receivedFromGuardian: "已從右邊的家屬手機收到綁定碼",
+  },
+  elderLogin: {
+    notPaired: "這支手機還沒跟家人配對過，請先請家人給您綁定圖（QR）掃描一次。",
+    wrongCredentials: "號碼或密碼不對，可以請家人幫忙確認。",
+    hint: "輸入家人幫您設定的手機號碼和密碼，登入一次就會一直記住。",
+    phoneLabel: "手機號碼",
+  },
+  talk: {
+    idleHint: "按住下面的麥克風說話，或按一下開始、說完再按一下",
+    fallback: "金孫沒聽清楚，再說一次好嗎？",
+    micPermission: "需要麥克風權限才能跟金孫說話，請到設定開啟。",
+    listening: "金孫在聽…",
+    listeningTapHint: "金孫在聽…說完再按一下",
+    thinking: "金孫想一下…",
+    bindingLost: "這台手機的綁定失效了，請家人重新給您一組號碼。",
+    pressToTalk: "按住說話，或按一下開始、再按一下結束",
+    logout: "登出",
+    logoutConfirmTitle: "登出",
+    logoutConfirmBody: "確定要登出嗎？下次要用手機號碼和密碼再登入。",
+    logoutCancel: "取消",
+    // 內測專用權限狀態列（僅 internalTesting 顯示）
+    debugMicLabel: "麥克風",
+    debugLocationLabel: "定位",
+    debugGranted: "已授權",
+    debugDenied: "未授權",
+    // 網頁端獨有：容量閘門排隊位置（App 對應畫面待 P3 續行時另接）與瀏覽器錄音
+    // 不支援的提示（App 是原生殼，不會遇到瀏覽器不支援錄音的情況）。
+    queued: (position: number) => `金孫正在跟別人說話，前面還有 ${position} 位…`,
+    micUnsupported: "這個瀏覽器不能錄音，請換 Chrome、Safari 或 Firefox。",
+  },
+  // 長輩看的提醒（X-01，2026-07-29）：用詞比家屬版更白話，不用「通知」這個詞。
+  elderNotifications: {
+    title: "金孫的提醒",
+    empty: "現在沒有要提醒您的事。時間到了金孫會跟您說。",
+    back: "回去講話",
+    bell: "看金孫的提醒",
+  },
 };
