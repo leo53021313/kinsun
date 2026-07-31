@@ -43,6 +43,7 @@ from kinsun.schedules.flow import ScheduleMenu
 from kinsun.speech.ack_audio import AckAudioCache, start_prewarm
 from kinsun.speech.asr import build_asr_client
 from kinsun.speech.tts import build_tts_client
+from kinsun.voice_profiles.store import PgVoiceProfileStore
 from kinsun.web.auth import LineIdTokenVerifier
 from kinsun.web.envelope import install_error_envelope
 from kinsun.web.ratelimit import PgRateLimiter
@@ -139,6 +140,9 @@ def build_app() -> FastAPI:
         # 一輪的總時間上限（辛-21）：逐次逾時攔不住三次呼叫相加。
         turn_budget_seconds=settings.turn_budget_seconds,
         moderator=moderator,
+        # 長輩客製化聲音（2026-07-30 voice_profiles）：未傳此參數時 _resolve_voice 一律回
+        # None，DGX 端沿用全域預設聲音且全程無任何錯誤訊息——設定檔存在也不會生效。
+        voice_profiles=PgVoiceProfileStore(db),
     )
     binding_sessions = PgBindingSessionStore(db)
     schedule_menu = ScheduleMenu(
