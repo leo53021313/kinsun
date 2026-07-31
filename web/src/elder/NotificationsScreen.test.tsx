@@ -79,7 +79,10 @@ describe("NotificationsScreen（長輩版）", () => {
   });
 
   it("沒有提醒時不要把水位歸零", async () => {
-    localStorage.setItem("kinsun_web_seen_at_elder", "1754000000");
+    // ⚠️ 鍵帶著登入者（`notify/seen.ts` 的 Minor 2 修正，2026-08-01）：這裡直接
+    // 寫底層鍵是為了「這一輪之前就已經有水位」，故必須與 `setSession()` 的
+    // `display_name` 對齊。
+    localStorage.setItem("kinsun_web_seen_at_elder:王阿嬤", "1754000000");
     renderScreen([]);
     await screen.findByText("現在沒有要提醒您的事。時間到了金孫會跟您說。");
     expect(loadSeenAt("elder")).toBe(1754000000);

@@ -76,7 +76,10 @@ describe("NotificationsScreen", () => {
   });
 
   it("沒有通知時不要把水位歸零", async () => {
-    localStorage.setItem("kinsun_web_seen_at_guardian", "1754000000");
+    // ⚠️ 鍵帶著登入者（`notify/seen.ts` 的 Minor 2 修正，2026-08-01）：這裡直接
+    // 寫底層鍵是為了「這一輪之前就已經有水位」，故必須與 `setSession()` 的
+    // `display_name` 對齊。
+    localStorage.setItem("kinsun_web_seen_at_guardian:兒子", "1754000000");
     renderScreen([]);
     await screen.findByText("目前沒有通知。金孫有事會第一時間放在這裡。");
     expect(loadSeenAt("guardian")).toBe(1754000000);
