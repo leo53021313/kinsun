@@ -19,6 +19,9 @@ export const strings = {
     saveFailed: "儲存失敗，請稍後再試。",
     deleteFailed: "刪除失敗，請稍後再試。",
     cancel: "取消",
+    // 通知橫幅（notify/NotificationBanner.tsx）關閉鍵的可及名稱；不用「取消」
+    // ——那是表單語意，這裡是把一則已經跳出來的訊息收掉。
+    close: "關閉",
     delete: "刪除",
     edit: "編輯",
     create: "新增",
