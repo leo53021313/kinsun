@@ -108,9 +108,12 @@ describe("App", () => {
     // `ElderApp` 之後，長輩配對畫面（`BindScreen`）自己也有一顆文字相同的
     // 「開始使用」按鈕（`strings.elderBind.start`，與 `strings.gate.start`
     // 恰好同名但語意無關），這條斷言從此對兩顆按鈕都會命中、不再能拿來分辨
-    // 「在開場頁」還是「在舞台上」。改認 GatePage 專屬、不會被誤認的文字
-    // （品牌標語，舞台上的畫面不會出現這句話）。
-    expect(screen.queryByText(strings.gate.slogan)).not.toBeInTheDocument();
+    // 「在開場頁」還是「在舞台上」——審查實測過：把舊斷言原樣還原重跑，會
+    // 明確失敗（抓到的是 BindScreen 那顆 disabled 的「開始使用」按鈕）。
+    // 改認 GatePage 專屬、不會被誤認的文字（品牌標語，舞台上的畫面不會出現
+    // 這句話）；斷言寫死字面值而非讀 `strings.gate.slogan`——測試與產品讀
+    // 同一個可變常數的話，改了兩邊一起變、永遠綠。
+    expect(screen.queryByText("陪伴長輩的家庭夥伴")).not.toBeInTheDocument();
   });
 
   it("不認得的網址回開場", async () => {

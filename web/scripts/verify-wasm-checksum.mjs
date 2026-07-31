@@ -53,3 +53,38 @@ if (packagedHash !== servedHash) {
 }
 
 console.log("[verify-wasm] wasm 二進位與 zxing-wasm 套件版本一致。");
+
+/**
+ * 第二道檢查（P3 Task 7 審查新增）：`qrScanner.ts` 對 wasm 位址的覆寫是否
+ * 還在，而且是不是真的用 `import.meta.env.BASE_URL` 組出來、沒有被誰改回
+ * 寫死的 `"/demo/"` 或整段拿掉。
+ *
+ * ⚠️ 這裡刻意檢查**原始碼**而非建置產物（`dist/`）：`zxing-wasm` 套件自身
+ * 內建的預設 `locateFile` 邏輯本身就含一段組 jsDelivr 網址的字面值，這段
+ * 程式碼隨套件整包打包進 `dist/`——對 `dist/` 做「零 jsdelivr 命中」的檢查
+ * 從一開始就不可能通過（P3 Task 7 審查發現，計畫文件 Step 7 原先要求的
+ * 「沒有任何輸出」永遠達不到，已就地更正）。檢查原始碼是否呼叫了正確的
+ * `overrides`，才是真正可執行、也真正測到重點的斷言；且不需要等 `vite
+ * build` 產生 `dist/` 就能跑，本腳本原本就掛在 `build` 最前面（`tsc`／
+ * `vite build` 之前），與這個順序天生相容。
+ */
+const qrScannerPath = path.join(here, "..", "src", "talk", "qrScanner.ts");
+const qrScannerSource = readFileSync(qrScannerPath, "utf8");
+const hasLocateFileOverride =
+  qrScannerSource.includes("prepareZXingModule(") &&
+  qrScannerSource.includes("locateFile") &&
+  qrScannerSource.includes("import.meta.env.BASE_URL");
+
+if (!hasLocateFileOverride) {
+  console.error(
+    [
+      "[verify-wasm] talk/qrScanner.ts 沒有偵測到 prepareZXingModule 的 locateFile 覆寫",
+      "  （或不再使用 import.meta.env.BASE_URL 組同源位址）。",
+      "  wasm 可能會改去套件預設的 CDN 抓，CSP default-src 'self' 會擋掉，",
+      "  症狀是掃碼完全沒反應、只有主控台一行紅字，畫面上看不出是被政策擋的。",
+    ].join("\n"),
+  );
+  process.exit(1);
+}
+
+console.log("[verify-wasm] qrScanner.ts 的 wasm 同源位址覆寫仍在（locateFile + BASE_URL）。");

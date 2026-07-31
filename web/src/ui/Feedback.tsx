@@ -1,12 +1,17 @@
 /** 錯誤、中性提示與空狀態。錯誤用 role="alert"——讀螢幕的人不會自己去掃畫面找紅字。 */
 
-export function ErrorText(props: { message: string }) {
-  if (!props.message) {
+export function ErrorText(props: { message: string; size?: "normal" | "big" }) {
+  const { message, size = "normal" } = props;
+  if (!message) {
     return null;
   }
+  // ⚠️ 長輩端審查發現：本元件固定 `text-sm`（14px），低於長輩端 `--text-elder-min`
+  // （22px）下限——五種綁定錯誤＋六種相機錯誤那十一句「告訴他下一步做什麼」的
+  // 話，全部曾經以全畫面最小字級呈現。加 `size` prop 而非全域放大：家屬端（沿用
+  // 預設 `"normal"`）不該被連帶放大。
   return (
-    <p role="alert" className="text-sm text-danger">
-      {props.message}
+    <p role="alert" className={size === "big" ? "text-elder-min text-danger" : "text-sm text-danger"}>
+      {message}
     </p>
   );
 }

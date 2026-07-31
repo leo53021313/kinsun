@@ -50,9 +50,18 @@ const SCANNER_ERRORS: Record<QrScannerError, string> = {
 
 export function BindScreen(props: {
   prefilledCode?: string;
+  /**
+   * 這一欄目前是否真的看得見（雙欄舞台在窄螢幕是頁籤擇一顯示，見
+   * `stage/StagePage.tsx`）。⚠️ **不是**用來卸載這個畫面——卸載會丟掉長輩
+   * 打到一半的號碼；只用來在「切走時」讓下面的相機 effect 停止，「切回來時」
+   * 自動恢復（`scanning` 這個 state 本身完全不受影響）。預設 `true`：獨立
+   * 渲染（如 `bind.test.tsx` 直接掛 `<ElderApp />`）時視為永遠看得見。
+   */
+  visible?: boolean;
   onDone: () => void;
   onLogin: () => void;
 }) {
+  const { visible = true } = props;
   const { signIn } = ElderSession.useSession();
   const [code, setCode] = useState(props.prefilledCode ?? "");
   const [error, setError] = useState("");
@@ -84,12 +93,23 @@ export function BindScreen(props: {
 
   // ⚠️ 相機資源要在每一條離開這個畫面狀態的路徑都釋放（見下方 return 的
   // cleanup）：掃到（onCode 內 setScanning(false)）、掃碼出錯（onError 內
-  // setScanning(false)）、按「改用輸入號碼」取消、或整個元件被卸載（切到
-  // 登入畫面前一定會先离开 scanning 狀態，見上面四條路徑）——這四條路徑最終
-  // 都會讓這個 effect 的 cleanup 被呼叫到，`scanner.stop()` 保證相機軌道
-  // 被關掉，指示燈不會留著。
+  // setScanning(false)）、按「改用輸入號碼」取消、整個元件被卸載，以及
+  // **這一欄被切到背景**（`visible` 變 `false`，見下）——這五條路徑最終都
+  // 會讓這個 effect 的 cleanup 被呼叫到，`scanner.stop()` 保證相機軌道被
+  // 關掉，指示燈不會留著。
+  //
+  // ⚠️ **審查發現的 Critical**：雙欄舞台在窄螢幕是頁籤擇一顯示
+  // （`stage/StagePage.tsx`），非活動欄用 CSS `hidden` 隱藏、元件仍掛著
+  // ——`MediaStream` 軌道與 `display:none` 無關，繼續存活。長輩按「掃描
+  // QR 碼」後若切到家屬端頁籤，相機會一直開著直到整個分頁關閉。修法**不是**
+  // 卸載非活動欄（會丟掉長輩打到一半的號碼），而是把「這一欄現在看得到嗎」
+  // 當成 effect 的相依之一：`visible` 變 `false` 時，即使 `scanning` 仍是
+  // `true`，也不建立新的 scanner；而上一輪 effect 的 cleanup（關掉舊的
+  // scanner）一定會先跑，相機因此確實關閉。切回來、`visible` 再變 `true`
+  // 時，只要 `scanning` 還是 `true`，effect 會重新建立 scanner、重新要求
+  // 鏡頭（權限已授予，瀏覽器不會再跳一次對話框），畫面自動恢復。
   useEffect(() => {
-    if (!scanning || videoRef.current === null) {
+    if (!scanning || !visible || videoRef.current === null) {
       return;
     }
     const scanner = createQrScanner({
@@ -109,7 +129,7 @@ export function BindScreen(props: {
     return () => scanner.stop();
     // submit 只讀 state 與常數，不列入相依以免每次輸入都重開相機。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scanning]);
+  }, [scanning, visible]);
 
   if (scanning) {
     return (
@@ -136,7 +156,9 @@ export function BindScreen(props: {
     <div className="flex h-full flex-col justify-center gap-5 p-6">
       <p className="text-center text-elder-min text-ink">{strings.elderBind.hint}</p>
       {props.prefilledCode ? (
-        <p className="text-center text-sm text-success">{strings.elderBind.receivedFromGuardian}</p>
+        <p className="text-center text-elder-min text-success">
+          {strings.elderBind.receivedFromGuardian}
+        </p>
       ) : null}
       <Button
         label={strings.elderBind.scanQr}
@@ -154,7 +176,7 @@ export function BindScreen(props: {
         size="big"
         placeholder={strings.elderBind.codePlaceholder}
       />
-      <ErrorText message={error} />
+      <ErrorText message={error} size="big" />
       <Button
         label={strings.elderBind.start}
         size="big"

@@ -3,6 +3,9 @@
  *
  * ⚠️ 與家屬端同樣不進瀏覽器網址列（見 nav/useScreenStack）。
  * ⚠️ 返回鍵比家屬端大：56px，而且字更大——長輩手指粗又常戴老花。
+ * ⚠️ `visible` prop 單純轉交給 `BindScreen`（見該檔說明）：雙欄舞台窄螢幕
+ * 頁籤模式下，這一欄被切到背景時要停止相機，但不能卸載（會丟掉打到一半的
+ * 號碼）。`ElderApp` 自己不需要這個資訊，只有 `BindScreen` 的相機邏輯需要。
  */
 
 import { useEffect } from "react";
@@ -20,7 +23,8 @@ export type ElderRoute =
   | { name: "talk" }
   | { name: "notifications" };
 
-export function ElderApp(props: { prefilledCode?: string }) {
+export function ElderApp(props: { prefilledCode?: string; visible?: boolean }) {
+  const { visible = true } = props;
   const { session } = ElderSession.useSession();
   const stack = useScreenStack<ElderRoute>(session ? { name: "talk" } : { name: "bind" });
   const { reset } = stack;
@@ -40,6 +44,7 @@ export function ElderApp(props: { prefilledCode?: string }) {
         return (
           <BindScreen
             prefilledCode={props.prefilledCode}
+            visible={visible}
             onDone={() => reset({ name: "talk" })}
             onLogin={() => stack.push({ name: "login" })}
           />

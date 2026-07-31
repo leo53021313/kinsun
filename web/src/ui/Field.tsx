@@ -15,9 +15,13 @@ export function Field(props: {
   // ⚠️ 用 useId 而非寫死 id：同一個畫面上兩個同名欄位（密碼／確認密碼）若 id 相同，
   // 點標籤永遠聚焦到第一個，而那種 bug 用眼睛看不出來。
   const id = useId();
+  // ⚠️ 長輩端審查發現：標籤原本固定 `text-sm`（14px），不隨 `size="big"` 放大
+  // ——輸入框內文是 22px，但「綁定碼」「手機號碼」「密碼」這些一直掛在畫面上
+  // 的標籤反而是全畫面最小的字。家屬端（`size` 預設 `"normal"`）不受影響。
+  const labelSizeClass = size === "big" ? "text-elder-min" : "text-sm";
   return (
     <div className="flex flex-col gap-1">
-      <label htmlFor={id} className="text-sm font-semibold text-ink-soft">
+      <label htmlFor={id} className={`font-semibold text-ink-soft ${labelSizeClass}`}>
         {label}
       </label>
       <input

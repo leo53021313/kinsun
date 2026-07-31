@@ -53,6 +53,21 @@ describe("Field", () => {
     expect(onChange).toHaveBeenLastCalledWith("阿");
   });
 
+  it("size=\"big\" 時標籤也要跟著放大，不能停在 14px", () => {
+    // ⚠️ 審查發現：標籤原本固定 text-sm（14px），不隨 size="big" 放大——
+    // 輸入框內文是 22px，但「綁定碼」「手機號碼」「密碼」這些一直掛在畫面上
+    // 的標籤反而是全畫面最小的字。
+    render(<Field label="綁定碼" value="" onChange={vi.fn()} size="big" />);
+    const label = screen.getByText("綁定碼");
+    expect(label).toHaveClass("text-elder-min");
+    expect(label).not.toHaveClass("text-sm");
+  });
+
+  it("size 預設（家屬端）標籤維持原本的 text-sm，不被連帶放大", () => {
+    render(<Field label="長輩稱呼" value="" onChange={vi.fn()} />);
+    expect(screen.getByText("長輩稱呼")).toHaveClass("text-sm");
+  });
+
   it("同一個畫面上的兩個欄位拿到不同的 id", () => {
     // ⚠️ **不要**用「點標籤看誰拿到焦點」來驗這件事：id 重複時，jsdom 的
     // `label.control` 與 testing-library 的 `getByLabelText` 用的是同一套
@@ -88,6 +103,21 @@ describe("Feedback", () => {
   it("有訊息時以 alert 角色呈現，讀螢幕的人才會被告知", () => {
     render(<ErrorText message="帳號或密碼不對，請再試一次。" />);
     expect(screen.getByRole("alert")).toHaveTextContent("帳號或密碼不對，請再試一次。");
+  });
+
+  it("size 預設是 text-sm（14px），家屬端沿用既有字級不受影響", () => {
+    render(<ErrorText message="帳號或密碼不對，請再試一次。" />);
+    expect(screen.getByRole("alert")).toHaveClass("text-sm");
+  });
+
+  it("size=\"big\" 時放大到長輩端最小字級，不能停在 14px", () => {
+    // ⚠️ 審查發現：本任務整個主題（五種綁定錯誤＋六種相機錯誤，那十一句
+    // 「告訴他下一步做什麼」的話）原本全部以 14px（text-sm）呈現——是全畫面
+    // 最小的字。
+    render(<ErrorText message="這組號碼是給家人用的，請家人給您長輩專用的那組。" size="big" />);
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveClass("text-elder-min");
+    expect(alert).not.toHaveClass("text-sm");
   });
 
   it("EmptyHint 顯示提示文字", () => {

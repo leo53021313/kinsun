@@ -92,6 +92,28 @@ describe("長輩配對", () => {
     expect(screen.queryByLabelText("綁定碼")).not.toBeInTheDocument();
   });
 
+  it("手動輸入綁定碼會把完整輸入送出，不會被截斷（method／路徑／body 皆正確）", async () => {
+    // ⚠️ 審查發現：長輩多半用手打（見本檔開頭註解），但先前只有掃碼那條路徑
+    // 斷言了送出的 method／路徑／body。審查實測過一個變異：
+    // `submit(code)` 改成 `submit(code.slice(0, 3))`——長輩打完整六碼、
+    // 實際只送前三碼，後端必回查無此碼，他對著正確的碼反覆重打——原本的
+    // 測試組合毫無察覺（19/19 仍全綠）。這裡補上手打路徑同等級的線路契約
+    // 斷言。
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 201,
+      json: async () => envelope({ elder_id: "e1", name: "王阿嬤", token: "tok" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+    await userEvent.type(screen.getByLabelText("綁定碼"), "AB12CD");
+    await userEvent.click(screen.getByRole("button", { name: "開始使用" }));
+    await screen.findByText("這裡還在準備，請再等一下。");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/device-bindings",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ code: "AB12CD" }) }),
+    );
+  });
+
   it.each([
     ["invite_not_found", "找不到這組號碼，請跟家人再確認一次。"],
     ["invite_used", "這組號碼已經用過了，請家人重新產生一組。"],
@@ -156,6 +178,102 @@ describe("長輩配對", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "這支手機還沒跟家人配對過，請先請家人給您綁定圖（QR）掃描一次。",
     );
+  });
+
+  it("手機號碼欄位格式不對時，照實顯示後端訊息而非「連線失敗」", async () => {
+    // ⚠️ 審查發現：手機號碼欄空白或只打了「09」會讓後端
+    // ElderLoginIn.phone: Field(min_length=8) 觸發 422 validation_error，
+    // 回「輸入資料格式不正確」——這句話已是繁中人話（D-24）。原始版本把
+    // 所有非 401／403 一律顯示「連線失敗」，長輩會去確認 Wi-Fi、反覆重試，
+    // 永遠不會想到是欄位沒填好；guardian/LoginScreen.tsx 已修過同一類問題，
+    // 此處補齊同一套原則。
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        status: 422,
+        json: async () => failure("validation_error", "輸入資料格式不正確"),
+      }),
+    );
+    renderApp();
+    await userEvent.click(screen.getByRole("button", { name: "用過金孫？帳號密碼登入" }));
+    await userEvent.type(screen.getByLabelText("手機號碼"), "09");
+    await userEvent.type(screen.getByLabelText("密碼"), "x");
+    await userEvent.click(screen.getByRole("button", { name: "登入" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("輸入資料格式不正確");
+  });
+
+  it("帳密登入把手機號碼與密碼各自正確送出，不會對調（method／路徑／body 皆正確）", async () => {
+    // ⚠️ 審查發現：審查實測過一個變異——`loginElder(phone, password)` 改成
+    // `loginElder(password, phone)`，手機號碼與密碼對調送出，長輩永遠登不
+    // 進去——原本的測試組合毫無察覺。這裡補上線路契約斷言。
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 201,
+      json: async () => envelope({ elder_id: "e1", name: "王阿嬤", token: "tok" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+    await userEvent.click(screen.getByRole("button", { name: "用過金孫？帳號密碼登入" }));
+    await userEvent.type(screen.getByLabelText("手機號碼"), "0912345678");
+    await userEvent.type(screen.getByLabelText("密碼"), "correct-horse-8");
+    await userEvent.click(screen.getByRole("button", { name: "登入" }));
+    await screen.findByText("這裡還在準備，請再等一下。");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/elder-sessions",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ phone: "0912345678", password: "correct-horse-8" }),
+      }),
+    );
+  });
+});
+
+describe("忙碌狀態防連按", () => {
+  /** 手動控制的 promise：`mockResolvedValue` 在同一個 microtask 就解出，看不見
+   *  「送出中」這個中間狀態——這份計畫栽過三次的教訓，見 brief 的既有提醒。 */
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((res) => {
+      resolve = res;
+    });
+    return { promise, resolve };
+  }
+
+  it("綁定送出期間按鈕忙碌中，連點兩下只送出一次請求", async () => {
+    const { promise, resolve } = deferred<{ status: number; json: () => Promise<unknown> }>();
+    const fetchMock = vi.fn().mockReturnValue(promise);
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+    await userEvent.type(screen.getByLabelText("綁定碼"), "AB12CD");
+    const button = screen.getByRole("button", { name: "開始使用" });
+    await userEvent.click(button);
+    expect(button).toBeDisabled();
+    await userEvent.click(button);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    resolve({
+      status: 201,
+      json: async () => envelope({ elder_id: "e1", name: "王阿嬤", token: "tok" }),
+    });
+    await screen.findByText("這裡還在準備，請再等一下。");
+  });
+
+  it("登入送出期間按鈕忙碌中，連點兩下只送出一次請求", async () => {
+    const { promise, resolve } = deferred<{ status: number; json: () => Promise<unknown> }>();
+    const fetchMock = vi.fn().mockReturnValue(promise);
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+    await userEvent.click(screen.getByRole("button", { name: "用過金孫？帳號密碼登入" }));
+    await userEvent.type(screen.getByLabelText("手機號碼"), "0912345678");
+    await userEvent.type(screen.getByLabelText("密碼"), "correct-horse-8");
+    const button = screen.getByRole("button", { name: "登入" });
+    await userEvent.click(button);
+    expect(button).toBeDisabled();
+    await userEvent.click(button);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    resolve({
+      status: 201,
+      json: async () => envelope({ elder_id: "e1", name: "王阿嬤", token: "tok" }),
+    });
+    await screen.findByText("這裡還在準備，請再等一下。");
   });
 });
 

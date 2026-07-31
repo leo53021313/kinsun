@@ -175,9 +175,15 @@ export const strings = {
     empty: "目前沒有通知。金孫有事會第一時間放在這裡。",
   },
   // 長輩端文案逐字沿用 app/src/lib/strings.ts 的既有措辭：口語敘述一律用
-  // 「號碼」「方塊圖」，比「通知」「綁定」更白話；`codeLabel`／`codePlaceholder`
-  // （輸入框標籤／精簡提示）與逐字沿用的 `notPaired`／`bindingLost` 仍帶「綁定」
-  // 二字，是 App 既有例外、非本輪新增。並補上網頁端獨有的幾條：
+  // 「號碼」「方塊圖」，比「通知」「綁定」更白話；`codePlaceholder`（輸入框
+  // 精簡提示）與逐字沿用的 `notPaired`／`bindingLost` 仍帶「綁定」二字，是
+  // App 既有例外、非本輪新增。⚠️ `codeLabel`（P3 Task 7 新增，App 版沒有
+  // 對應鍵——App 用畫面標題當標籤，網頁版才需要獨立的欄位標籤）**刻意不**
+  // 跟進本段其餘欄位偏好的「號碼」措辭，仍用「綁定碼」：這是**一直掛在畫面
+  // 上、讀螢幕軟體逐欄朗讀時會唸出來的可見標籤**，與提示文字（讀過就過）
+  // 性質不同——長輩若先切去用過帳密登入（`elder/LoginScreen.tsx` 的欄位是
+  // 「手機號碼」）再切回來，兩個畫面的標籤都只寫「號碼」會混淆是哪一種號碼；
+  // 「綁定碼」在此處是必要的消歧，非疏漏。並補上網頁端獨有的幾條：
   // receivedFromGuardian／queued／micUnsupported（App 沒有這幾種情境，見 talk 段）；
   // `inviteWrongRole`（P3 Task 7）＋`cameraNotFound`／`cameraInUse`／
   // `cameraInsecureOrigin`／`cameraNoSignal`（P3 Task 7，對應 `talk/qrScanner.ts`
