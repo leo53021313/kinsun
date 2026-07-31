@@ -36,6 +36,11 @@ export function SchedulesScreen(props: { elderId: string }) {
   const signOutOn401 = useMemo(() => makeSignOutOnAuthError(signOut), [signOut]);
 
   const [groups, setGroups] = useState<ScheduleGroup[] | null>(null);
+  // ⚠️ 清單載入失敗用獨立的布林旗標、不共用下面那個 error 字串：`groups` 留在 null
+  // 時畫面會照樣顯示「載入中…」，於是錯誤與載入中兩句互相矛盾的話同時出現，家屬
+  // 會照著「載入中」等下去——而且永遠等不到（沒有重試鈕，唯一復原方式是返回再進
+  // 來）。同一份清單在 ElderDetailScreen 早就是用 groupsError 降級的，此處對齊。
+  const [groupsError, setGroupsError] = useState(false);
   const [kind, setKind] = useState<Kind>("medication");
   const [title, setTitle] = useState("");
   const [slots, setSlots] = useState<string[]>([]);
@@ -59,8 +64,12 @@ export function SchedulesScreen(props: { elderId: string }) {
     if (!token) return;
     try {
       setGroups(await listSchedules(elderId, token));
+      setGroupsError(false);
     } catch (exc) {
       if (signOutOn401(exc)) return;
+      // ⚠️ 這一路走頁面最上方的 error、不設 groupsError：重打是寫入成功之後的事，
+      // `groups` 還留著上一份清單。設旗標會把那份還看得到的資料換成錯誤字，家屬
+      // 反而失去手上僅有的資訊；「寫進去了、清單沒刷新」照實說即可。
       setError(strings.common.loadFailed);
     }
   }, [elderId, token, signOutOn401]);
@@ -74,7 +83,7 @@ export function SchedulesScreen(props: { elderId: string }) {
       })
       .catch((exc) => {
         if (signOutOn401(exc)) return;
-        if (alive) setError(strings.common.loadFailed);
+        if (alive) setGroupsError(true);
       });
     return () => {
       alive = false;
@@ -154,7 +163,10 @@ export function SchedulesScreen(props: { elderId: string }) {
       <ErrorText message={error} />
 
       <Section title={strings.schedules.listSection}>
-        {groups === null ? (
+        {/* 順序固定為 錯誤 → 載入中 → 空狀態 → 清單（與 ElderDetailScreen 一致）。 */}
+        {groupsError ? (
+          <ErrorText message={strings.common.loadFailed} />
+        ) : groups === null ? (
           <EmptyHint text={strings.common.loading} />
         ) : groups.length === 0 ? (
           <EmptyHint text={strings.schedules.empty} />

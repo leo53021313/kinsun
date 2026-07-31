@@ -77,6 +77,26 @@ describe("SchedulesScreen", () => {
     expect(await screen.findByText("還沒有任何提醒，從下方新增第一筆。")).toBeInTheDocument();
   });
 
+  // ⚠️ 同一份清單（`listSchedules`）在 `ElderDetailScreen` 早就用 `groupsError`
+  // 正確降級了，這裡卻讓 `groups` 留在 null——畫面同時顯示「載入失敗，請稍後再試。」
+  // 與「載入中…」兩句互相矛盾的話。家屬會照著「載入中」等下去，而且永遠等不到：
+  // 畫面上沒有重試鈕，唯一的復原方式是按返回再進來一次。
+  it("載入失敗時只說載入失敗，不可同時還說「載入中…」", async () => {
+    renderScreen(
+      vi.fn().mockResolvedValue({
+        status: 500,
+        json: async () => ({
+          success: false,
+          data: null,
+          error: { code: "server_error", message: "系統忙碌，請稍後再試" },
+          meta: null,
+        }),
+      }),
+    );
+    expect(await screen.findByText("載入失敗，請稍後再試。")).toBeInTheDocument();
+    expect(screen.queryByText("載入中…")).not.toBeInTheDocument();
+  });
+
   it("切換類型會換掉時間欄位的問法", async () => {
     renderScreen(vi.fn().mockResolvedValue({ status: 200, json: async () => envelope([]) }));
     await screen.findByText("還沒有任何提醒，從下方新增第一筆。");
