@@ -24,17 +24,23 @@ function setSession() {
   );
 }
 
+/** 401 的處理由呼叫端（`ElderApp`）負責，這裡只要能觀察到它有沒有被通知。 */
+const onTokenRevoked = vi.fn();
+
 function renderScreen(items: unknown[]) {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ status: 200, json: async () => envelope(items) }));
   setSession();
   return render(
     <ElderSession.Provider>
-      <NotificationsScreen />
+      <NotificationsScreen onTokenRevoked={onTokenRevoked} />
     </ElderSession.Provider>,
   );
 }
 
-beforeEach(() => localStorage.clear());
+beforeEach(() => {
+  localStorage.clear();
+  onTokenRevoked.mockClear();
+});
 afterEach(() => vi.unstubAllGlobals());
 
 describe("NotificationsScreen（長輩版）", () => {
@@ -110,7 +116,7 @@ describe("NotificationsScreen（長輩版）", () => {
     setSession();
     render(
       <ElderSession.Provider>
-        <NotificationsScreen />
+        <NotificationsScreen onTokenRevoked={onTokenRevoked} />
       </ElderSession.Provider>,
     );
     expect(await screen.findByText("載入中…")).toBeInTheDocument();
@@ -128,7 +134,7 @@ describe("NotificationsScreen（長輩版）", () => {
     setSession();
     render(
       <ElderSession.Provider>
-        <NotificationsScreen />
+        <NotificationsScreen onTokenRevoked={onTokenRevoked} />
       </ElderSession.Provider>,
     );
     expect(await screen.findByRole("alert")).toBeInTheDocument();
@@ -142,12 +148,39 @@ describe("NotificationsScreen（長輩版）", () => {
     setSession();
     render(
       <ElderSession.Provider>
-        <NotificationsScreen />
+        <NotificationsScreen onTokenRevoked={onTokenRevoked} />
       </ElderSession.Provider>,
     );
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(
       screen.queryByText("現在沒有要提醒您的事。時間到了金孫會跟您說。"),
     ).not.toBeInTheDocument();
+  });
+
+  it("token 被撤銷（401）時通知呼叫端，而不是叫長輩「稍後再試」", async () => {
+    // ⚠️ **全分支審查抓到的 Critical 1** 在提醒列表這一側的樣子：家屬按過「重新
+    // 產生長輩綁定碼」之後，這支 token 已經被後端撤銷，「稍後再試」永遠不會成功
+    // ——長輩會反覆按鈴鐺，而畫面上沒有任何一條路把他帶回配對畫面。
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        status: 401,
+        json: async () => ({
+          success: false,
+          data: null,
+          error: { code: "invalid_token", message: "登入已失效" },
+          meta: null,
+        }),
+      }),
+    );
+    setSession();
+    render(
+      <ElderSession.Provider>
+        <NotificationsScreen onTokenRevoked={onTokenRevoked} />
+      </ElderSession.Provider>,
+    );
+    await waitFor(() => expect(onTokenRevoked).toHaveBeenCalledOnce());
+    // 不可以再落到「載入失敗，請稍後再試」那一段：呼叫端這時已經在把他導回配對。
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

@@ -51,6 +51,16 @@ const SCANNER_ERRORS: Record<QrScannerError, string> = {
 export function BindScreen(props: {
   prefilledCode?: string;
   /**
+   * 「他是被登出才回到這個畫面的」要講的那句話（見 `ElderApp` 的 `signedOutNotice`）。
+   *
+   * ⚠️ 用來當**錯誤欄位的初始值**而不是另外畫一段：兩段同時掛著的話，長輩會同時
+   * 看到「家人幫您重新設定了…」與「找不到這組號碼…」兩句紅字，不知道該信哪一句。
+   * 當成初始值的話，他一送出就被這一次的結果取代，正好是我們要的。
+   * ⚠️ 只在**掛載時**讀一次：這個畫面是被登出時才重新掛上來的（`ElderApp` 的路由
+   * 從對講機換成配對，元件整個換掉），不會有「掛著不動、值卻換了」的情形。
+   */
+  signedOutNotice?: string;
+  /**
    * 這一欄目前是否真的看得見（雙欄舞台在窄螢幕是頁籤擇一顯示，見
    * `stage/StagePage.tsx`）。⚠️ **不是**用來卸載這個畫面——卸載會丟掉長輩
    * 打到一半的號碼；只用來在「切走時」讓下面的相機 effect 停止，「切回來時」
@@ -64,7 +74,7 @@ export function BindScreen(props: {
   const { visible = true } = props;
   const { signIn } = ElderSession.useSession();
   const [code, setCode] = useState(props.prefilledCode ?? "");
-  const [error, setError] = useState("");
+  const [error, setError] = useState(props.signedOutNotice ?? "");
   const [busy, setBusy] = useState(false);
   const [scanning, setScanning] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);

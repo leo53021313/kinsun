@@ -14,20 +14,34 @@
 
 import { formatTime } from "kinsun-shared/format";
 import type { AppNotification } from "kinsun-shared/types";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { saveSeenAt } from "@/notify/seen";
 import { ElderSession } from "@/session/contexts";
+import { makeSignOutOnAuthError } from "@/session/useSignOutOnAuthError";
 import { strings } from "@/strings";
 import { ErrorText } from "@/ui/Feedback";
 
 import { listElderNotifications } from "./api";
 
-export function NotificationsScreen() {
+export function NotificationsScreen(props: {
+  /**
+   * 後端不認這支 token（401）：呼叫端負責清掉登入並把人導回配對畫面。
+   *
+   * ⚠️ 沒有這條的話，家屬按過「重新產生長輩綁定碼」之後，長輩按鈴鐺只會看到
+   * 「載入失敗，請稍後再試。」——而「稍後再試」永遠不會成功，他手上這支手機的
+   * token 已經被撤銷了（見 `useTalk` 該 prop 的說明）。
+   */
+  onTokenRevoked: () => void;
+}) {
   const { session } = ElderSession.useSession();
   const token = session?.token ?? "";
   const [items, setItems] = useState<AppNotification[] | null>(null);
   const [hasError, setHasError] = useState(false);
+
+  // 工廠、回傳的是函式值，所以用 useMemo 而非 useCallback（同家屬端五個畫面的寫法）。
+  const { onTokenRevoked } = props;
+  const signOutOn401 = useMemo(() => makeSignOutOnAuthError(onTokenRevoked), [onTokenRevoked]);
 
   useEffect(() => {
     if (!token) {
@@ -56,14 +70,18 @@ export function NotificationsScreen() {
           }
         }
       })
-      .catch(() => {
+      .catch((exc) => {
+        // ⚠️ 401 先攔：它不是「稍後再試」救得回來的錯誤，顯示錯誤文字只會讓長輩
+        // 一直重進來。攔截不看 `alive`——token 真的被撤銷了，即使這個畫面已經被
+        // 切走，那份登入狀態一樣不該留著（同家屬端五個畫面的順序）。
+        if (signOutOn401(exc)) return;
         if (!alive) return;
         setHasError(true);
       });
     return () => {
       alive = false;
     };
-  }, [token]);
+  }, [token, signOutOn401]);
 
   return (
     <div className="flex h-full flex-col gap-4 p-5">

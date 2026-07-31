@@ -8,7 +8,7 @@
  *（會丟掉打到一半的號碼）。`ElderApp` 自己不需要這個資訊。
  */
 
-import { useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { useScreenStack } from "@/nav/useScreenStack";
 import { ElderSession } from "@/session/contexts";
@@ -32,6 +32,30 @@ export function ElderApp(props: { prefilledCode?: string; visible?: boolean }) {
   const stack = useScreenStack<ElderRoute>(session ? { name: "talk" } : { name: "bind" });
   const { reset } = stack;
 
+  /**
+   * 被動登出（後端不認 token、或綁定失效）時要在配對畫面上講的那句話。
+   *
+   * ⚠️ **為什麼這句話住在這裡、不住在對講機或提醒畫面**：長輩被登出的那一刻，
+   * 那兩個畫面就被配對畫面換掉了，寫在它們身上的說明一個字都不會被看到。他接下來
+   * 唯一看得到的畫面是配對畫面，所以話要在**那裡**講。
+   * ⚠️ 自己按登出**不**帶這句話：那是他自己做的事，不需要人解釋（`onLogout` 沒有
+   * 呼叫 `loseSession`）。
+   */
+  const [signedOutNotice, setSignedOutNotice] = useState("");
+  const loseSession = useCallback(
+    (notice: string) => {
+      setSignedOutNotice(notice);
+      signOut();
+    },
+    [signOut],
+  );
+  // 重新登入成功就把上一次的說明收掉：不收的話他下次自己按登出，配對畫面會再說
+  // 一次「家人幫您重新設定了」——那時根本沒有人幫他設定過任何東西。
+  const enterTalk = useCallback(() => {
+    setSignedOutNotice("");
+    reset({ name: "talk" });
+  }, [reset]);
+
   // 登入狀態消失（登出或綁定失效）就回到配對畫面。留在原畫面的話，上面會停著
   // 最後一次成功的內容，看起來像還連得上。
   const loggedIn = session !== null;
@@ -47,13 +71,14 @@ export function ElderApp(props: { prefilledCode?: string; visible?: boolean }) {
         return (
           <BindScreen
             prefilledCode={props.prefilledCode}
+            signedOutNotice={signedOutNotice}
             visible={visible}
-            onDone={() => reset({ name: "talk" })}
+            onDone={enterTalk}
             onLogin={() => stack.push({ name: "login" })}
           />
         );
       case "login":
-        return <LoginScreen onDone={() => reset({ name: "talk" })} />;
+        return <LoginScreen onDone={enterTalk} />;
       case "talk":
         return (
           <TalkScreen
@@ -68,12 +93,20 @@ export function ElderApp(props: { prefilledCode?: string; visible?: boolean }) {
               await logoutSession(session?.token ?? "").catch(() => undefined);
               signOut();
             }}
-            // 403＝這台手機的綁定失效了。清掉 session，上面的守衛會把他導回配對。
-            onBindingLost={signOut}
+            // 403＝家屬撤回了同意（token 還在，但閘門不讓這一輪過）。
+            onBindingLost={() => loseSession(strings.talk.bindingLost)}
+            // 401＝後端不認這支 token（家屬按了「重新產生長輩綁定碼」，或彩排後
+            // 重建了資料庫）。⚠️ 這條路徑比 403 常見得多——後端撤 token 在拆綁定
+            // **之前**，認證那一關就先擋下來了，403 幾乎到不了（見 useTalk 的說明）。
+            onTokenRevoked={() => loseSession(strings.elderBind.signedOutByGuardian)}
           />
         );
       case "notifications":
-        return <NotificationsScreen />;
+        return (
+          <NotificationsScreen
+            onTokenRevoked={() => loseSession(strings.elderBind.signedOutByGuardian)}
+          />
+        );
       default: {
         // 走到這裡代表新增了路由卻忘了接畫面。編譯期就會抓到（never 型別，
         // 與家屬端 GuardianApp 同款窮盡檢查）。

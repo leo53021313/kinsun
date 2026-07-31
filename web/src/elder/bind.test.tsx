@@ -176,6 +176,27 @@ describe("長輩配對", () => {
     );
   });
 
+  it("帳密登入的 401 是密碼打錯，不可以把長輩踢回配對畫面", async () => {
+    // ⚠️ 全分支審查修 Critical 1 時，長輩端的對講機與提醒列表都接上了「401 就清掉
+    // 登入、導回配對」。**登入畫面是唯一不可以這樣做的地方**：這裡的 401 是「號碼
+    // 或密碼不對」，要顯示給人看、讓他重打，把他踢回配對畫面等於每打錯一次密碼就
+    // 被趕出去一次（`session/useSignOutOnAuthError.ts` 開頭也寫著同一句警告）。
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ status: 401, json: async () => failure("invalid_credentials", "x") }),
+    );
+    renderApp();
+    await userEvent.click(screen.getByRole("button", { name: "用過金孫？帳號密碼登入" }));
+    await userEvent.type(screen.getByLabelText("手機號碼"), "0912345678");
+    await userEvent.type(screen.getByLabelText("密碼"), "wrong-password");
+    await userEvent.click(screen.getByRole("button", { name: "登入" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "號碼或密碼不對，可以請家人幫忙確認。",
+    );
+    // 還在登入畫面（號碼與密碼都還在），不是被送回配對畫面重打一次綁定碼。
+    expect(screen.getByLabelText("手機號碼")).toHaveValue("0912345678");
+  });
+
   it("手機號碼欄位格式不對時，照實顯示後端訊息而非「連線失敗」", async () => {
     // ⚠️ 審查發現：手機號碼欄空白或只打了「09」會讓後端
     // ElderLoginIn.phone: Field(min_length=8) 觸發 422 validation_error，

@@ -10,9 +10,10 @@
  * 控制每一步的環境裡才測得出來。
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ApiError } from "@/api";
+import { makeSignOutOnAuthError } from "@/session/useSignOutOnAuthError";
 import { strings } from "@/strings";
 import { unlockAudio } from "@/talk/audioUnlock";
 import {
@@ -116,9 +117,21 @@ export function useTalk(options: {
   visible?: boolean;
   /** 綁定失效（403）：呼叫端負責把人導回配對畫面。 */
   onBindingLost: () => void;
+  /**
+   * 後端不認這支 token（401）：呼叫端負責清掉登入並把人導回配對畫面。
+   *
+   * ⚠️ **與 403 分開接，因為 403 幾乎到不了**：家屬按「重新產生長輩綁定碼」時，
+   * 後端 `accounts/service.py::revoke_elder_device` 是**先**撤 token **再**拆綁定，
+   * 於是 `channels/app/turns.py::current_elder` 在認證那一步就回 401，永遠走不到
+   * 後面那個 403 `consent_revoked`。只接 403 的話，長輩每按一次麥克風都只會看到
+   * 「金孫沒聽清楚，再說一次好嗎？」，重新整理也沒用（token 在 localStorage、
+   * 初始路由仍是對講機），而家屬手上那組新碼永遠沒有畫面可以輸入。
+   * ⚠️ 彩排後重建資料庫會讓舊 token 落在同一個狀態，比家屬按鈕更容易發生。
+   */
+  onTokenRevoked: () => void;
   deps?: Partial<TalkDeps>;
 }) {
-  const { token, onBindingLost, visible = true } = options;
+  const { token, onBindingLost, onTokenRevoked, visible = true } = options;
   // ⚠️ **用 `useState` 的惰性初始化當「只算一次的常數」**（不是拿它當狀態用）：
   // `deps` 若每次重繪都重新展開成一個新物件，所有以它為相依的 `useCallback`／
   // `useEffect` 都會跟著每次重繪失效——包括那條會**重建長連線**的 effect。寫
@@ -143,6 +156,12 @@ export function useTalk(options: {
   const [avatar, setAvatar] = useState<AvatarState>("idle");
   const [replyText, setReplyText] = useState(strings.talk.idleHint);
   const [micReady, setMicReady] = useState(false);
+
+  // 401 的判定沿用家屬端五個畫面都在用的那一支（`session/useSignOutOnAuthError.ts`）
+  // ——「什麼算 token 不能用了」只該有一份定義。⚠️ 它只負責「收到 401 就呼叫你給的
+  // 那支函式」，長輩要看到的那句說明由呼叫端在配對畫面上講（見下方 catch 的說明）。
+  // 用 `useMemo` 而非 `useCallback`：它是**工廠**、回傳的是函式值（同家屬端寫法）。
+  const signOutOn401 = useMemo(() => makeSignOutOnAuthError(onTokenRevoked), [onTokenRevoked]);
 
   // 以下全部用 ref：它們的變動不該觸發重繪，而且事件處理器必須讀到最新值
   // ——放進 state 會被閉包鎖在註冊當下的那一版。
@@ -587,6 +606,10 @@ export function useTalk(options: {
       if (exc instanceof ApiError && exc.status === 403) {
         setReplyText(strings.talk.bindingLost);
         onBindingLost();
+      } else if (signOutOn401(exc)) {
+        // ⚠️ 401 刻意**不**設字幕：呼叫端收到就會清掉登入，這個畫面在同一次重繪
+        // 就被配對畫面換掉，寫在這裡長輩看不到。那句「家人幫您重新設定了…」由
+        // `ElderApp` 交給配對畫面顯示——那才是他接下來看得到的地方。
       } else {
         setReplyText(strings.talk.fallback);
       }
@@ -597,7 +620,15 @@ export function useTalk(options: {
       // 回覆都會被當成「錄音中抵達」而丟掉——長輩從此聽不到任何回答。
       micActiveRef.current = false;
     }
-  }, [deps, token, onBindingLost, prefetchNext, setAvatarBoth, armThinkingWatchdog]);
+  }, [
+    deps,
+    token,
+    onBindingLost,
+    signOutOn401,
+    prefetchNext,
+    setAvatarBoth,
+    armThinkingWatchdog,
+  ]);
 
   const pressIn = useCallback(() => {
     // 第一次互動時解鎖音訊（iOS Safari）。必須在使用者手勢之內，之後才播得動

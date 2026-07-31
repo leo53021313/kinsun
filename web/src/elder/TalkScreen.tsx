@@ -24,12 +24,15 @@ export function TalkScreen(props: {
   onOpenNotifications: () => void;
   onLogout: () => void;
   onBindingLost: () => void;
+  /** 後端不認這支 token（401）。與 403 分開的理由見 `useTalk` 該 prop 的說明。 */
+  onTokenRevoked: () => void;
 }) {
   const { visible = true } = props;
   const talk = useTalk({
     token: props.token,
     visible,
     onBindingLost: props.onBindingLost,
+    onTokenRevoked: props.onTokenRevoked,
   });
   const disabled = !talk.micReady || talk.avatar === "thinking";
 

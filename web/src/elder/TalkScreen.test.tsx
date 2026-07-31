@@ -55,6 +55,7 @@ function renderScreen(
     onOpenNotifications: () => void;
     onLogout: () => void;
     onBindingLost: () => void;
+    onTokenRevoked: () => void;
   }> = {},
 ) {
   const props = {
@@ -63,6 +64,7 @@ function renderScreen(
     onOpenNotifications: vi.fn(),
     onLogout: vi.fn(),
     onBindingLost: vi.fn(),
+    onTokenRevoked: vi.fn(),
     ...overrides,
   };
   const view = render(
@@ -73,6 +75,7 @@ function renderScreen(
       onOpenNotifications={props.onOpenNotifications}
       onLogout={props.onLogout}
       onBindingLost={props.onBindingLost}
+      onTokenRevoked={props.onTokenRevoked}
     />,
   );
   return { ...props, view };
@@ -188,12 +191,15 @@ describe("麥克風鍵真的把手勢交出去", () => {
 });
 
 describe("交給 useTalk 的東西", () => {
-  it("token、visible 與綁定失效回呼都真的傳進去", () => {
+  it("token、visible 與兩支登入失效回呼都真的傳進去", () => {
     // ⚠️ 沒有這條，`visible` 少傳一個字也沒人會發現——而後果是切到家屬端頁籤
     // 之後麥克風一直開著（同一類坑的第四次）。
+    // ⚠️ `onTokenRevoked` 少傳的後果同樣看不出來：畫面完全正常，但長輩在家屬按過
+    // 「重新產生綁定碼」之後永遠回不到配對畫面（全分支審查的 Critical 1）。
     const h = renderScreen({ visible: false });
     expect(talkState.options).toMatchObject({ token: "tok", visible: false });
     expect(talkState.options?.onBindingLost).toBe(h.onBindingLost);
+    expect(talkState.options?.onTokenRevoked).toBe(h.onTokenRevoked);
   });
 });
 

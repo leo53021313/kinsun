@@ -222,6 +222,7 @@ function setup(
     currentPlace: vi.fn().mockResolvedValue(null),
     revokeQueuedReplyAudio: vi.fn(),
     onBindingLost: vi.fn(),
+    onTokenRevoked: vi.fn(),
   };
   const view = renderHook(
     (props: { visible: boolean }) =>
@@ -229,6 +230,7 @@ function setup(
         token: "tok",
         visible: props.visible,
         onBindingLost: harness.onBindingLost,
+        onTokenRevoked: harness.onTokenRevoked,
         deps: {
           createRecorder: () => harness.recorder.create(),
           createPlayer: () => harness.player.create(),
@@ -832,6 +834,24 @@ describe("降級與失敗", () => {
     await holdAndRelease(h);
     await waitFor(() => expect(h.onBindingLost).toHaveBeenCalledOnce());
     expect(h.view.result.current.replyText).toContain("綁定");
+  });
+
+  it("token 被撤銷（401）時通知呼叫端，不可以只說「金孫沒聽清楚」", async () => {
+    // ⚠️ **全分支審查抓到的 Critical 1**：家屬按下「重新產生長輩綁定碼」時，後端
+    // `accounts/service.py::revoke_elder_device` 是**先**撤 token **再**拆綁定，
+    // 於是 `turns.py::current_elder` 在認證那一步就回 401，永遠走不到後面那個 403。
+    // 只接 403 的話，長輩每按一次麥克風都只看到「金孫沒聽清楚，再說一次好嗎？」，
+    // 他就一次比一次更大聲地再講一遍；重新整理也沒用（token 在 localStorage、
+    // 初始路由仍是對講機），而家屬手上那組新碼永遠沒有畫面可以輸入。
+    const h = setup();
+    h.postTurn.mockRejectedValue(new ApiError(401, "invalid_token"));
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    await holdAndRelease(h);
+    await waitFor(() => expect(h.onTokenRevoked).toHaveBeenCalledOnce());
+    // 403 是另一回事（同意被撤回、token 還有效），不可以順手一起通知。
+    expect(h.onBindingLost).not.toHaveBeenCalled();
+    // 麥克風鍵要能再按（畫面接下來會被呼叫端換成配對畫面，但這一層不可以卡在「在想」）。
+    expect(h.view.result.current.avatar).toBe("idle");
   });
 });
 
