@@ -42,11 +42,16 @@ const BACK_LABELS: Partial<Record<ElderRoute["name"], string>> = {
 
 /**
  * ⚠️ `prefilledCode` 是「家屬欄把剛產生的碼直接送到長輩欄」那條內測捷徑的**接收端**
- *（spec W-15）。**接收端已就緒並有測試，發送端待 P4**：`stage/StagePage.tsx` 目前
- * 沒有傳它，`guardian/InviteCard.tsx` 的 `onSendToElder` 兩個呼叫端
- *（`HomeScreen`／`ElderDetailScreen`）也都沒有傳，所以整條鏈連同
- * `strings.elderBind.receivedFromGuardian` 目前都還沒有人走過。P4 接上發送端時，
- * 這一側不需要任何改動。
+ *（spec W-15，P4 Task 3 接上發送端：`stage/StagePage.tsx` 持有這個字串狀態，往下
+ * 傳給這裡，並把 `guardian/GuardianApp.tsx` 的 `onSendCodeToElder` 一路轉交給
+ * `HomeScreen`／`ElderDetailScreen`，最終掛在 `InviteCard` 的 `onSendToElder`）。
+ *
+ * ⚠️ **這裡本身不需要改**（往下轉交給 `BindScreen` 即可），但發送端接上之後才
+ * 現形一個 P3 時沒測到的坑：這個畫面多半是**先掛著**、家屬才**之後**按下送出
+ * （雙欄舞台一開場兩欄就都在），`prefilledCode` 是掛載之後才從 `undefined` 變成
+ * 有值的，不是掛載當下就有值——`BindScreen` 原本只用 `useState(() =>
+ * props.prefilledCode ?? "")` 這種只在首次掛載讀一次的惰性初始化，已補上
+ * `useEffect` 讓已經掛著的畫面也能同步（見該檔說明）。
  */
 export function ElderApp(props: { prefilledCode?: string; visible?: boolean }) {
   const { visible = true } = props;

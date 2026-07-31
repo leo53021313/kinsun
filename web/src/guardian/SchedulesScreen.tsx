@@ -12,6 +12,7 @@ import type { ScheduleGroup, ScheduleInput } from "kinsun-shared/types";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { apiErrorMessage } from "@/api";
+import { emitStageEvent } from "@/notify/bus";
 import { GuardianSession } from "@/session/contexts";
 import { makeSignOutOnAuthError } from "@/session/useSignOutOnAuthError";
 import { strings } from "@/strings";
@@ -138,6 +139,8 @@ export function SchedulesScreen(props: { elderId: string; elderName: string }) {
         await createSchedule(elderId, body, token);
       }
       resetForm();
+      // 讓長輩欄立刻去拉，不必等下一次輪詢（見 notify/bus 的說明）。
+      emitStageEvent("guardian-wrote");
       await reload();
     } catch (exc) {
       if (signOutOn401(exc)) return;
@@ -158,6 +161,8 @@ export function SchedulesScreen(props: { elderId: string; elderName: string }) {
       await deleteSchedule(elderId, group.group_id, token);
       if (editingId === group.group_id) resetForm();
       setPendingDelete(null);
+      // 讓長輩欄立刻去拉，不必等下一次輪詢（見 notify/bus 的說明）。
+      emitStageEvent("guardian-wrote");
       await reload();
     } catch (exc) {
       if (signOutOn401(exc)) return;

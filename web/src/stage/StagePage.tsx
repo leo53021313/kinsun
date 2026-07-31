@@ -7,6 +7,13 @@
  * ⚠️ 兩欄各自持有獨立的 session（見 session/createSessionContext）。
  * 兩個 Provider 都掛在最外層而不是各掛在自己那一欄裡面——P4 的跨欄連動
  * （家屬端操作完立刻叫長輩端重載）需要兩邊都在同一棵樹底下。
+ *
+ * ⚠️ **跨欄連動有兩條不同的線**（P4 Task 3）：一條是 `notify/bus.ts` 的事件匯
+ * 流排（只送「有事發生了」的訊號，不搬資料，供 Task 4 接上通知輪詢的
+ * `reloadSignal`）；另一條是這裡的 `prefilledCode`／`sendCodeToElder`（直接搬
+ * 一個字串——家屬產生的綁定碼），因為它就是要展示的資料本身，不是「叫對方去
+ * 拉」。兩條線刻意分開：搬資料的需求只有這一種，不需要為它把兩欄的型別與快取
+ * 綁在一起。
  */
 
 import { memo, useEffect, useState } from "react";
@@ -81,6 +88,10 @@ function useIsWideScreen(): boolean {
 export const StagePage = memo(function StagePage() {
   const [pane, setPane] = useState<Pane>("elder");
   const isWide = useIsWideScreen();
+  // 家屬欄產生的綁定碼（新建長輩／重新產生綁定碼）直接送到長輩欄（spec W-15
+  // 內測捷徑，接收端見 `elder/BindScreen.tsx`）：省去在同一個瀏覽器分頁裡「拿
+  // 一欄的相機去掃另一欄螢幕上的 QR」這種不切實際的操作。
+  const [prefilledCode, setPrefilledCode] = useState<string | undefined>(undefined);
 
   // ⚠️ 審查發現的 Critical：長輩欄按下「掃描 QR 碼」後，若在窄螢幕切到
   // 「家屬端」頁籤，非活動欄只是被 CSS `hidden` 蓋住——元件仍掛著，
@@ -94,6 +105,15 @@ export const StagePage = memo(function StagePage() {
   // 只看 `pane` 的話，會出現「畫面看起來完全正常、麥克風卻永遠打不開，而且沒有任何
   // UI 能把它撥回來」的死路——詳見 `useIsWideScreen` 的說明。
   const elderVisible = isWide || pane === "elder";
+
+  // ⚠️ 窄螢幕頁籤模式下另一欄不在畫面上，光是把碼傳下去，家屬按下去什麼都
+  // 看不到（連動了也像沒動一樣）——所以連動的同時把頁籤切回長輩端，這正是這
+  // 條內測捷徑要做給人看的效果（「你看，長輩那邊出現了」）。寬螢幕兩欄本來就
+  // 都看得見，`setPane` 在那裡是無害的（下次縮窄視窗時頁籤會自然停在長輩端）。
+  function sendCodeToElder(code: string) {
+    setPrefilledCode(code);
+    setPane("elder");
+  }
 
   return (
     <ElderSession.Provider>
@@ -126,17 +146,12 @@ export const StagePage = memo(function StagePage() {
           <div className="mx-auto grid w-full max-w-5xl gap-8 lg:grid-cols-2">
             <div className={pane === "elder" ? "" : "hidden lg:block"}>
               <PhoneFrame title={strings.stage.elderTitle} os="ios">
-                {/* ⚠️ 這裡**還沒有**傳 `prefilledCode`：「家屬欄產生的碼直接送到長輩
-                    欄」那條內測捷徑（spec W-15）的接收端在 P3 已經建好並有測試
-                    （`ElderApp`／`BindScreen`），但發送端待 P4——`InviteCard` 的
-                    `onSendToElder` 目前沒有任何呼叫端傳進來。P4 接上時要在這裡把碼
-                    往下傳，長輩端不需要改。 */}
-                <ElderApp visible={elderVisible} />
+                <ElderApp visible={elderVisible} prefilledCode={prefilledCode} />
               </PhoneFrame>
             </div>
             <div className={pane === "guardian" ? "" : "hidden lg:block"}>
               <PhoneFrame title={strings.stage.guardianTitle} os="android">
-                <GuardianApp />
+                <GuardianApp onSendCodeToElder={sendCodeToElder} />
               </PhoneFrame>
             </div>
           </div>

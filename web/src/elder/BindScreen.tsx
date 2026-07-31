@@ -79,6 +79,25 @@ export function BindScreen(props: {
   const [scanning, setScanning] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
+  // ⚠️ 這個畫面在家屬按下「送到長輩的手機」之前多半早就掛著（雙欄舞台一開場
+  // 兩欄就都在，見 stage/StagePage.tsx）——`prefilledCode` 是那一刻才從
+  // `undefined` 變成有值的，不是掛載當下就已經有值。上面那行的 `useState` 只在
+  // 第一次掛載時讀一次 `props.prefilledCode`，之後 props 再怎麼變都不會讓它重新
+  // 算（已用 `rerender` 實測證實：不接這段的話，畫面上的綁定碼欄永遠是空的）。
+  //
+  // ⚠️ 用「render 期間比對＋調整」（React 官方文件「Adjusting some state when a
+  // prop changes」的既定寫法，`notify/useNotificationFeed.ts` 的 `lastSession`
+  // 已是同一套），不是 `useEffect`：在 effect 裡直接呼叫 `setCode` 會先掛著舊值
+  // 多畫一次畫面、下一輪 render 才收掉（`react-hooks/set-state-in-effect` 擋下的
+  // 正是這種會多一輪 cascading render 的寫法）。
+  const [lastPrefilledCode, setLastPrefilledCode] = useState(props.prefilledCode);
+  if (props.prefilledCode !== lastPrefilledCode) {
+    setLastPrefilledCode(props.prefilledCode);
+    if (props.prefilledCode !== undefined) {
+      setCode(props.prefilledCode);
+    }
+  }
+
   async function submit(raw: string) {
     const trimmed = raw.trim();
     if (!trimmed) {

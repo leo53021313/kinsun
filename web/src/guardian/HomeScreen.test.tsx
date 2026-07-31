@@ -1,9 +1,10 @@
 /** 家屬首頁：長輩列表、新增長輩、綁定碼。 */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { useStageEvent } from "@/notify/bus";
 import { GuardianSession } from "@/session/contexts";
 
 import { HomeScreen } from "./HomeScreen";
@@ -326,5 +327,71 @@ describe("HomeScreen", () => {
     await waitFor(() => {
       expect(screen.getByAltText("長輩綁定用的 QR 圖")).toBeInTheDocument();
     });
+  });
+
+  // ⚠️ 守的是「跨欄連動」（notify/bus.ts）：新增長輩成功後，長輩欄不必等下一次
+  // 輪詢（最多兩秒）就能立刻知道有新事情發生。用真正的 `useStageEvent`（而非
+  // mock `emitStageEvent`）掛一個訂閱者旁觀，較貼近實際跨欄的用法。
+  it("建立長輩成功後會發出 guardian-wrote 事件", async () => {
+    const spy = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 200, json: async () => envelope([]) })
+      .mockResolvedValueOnce({
+        status: 201,
+        json: async () =>
+          envelope({ elder_id: "e9", name: "阿公", nickname: "", invite_code: "AB12CD" }),
+      })
+      .mockResolvedValueOnce({ status: 200, json: async () => envelope([]) });
+    vi.stubGlobal("fetch", spy);
+    const { result } = renderHook(() => useStageEvent("guardian-wrote"));
+    const before = result.current;
+    renderHome();
+    await screen.findByText("還沒有長輩檔案，先在上面建立一位吧。");
+    await userEvent.type(screen.getByLabelText("長輩稱呼"), "阿公");
+    await userEvent.click(screen.getByRole("button", { name: "建立長輩檔案" }));
+    await waitFor(() => expect(result.current).not.toBe(before));
+  });
+
+  // ⚠️ 守的是「跨欄連動」的另一半：家屬欄產生碼之後，要能把它直接送到長輩欄
+  // （spec W-15 內測捷徑），省去在同一個瀏覽器分頁裡「拿一欄的相機去掃另一欄
+  // 螢幕上的 QR」這種不切實際的操作。`InviteCard` 本身沒有呼叫端就不畫這顆按鈕
+  // （見既有測試「綁定碼旁邊有 QR 圖」等未傳 `onSendCodeToElder` 的情形），這裡
+  // 只驗證「有傳的話，按下去會把正確的碼交出去」。
+  it("按「送到長輩的手機」會把剛拿到的綁定碼交給呼叫端", async () => {
+    const spy = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 200, json: async () => envelope([]) })
+      .mockResolvedValueOnce({
+        status: 201,
+        json: async () =>
+          envelope({ elder_id: "e9", name: "阿公", nickname: "", invite_code: "AB12CD" }),
+      })
+      .mockResolvedValueOnce({ status: 200, json: async () => envelope([]) });
+    vi.stubGlobal("fetch", spy);
+    const onSendCodeToElder = vi.fn();
+    renderHome({ onSendCodeToElder });
+    await screen.findByText("還沒有長輩檔案，先在上面建立一位吧。");
+    await userEvent.type(screen.getByLabelText("長輩稱呼"), "阿公");
+    await userEvent.click(screen.getByRole("button", { name: "建立長輩檔案" }));
+    await screen.findByText("AB12CD");
+    await userEvent.click(screen.getByRole("button", { name: "送到長輩的手機" }));
+    expect(onSendCodeToElder).toHaveBeenCalledWith("AB12CD");
+  });
+
+  it("沒有傳 onSendCodeToElder 時不畫出「送到長輩的手機」鈕", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValueOnce({ status: 200, json: async () => envelope([]) }).mockResolvedValueOnce({
+        status: 201,
+        json: async () =>
+          envelope({ elder_id: "e9", name: "阿公", nickname: "", invite_code: "AB12CD" }),
+      }).mockResolvedValueOnce({ status: 200, json: async () => envelope([]) }),
+    );
+    renderHome();
+    await screen.findByText("還沒有長輩檔案，先在上面建立一位吧。");
+    await userEvent.type(screen.getByLabelText("長輩稱呼"), "阿公");
+    await userEvent.click(screen.getByRole("button", { name: "建立長輩檔案" }));
+    await screen.findByText("AB12CD");
+    expect(screen.queryByRole("button", { name: "送到長輩的手機" })).not.toBeInTheDocument();
   });
 });

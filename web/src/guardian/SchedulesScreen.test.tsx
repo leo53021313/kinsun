@@ -1,9 +1,10 @@
 /** 排程管理：用藥／回診／自訂三種提醒類型共用的新增、修改、刪除（各類型可用的重複方式不同，非三三對應）。 */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { useStageEvent } from "@/notify/bus";
 import { GuardianSession } from "@/session/contexts";
 
 import { SchedulesScreen } from "./SchedulesScreen";
@@ -263,5 +264,38 @@ describe("SchedulesScreen", () => {
     await waitFor(() =>
       expect(screen.queryByText("散步（每天 17:00）")).not.toBeInTheDocument(),
     );
+  });
+
+  // ⚠️ 這兩條守的是「跨欄連動」（notify/bus.ts）：家屬這頁寫入成功後，長輩欄不必
+  // 等下一次輪詢（最多兩秒）就能立刻知道有新事情發生。用真正的 `useStageEvent`
+  // （而非 mock `emitStageEvent`）掛一個訂閱者旁觀，較貼近實際跨欄的用法。
+  it("新增排程成功後會發出 guardian-wrote 事件", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 200, json: async () => envelope([]) })
+      .mockResolvedValueOnce({ status: 201, json: async () => envelope(WALK) })
+      .mockResolvedValueOnce({ status: 200, json: async () => envelope([WALK]) });
+    const { result } = renderHook(() => useStageEvent("guardian-wrote"));
+    const before = result.current;
+    renderScreen(fetchImpl);
+    await screen.findByText("還沒有任何提醒，從下方新增第一筆。");
+    await userEvent.type(screen.getByLabelText("提醒內容"), "散步");
+    await userEvent.click(screen.getByRole("checkbox", { name: "早上" }));
+    await userEvent.click(screen.getByRole("button", { name: "新增" }));
+    await waitFor(() => expect(result.current).not.toBe(before));
+  });
+
+  it("刪除確認後也會發出 guardian-wrote 事件", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 200, json: async () => envelope([WALK]) })
+      .mockResolvedValueOnce({ status: 204, json: async () => ({}) })
+      .mockResolvedValueOnce({ status: 200, json: async () => envelope([]) });
+    const { result } = renderHook(() => useStageEvent("guardian-wrote"));
+    const before = result.current;
+    renderScreen(fetchImpl);
+    await userEvent.click(await screen.findByRole("button", { name: "刪除" }));
+    await userEvent.click(screen.getByRole("button", { name: "確定刪除" }));
+    await waitFor(() => expect(result.current).not.toBe(before));
   });
 });

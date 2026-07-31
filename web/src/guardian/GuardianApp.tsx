@@ -29,7 +29,15 @@ export type GuardianRoute =
   | { name: "schedules"; elderId: string; elderName: string }
   | { name: "notifications" };
 
-export function GuardianApp() {
+export function GuardianApp(props: {
+  /**
+   * 把家屬產生的綁定碼直接送到長輩欄（spec W-15 內測捷徑）。轉交給
+   * `HomeScreen`／`ElderDetailScreen`，接線見 `stage/StagePage.tsx`——
+   * `GuardianApp` 自己不需要知道長輩欄的任何事，只單純往下傳。
+   */
+  onSendCodeToElder?: (code: string) => void;
+}) {
+  const { onSendCodeToElder } = props;
   const { session } = GuardianSession.useSession();
   const stack = useScreenStack<GuardianRoute>(session ? { name: "home" } : { name: "login" });
   const { reset } = stack;
@@ -74,6 +82,7 @@ export function GuardianApp() {
           <HomeScreen
             onOpenElder={(elderId, elderName) => stack.push({ name: "elder", elderId, elderName })}
             onOpenNotifications={() => stack.push({ name: "notifications" })}
+            onSendCodeToElder={onSendCodeToElder}
           />
         );
       case "elder":
@@ -88,6 +97,7 @@ export function GuardianApp() {
                 elderName: route.elderName,
               })
             }
+            onSendCodeToElder={onSendCodeToElder}
           />
         );
       case "schedules":

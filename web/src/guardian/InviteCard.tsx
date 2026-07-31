@@ -5,8 +5,10 @@
  * 裡，要用一欄的相機去掃另一欄螢幕上的 QR 實務上很蠢。真實掃碼路徑完整保留，
  * 實機展示或用手機開這個網址時仍然走那條。
  *
- * ⚠️ `onSendToElder` **目前沒有任何呼叫端傳進來**（見 `stage/StagePage.tsx` 與
- * `elder/ElderApp.tsx` 對 `prefilledCode` 的說明）：接收端已就緒，發送端待 P4。
+ * ⚠️ `onSendToElder` 由呼叫端（`HomeScreen`／`ElderDetailScreen`）決定要不要傳：
+ * 傳了才畫這顆鈕，接線一路上到 `stage/StagePage.tsx`（見該檔與 `elder/ElderApp.tsx`
+ * 對 `prefilledCode` 的說明，P4 Task 3）。獨立測試這支畫面（不透過 `StagePage`）
+ * 時沒有另一欄可以送，不傳的話這顆鈕不該出現。
  */
 
 import QRCode from "qrcode";

@@ -153,6 +153,29 @@ describe("長輩配對", () => {
     expect(screen.getByText("已從家屬手機收到號碼")).toBeInTheDocument();
   });
 
+  // ⚠️ 這條守的是「跨欄連動」實際會發生的形狀：長輩欄在家屬按下「送到長輩的
+  // 手機」之前多半早就掛著（雙欄舞台一開場兩欄就都在），`prefilledCode` 是家屬
+  // 按下去那一刻才從 `undefined` 變成有值的——不是像上一條測試那樣「掛載當下
+  // 就已經有值」。`useState(() => props.prefilledCode ?? "")` 這種惰性初始化只在
+  // 「第一次掛載」讀一次，之後 props 再怎麼變都不會讓它重新算；若沒有另外接
+  // 「prop 變了就同步」，家屬送出的碼在畫面上完全不會出現。
+  it("配對畫面掛著的時候，家屬端才送過來的碼也要即時填好（不是只有掛載當下就有值才算）", () => {
+    const { rerender } = render(
+      <ElderSession.Provider>
+        <ElderApp />
+      </ElderSession.Provider>,
+    );
+    expect(screen.getByLabelText("綁定碼")).toHaveValue("");
+    expect(screen.queryByText("已從家屬手機收到號碼")).not.toBeInTheDocument();
+    rerender(
+      <ElderSession.Provider>
+        <ElderApp prefilledCode="AB12CD" />
+      </ElderSession.Provider>,
+    );
+    expect(screen.getByLabelText("綁定碼")).toHaveValue("AB12CD");
+    expect(screen.getByText("已從家屬手機收到號碼")).toBeInTheDocument();
+  });
+
   it("可以切到帳密登入再切回來", async () => {
     renderApp();
     await userEvent.click(screen.getByRole("button", { name: "用過金孫？帳號密碼登入" }));

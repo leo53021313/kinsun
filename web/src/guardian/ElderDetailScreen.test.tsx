@@ -54,14 +54,19 @@ function mockMixedByPath(map: Record<string, { status: number; body: unknown }>)
   );
 }
 
-function renderDetail() {
+function renderDetail(props: Partial<Parameters<typeof ElderDetailScreen>[0]> = {}) {
   localStorage.setItem(
     "kinsun_web_session_guardian",
     JSON.stringify({ role: "guardian", token: "tok", display_name: "兒子" }),
   );
   return render(
     <GuardianSession.Provider>
-      <ElderDetailScreen elderId="e1" elderName="王阿嬤" onManageSchedules={vi.fn()} />
+      <ElderDetailScreen
+        elderId="e1"
+        elderName="王阿嬤"
+        onManageSchedules={vi.fn()}
+        {...props}
+      />
     </GuardianSession.Provider>,
   );
 }
@@ -332,6 +337,42 @@ describe("ElderDetailScreen", () => {
       expect(await screen.findByText("NEW789")).toBeInTheDocument();
       // 換完了確認列要收掉，否則家屬會以為還沒生效而再按一次。
       expect(screen.queryByText(CONFIRM_TEXT)).not.toBeInTheDocument();
+    });
+
+    // ⚠️ 守的是「跨欄連動」的另一半：新綁定碼一樣可以直接送到長輩欄（spec W-15
+    // 內測捷徑），不必在同一個瀏覽器分頁裡拿一欄的相機去掃另一欄螢幕上的 QR。
+    it("按「送到長輩的手機」會把新綁定碼交給呼叫端", async () => {
+      mockByPath({
+        "health-report": { risk_events: [], reminders: [] },
+        "daily-summaries": [],
+        schedules: [],
+        "device-bindings": { invite_code: "NEW789" },
+      });
+      const onSendCodeToElder = vi.fn();
+      renderDetail({ onSendCodeToElder });
+      await userEvent.click(
+        await screen.findByRole("button", { name: "重新產生長輩綁定碼" }),
+      );
+      await userEvent.click(screen.getByRole("button", { name: "確定換新碼" }));
+      await screen.findByText("NEW789");
+      await userEvent.click(screen.getByRole("button", { name: "送到長輩的手機" }));
+      expect(onSendCodeToElder).toHaveBeenCalledWith("NEW789");
+    });
+
+    it("沒有傳 onSendCodeToElder 時不畫出「送到長輩的手機」鈕", async () => {
+      mockByPath({
+        "health-report": { risk_events: [], reminders: [] },
+        "daily-summaries": [],
+        schedules: [],
+        "device-bindings": { invite_code: "NEW789" },
+      });
+      renderDetail();
+      await userEvent.click(
+        await screen.findByRole("button", { name: "重新產生長輩綁定碼" }),
+      );
+      await userEvent.click(screen.getByRole("button", { name: "確定換新碼" }));
+      await screen.findByText("NEW789");
+      expect(screen.queryByRole("button", { name: "送到長輩的手機" })).not.toBeInTheDocument();
     });
 
     // ⚠️ 刪一筆排程都要二次確認，而這個操作破壞性更大——它會把長輩手機上的金孫

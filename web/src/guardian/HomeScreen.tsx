@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { emitStageEvent } from "@/notify/bus";
 import { GuardianSession } from "@/session/contexts";
 import { makeSignOutOnAuthError } from "@/session/useSignOutOnAuthError";
 import { strings } from "@/strings";
@@ -15,6 +16,13 @@ import { InviteCard } from "./InviteCard";
 export function HomeScreen(props: {
   onOpenElder: (elderId: string, elderName: string) => void;
   onOpenNotifications: () => void;
+  /**
+   * 把剛拿到的綁定碼直接送到長輩欄（spec W-15 內測捷徑，接線見
+   * `stage/StagePage.tsx`）。不傳的話 `InviteCard` 不畫出「送到長輩的手機」鈕
+   * （見該元件 `onSendToElder` 的說明）——獨立測試這支畫面（不透過
+   * `StagePage`）時沒有另一欄可以送，這顆按鈕不該出現。
+   */
+  onSendCodeToElder?: (code: string) => void;
 }) {
   const { session, signOut } = GuardianSession.useSession();
   const token = session?.token ?? "";
@@ -86,6 +94,8 @@ export function HomeScreen(props: {
       ]);
       setInviteCode(created.invite_code);
       setNewName("");
+      // 讓長輩欄立刻去拉，不必等下一次輪詢（見 notify/bus 的說明）。
+      emitStageEvent("guardian-wrote");
       // ⚠️ 建立成功後重打一次列表。上面那筆樂觀追加只夠應付「列表本來就載到了」
       // 的情形；若這一頁是帶著 hasError 進來的，錯誤訊息會佔住清單的位置、把剛
       // 建好的那位蓋掉，而且清單其實還少了家屬原有的其他長輩——他會以為建立失敗
@@ -129,7 +139,14 @@ export function HomeScreen(props: {
         />
         <p className="text-xs leading-5 text-ink-soft">{strings.guardianHome.consent}</p>
         <Button label={strings.guardianHome.createElder} onClick={addElder} busy={busy} />
-        {inviteCode ? <InviteCard code={inviteCode} /> : null}
+        {inviteCode ? (
+          <InviteCard
+            code={inviteCode}
+            onSendToElder={
+              props.onSendCodeToElder ? () => props.onSendCodeToElder?.(inviteCode) : undefined
+            }
+          />
+        ) : null}
         <ErrorText message={formError} />
       </Section>
 

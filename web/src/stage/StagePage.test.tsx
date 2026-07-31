@@ -6,6 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { StagePage } from "./StagePage";
 
+function envelope(data: unknown) {
+  return { success: true, data, error: null, meta: null };
+}
+
 /**
  * 可控制的假 `matchMedia`。
  *
@@ -159,5 +163,82 @@ describe("寬螢幕兩欄同時可見時的長輩欄", () => {
     // 兩欄又同時看得見了：長輩欄必須跟著回來，否則它會停在一個看起來正常、
     // 實際上麥克風永遠打不開的狀態，而且沒有任何 UI 救得回來。
     expect(scannerState.createCount).toBe(2);
+  });
+});
+
+/**
+ * 跨欄連動的另一半（P4 Task 3）：家屬產生綁定碼後直接送到長輩欄，省去在同一個
+ * 瀏覽器分頁裡「拿一欄的相機去掃另一欄螢幕上的 QR」這種不切實際的操作
+ * （spec W-15 內測捷徑）。這裡驗證的正是「另一欄沒登入時怎樣」——長輩欄預設
+ * 就停在未配對的配對畫面（`ElderApp` 沒有 session 時路由到 `bind`），這正是
+ * 這條捷徑存在的目的：家屬按下去，長輩欄立刻收到碼。
+ */
+describe("跨欄連動：家屬把綁定碼送到長輩欄", () => {
+  it("家屬新增長輩後按「送到長輩的手機」，長輩欄立刻收到綁定碼，窄螢幕並自動切回長輩端頁籤", async () => {
+    localStorage.setItem(
+      "kinsun_web_session_guardian",
+      JSON.stringify({ role: "guardian", token: "tok", display_name: "兒子" }),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((path: string, init?: RequestInit) => {
+        if (String(path).includes("/elders") && init?.method === "POST") {
+          return Promise.resolve({
+            status: 201,
+            json: async () =>
+              envelope({ elder_id: "e9", name: "阿公", nickname: "", invite_code: "AB12CD" }),
+          });
+        }
+        return Promise.resolve({ status: 200, json: async () => envelope([]) });
+      }),
+    );
+    render(<StagePage />);
+    // 窄螢幕預設停在長輩端頁籤，先切到家屬端才拿得到「建立長輩檔案」表單。
+    await userEvent.click(screen.getByRole("tab", { name: "家屬端" }));
+    await screen.findByText("還沒有長輩檔案，先在上面建立一位吧。");
+    await userEvent.type(screen.getByLabelText("長輩稱呼"), "阿公");
+    await userEvent.click(screen.getByRole("button", { name: "建立長輩檔案" }));
+    await screen.findByText("AB12CD");
+
+    await userEvent.click(screen.getByRole("button", { name: "送到長輩的手機" }));
+
+    // 窄螢幕頁籤模式下另一欄不在畫面上，連動了家屬也看不到——自動切回長輩端
+    // 頁籤，他才看得到「已經送過去了」的反應。
+    expect(screen.getByRole("tab", { name: "長輩端" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "家屬端" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByLabelText("綁定碼")).toHaveValue("AB12CD");
+    expect(screen.getByText("已從家屬手機收到號碼")).toBeInTheDocument();
+  });
+
+  it("寬螢幕兩欄同時可見時按下送出，長輩欄不需要切頁籤也能立刻看到碼", async () => {
+    stubMatchMedia(true);
+    localStorage.setItem(
+      "kinsun_web_session_guardian",
+      JSON.stringify({ role: "guardian", token: "tok", display_name: "兒子" }),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((path: string, init?: RequestInit) => {
+        if (String(path).includes("/elders") && init?.method === "POST") {
+          return Promise.resolve({
+            status: 201,
+            json: async () =>
+              envelope({ elder_id: "e9", name: "阿嬤", nickname: "", invite_code: "ZZ99YY" }),
+          });
+        }
+        return Promise.resolve({ status: 200, json: async () => envelope([]) });
+      }),
+    );
+    render(<StagePage />);
+    await userEvent.click(screen.getByRole("tab", { name: "家屬端" }));
+    await screen.findByText("還沒有長輩檔案，先在上面建立一位吧。");
+    await userEvent.type(screen.getByLabelText("長輩稱呼"), "阿嬤");
+    await userEvent.click(screen.getByRole("button", { name: "建立長輩檔案" }));
+    await screen.findByText("ZZ99YY");
+
+    await userEvent.click(screen.getByRole("button", { name: "送到長輩的手機" }));
+
+    expect(screen.getByLabelText("綁定碼")).toHaveValue("ZZ99YY");
+    expect(screen.getByText("已從家屬手機收到號碼")).toBeInTheDocument();
   });
 });

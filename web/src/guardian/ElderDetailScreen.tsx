@@ -31,6 +31,13 @@ export function ElderDetailScreen(props: {
   elderId: string;
   elderName: string;
   onManageSchedules: () => void;
+  /**
+   * 把重新產生的長輩綁定碼直接送到長輩欄（spec W-15 內測捷徑，接線見
+   * `stage/StagePage.tsx`）。不傳的話 `InviteCard` 不畫出「送到長輩的手機」鈕
+   * （見該元件 `onSendToElder` 的說明）——獨立測試這支畫面（不透過
+   * `StagePage`）時沒有另一欄可以送，這顆按鈕不該出現。
+   */
+  onSendCodeToElder?: (code: string) => void;
 }) {
   const { elderId, elderName } = props;
   const { session, signOut } = GuardianSession.useSession();
@@ -311,7 +318,14 @@ export function ElderDetailScreen(props: {
             </div>
           </div>
         ) : null}
-        {bindingCode ? <InviteCard code={bindingCode} /> : null}
+        {bindingCode ? (
+          <InviteCard
+            code={bindingCode}
+            onSendToElder={
+              props.onSendCodeToElder ? () => props.onSendCodeToElder?.(bindingCode) : undefined
+            }
+          />
+        ) : null}
         <ErrorText message={bindingError} />
       </Section>
 
