@@ -104,7 +104,13 @@ describe("App", () => {
     window.history.pushState({}, "", "/demo/stage/");
     render(<App />);
     expect(await screen.findByRole("region", { name: "長輩的手機" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "開始使用" })).not.toBeInTheDocument();
+    // ⚠️ 不可再用「開始使用」按鈕的有無來判斷「不是開場頁」：P3 Task 7 接上
+    // `ElderApp` 之後，長輩配對畫面（`BindScreen`）自己也有一顆文字相同的
+    // 「開始使用」按鈕（`strings.elderBind.start`，與 `strings.gate.start`
+    // 恰好同名但語意無關），這條斷言從此對兩顆按鈕都會命中、不再能拿來分辨
+    // 「在開場頁」還是「在舞台上」。改認 GatePage 專屬、不會被誤認的文字
+    // （品牌標語，舞台上的畫面不會出現這句話）。
+    expect(screen.queryByText(strings.gate.slogan)).not.toBeInTheDocument();
   });
 
   it("不認得的網址回開場", async () => {

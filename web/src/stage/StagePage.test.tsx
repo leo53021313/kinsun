@@ -17,6 +17,11 @@ describe("StagePage", () => {
     expect(screen.getByRole("region", { name: "家屬的手機" })).toBeInTheDocument();
   });
 
+  it("長輩欄顯示真正的配對畫面，不是佔位元件（P3 Task 7 接上 ElderApp）", () => {
+    render(<StagePage />);
+    expect(screen.getByText("掃描家人給的方塊圖，或輸入號碼")).toBeInTheDocument();
+  });
+
   it("窄螢幕的切換頁籤兩個都在", () => {
     render(<StagePage />);
     expect(screen.getByRole("tab", { name: "長輩端" })).toBeInTheDocument();

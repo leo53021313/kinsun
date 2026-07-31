@@ -1,0 +1,177 @@
+/**
+ * 長輩配對：掃家人給的 QR（✅ D-54 丁-3）或輸入綁定碼，一次就好。
+ *
+ * ⚠️ 相機權限在**按下「掃描」時**才要，不是進畫面就要。長輩多半用手打，
+ * 一進來就跳權限對話框只會嚇到他。
+ */
+
+import { useEffect, useRef, useState } from "react";
+
+import { ApiError } from "@/api";
+import { ElderSession } from "@/session/contexts";
+import { strings } from "@/strings";
+import { createQrScanner, type QrScannerError } from "@/talk/qrScanner";
+import { Button } from "@/ui/Button";
+import { ErrorText } from "@/ui/Feedback";
+import { Field } from "@/ui/Field";
+
+import { bindElderDevice } from "./api";
+
+/**
+ * 綁定失敗的五種情形，各給一句長輩能照做的話。
+ *
+ * ⚠️「invite_expired」對他沒有任何意義。每一種失敗都必須告訴他**下一步做什麼**
+ * ——而下一步幾乎都是「請家人重新產生一組」。
+ *
+ * ⚠️ `invite_wrong_role`（409）：家屬把**自己的**邀請碼給長輩掃／打時會走到
+ * 這裡，與「查無此碼」「已過期」是完全不同的原因——混在一起講，長輩會拿著同
+ * 一組本來就不是給他用的碼反覆重試。
+ */
+const BIND_ERRORS: Record<string, string> = {
+  invite_not_found: strings.elderBind.inviteNotFound,
+  invite_used: strings.elderBind.inviteUsed,
+  invite_expired: strings.elderBind.inviteExpired,
+  too_many_attempts: strings.elderBind.tooManyAttempts,
+  invite_wrong_role: strings.elderBind.inviteWrongRole,
+};
+
+/**
+ * `QrScannerError` 有六種（見 `talk/qrScanner.ts`），不是兩種——每一種都要有
+ * 對應的長輩話、且都要講「下一步做什麼」（多半是「直接輸入號碼」）。
+ */
+const SCANNER_ERRORS: Record<QrScannerError, string> = {
+  denied: strings.elderBind.cameraPermission,
+  unsupported: strings.elderBind.cameraUnsupported,
+  "not-found": strings.elderBind.cameraNotFound,
+  "in-use": strings.elderBind.cameraInUse,
+  "insecure-origin": strings.elderBind.cameraInsecureOrigin,
+  "no-signal": strings.elderBind.cameraNoSignal,
+};
+
+export function BindScreen(props: {
+  prefilledCode?: string;
+  onDone: () => void;
+  onLogin: () => void;
+}) {
+  const { signIn } = ElderSession.useSession();
+  const [code, setCode] = useState(props.prefilledCode ?? "");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  async function submit(raw: string) {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return;
+    }
+    setError("");
+    setBusy(true);
+    try {
+      const session = await bindElderDevice(trimmed);
+      signIn({ token: session.token, display_name: session.name });
+      props.onDone();
+    } catch (exc) {
+      setError(
+        exc instanceof ApiError && BIND_ERRORS[exc.code]
+          ? BIND_ERRORS[exc.code]
+          : strings.elderBind.bindFailed,
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ⚠️ 相機資源要在每一條離開這個畫面狀態的路徑都釋放（見下方 return 的
+  // cleanup）：掃到（onCode 內 setScanning(false)）、掃碼出錯（onError 內
+  // setScanning(false)）、按「改用輸入號碼」取消、或整個元件被卸載（切到
+  // 登入畫面前一定會先离开 scanning 狀態，見上面四條路徑）——這四條路徑最終
+  // 都會讓這個 effect 的 cleanup 被呼叫到，`scanner.stop()` 保證相機軌道
+  // 被關掉，指示燈不會留著。
+  useEffect(() => {
+    if (!scanning || videoRef.current === null) {
+      return;
+    }
+    const scanner = createQrScanner({
+      video: videoRef.current,
+      onCode: (text) => {
+        // 掃到就收工：同一個碼在連續幾幀都會被讀到，掃描器已經只回報第一次，
+        // 這裡再關掉相機，避免它在送出期間繼續跑。
+        setScanning(false);
+        setCode(text.trim());
+        void submit(text);
+      },
+      onError: (reason) => {
+        setScanning(false);
+        setError(SCANNER_ERRORS[reason]);
+      },
+    });
+    return () => scanner.stop();
+    // submit 只讀 state 與常數，不列入相依以免每次輸入都重開相機。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scanning]);
+
+  if (scanning) {
+    return (
+      <div className="flex h-full flex-col gap-4 p-5">
+        <p className="text-center text-elder-min text-ink">{strings.elderBind.scanHint}</p>
+        {/* playsInline：iOS Safari 不加會把影片切成全螢幕播放器，掃碼畫面整個跑掉。 */}
+        <video
+          ref={videoRef}
+          muted
+          playsInline
+          className="min-h-0 flex-1 rounded-2xl bg-ink object-cover"
+        />
+        <Button
+          label={strings.elderBind.switchToManual}
+          variant="outline"
+          size="big"
+          onClick={() => setScanning(false)}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full flex-col justify-center gap-5 p-6">
+      <p className="text-center text-elder-min text-ink">{strings.elderBind.hint}</p>
+      {props.prefilledCode ? (
+        <p className="text-center text-sm text-success">{strings.elderBind.receivedFromGuardian}</p>
+      ) : null}
+      <Button
+        label={strings.elderBind.scanQr}
+        size="big"
+        onClick={() => {
+          setError("");
+          setScanning(true);
+        }}
+        disabled={busy}
+      />
+      <Field
+        label={strings.elderBind.codeLabel}
+        value={code}
+        onChange={setCode}
+        size="big"
+        placeholder={strings.elderBind.codePlaceholder}
+      />
+      <ErrorText message={error} />
+      <Button
+        label={strings.elderBind.start}
+        size="big"
+        onClick={() => void submit(code)}
+        busy={busy}
+        disabled={!code.trim()}
+      />
+      {/* ⚠️ 適老化：長輩端可點擊目標一律 ≥56px，這顆次要導覽按鈕也不例外
+          （`size="big"` 對應 `Button` 的 64px，brief 原始版本漏了這個尺寸，
+          僅預設的 48px「一般」尺寸，低於長輩端下限）。 */}
+      <Button
+        label={strings.elderBind.loginLink}
+        variant="outline"
+        size="big"
+        onClick={props.onLogin}
+        disabled={busy}
+      />
+    </div>
+  );
+}

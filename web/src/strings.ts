@@ -24,6 +24,9 @@ export const strings = {
     passwordPlaceholder: "至少 8 碼",
     emailLabel: "Email",
     emailPlaceholder: "you@example.com",
+    // 長輩端對講機／提醒畫面接線前的暫時佔位文字（P3 Task 8／9 接上後這個分支
+    // 就不會再被走到）；元件裡不可出現裸中文字串，即使只是暫時性的畫面也一樣。
+    comingSoon: "這裡還在準備，請再等一下。",
   },
   gate: {
     brand: "金孫",
@@ -172,21 +175,38 @@ export const strings = {
     empty: "目前沒有通知。金孫有事會第一時間放在這裡。",
   },
   // 長輩端文案逐字沿用 app/src/lib/strings.ts 的既有措辭：口語敘述一律用
-  // 「號碼」「方塊圖」，比「通知」「綁定」更白話；`codePlaceholder`（輸入框
-  // 精簡標籤）與逐字沿用的 `notPaired`／`bindingLost` 仍帶「綁定」二字，
-  // 是 App 既有例外、非本輪新增。並補上網頁端獨有的三條：
-  // receivedFromGuardian／queued／micUnsupported（App 沒有這三種情境）。
+  // 「號碼」「方塊圖」，比「通知」「綁定」更白話；`codeLabel`／`codePlaceholder`
+  // （輸入框標籤／精簡提示）與逐字沿用的 `notPaired`／`bindingLost` 仍帶「綁定」
+  // 二字，是 App 既有例外、非本輪新增。並補上網頁端獨有的幾條：
+  // receivedFromGuardian／queued／micUnsupported（App 沒有這幾種情境，見 talk 段）；
+  // `inviteWrongRole`（P3 Task 7）＋`cameraNotFound`／`cameraInUse`／
+  // `cameraInsecureOrigin`／`cameraNoSignal`（P3 Task 7，對應 `talk/qrScanner.ts`
+  // 的 `QrScannerError` 六種分類——App 端走 `expo-camera` 原生殼，沒有這麼細的
+  // 瀏覽器相機錯誤分類）。
   elderBind: {
     inviteNotFound: "找不到這組號碼，請跟家人再確認一次。",
     inviteUsed: "這組號碼已經用過了，請家人重新產生一組。",
     inviteExpired: "這組號碼過期了，請家人重新產生一組。",
     tooManyAttempts: "試太多次了，請家人重新產生一組。",
+    // 家屬把自己的邀請碼給長輩掃／打時會走到這裡（後端 409 invite_wrong_role）。
+    // 這與「查無此碼」「已過期」完全是另一回事，混在一起講會讓長輩對著同一組碼
+    // 反覆試——直接說清楚這組碼本來就不是給他用的。
+    inviteWrongRole: "這組號碼是給家人用的，請家人給您長輩專用的那組。",
     bindFailed: "連不上金孫，請稍後再試一次。",
     cameraPermission: "需要相機權限才能掃描，也可以直接輸入號碼。",
+    cameraUnsupported: "這個瀏覽器不能用相機，請直接輸入號碼。",
+    cameraNotFound: "這台裝置沒有相機，請直接輸入號碼。",
+    cameraInUse: "相機正被別的畫面用著，請直接輸入號碼，或關掉其他用相機的畫面再試一次。",
+    // ⚠️ 不可講「換一家瀏覽器」：真正原因是網址不是安全來源（非 https 且非
+    // localhost），常見於組員用區網 IP（如 http://192.168.x.x）連線；換瀏覽器
+    // 解決不了，換網址才有用。
+    cameraInsecureOrigin: "這個網址不能用相機，請改用家人給您、開頭是 https 的網址，或直接輸入號碼。",
+    cameraNoSignal: "相機看不到畫面，請確認鏡頭沒被遮住，或直接輸入號碼。",
     scanHint: "把家人給的方塊圖對準框框",
     switchToManual: "改用輸入號碼",
     hint: "掃描家人給的方塊圖，或輸入號碼",
     scanQr: "掃描 QR 碼",
+    codeLabel: "綁定碼",
     codePlaceholder: "綁定碼",
     start: "開始使用",
     loginLink: "用過金孫？帳號密碼登入",

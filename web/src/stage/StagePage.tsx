@@ -11,6 +11,7 @@
 
 import { memo, useState } from "react";
 
+import { ElderApp } from "@/elder/ElderApp";
 import { GuardianApp } from "@/guardian/GuardianApp";
 import { ElderSession, GuardianSession } from "@/session/contexts";
 import { strings } from "@/strings";
@@ -61,7 +62,7 @@ export const StagePage = memo(function StagePage() {
           <div className="mx-auto grid w-full max-w-5xl gap-8 lg:grid-cols-2">
             <div className={pane === "elder" ? "" : "hidden lg:block"}>
               <PhoneFrame title={strings.stage.elderTitle} os="ios">
-                <ElderPanePlaceholder />
+                <ElderApp />
               </PhoneFrame>
             </div>
             <div className={pane === "guardian" ? "" : "hidden lg:block"}>
@@ -75,13 +76,3 @@ export const StagePage = memo(function StagePage() {
     </ElderSession.Provider>
   );
 });
-
-/** P3 換成完整的長輩端。此處先佔位，讓版面與 session 接線可以先驗收。 */
-function ElderPanePlaceholder() {
-  const { session } = ElderSession.useSession();
-  return (
-    <div className="flex h-full items-center justify-center p-6 text-center text-elder-min text-ink-soft">
-      {session ? session.display_name : "長輩端（尚未實作）"}
-    </div>
-  );
-}
