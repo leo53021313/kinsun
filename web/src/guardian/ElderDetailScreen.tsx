@@ -3,7 +3,7 @@
 import { formatTime } from "kinsun-shared/format";
 import { tierLabel } from "kinsun-shared/terms";
 import type { DailySummary, HealthReport, ScheduleGroup } from "kinsun-shared/types";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { ApiError } from "@/api";
 import { GuardianSession } from "@/session/contexts";
@@ -73,6 +73,24 @@ export function ElderDetailScreen(props: {
   const [bindingCode, setBindingCode] = useState("");
   const [bindingError, setBindingError] = useState("");
   const [bindingBusy, setBindingBusy] = useState(false);
+  // 二次確認：這是本頁破壞性最強的操作——長輩手機上的金孫會馬上被登出，而他自己
+  // 不會知道發生什麼事，只會發現「金孫不理我了」；家屬按下去的當下，長輩甚至可能
+  // 正在跟金孫講話。刪一筆排程都要確認，這個更要。
+  //
+  // ⚠️ 用畫面內的確認列而非瀏覽器的 confirm()：confirm 會鎖住整個分頁，左欄的長輩
+  // 端連對講機都按不了——雙欄同時存在時，任何 modal 對話框都是全域的
+  // （與 SchedulesScreen 的刪除確認列同一套作法與同一個理由）。
+  const [isConfirmingBinding, setIsConfirmingBinding] = useState(false);
+  const bindingConfirmHeadingId = useId();
+  const bindingConfirmRef = useRef<HTMLDivElement | null>(null);
+
+  // 確認列一出現就把焦點移進去：它在 DOM 裡但焦點沒過去的話，螢幕報讀軟體不會
+  // 朗讀那句後果——而那句後果正是這顆按鈕存在的理由。
+  useEffect(() => {
+    if (isConfirmingBinding) {
+      bindingConfirmRef.current?.focus();
+    }
+  }, [isConfirmingBinding]);
 
   useEffect(() => {
     if (!token) {
@@ -125,6 +143,21 @@ export function ElderDetailScreen(props: {
       );
     } finally {
       setAccountBusy(false);
+    }
+  }
+
+  async function regenerateBinding() {
+    setBindingBusy(true);
+    setBindingError("");
+    try {
+      setBindingCode(await revokeElderDeviceBindings(elderId, token));
+      setIsConfirmingBinding(false);
+    } catch (exc) {
+      if (signOutOn401(exc)) return;
+      // 確認列刻意留著：家屬可以直接再按一次「確定換新碼」，不必從頭再點一遍。
+      setBindingError(strings.elderDetail.bindingFailed);
+    } finally {
+      setBindingBusy(false);
     }
   }
 
@@ -248,20 +281,36 @@ export function ElderDetailScreen(props: {
         <Button
           label={strings.elderDetail.regenerateBinding}
           variant="outline"
-          busy={bindingBusy}
-          onClick={async () => {
-            setBindingBusy(true);
-            setBindingError("");
-            try {
-              setBindingCode(await revokeElderDeviceBindings(elderId, token));
-            } catch (exc) {
-              if (signOutOn401(exc)) return;
-              setBindingError(strings.elderDetail.bindingFailed);
-            } finally {
-              setBindingBusy(false);
-            }
-          }}
+          disabled={isConfirmingBinding}
+          onClick={() => setIsConfirmingBinding(true)}
         />
+        {isConfirmingBinding ? (
+          <div
+            ref={bindingConfirmRef}
+            tabIndex={-1}
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby={bindingConfirmHeadingId}
+            className="flex flex-col gap-2 rounded-2xl border-2 border-danger bg-surface p-4"
+          >
+            <p id={bindingConfirmHeadingId} className="text-sm text-ink">
+              {strings.elderDetail.confirmRegenerateBinding}
+            </p>
+            <div className="flex gap-2">
+              <Button
+                label={strings.elderDetail.confirmRegenerateBindingButton}
+                onClick={regenerateBinding}
+                busy={bindingBusy}
+              />
+              <Button
+                label={strings.common.cancel}
+                variant="outline"
+                disabled={bindingBusy}
+                onClick={() => setIsConfirmingBinding(false)}
+              />
+            </div>
+          </div>
+        ) : null}
         {bindingCode ? <InviteCard code={bindingCode} /> : null}
         <ErrorText message={bindingError} />
       </Section>

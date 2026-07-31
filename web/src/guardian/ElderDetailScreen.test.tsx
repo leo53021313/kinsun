@@ -16,19 +16,28 @@ function failure(code: string, message: string) {
   return { success: false, data: null, error: { code, message }, meta: null };
 }
 
-/** 依請求路徑回不同的資料——這一頁一次打三支端點。 */
+/** 依請求路徑回不同的資料——這一頁一次打三支端點。回傳 spy 供斷言呼叫內容。 */
 function mockByPath(map: Record<string, unknown>) {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn().mockImplementation((path: string) => {
-      const key = Object.keys(map).find((k) => path.includes(k));
-      return Promise.resolve({
-        status: 200,
-        json: async () => envelope(key ? map[key] : null),
-      });
-    }),
-  );
+  const spy = vi.fn().mockImplementation((path: string) => {
+    const key = Object.keys(map).find((k) => path.includes(k));
+    return Promise.resolve({
+      status: 200,
+      json: async () => envelope(key ? map[key] : null),
+    });
+  });
+  vi.stubGlobal("fetch", spy);
+  return spy;
 }
+
+/** 這一頁打過的 DELETE 請求數——撤銷長輩裝置是唯一會用 DELETE 的操作。 */
+function deleteCalls(spy: ReturnType<typeof vi.fn>): number {
+  return spy.mock.calls.filter(
+    ([, init]) => (init as RequestInit | undefined)?.method === "DELETE",
+  ).length;
+}
+
+const CONFIRM_TEXT =
+  "長輩手機上的金孫會馬上被登出，他要用新的綁定碼重綁一次才能再跟金孫說話。確定要換嗎？";
 
 /**
  * 依請求路徑回不同的狀態碼與內容——用來驗證三支端點其中一支失敗時，其餘兩支
@@ -288,7 +297,55 @@ describe("ElderDetailScreen", () => {
       await userEvent.click(
         await screen.findByRole("button", { name: "重新產生長輩綁定碼" }),
       );
+      await userEvent.click(screen.getByRole("button", { name: "確定換新碼" }));
       expect(await screen.findByText("NEW789")).toBeInTheDocument();
+      // 換完了確認列要收掉，否則家屬會以為還沒生效而再按一次。
+      expect(screen.queryByText(CONFIRM_TEXT)).not.toBeInTheDocument();
+    });
+
+    // ⚠️ 刪一筆排程都要二次確認，而這個操作破壞性更大——它會把長輩手機上的金孫
+    // 直接登出，長輩自己不會知道發生什麼事，只會發現「金孫不理我了」；家屬按下去
+    // 的當下長輩可能正在跟金孫講話。
+    it("先跳確認列才動手，按取消不會送出 DELETE", async () => {
+      const spy = mockByPath({
+        "health-report": { risk_events: [], reminders: [] },
+        "daily-summaries": [],
+        schedules: [],
+        "device-bindings": { invite_code: "NEW789" },
+      });
+      renderDetail();
+      await userEvent.click(
+        await screen.findByRole("button", { name: "重新產生長輩綁定碼" }),
+      );
+      expect(screen.getByText(CONFIRM_TEXT)).toBeInTheDocument();
+      // ⚠️ 這一句是關鍵：只驗證「按取消後沒有新呼叫」守不住「按重新產生的當下就
+      // 已經送出 DELETE」這種錯——下面的 mockClear() 會把那次呼叫洗掉，讓斷言誤判
+      // 通過。開確認列的當下必須還沒打過任何 DELETE。
+      expect(deleteCalls(spy)).toBe(0);
+      spy.mockClear();
+
+      await userEvent.click(screen.getByRole("button", { name: "取消" }));
+      expect(spy).not.toHaveBeenCalled();
+      // 確認列本身要真的關掉，否則使用者以為取消生效了，那顆唯一能反悔的按鈕
+      // 卻還卡在畫面上。
+      expect(screen.queryByText(CONFIRM_TEXT)).not.toBeInTheDocument();
+    });
+
+    it("確認列一出現就把焦點移進去，讀螢幕的人才聽得到後果", async () => {
+      // 它在 DOM 裡但焦點沒過去的話，螢幕報讀軟體不會朗讀它——而這是本頁破壞性
+      // 最強的操作。作法與 SchedulesScreen 的刪除確認列一致。
+      mockByPath({
+        "health-report": { risk_events: [], reminders: [] },
+        "daily-summaries": [],
+        schedules: [],
+      });
+      renderDetail();
+      await userEvent.click(
+        await screen.findByRole("button", { name: "重新產生長輩綁定碼" }),
+      );
+      const dialog = screen.getByRole("alertdialog");
+      expect(dialog).toHaveFocus();
+      expect(dialog).toHaveTextContent(CONFIRM_TEXT);
     });
 
     it("按下去之前就先講清楚後果：長輩手機上的金孫會被登出", async () => {
@@ -321,9 +378,12 @@ describe("ElderDetailScreen", () => {
       await userEvent.click(
         await screen.findByRole("button", { name: "重新產生長輩綁定碼" }),
       );
+      await userEvent.click(screen.getByRole("button", { name: "確定換新碼" }));
       expect(await screen.findByRole("alert")).toHaveTextContent(
         "重新產生綁定碼失敗，請稍後再試。",
       );
+      // 失敗時確認列留著，家屬可以直接再按一次；收掉的話他得從頭再點一遍。
+      expect(screen.getByText(CONFIRM_TEXT)).toBeInTheDocument();
     });
   });
 });
