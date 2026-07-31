@@ -10,7 +10,7 @@ import { GuardianSession } from "@/session/contexts";
 import { makeSignOutOnAuthError } from "@/session/useSignOutOnAuthError";
 import { strings } from "@/strings";
 import { Button } from "@/ui/Button";
-import { EmptyHint, ErrorText } from "@/ui/Feedback";
+import { EmptyHint, ErrorText, NoticeText } from "@/ui/Feedback";
 import { Field } from "@/ui/Field";
 import { Section } from "@/ui/Section";
 
@@ -45,7 +45,13 @@ export function ElderDetailScreen(props: {
 
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
+  // ⚠️ 成功與失敗**分成兩個狀態**、走兩種樣式。共用一個字串（且共用一個裸 <p> 灰
+  // 色小字）時，「這個手機號碼已經幫另一位長輩註冊過了」（後端 409 phone_taken）
+  // 會出現在跟「已設定完成。長輩手機用這組號碼＋密碼登入一次就會一直記住。」完全
+  // 相同的位置與樣式——家屬據此判定設好了，接著拿那組帳密去長輩端登入吃 401，而
+  // 家屬端沒有任何線索指出哪裡錯。同一頁其他所有錯誤都走 ErrorText，這裡不可例外。
   const [accountMessage, setAccountMessage] = useState("");
+  const [accountError, setAccountError] = useState("");
   const [accountBusy, setAccountBusy] = useState(false);
 
   const [inviteCode, setInviteCode] = useState("");
@@ -88,6 +94,7 @@ export function ElderDetailScreen(props: {
 
   async function saveAccount() {
     setAccountMessage("");
+    setAccountError("");
     setAccountBusy(true);
     try {
       await setElderAccount(elderId, phone, password, token);
@@ -96,12 +103,22 @@ export function ElderDetailScreen(props: {
     } catch (exc) {
       if (signOutOn401(exc)) return;
       // 後端的驗證訊息已經是繁中人話（D-24），直接顯示比自己重寫一句準確。
-      setAccountMessage(
+      setAccountError(
         exc instanceof ApiError ? exc.message : strings.elderDetail.accountSaveFailed,
       );
     } finally {
       setAccountBusy(false);
     }
+  }
+
+  /** 改了號碼或密碼就把上一次的結果清掉——舊的「已設定完成」掛在新輸入的號碼
+   *  旁邊，家屬會以為新號碼也已經存好了；舊的錯誤同理，會蓋住他剛修正的內容。 */
+  function editAccountField(setter: (value: string) => void) {
+    return (value: string) => {
+      setAccountMessage("");
+      setAccountError("");
+      setter(value);
+    };
   }
 
   return (
@@ -184,14 +201,14 @@ export function ElderDetailScreen(props: {
         <Field
           label={strings.elderDetail.accountPhoneLabel}
           value={phone}
-          onChange={setPhone}
+          onChange={editAccountField(setPhone)}
           type="tel"
           placeholder={strings.elderDetail.accountPhonePlaceholder}
         />
         <Field
           label={strings.elderDetail.accountPasswordLabel}
           value={password}
-          onChange={setPassword}
+          onChange={editAccountField(setPassword)}
           type="password"
           autoComplete="new-password"
         />
@@ -202,7 +219,8 @@ export function ElderDetailScreen(props: {
           busy={accountBusy}
           disabled={!phone.trim() || password.length < MIN_PASSWORD_LENGTH}
         />
-        {accountMessage ? <p className="text-xs text-ink-soft">{accountMessage}</p> : null}
+        <NoticeText message={accountMessage} />
+        <ErrorText message={accountError} />
       </Section>
 
       <Section title={strings.elderDetail.inviteSection}>

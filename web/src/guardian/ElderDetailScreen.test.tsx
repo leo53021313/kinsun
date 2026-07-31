@@ -164,6 +164,70 @@ describe("ElderDetailScreen", () => {
     expect(screen.queryByText("載入中…")).not.toBeInTheDocument();
   });
 
+  // ⚠️ 這兩條守的是「成功與失敗在畫面上必須長得不一樣」。原本兩者共用同一個
+  // accountMessage 狀態、同一個裸 <p className="text-xs text-ink-soft">：家屬填了
+  // 一組已被別的長輩佔用的手機號碼、後端回 409，那句灰色小字出現在跟「已設定完成」
+  // 完全相同的位置與樣式，他會判定設好了，然後拿那組帳密去長輩端登入吃 401。
+  it("代辦帳密成功時顯示成功訊息，且不是警示", async () => {
+    mockMixedByPath({
+      "health-report": { status: 200, body: envelope({ risk_events: [], reminders: [] }) },
+      "daily-summaries": { status: 200, body: envelope([]) },
+      schedules: { status: 200, body: envelope([]) },
+      account: { status: 200, body: envelope({ elder_id: "e1" }) },
+    });
+    renderDetail();
+    await userEvent.type(await screen.findByLabelText("長輩手機號碼"), "0912345678");
+    await userEvent.type(screen.getByLabelText("密碼（至少 8 碼）"), "correct-horse-8");
+    await userEvent.click(screen.getByRole("button", { name: "儲存帳密" }));
+    expect(
+      await screen.findByText(
+        "已設定完成。長輩手機用這組號碼＋密碼登入一次就會一直記住。",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("代辦帳密失敗時走紅字警示，且不會同時出現成功訊息", async () => {
+    mockMixedByPath({
+      "health-report": { status: 200, body: envelope({ risk_events: [], reminders: [] }) },
+      "daily-summaries": { status: 200, body: envelope([]) },
+      schedules: { status: 200, body: envelope([]) },
+      account: {
+        status: 409,
+        body: failure("phone_taken", "這個手機號碼已經幫另一位長輩註冊過了"),
+      },
+    });
+    renderDetail();
+    await userEvent.type(await screen.findByLabelText("長輩手機號碼"), "0912345678");
+    await userEvent.type(screen.getByLabelText("密碼（至少 8 碼）"), "correct-horse-8");
+    await userEvent.click(screen.getByRole("button", { name: "儲存帳密" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "這個手機號碼已經幫另一位長輩註冊過了",
+    );
+    expect(
+      screen.queryByText("已設定完成。長輩手機用這組號碼＋密碼登入一次就會一直記住。"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("改動號碼或密碼時清掉上一次的結果訊息", async () => {
+    // 舊的「已設定完成」掛在新輸入的號碼旁邊，家屬會以為新號碼也已經存好了。
+    mockMixedByPath({
+      "health-report": { status: 200, body: envelope({ risk_events: [], reminders: [] }) },
+      "daily-summaries": { status: 200, body: envelope([]) },
+      schedules: { status: 200, body: envelope([]) },
+      account: { status: 200, body: envelope({ elder_id: "e1" }) },
+    });
+    renderDetail();
+    await userEvent.type(await screen.findByLabelText("長輩手機號碼"), "0912345678");
+    await userEvent.type(screen.getByLabelText("密碼（至少 8 碼）"), "correct-horse-8");
+    await userEvent.click(screen.getByRole("button", { name: "儲存帳密" }));
+    await screen.findByText("已設定完成。長輩手機用這組號碼＋密碼登入一次就會一直記住。");
+    await userEvent.type(screen.getByLabelText("長輩手機號碼"), "9");
+    expect(
+      screen.queryByText("已設定完成。長輩手機用這組號碼＋密碼登入一次就會一直記住。"),
+    ).not.toBeInTheDocument();
+  });
+
   it("產生家屬邀請碼後顯示出來", async () => {
     mockByPath({
       "health-report": { risk_events: [], reminders: [] },

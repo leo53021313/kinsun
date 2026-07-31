@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { Button } from "./Button";
-import { EmptyHint, ErrorText } from "./Feedback";
+import { EmptyHint, ErrorText, NoticeText } from "./Feedback";
 import { Field } from "./Field";
 import { Section } from "./Section";
 
@@ -93,6 +93,17 @@ describe("Feedback", () => {
   it("EmptyHint 顯示提示文字", () => {
     render(<EmptyHint text="目前沒有通知。" />);
     expect(screen.getByText("目前沒有通知。")).toBeInTheDocument();
+  });
+
+  it("沒有訊息時 NoticeText 什麼都不畫", () => {
+    const { container } = render(<NoticeText message="" />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("NoticeText 不是警示：用 status 而非 alert，才不會被當警告打斷朗讀", () => {
+    render(<NoticeText message="已設定完成。" />);
+    expect(screen.getByRole("status")).toHaveTextContent("已設定完成。");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });
 
