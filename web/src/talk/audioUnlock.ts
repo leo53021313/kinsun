@@ -24,10 +24,24 @@
 
 import { UNLOCK_AUDIO_URI } from "./playback";
 
-let unlocked = false;
+/**
+ * 已經解鎖過的播放器。
+ *
+ * ⚠️ **粒度必須是「每顆播放器一次」，不是「每個頁面一次」**（2026-07-31 審查發現
+ * 的 Critical）：iOS 的解鎖綁在單一 `HTMLMediaElement` 上（見 `playback.ts` 的
+ * `addListener` 說明），而 `createWebPlayer()` 每次都 `new Audio()`——長輩端在
+ * 窄螢幕切一次頁籤、或登出後重新配對，`useTalk` 的 effect 就會重跑、換一顆新的
+ * 播放器。旗標若是單一布林值，第二顆播放器會在這裡被早退掉、**從未在使用者手勢
+ * 內被 `play()` 過**，之後 WebSocket 送下來的回覆一律被 iOS 擋下，而
+ * `playback.ts::play()` 把 rejection 吞掉了——症狀是「長輩只看得到字、聽不到
+ * 任何聲音，而且本次頁面載入內永久如此」。
+ *
+ * 用 `WeakSet`：播放器被丟棄後這裡不會攔著它不讓垃圾回收。
+ */
+let unlockedPlayers = new WeakSet<object>();
 
 export function unlockAudio(player: { play: () => void; replace: (s: { uri: string }) => void }): void {
-  if (unlocked) {
+  if (unlockedPlayers.has(player)) {
     return;
   }
   // ⚠️ 先上鎖再播放：`player.play()` 是 `PlayerLike` 的同步介面（不回傳
@@ -37,12 +51,12 @@ export function unlockAudio(player: { play: () => void; replace: (s: { uri: stri
   // 失敗（例如未來改成在非手勢時機呼叫、被 iOS 擋下），旗標仍會維持
   // `true`、之後不會再嘗試。目前的呼叫時機（使用者手勢的同步呼叫堆疊內）
   // 下這不是問題；若日後改動呼叫時機，須連同這裡的假設一起重新檢視。
-  unlocked = true;
+  unlockedPlayers.add(player);
   player.replace({ uri: UNLOCK_AUDIO_URI });
   player.play();
 }
 
 /** 測試用：把解鎖狀態歸零。 */
 export function resetAudioUnlockForTest(): void {
-  unlocked = false;
+  unlockedPlayers = new WeakSet();
 }

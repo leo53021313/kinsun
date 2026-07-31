@@ -27,13 +27,27 @@ describe("unlockAudio", () => {
     expect(order).toEqual(["replace", "play"]);
   });
 
-  it("解鎖過一次之後，之後呼叫不再重播無聲音檔", () => {
-    // 只解鎖一次即可：重複播放無聲音檔沒有任何好處，還可能打斷正在播的回覆。
+  it("同一顆播放器解鎖過之後，之後呼叫不再重播無聲音檔", () => {
+    // 同一顆只解鎖一次即可：重複播放無聲音檔沒有任何好處，還可能打斷正在播的回覆。
+    const player = { replace: vi.fn(), play: vi.fn() };
+    unlockAudio(player);
+    unlockAudio(player);
+    expect(player.replace).toHaveBeenCalledTimes(1);
+    expect(player.play).toHaveBeenCalledTimes(1);
+  });
+
+  it("換一顆新的播放器要重新解鎖一次", () => {
+    // ⚠️ 2026-07-31 審查發現的 Critical：iOS 的解鎖綁在單一 HTMLMediaElement 上
+    //（見 playback.ts），而 createWebPlayer() 每次都 new Audio()。旗標若是單一
+    // 布林值，長輩在窄螢幕切一次頁籤（或登出後重新配對）換到的第二顆播放器會被
+    // 早退掉、從未在使用者手勢內被 play() 過——之後所有回覆都被 iOS 擋下，而
+    // playback.ts 把那個 rejection 吞掉了：長輩只看得到字、聽不到任何聲音，
+    // 而且本次頁面載入內永久如此。
     unlockAudio({ replace: vi.fn(), play: vi.fn() });
     const second = { replace: vi.fn(), play: vi.fn() };
     unlockAudio(second);
-    expect(second.replace).not.toHaveBeenCalled();
-    expect(second.play).not.toHaveBeenCalled();
+    expect(second.replace).toHaveBeenCalledWith({ uri: "/demo/silent.wav" });
+    expect(second.play).toHaveBeenCalledTimes(1);
   });
 
   it("resetAudioUnlockForTest 之後可以再解鎖一次", () => {
