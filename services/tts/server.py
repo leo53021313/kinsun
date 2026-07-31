@@ -64,9 +64,7 @@ _inflight = 0
 _voice_cache: dict[str, tuple[str, str]] = {}
 
 
-def _resolve_voice(
-    elder_id: str, prompt_audio_url: str, prompt_text: str
-) -> tuple[str, str]:
+def _resolve_voice(elder_id: str, prompt_audio_url: str, prompt_text: str) -> tuple[str, str]:
     """依 elder_id 解析客製化參考語音；缺 elder_id 或無法取得時退回全域預設聲音。"""
     if not elder_id:
         return TTS_PROMPT_WAV, TTS_PROMPT_TEXT
@@ -206,9 +204,7 @@ async def synthesize(payload: dict, request: Request) -> Response:
             prompt_wav, prompt_text = await run_in_threadpool(
                 _resolve_voice, elder_id, prompt_audio_url, prompt_text_override
             )
-            audio, duration_ms = await run_in_threadpool(
-                _synthesize, text, prompt_wav, prompt_text
-            )
+            audio, duration_ms = await run_in_threadpool(_synthesize, text, prompt_wav, prompt_text)
     finally:
         _inflight -= 1
     return Response(
