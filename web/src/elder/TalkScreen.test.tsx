@@ -126,6 +126,28 @@ describe("TalkScreen", () => {
     renderScreen();
     expect(micButton()).toBeInTheDocument();
   });
+
+  it("適老化尺寸：可點擊目標 ≥56px、字級 ≥22px", () => {
+    // ⚠️ 這條約束（`--text-elder-min` 22px 起跳、可點擊目標 ≥56px）是這個專案反覆
+    // 修過的東西（Task 7 才剛修過 `ErrorText`／`Field`／`loginLink` 三處），而對講機
+    // 是它最要緊的一頁。審查實測：把麥克風鍵改成 40px、回覆字幕改成 `text-sm`，
+    // 整份測試仍然全綠——這條約束當時**只靠人工審查守著**。
+    //
+    // ⚠️ 斷言的是 class 而不是實際尺寸：jsdom 沒有版面計算，`getBoundingClientRect`
+    // 一律回 0，`getComputedStyle` 也解不出 Tailwind 的工具類。class 名是這一層
+    // 唯一測得到的契約；真正的視覺尺寸由人工驗收把關。
+    renderScreen();
+    // 104px（與 App 的麥克風鍵同尺寸）
+    expect(micButton().className).toContain("size-[104px]");
+    // 30px 字幕
+    expect(screen.getByRole("status").className).toContain("text-elder-big");
+    // 56px 鈴鐺
+    expect(screen.getByRole("button", { name: "看金孫的提醒" }).className).toContain("size-14");
+    // 56px＋22px 登出
+    const logout = screen.getByRole("button", { name: "登出" });
+    expect(logout.className).toContain("min-h-14");
+    expect(logout.className).toContain("text-elder-min");
+  });
 });
 
 describe("麥克風鍵真的把手勢交出去", () => {
@@ -181,9 +203,7 @@ describe("登出", () => {
     const h = renderScreen();
     await userEvent.click(screen.getByRole("button", { name: "登出" }));
     expect(h.onLogout).not.toHaveBeenCalled();
-    expect(screen.getByRole("alertdialog")).toHaveTextContent(
-      "確定要登出嗎？下次要用手機號碼和密碼再登入。",
-    );
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
   });
 
   it("確認之後才真的登出", async () => {
@@ -191,6 +211,34 @@ describe("登出", () => {
     await userEvent.click(screen.getByRole("button", { name: "登出" }));
     await userEvent.click(screen.getByRole("button", { name: "確定登出" }));
     expect(h.onLogout).toHaveBeenCalledOnce();
+  });
+
+  it("確認列講的是「還沒設過帳密要請家人重新給號碼」，不是叫他去用一組不存在的帳密", async () => {
+    // ⚠️ 這顆確認鍵存在的理由，正是「只靠綁定碼配對、家屬還沒替他設過帳密的長輩
+    // 一按就自己回不來」——文案若只說「下次要用手機號碼和密碼再登入」，他會安心
+    // 地按下確定，然後在登入畫面試一組不存在的密碼。這與本輪修掉的六處文案是同
+    // 一種錯誤：叫使用者去找一個不存在的東西。
+    renderScreen();
+    await userEvent.click(screen.getByRole("button", { name: "登出" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent(
+      "確定要登出嗎？下次要用手機號碼和密碼登入，還沒設過的話要請家人重新給您一組號碼。",
+    );
+  });
+
+  it("確認列不宣稱自己是模態的（沒有焦點陷阱就不該這樣宣告）", () => {
+    // 宣告 `aria-modal="true"` 會讓螢幕報讀軟體把其餘內容藏起來，但這裡的麥克風鍵
+    // 仍然可以按——看得見的人與聽的人會拿到兩種不一樣的畫面。
+    renderScreen();
+    fireEvent.click(screen.getByRole("button", { name: "登出" }));
+    expect(screen.getByRole("alertdialog")).not.toHaveAttribute("aria-modal");
+  });
+
+  it("按 Escape 可以關掉確認列", async () => {
+    const h = renderScreen();
+    await userEvent.click(screen.getByRole("button", { name: "登出" }));
+    fireEvent.keyDown(screen.getByRole("alertdialog"), { key: "Escape" });
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(h.onLogout).not.toHaveBeenCalled();
   });
 
   it("按取消就回到原狀，不登出", async () => {

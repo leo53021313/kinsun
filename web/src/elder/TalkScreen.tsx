@@ -94,8 +94,17 @@ export function TalkScreen(props: {
           ref={confirmRef}
           tabIndex={-1}
           role="alertdialog"
-          aria-modal="true"
+          // ⚠️ 刻意**不**宣告 `aria-modal="true"`：那會讓螢幕報讀軟體把畫面其餘
+          // 內容藏起來，但這裡沒有焦點陷阱、麥克風鍵仍然可以按——看得見的人與
+          // 聽的人會拿到兩種不一樣的畫面。不用 `window.confirm` 是對的（它鎖住
+          // 整個分頁，雙欄同時存在時另一欄連按都按不了），但那也代表不該宣稱
+          // 自己是模態的。
           aria-labelledby={confirmHeadingId}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              setIsConfirmingLogout(false);
+            }
+          }}
           className="flex flex-col gap-3 rounded-2xl border-2 border-danger bg-surface p-4"
         >
           <p id={confirmHeadingId} className="text-elder-min leading-relaxed text-ink">

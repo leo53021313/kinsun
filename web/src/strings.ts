@@ -245,7 +245,12 @@ export const strings = {
     pressToTalk: "按住說話，或按一下開始、再按一下結束",
     logout: "登出",
     logoutConfirmTitle: "登出",
-    logoutConfirmBody: "確定要登出嗎？下次要用手機號碼和密碼再登入。",
+    // ⚠️ 這顆確認鍵存在的理由，正是「家屬**還沒替他設過帳密**的長輩一按就自己
+    // 回不來」——文案卻叫他用一組可能不存在的帳密，他會安心地按下確定，然後在
+    // 登入畫面試一組不存在的密碼。前端無從得知帳密設過沒有，不能分支，但可以
+    // 誠實地把另一條路一起講出來。
+    logoutConfirmBody:
+      "確定要登出嗎？下次要用手機號碼和密碼登入，還沒設過的話要請家人重新給您一組號碼。",
     logoutCancel: "取消",
     // 內測專用權限狀態列（僅 internalTesting 顯示）
     debugMicLabel: "麥克風",
