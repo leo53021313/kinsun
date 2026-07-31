@@ -79,6 +79,29 @@ describe("家屬登入", () => {
     expect(screen.getByRole("heading", { name: "家屬登入" })).toBeInTheDocument();
   });
 
+  // ⚠️ 非 401 的後端錯誤要照實顯示後端那句話，不可一律說成「連線失敗」。
+  // 失效路徑：密碼欄留空按登入（前端沒擋）→ 後端 `min_length=1` 觸發 422 →
+  // 回 `{code: "validation_error", message: "輸入資料格式不正確"}` → 畫面卻說
+  // 「連線失敗，請稍後再試。」→ 使用者以為伺服器掛了，重按十次都一樣。
+  // `ElderDetailScreen` 與 `SchedulesScreen` 早就是直接顯示 `exc.message` 的
+  // ——同一條旅程的前兩步用了相反的原則。
+  it("輸入格式不對時顯示後端那句話，而不是誤報成連線失敗", async () => {
+    mockAllRequests(422, failure("validation_error", "輸入資料格式不正確"));
+    renderApp();
+    await userEvent.type(screen.getByLabelText("Email"), "a@example.com");
+    await userEvent.click(screen.getByRole("button", { name: "登入" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("輸入資料格式不正確");
+  });
+
+  it("真的連不上（不是後端回的錯）時才說連線失敗", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    renderApp();
+    await userEvent.type(screen.getByLabelText("Email"), "a@example.com");
+    await userEvent.type(screen.getByLabelText("密碼"), "correct-horse-8");
+    await userEvent.click(screen.getByRole("button", { name: "登入" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("連線失敗，請稍後再試。");
+  });
+
   it("已登入時第一次繪製就在長輩列表，不會先閃一次登入畫面", () => {
     // ⚠️ **不要**用 render() 斷言最終畫面：它內部用 act() 包住掛載、會把 effect
     // 一起 flush，所以「一律從登入起手、靠 effect 補到首頁」那種會閃一下的實作
@@ -121,7 +144,9 @@ describe("家屬註冊", () => {
   });
 
   it("Email 已註冊過時顯示可操作的訊息", async () => {
-    mockAllRequests(400, failure("email_taken", "這個 email 已經註冊過了"));
+    // ⚠️ 409，不是 400：後端 `guardians.py` 對 `AppAccountError` 一律回 409。
+    // 假回應與後端實況不符時，測試守的是一個不存在的世界。
+    mockAllRequests(409, failure("email_taken", "這個 email 已經註冊過了"));
     renderApp();
     await userEvent.click(screen.getByRole("button", { name: "還沒有帳號？註冊" }));
     await userEvent.type(screen.getByLabelText("您的稱呼"), "兒子");
@@ -131,6 +156,19 @@ describe("家屬註冊", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "這個 Email 已經註冊過了，請直接登入。",
     );
+  });
+
+  // Email 打成 `abc`（漏 @）會被後端的 pattern 擋成 422。說成「連線失敗」會讓
+  // 使用者去查網路，而真正要改的是他打錯的那一格。
+  it("Email 格式不對時顯示後端那句話，而不是誤報成連線失敗", async () => {
+    mockAllRequests(422, failure("validation_error", "輸入資料格式不正確"));
+    renderApp();
+    await userEvent.click(screen.getByRole("button", { name: "還沒有帳號？註冊" }));
+    await userEvent.type(screen.getByLabelText("您的稱呼"), "兒子");
+    await userEvent.type(screen.getByLabelText("Email"), "abc");
+    await userEvent.type(screen.getByLabelText("密碼"), "correct-horse-8");
+    await userEvent.click(screen.getByRole("button", { name: "註冊並登入" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("輸入資料格式不正確");
   });
 });
 

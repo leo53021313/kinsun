@@ -32,11 +32,18 @@ export function RegisterScreen(props: { onLogin: () => void; onDone: () => void 
       signIn({ token: session.token, display_name: session.name });
       props.onDone();
     } catch (exc) {
-      setError(
-        exc instanceof ApiError && exc.code === "email_taken"
-          ? strings.guardianRegister.emailTaken
-          : strings.common.connectionFailed,
-      );
+      // `email_taken` 自己寫一句，是因為要多給一個「請直接登入」的下一步；後端
+      // 那句「這個 email 已經註冊過了」只講了事實。其餘後端錯誤照實顯示後端的
+      // 訊息——它已經是繁中人話（D-24）。
+      //
+      // ⚠️ 一律說成「連線失敗」會誤導：Email 打成 `abc`（漏 @）會被後端的 pattern
+      // 擋成 422、回「輸入資料格式不正確」，而畫面說連線失敗，使用者於是去查網路，
+      // 真正要改的卻是他打錯的那一格。與 LoginScreen 同一個原則。
+      if (exc instanceof ApiError && exc.code === "email_taken") {
+        setError(strings.guardianRegister.emailTaken);
+      } else {
+        setError(exc instanceof ApiError ? exc.message : strings.common.connectionFailed);
+      }
     } finally {
       setBusy(false);
     }

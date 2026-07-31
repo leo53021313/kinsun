@@ -26,11 +26,18 @@ export function LoginScreen(props: { onRegister: () => void; onDone: () => void 
     } catch (exc) {
       // ⚠️ 這裡的 401 是「帳密不對」，要顯示給人看，不可套用 signOutOnAuthError
       // 把人踢出去——他本來就還沒進來。
-      setError(
-        exc instanceof ApiError && exc.status === 401
-          ? strings.guardianLogin.wrongCredentials
-          : strings.common.connectionFailed,
-      );
+      if (exc instanceof ApiError && exc.status === 401) {
+        setError(strings.guardianLogin.wrongCredentials);
+      } else {
+        // 其餘後端錯誤照實顯示後端那句話：它已經是繁中人話（D-24），比自己重寫
+        // 一句準確——與 ElderDetailScreen／SchedulesScreen 同一個原則。
+        //
+        // ⚠️ 一律說成「連線失敗」會誤導：密碼欄留空按登入（前端沒擋）會讓後端的
+        // `min_length=1` 觸發 422、回「輸入資料格式不正確」，而畫面說連線失敗，
+        // 使用者於是去查網路、重按十次都一樣。真正連不上（fetch 自己擲的
+        // TypeError，不是 ApiError）才留給 connectionFailed。
+        setError(exc instanceof ApiError ? exc.message : strings.common.connectionFailed);
+      }
     } finally {
       setBusy(false);
     }
