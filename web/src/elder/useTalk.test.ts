@@ -836,6 +836,38 @@ describe("降級與失敗", () => {
     expect(h.view.result.current.replyText).toContain("綁定");
   });
 
+  it.each([
+    [503, "too_many_requests", "金孫還在忙前面那幾句，等一下下再跟您說好嗎？"],
+    [429, "too_many_requests", "金孫還在忙前面那幾句，等一下下再跟您說好嗎？"],
+    [413, "audio_too_large", "音檔太大，請縮短錄音再試一次"],
+  ])("POST 降級路徑吃到 %s 時，長輩看到的是後端那句人話", async (status, code, message) => {
+    // ⚠️ **全分支審查抓到的 Important 1**：這幾句全部被收斂成「金孫沒聽清楚，再說
+    // 一次好嗎？」。失效情境：GPU 滿載、長連線又剛好連不上 → 長輩講一句 → 503 →
+    // 他看到「沒聽清楚」→ **更大聲再講一次** → 又一輪打進已經滿載的閘門。閘門存在
+    // 的理由就是避免這件事，而降級路徑親手製造它。
+    // ⚠️ 斷言寫死字面值：這是後端 `channels/app/ws.py::_BUSY_REPLY` 與
+    // `web/envelope.py` 的既有文案，測試要在它被前端吃掉時變紅。
+    const h = setup();
+    h.postTurn.mockRejectedValue(new ApiError(status, code, message));
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    await holdAndRelease(h);
+    await waitFor(() => expect(h.view.result.current.replyText).toBe(message));
+    // 講完還是要能再按（他等一下確實可以再講一次）。
+    expect(h.view.result.current.avatar).toBe("idle");
+  });
+
+  it("後端回的不是人話（隧道抖動的 HTTP 502）時，仍講長輩看得懂的那句", async () => {
+    // ⚠️ `shared/client.ts` 在回應不是合法信封時自造 `http_<status>` 的英文訊息
+    //（字面值就是「HTTP 502」）。直接顯示的話長輩會在畫面正中央看到一串英數字。
+    const h = setup();
+    h.postTurn.mockRejectedValue(new ApiError(502, "http_502", "HTTP 502"));
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    await holdAndRelease(h);
+    await waitFor(() =>
+      expect(h.view.result.current.replyText).toBe("金孫沒聽清楚，再說一次好嗎？"),
+    );
+  });
+
   it("token 被撤銷（401）時通知呼叫端，不可以只說「金孫沒聽清楚」", async () => {
     // ⚠️ **全分支審查抓到的 Critical 1**：家屬按下「重新產生長輩綁定碼」時，後端
     // `accounts/service.py::revoke_elder_device` 是**先**撤 token **再**拆綁定，

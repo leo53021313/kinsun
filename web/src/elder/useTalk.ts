@@ -12,7 +12,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { ApiError } from "@/api";
+import { apiErrorMessage, ApiError } from "@/api";
 import { makeSignOutOnAuthError } from "@/session/useSignOutOnAuthError";
 import { strings } from "@/strings";
 import { unlockAudio } from "@/talk/audioUnlock";
@@ -617,7 +617,22 @@ export function useTalk(options: {
         // 就被配對畫面換掉，寫在這裡長輩看不到。那句「家人幫您重新設定了…」由
         // `ElderApp` 交給配對畫面顯示——那才是他接下來看得到的地方。
       } else {
-        setReplyText(strings.talk.fallback);
+        // ⚠️ 後端寫好的那句話照顯示，不可以一律收斂成「金孫沒聽清楚，再說一次好嗎？」
+        //（全分支審查的 Important 1）。被吃掉的至少有四句：容量閘門排隊逾時（503）與
+        // 每分鐘保險絲（429）的婉拒話「金孫還在忙前面那幾句，等一下下再跟您說好嗎？」、
+        // 音檔太大（413）的「音檔太大，請縮短錄音再試一次」、以及語音服務不可用（503
+        // `speech_unavailable`）。
+        //
+        // 失效情境：GPU 滿載、長連線又剛好連不上（隧道抖一下）→ 長輩講一句 → 503 →
+        // 他看到「沒聽清楚」→ **更大聲再講一次** → 又一輪打進已經滿載的閘門。閘門存在
+        // 的理由就是避免這件事，而降級路徑親手製造它。WS 路徑（`ws.py` 的 error 訊框）
+        // 一直是照顯示的——兩條路徑對長輩說兩種話，正好違反 `turns.py` 自己寫下的意圖。
+        //
+        // `apiErrorMessage` 擋掉不是人話的那一種：隧道回 502 HTML、後端未捕捉例外走
+        // Starlette 預設處理時，`shared/client.ts` 會自造 `http_<status>` 的英文訊息
+        //（如「HTTP 502」），那種一律退回 `fallback`；非 ApiError 的例外（如錄到空音檔
+        // 時本檔自己擲的 `no recording`）同理。
+        setReplyText(apiErrorMessage(exc, strings.talk.fallback));
       }
       setAvatarBoth("idle");
     } finally {
