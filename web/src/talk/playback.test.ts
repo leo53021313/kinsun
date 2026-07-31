@@ -2,9 +2,18 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createWebPlayer, writeReplyAudio } from "./playback";
+import {
+  createWebPlayer,
+  resetPendingReplyAudioForTest,
+  revokeQueuedReplyAudio,
+  UNLOCK_AUDIO_URI,
+  writeReplyAudio,
+} from "./playback";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  resetPendingReplyAudioForTest();
+});
 
 describe("writeReplyAudio", () => {
   it("把位元組換成可播放的 blob URL", () => {
@@ -71,7 +80,26 @@ describe("createWebPlayer", () => {
     expect(seen).toEqual([]);
   });
 
-  it("dispose() 停止播放並回收目前的 blob URL，離開對講機畫面時徹底清乾淨", () => {
+  it("iOS 解鎖用的無聲檔播完不通知監聽者，換成真的回覆後才恢復正常通知", () => {
+    // 這顆播放器是 unlockAudio 刻意共用的同一顆（iOS 的解鎖綁在單一
+    // HTMLMediaElement 上）。若不濾掉，長輩第一次按下麥克風時，這段無聲檔
+    // 播完的 ended 會被常駐監聽者誤判為「一則回覆播完了」，佇列是空的、
+    // 提前把畫面切回待機——而長輩其實還在講話。
+    const player = createWebPlayer();
+    const element = (player as unknown as { element: HTMLAudioElement }).element;
+    const seen: boolean[] = [];
+    player.addListener("playbackStatusUpdate", (status) => seen.push(status.didJustFinish));
+
+    player.replace({ uri: UNLOCK_AUDIO_URI });
+    element.dispatchEvent(new Event("ended"));
+    expect(seen).toEqual([]);
+
+    player.replace({ uri: "blob:fake-1" });
+    element.dispatchEvent(new Event("ended"));
+    expect(seen).toEqual([true]);
+  });
+
+  it("dispose() 停止播放、回收目前的 blob URL 並釋放媒體資源，離開對講機畫面時徹底清乾淨", () => {
     // brief 的 Test 清單完全沒測到 dispose()——它是唯一負責「徹底清乾淨」的
     // 出口（例如長輩離開對講機畫面時呼叫），沒有測試會讓這條路徑的回收行為
     // 隨時被改壞而沒有任何訊號。
@@ -79,13 +107,84 @@ describe("createWebPlayer", () => {
     vi.stubGlobal("URL", { createObjectURL: vi.fn(), revokeObjectURL });
     const player = createWebPlayer();
     const element = (player as unknown as { element: HTMLAudioElement }).element;
-    // jsdom 沒有實作 pause()（呼叫真的實作會印一行 "Not implemented" 噪音），
-    // 故蓋掉實作，只驗證有沒有被呼叫到。
+    // jsdom 沒有實作 pause()／load()（呼叫真的實作會印一行 "Not implemented"
+    // 噪音），故蓋掉實作，只驗證有沒有被呼叫到。
     const pause = vi.spyOn(element, "pause").mockImplementation(() => undefined);
+    const load = vi.spyOn(element, "load").mockImplementation(() => undefined);
     player.replace({ uri: "blob:fake-1" });
     player.dispose();
     expect(pause).toHaveBeenCalled();
+    expect(load).toHaveBeenCalled();
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:fake-1");
     expect(element.src).toBe("");
+  });
+
+  it("dispose() 連還沒排到 replace() 的 blob URL 也一併回收", () => {
+    // 對應 Important 5：dispose() 是整個播放器要丟棄的時刻，此時不只回收
+    // 「目前正在播的那一則」，佇列裡還沒輪到的那幾則也該一併清乾淨。
+    const createObjectURL = vi
+      .fn()
+      .mockReturnValueOnce("blob:fake-1")
+      .mockReturnValueOnce("blob:fake-2");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+    const player = createWebPlayer();
+    const element = (player as unknown as { element: HTMLAudioElement }).element;
+    vi.spyOn(element, "pause").mockImplementation(() => undefined);
+    vi.spyOn(element, "load").mockImplementation(() => undefined);
+
+    const playing = writeReplyAudio(new Uint8Array([1]));
+    const queued = writeReplyAudio(new Uint8Array([2])); // 還沒排到 replace()
+    player.replace(playing);
+
+    player.dispose();
+
+    expect(revokeObjectURL).toHaveBeenCalledWith(playing.uri);
+    expect(revokeObjectURL).toHaveBeenCalledWith(queued.uri);
+  });
+});
+
+describe("revokeQueuedReplyAudio", () => {
+  it("回收所有還沒排到 replace() 的 blob URL，但不動傳入的 exceptUri", () => {
+    // 對應 Important 5：長輩插嘴、播放佇列被 clear() 清空時，裡面還沒輪到
+    // replace() 的那幾則本來一個都不會被回收——見本函式的模組註解。
+    const createObjectURL = vi
+      .fn()
+      .mockReturnValueOnce("blob:fake-1")
+      .mockReturnValueOnce("blob:fake-2")
+      .mockReturnValueOnce("blob:fake-3");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+
+    writeReplyAudio(new Uint8Array([1]));
+    writeReplyAudio(new Uint8Array([2]));
+    const playing = writeReplyAudio(new Uint8Array([3]));
+
+    revokeQueuedReplyAudio(playing.uri);
+
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:fake-1");
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:fake-2");
+    expect(revokeObjectURL).not.toHaveBeenCalledWith("blob:fake-3");
+  });
+
+  it("已經透過 replace() 正常回收過的 uri 不會被重複回收", () => {
+    const createObjectURL = vi
+      .fn()
+      .mockReturnValueOnce("blob:fake-1")
+      .mockReturnValueOnce("blob:fake-2");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+    const player = createWebPlayer();
+
+    const first = writeReplyAudio(new Uint8Array([1]));
+    const second = writeReplyAudio(new Uint8Array([2]));
+    player.replace(first);
+    player.replace(second); // 正常換下一則時，first 已經被 revokeCurrent() 回收
+
+    revokeObjectURL.mockClear();
+    revokeQueuedReplyAudio();
+
+    expect(revokeObjectURL).not.toHaveBeenCalledWith(first.uri);
+    expect(revokeObjectURL).toHaveBeenCalledWith(second.uri);
   });
 });

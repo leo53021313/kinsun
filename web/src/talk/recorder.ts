@@ -17,13 +17,46 @@ export type Recorder = {
   isRecording: () => boolean;
 };
 
-export function createRecorder(): Recorder {
+/**
+ * setTimeout 的回傳值在不同環境型別不同，這裡只當成不透明代號傳來傳去
+ * （同 `talkSocket.ts` 的 `RetryHandle`，此檔刻意不 import 該型別以維持零
+ * 依賴，見 09_模組依賴關係）。
+ */
+type StopGuardHandle = number | ReturnType<typeof setTimeout>;
+
+/**
+ * `stop()` 等待 `onstop` 事件的保險逾時（毫秒）。
+ *
+ * ⚠️ 事件真的沒來時（例如系統把麥克風軌道搶走、`MediaRecorder` 已自行回到
+ * `"inactive"`），沒有這個保險就是這個 Promise **永遠不 resolve**——長輩按了
+ * 停止鍵卻沒有任何反應，呼叫端（未來 Task 8 的 `stopAndSend`）會卡在
+ * `await` 上。與 `talkSocket.ts::playAndWait` 的保險逾時同一種理由。
+ */
+const STOP_GUARD_MS = 3000;
+
+/** 注入點：測試不想真的等（同 `talkSocket.ts` 的既有慣例）。 */
+export type RecorderDeps = {
+  setTimeoutFn?: (fn: () => void, ms: number) => StopGuardHandle;
+  clearTimeoutFn?: (handle: StopGuardHandle) => void;
+};
+
+export function createRecorder(deps: RecorderDeps = {}): Recorder {
+  const { setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout } = deps;
   let recorder: MediaRecorder | null = null;
   let stream: MediaStream | null = null;
   let chunks: Blob[] = [];
+  // 重入保護：`recorder` 只在 `await getUserMedia` 之後才賦值，等待權限的
+  // 整個窗口裡 `isRecording()` 回 false，呼叫端就算檢查也擋不住重入——第二次
+  // `start()` 會覆蓋 `stream`／`recorder` 變數，讓第一顆 `MediaStream` 的軌道
+  // 從此沒有人呼叫 `track.stop()`，指示燈永遠關不掉。
+  let starting = false;
 
   return {
     async start() {
+      if (starting || recorder !== null) {
+        return false;
+      }
+      starting = true;
       try {
         stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         chunks = [];
@@ -49,6 +82,8 @@ export function createRecorder(): Recorder {
         stream = null;
         recorder = null;
         return false;
+      } finally {
+        starting = false;
       }
     },
 
@@ -57,18 +92,47 @@ export function createRecorder(): Recorder {
       if (active === null) {
         return null;
       }
-      const bytes = await new Promise<ArrayBuffer>((resolve) => {
-        active.onstop = () => {
-          void new Blob(chunks).arrayBuffer().then(resolve);
-        };
-        active.stop();
-      });
-      // ⚠️ 關掉軌道：不關的話瀏覽器分頁上的錄音指示燈會一直亮著，長輩（與展示
-      // 現場的觀眾）會以為它在偷聽。
-      stream?.getTracks().forEach((track) => track.stop());
-      stream = null;
-      recorder = null;
-      return bytes;
+      // ⚠️ 關掉軌道與重置狀態放進 finally：`active.stop()` 依 MediaRecorder
+      // 規格，在非 "recording"／"paused" 狀態呼叫會同步擲出
+      // `InvalidStateError`——例如錄音途中來電／Siri 介入／藍牙耳機被拔，
+      // 系統把軌道搶走、`MediaRecorder` 已自行回到 `"inactive"`，長輩這時
+      // 放開按鈕才呼叫 `stop()`。若軌道關閉與狀態重置寫在這段之後，這條
+      // 路徑會整段跳過——麥克風指示燈永遠關不掉（跟本檔第一段要防的事一
+      // 模一樣），`isRecording()` 也永遠回 `true`。`finally` 保證無論成功、
+      // 同步擲出例外、或保險逾時，這兩件事都會發生。
+      try {
+        return await new Promise<ArrayBuffer>((resolve) => {
+          let settled = false;
+          let guard: StopGuardHandle | null = null;
+          const finish = () => {
+            if (settled) return;
+            settled = true;
+            if (guard !== null) clearTimeoutFn(guard);
+            void new Blob(chunks).arrayBuffer().then(resolve);
+          };
+          // 保險逾時：見上方 STOP_GUARD_MS 說明。
+          guard = setTimeoutFn(finish, STOP_GUARD_MS);
+          active.onstop = finish;
+          try {
+            active.stop();
+          } catch {
+            // `active.stop()` 本身同步擲出（如 `InvalidStateError`）：手上
+            // 已有的 chunks 仍然有效，直接用它們收尾，不必等 onstop 或保險
+            // 逾時。這層內層 catch 已經保證這個 Promise 不會 reject——下面
+            // 的 `finally` 因此目前沒有「與內層 catch 不同」的可獨立驗證
+            // 路徑，屬於防禦性寫法：保護日後若有人在這個 executor 裡加入
+            // 新的、未被內層 catch 涵蓋的擲出路徑時，軌道關閉與狀態重置仍
+            // 不會被跳過（見 task-4-report.md 對這一層的誠實記載）。
+            finish();
+          }
+        });
+      } finally {
+        // ⚠️ 關掉軌道：不關的話瀏覽器分頁上的錄音指示燈會一直亮著，長輩（與展示
+        // 現場的觀眾）會以為它在偷聽。
+        stream?.getTracks().forEach((track) => track.stop());
+        stream = null;
+        recorder = null;
+      }
     },
 
     isRecording() {
