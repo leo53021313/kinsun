@@ -395,3 +395,34 @@ describe("HomeScreen", () => {
     expect(screen.queryByRole("button", { name: "送到長輩的手機" })).not.toBeInTheDocument();
   });
 });
+
+/**
+ * 通知未讀徽章（P4 Task 4，`unread` 由 `stage/StagePage.tsx` 的
+ * `guardianFeed.unread` 傳入）。⚠️ 紅點本身是 `aria-hidden`，真正的數字在
+ * 可及名稱裡（同 `elder/TalkScreen.tsx` 鈴鐺未讀數的作法）——斷言一律走
+ * `getByRole` 的 `name`，不直接找紅點文字。
+ */
+describe("通知未讀徽章", () => {
+  it("unread > 0 時，通知鈕的可及名稱帶上未讀數，紅點也顯示同一個數字", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ status: 200, json: async () => envelope([]) }));
+    renderHome({ unread: 3 });
+    await screen.findByText("還沒有長輩檔案，先在上面建立一位吧。");
+    expect(screen.getByRole("button", { name: "通知，3 則新的" })).toBeInTheDocument();
+    expect(screen.getByText("3")).toBeInTheDocument();
+  });
+
+  it("unread 超過 9 時紅點顯示 9+，可及名稱仍講實際數字", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ status: 200, json: async () => envelope([]) }));
+    renderHome({ unread: 12 });
+    await screen.findByText("還沒有長輩檔案，先在上面建立一位吧。");
+    expect(screen.getByRole("button", { name: "通知，12 則新的" })).toBeInTheDocument();
+    expect(screen.getByText("9+")).toBeInTheDocument();
+  });
+
+  it("unread 是 0 或未傳入時不顯示徽章，鈕名稱只有「通知」", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ status: 200, json: async () => envelope([]) }));
+    renderHome({ unread: 0 });
+    await screen.findByText("還沒有長輩檔案，先在上面建立一位吧。");
+    expect(screen.getByRole("button", { name: "通知" })).toBeInTheDocument();
+  });
+});

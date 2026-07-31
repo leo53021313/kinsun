@@ -569,4 +569,71 @@ describe("useNotificationFeed", () => {
     rerender({ reloadSignal: 1 });
     await waitFor(() => expect(api.guardian).toHaveBeenCalledTimes(2));
   });
+
+  /**
+   * `visible`（P4 Task 4 接線）：窄螢幕頁籤模式下被 CSS 蓋住的那一欄，同一種坑
+   * `elder/useTalk.ts` 的麥克風／相機已經修過四次（見檔頭「接線狀態 1」）。
+   */
+  describe("visible", () => {
+    it("visible 為 false 時完全不會打請求，即使經過多輪間隔", async () => {
+      api.guardian.mockResolvedValue([]);
+      renderHook(() =>
+        useNotificationFeed({
+          audience: "guardian",
+          token: "tok",
+          intervalMs: 1000,
+          visible: false,
+        }),
+      );
+      await act(async () => {
+        vi.advanceTimersByTime(5000);
+      });
+      expect(api.guardian).not.toHaveBeenCalled();
+    });
+
+    it("visible 從 false 變 true 時立刻補一次輪詢，不必等下一個間隔", async () => {
+      api.guardian.mockResolvedValue([]);
+      const { rerender } = renderHook(
+        (props: { visible: boolean }) =>
+          useNotificationFeed({
+            audience: "guardian",
+            token: "tok",
+            intervalMs: 60_000,
+            visible: props.visible,
+          }),
+        { initialProps: { visible: false } },
+      );
+      await act(async () => {
+        vi.advanceTimersByTime(5000);
+      });
+      expect(api.guardian).not.toHaveBeenCalled();
+
+      rerender({ visible: true });
+      await waitFor(() => expect(api.guardian).toHaveBeenCalledTimes(1));
+    });
+
+    it("visible 變回 false 之後，連分頁切回前景這種本來會補打一次的觸發也不再打", async () => {
+      // ⚠️ 只驗證「呼叫次數不再增加」還不夠精確（同本檔卸載那幾條測試的理由）：
+      // 這裡改用「切去背景又切回前景」當探針——若 `visible` 沒有真的擋住整條
+      // effect（含監聽器註冊），visibilitychange 一樣會補打一輪。
+      api.guardian.mockResolvedValue([]);
+      const { rerender } = renderHook(
+        (props: { visible: boolean }) =>
+          useNotificationFeed({
+            audience: "guardian",
+            token: "tok",
+            intervalMs: 60_000,
+            visible: props.visible,
+          }),
+        { initialProps: { visible: true } },
+      );
+      await waitFor(() => expect(api.guardian).toHaveBeenCalledTimes(1));
+
+      rerender({ visible: false });
+      await act(async () => {
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      expect(api.guardian).toHaveBeenCalledTimes(1);
+    });
+  });
 });

@@ -11,6 +11,12 @@
  */
 const ELDER_BELL_LABEL = "看金孫的提醒";
 
+/**
+ * 家屬首頁通知鈕的用途說明。`guardianHome.notify` 與 `notifyWithUnread` 都要
+ * 用到它，抽成常數的理由同 `ELDER_BELL_LABEL`。
+ */
+const GUARDIAN_NOTIFY_LABEL = "通知";
+
 export const strings = {
   common: {
     loading: "載入中…",
@@ -74,6 +80,9 @@ export const strings = {
     guardianTab: "家屬端",
     elderTitle: "長輩的手機",
     guardianTitle: "家屬的手機",
+    // 手動切換鈕的可及名稱（P4 Task 4）：UA 只能給一個合理的預設，展示時觀眾
+    // 會想看兩種、投影用的筆電也只有一種 UA，故一定要能手動切換。
+    notificationStyle: (os: string) => (os === "ios" ? "通知樣式：iOS" : "通知樣式：Android"),
   },
   guardianLogin: {
     title: "家屬登入",
@@ -94,7 +103,10 @@ export const strings = {
     nameRequired: "請先輸入長輩的稱呼。",
     addFailed: "新增失敗",
     logout: "登出",
-    notify: "通知",
+    notify: GUARDIAN_NOTIFY_LABEL,
+    // 讀螢幕的人聽不到紅色數字，未讀數必須進可及名稱裡（同 elderNotifications
+    // 的 bellWithUnread 作法）。
+    notifyWithUnread: (count: number) => `${GUARDIAN_NOTIFY_LABEL}，${count} 則新的`,
     addElderSection: "新增長輩",
     elderNameLabel: "長輩稱呼",
     elderNamePlaceholder: "例如：阿公",

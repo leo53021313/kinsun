@@ -23,6 +23,12 @@ export function HomeScreen(props: {
    * `StagePage`）時沒有另一欄可以送，這顆按鈕不該出現。
    */
   onSendCodeToElder?: (code: string) => void;
+  /**
+   * 通知未讀數（P4 Task 4，見 `stage/StagePage.tsx` 的 `guardianFeed.unread`）。
+   * 未傳或 0 時「通知」鈕不畫徽章，可及名稱維持純文字（同 `elder/TalkScreen.tsx`
+   * 鈴鐺「紅點只是給看得見的人的捷徑，真正的數字在可及名稱裡」的作法）。
+   */
+  unread?: number;
 }) {
   const { session, signOut } = GuardianSession.useSession();
   const token = session?.token ?? "";
@@ -124,9 +130,22 @@ export function HomeScreen(props: {
         <button
           type="button"
           onClick={props.onOpenNotifications}
-          className="min-h-12 rounded-xl border border-line bg-surface px-4 text-sm font-semibold text-ink"
+          aria-label={
+            props.unread ? strings.guardianHome.notifyWithUnread(props.unread) : undefined
+          }
+          className="relative min-h-12 rounded-xl border border-line bg-surface px-4 text-sm font-semibold text-ink"
         >
           {strings.guardianHome.notify}
+          {props.unread ? (
+            // aria-hidden：紅點只是給看得見的人的捷徑，真正的數字在上面的
+            // aria-label 裡（同 elder/TalkScreen.tsx 鈴鐺未讀數的作法）。
+            <span
+              aria-hidden
+              className="absolute -right-1 -top-1 flex min-w-5 items-center justify-center rounded-full bg-danger px-1 text-xs font-bold leading-none text-white"
+            >
+              {props.unread > 9 ? "9+" : props.unread}
+            </span>
+          ) : null}
         </button>
       </div>
 

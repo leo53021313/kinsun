@@ -54,8 +54,13 @@ const BACK_LABELS: Partial<Record<ElderRoute["name"], string>> = {
  * 是否變動來決定要不要同步，不在掛載時把 props 目前的值當成初始值（見該檔
  * 說明）。
  */
-export function ElderApp(props: { prefilledCode?: ElderCodeDelivery; visible?: boolean }) {
-  const { visible = true } = props;
+export function ElderApp(props: {
+  prefilledCode?: ElderCodeDelivery;
+  visible?: boolean;
+  /** 鈴鐺未讀數（P4 Task 4 接上真的輪詢結果，見 `stage/StagePage.tsx` 的 `elderFeed.unread`）。 */
+  unread?: number;
+}) {
+  const { visible = true, unread = 0 } = props;
   const { session, signOut } = ElderSession.useSession();
   const stack = useScreenStack<ElderRoute>(session ? { name: "talk" } : { name: "bind" });
   const { reset } = stack;
@@ -111,8 +116,7 @@ export function ElderApp(props: { prefilledCode?: ElderCodeDelivery; visible?: b
         return (
           <TalkScreen
             token={session?.token ?? ""}
-            // P4 接上通知輪詢時換成真的數字（Task 9 補提醒列表本身）。
-            unread={0}
+            unread={unread}
             visible={visible}
             onOpenNotifications={() => stack.push({ name: "notifications" })}
             onLogout={() => {

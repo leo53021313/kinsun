@@ -44,25 +44,25 @@
  * `shownUpTo` 一律從 `0` 起跳（掛載與換人皆同，不再讀已讀水位）；第一輪輪詢
  * 只用來記下目前的水位，不管當下已經累積了多少通知都不播。
  *
- * ⚠️ **接線提醒（給 Task 3／4，只寫在這裡，簽章尚未反映）**：
- * 1) `visible?: boolean`：窄螢幕頁籤模式下，非活動欄（同 `elder/useTalk.ts` 的
- *    `visible` 語意）目前**沒有**暫停輪詢的機制，只有瀏覽器分頁真的切到背景
- *    才會暫停（見下）。若接線後發現非活動欄持續輪詢造成佇列與畫面顯示的欄位
- *    不同步、或想省下非活動欄的請求量，需要幫本 hook 加上同款 `visible`
- *    參數並在 `poll()` 前比照擋掉——目前刻意不加，是因為呼叫端怎麼接還沒
- *    定案，避免加一個沒有真實呼叫端的推測性參數。
- * 2) `onTokenRevoked?: () => void`（本輪已加進簽章）：401（後端不認這支
- *    token，例如家屬按了「重新產生長輩綁定碼」）時會呼叫這個 callback，但
- *    **目前沒有任何呼叫端傳它**——接線時務必比照 `elder/TalkScreen.tsx`／
- *    `elder/NotificationsScreen.tsx` 接上 `session/useSignOutOnAuthError.ts`，
- *    否則長輩／家屬被撤銷 token 後，這支 hook 會每 `intervalMs` 打一次註定
- *    失敗的 401、畫面上卻沒有任何反應，直到使用者自己觸發別的路徑（如按下
- *    麥克風）才會被踢出去，後端也會平白多收這些必敗的請求。
+ * ⚠️ **接線狀態（P4 Task 4 已接，見 `stage/StagePage.tsx`）**：
+ * 1) `visible?: boolean`（本輪已加進簽章並接上）：窄螢幕頁籤模式下，非活動欄
+ *    （同 `elder/useTalk.ts` 的 `visible` 語意）現在會在 `!visible` 時整段跳過
+ *    輪詢（含不註冊分頁可見性監聽器），由 `StagePage.tsx` 的 `elderVisible`／
+ *    `guardianVisible` 傳入——與相機／麥克風走同一條線，理由同該檔說明：非
+ *    活動欄只是被 CSS `hidden` 蓋住，元件仍掛著，計時器與 `display:none` 無關。
+ * 2) `onTokenRevoked?: () => void`（本輪已接上）：`stage/StagePage.tsx` 傳入
+ *    對應 session 的 `signOut`。⚠️ **已知落差**：這裡只會清掉 session、把
+ *    `ElderApp`／`GuardianApp` 導回配對／登入畫面，**不會**帶出
+ *    `elder/ElderApp.tsx` 那句「家人幫您重新設定了…」的說明——那句話掛在
+ *    `ElderApp` 自己的 `loseSession`，本 hook 活在舞台層、構造上碰不到它。
+ *    是否要把這句說明也接上，留給下一輪裁決（多一條跨元件的訊息通道，是否
+ *    值得為這個邊角情境增加複雜度）。
  *
  * ⚠️ **已知限制（非本工項新缺陷，W-13 同款）**：窄螢幕頁籤模式下，橫幅在被
  * CSS 蓋住的那一欄一樣會照常播出、3.5 秒後照樣自動消失——使用者切過去看的
  * 時候已經錯過了。資料本身不會遺失（仍在提醒列表與未讀數裡），只有「即時跳
- * 出來」這個效果會被錯過；是否要在非活動欄暫停或補播，見上方接線提醒 1)。
+ * 出來」這個效果會被錯過；`visible` 接上後非活動欄不再繼續累積新的橫幅，但
+ * 切走那一刻**已經**顯示著的那一則仍會照原訂時間自動消失，不受影響。
  *
  * ⚠️ **已知限制（後端）**：`unread` 徽章依賴的 `list_for_external_ids` 後端
  * 有 `LIMIT 50`（`src/kinsun/notifications/store.py`），未開放成可調整的查詢
@@ -113,13 +113,25 @@ export function useNotificationFeed(options: {
   /** 值一變就立刻重拉一次（供未來跨欄連動使用，如「家屬剛設了新排程」）。 */
   reloadSignal?: number;
   /**
-   * 後端不認這支 token（401，例如家屬按了「重新產生長輩綁定碼」）。目前尚未
-   * 有任何呼叫端傳入——見檔頭「接線提醒 2」，Task 3／4 接線時務必補上。
+   * 後端不認這支 token（401，例如家屬按了「重新產生長輩綁定碼」）。見檔頭
+   * 「接線狀態 2」。
    */
   onTokenRevoked?: () => void;
+  /**
+   * 這一欄目前是否真的看得見（雙欄舞台在窄螢幕是頁籤擇一顯示，見
+   * `stage/StagePage.tsx`）。見檔頭「接線狀態 1」。預設 `true`（與
+   * `elder/useTalk.ts` 的預設一致，維持非舞台情境下呼叫端不必知道這個概念）。
+   */
+  visible?: boolean;
 }) {
-  const { audience, token, intervalMs = DEFAULT_INTERVAL_MS, reloadSignal = 0, onTokenRevoked } =
-    options;
+  const {
+    audience,
+    token,
+    intervalMs = DEFAULT_INTERVAL_MS,
+    reloadSignal = 0,
+    onTokenRevoked,
+    visible = true,
+  } = options;
   const [banner, setBanner] = useState<BannerItem | null>(null);
   const [unread, setUnread] = useState(0);
   // 佇列而非直接覆寫：一次輪詢可能拿到兩則新的（排程提醒剛好與危急警報同時），
@@ -286,7 +298,11 @@ export function useNotificationFeed(options: {
   }, []);
 
   useEffect(() => {
-    if (!token) return;
+    // ⚠️ `!visible` 同 `!token` 一併擋掉：非活動欄（窄螢幕頁籤模式下被 CSS
+    // `hidden` 蓋住的那一欄）整段跳過，連分頁可見性監聽器都不註冊——切回來時
+    // 這條 effect 會因 `visible` 進了依賴陣列而重新掛一次，`run()` 立刻補一輪，
+    // 不必等下一次輪詢間隔（與相機／麥克風切走即收、切回即恢復同一種寫法）。
+    if (!token || !visible) return;
     let alive = true;
     const run = () => {
       void poll().catch(handlePollError);
@@ -308,7 +324,7 @@ export function useNotificationFeed(options: {
       clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [poll, token, intervalMs, reloadSignal, handlePollError]);
+  }, [poll, token, intervalMs, reloadSignal, handlePollError, visible]);
 
   // 橫幅自動消失。3.5 秒足夠看完一句話，又不會擋住底下的操作太久。
   //

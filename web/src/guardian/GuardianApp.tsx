@@ -36,8 +36,10 @@ export function GuardianApp(props: {
    * `GuardianApp` 自己不需要知道長輩欄的任何事，只單純往下傳。
    */
   onSendCodeToElder?: (code: string) => void;
+  /** 通知未讀數（P4 Task 4，見 `stage/StagePage.tsx` 的 `guardianFeed.unread`）。轉交給 `HomeScreen`。 */
+  unread?: number;
 }) {
-  const { onSendCodeToElder } = props;
+  const { onSendCodeToElder, unread } = props;
   const { session } = GuardianSession.useSession();
   const stack = useScreenStack<GuardianRoute>(session ? { name: "home" } : { name: "login" });
   const { reset } = stack;
@@ -83,6 +85,7 @@ export function GuardianApp(props: {
             onOpenElder={(elderId, elderName) => stack.push({ name: "elder", elderId, elderName })}
             onOpenNotifications={() => stack.push({ name: "notifications" })}
             onSendCodeToElder={onSendCodeToElder}
+            unread={unread}
           />
         );
       case "elder":

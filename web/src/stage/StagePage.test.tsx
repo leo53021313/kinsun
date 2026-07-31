@@ -1,6 +1,6 @@
 /** 雙欄舞台：兩欄都在、窄螢幕以頁籤切換。 */
 
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -240,5 +240,210 @@ describe("跨欄連動：家屬把綁定碼送到長輩欄", () => {
 
     expect(screen.getByLabelText("綁定碼")).toHaveValue("ZZ99YY");
     expect(screen.getByText("已從家屬手機收到號碼")).toBeInTheDocument();
+  });
+});
+
+/**
+ * P4 Task 4：兩欄接上通知。
+ *
+ * ⚠️ **brief 原始版本的測試已修正**：brief 給的第一條測試設定已讀水位不是 0、
+ * 只餵一批固定資料（`mockImplementation` 每次都回同一批），期待掛載後立刻看到
+ * 橫幅。這與 `notify/useNotificationFeed.ts` 刻意規定的「第一次載入不補播歷史，
+ * 且與已讀水位無關，一律以自己掛載後第一輪輪詢為準」互相矛盾（見該檔「brief
+ * 缺陷 2」）：第一輪輪詢只會把這批資料當成基準記下來，之後同一批資料的
+ * `created_at` 不會再大於這個基準，橫幅永遠不會出現（實測驗證：套用 brief 原始
+ * 寫法跑到逾時）。改為兩輪：第一輪回舊資料建立基準，第二輪追加一則更新的，
+ * 觸發方式沿用 `useNotificationFeed.test.ts` 自己的既有手法——分派
+ * `visibilitychange` 事件讓 hook 立刻重拉一次，不必等 2 秒的真實輪詢間隔。
+ */
+describe("通知橫幅", () => {
+  it("長輩端有新提醒時在左邊的手機外框上滑出橫幅", async () => {
+    localStorage.setItem(
+      "kinsun_web_session_elder",
+      JSON.stringify({ role: "elder", token: "tok", display_name: "王阿嬤" }),
+    );
+    let pollCount = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((path: string) => {
+        if (String(path).includes("elder-notifications")) {
+          pollCount += 1;
+          const data =
+            pollCount === 1
+              ? [{ content: "舊提醒", created_at: 1754000050 }]
+              : [
+                  { content: "舊提醒", created_at: 1754000050 },
+                  { content: "提醒您：降血壓藥", created_at: 1754000100 },
+                ];
+          return Promise.resolve({ status: 200, json: async () => envelope(data) });
+        }
+        return Promise.resolve({ status: 200, json: async () => envelope([]) });
+      }),
+    );
+    render(<StagePage />);
+    // 第一輪輪詢（建立基準，不播）跑完再觸發第二輪。
+    await waitFor(() => expect(pollCount).toBe(1));
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(await screen.findByText("提醒您：降血壓藥")).toBeInTheDocument();
+  });
+
+  /**
+   * ⚠️ brief 原始版本只斷言「按鈕存在、點了不會炸」，沒有斷言點下去真的
+   * 改變了什麼——這正是這份 spec 反覆抓到的「恰好通過的假測試」形狀（實測：
+   * 把 `onClick` 換成空函式，brief 原始寫法仍然全綠）。改用 `PhoneFrame` 的
+   * `dynamic-island`（只有 iOS 樣式才畫）當觀察窗，同時驗證「兩欄同步」這件
+   * 事本身——brief 修正前兩欄是各自寫死 `ios`／`android`，這裡若沒有真的改成
+   * 共用同一個 `os` state，會看到 0 或 1 個瀏海，不會是兩個一起出現／消失。
+   */
+  it("可以切換通知的作業系統風格，且兩欄同步套用同一種樣式", async () => {
+    render(<StagePage />);
+    // jsdom 的 navigator.userAgent 不含 iPhone／iPad／Macintosh，預設會判成
+    // Android 風（見 `notify/osStyle.ts::detectOs`），兩欄一開始都不畫瀏海。
+    expect(screen.queryAllByTestId("dynamic-island")).toHaveLength(0);
+
+    const toggle = screen.getByRole("button", { name: /通知樣式/ });
+    await userEvent.click(toggle);
+    expect(screen.queryAllByTestId("dynamic-island")).toHaveLength(2);
+
+    await userEvent.click(toggle);
+    expect(screen.queryAllByTestId("dynamic-island")).toHaveLength(0);
+  });
+});
+
+/**
+ * ⚠️ **這條線一定要有測試守**（見任務交辦）：這是「非活動欄的長生命週期資源
+ * 沒有隨可見性收掉」這一類坑第五次發生的地方，前四次分別是麥克風、相機、
+ * 頁籤、播放器解鎖，全部是「程式碼寫對了、但沒有任何測試會在它被拿掉時
+ * 變紅」。這裡刻意用網路請求次數當觀察窗——若 `visible={guardianVisible}`／
+ * `visible={elderVisible}` 被拿掉（等於恆為預設值 `true`），下面兩條測試都會
+ * 因為非活動欄照樣打請求而變紅（已實測，見任務報告的變異驗證段落）。
+ */
+describe("通知輪詢的可見性接線（elderVisible／guardianVisible／visible）", () => {
+  it("窄螢幕預設在長輩端頁籤時，家屬欄的通知輪詢不會打；切過去後才開始打", async () => {
+    localStorage.setItem(
+      "kinsun_web_session_guardian",
+      JSON.stringify({ role: "guardian", token: "tok", display_name: "兒子" }),
+    );
+    const notifyFetch = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((path: string) => {
+        if (String(path).includes("/api/v1/notifications")) {
+          notifyFetch();
+        }
+        return Promise.resolve({ status: 200, json: async () => envelope([]) });
+      }),
+    );
+    render(<StagePage />);
+    await act(async () => {}); // 讓掛載時可能觸發的效果跑完
+    expect(notifyFetch).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("tab", { name: "家屬端" }));
+    await waitFor(() => expect(notifyFetch).toHaveBeenCalled());
+  });
+
+  it("切到家屬端頁籤後，長輩欄的通知輪詢跟著暫停", async () => {
+    localStorage.setItem(
+      "kinsun_web_session_elder",
+      JSON.stringify({ role: "elder", token: "tok", display_name: "王阿嬤" }),
+    );
+    let elderCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((path: string) => {
+        if (String(path).includes("elder-notifications")) {
+          elderCalls += 1;
+        }
+        return Promise.resolve({ status: 200, json: async () => envelope([]) });
+      }),
+    );
+    render(<StagePage />);
+    await waitFor(() => expect(elderCalls).toBe(1)); // 掛載時的第一輪
+
+    await userEvent.click(screen.getByRole("tab", { name: "家屬端" }));
+    elderCalls = 0;
+    // 若沒有暫停，這個事件會讓長輩欄立刻再打一次（同 `useNotificationFeed`
+    // 自己「切回前景立刻補一次」測試的手法）。
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(elderCalls).toBe(0);
+  });
+});
+
+describe("通知輪詢的 401 出口接線（onTokenRevoked）", () => {
+  it("長輩欄的通知輪詢收到 401（token 被撤銷）時，立刻退回配對畫面", async () => {
+    localStorage.setItem(
+      "kinsun_web_session_elder",
+      JSON.stringify({ role: "elder", token: "tok", display_name: "王阿嬤" }),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((path: string) => {
+        if (String(path).includes("elder-notifications")) {
+          return Promise.resolve({
+            status: 401,
+            json: async () => ({
+              success: false,
+              data: null,
+              error: { code: "invalid_token", message: "請重新配對" },
+              meta: null,
+            }),
+          });
+        }
+        return Promise.resolve({ status: 200, json: async () => envelope([]) });
+      }),
+    );
+    render(<StagePage />);
+    // 沒有這條接線的話，這支輪詢會每 2 秒收到一次註定失敗的 401、完全靜默
+    // 丟棄，長輩欄會停在對講機畫面，不會回到配對畫面。
+    expect(await screen.findByText("掃描家人給的方塊圖，或輸入號碼")).toBeInTheDocument();
+  });
+});
+
+describe("未讀數接上真正的輪詢結果（不再寫死 0／恆無徽章）", () => {
+  it("長輩欄的鈴鐺未讀數接上 elderFeed.unread", async () => {
+    localStorage.setItem(
+      "kinsun_web_session_elder",
+      JSON.stringify({ role: "elder", token: "tok", display_name: "王阿嬤" }),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((path: string) => {
+        if (String(path).includes("elder-notifications")) {
+          return Promise.resolve({
+            status: 200,
+            json: async () => envelope([{ content: "吃藥囉", created_at: 1754000100 }]),
+          });
+        }
+        return Promise.resolve({ status: 200, json: async () => envelope([]) });
+      }),
+    );
+    render(<StagePage />);
+    expect(await screen.findByRole("button", { name: "看金孫的提醒，1 則新的" })).toBeInTheDocument();
+  });
+
+  it("家屬端首頁的通知鈕接上 guardianFeed.unread", async () => {
+    localStorage.setItem(
+      "kinsun_web_session_guardian",
+      JSON.stringify({ role: "guardian", token: "tok", display_name: "兒子" }),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((path: string) => {
+        if (String(path).includes("/api/v1/notifications")) {
+          return Promise.resolve({
+            status: 200,
+            json: async () => envelope([{ content: "王阿嬤說胸口悶", created_at: 1754000100 }]),
+          });
+        }
+        return Promise.resolve({ status: 200, json: async () => envelope([]) });
+      }),
+    );
+    render(<StagePage />);
+    await userEvent.click(screen.getByRole("tab", { name: "家屬端" }));
+    expect(await screen.findByRole("button", { name: "通知，1 則新的" })).toBeInTheDocument();
   });
 });
