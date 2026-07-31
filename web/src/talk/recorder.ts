@@ -9,6 +9,8 @@
  * 安全感——驗收要在真的 ngrok 網址上做。
  */
 
+import { classifyMediaError } from "./mediaErrors";
+
 export type Recorder = {
   /** 開始錄音；回傳是否真的開始（權限被拒、瀏覽器不支援都回 false）。 */
   start: () => Promise<boolean>;
@@ -139,4 +141,61 @@ export function createRecorder(deps: RecorderDeps = {}): Recorder {
       return recorder !== null;
     },
   };
+}
+
+/**
+ * 麥克風探測的結果。
+ *
+ * ⚠️ **為什麼不是一個布林值**（brief Step 3 的原始簽章是 `Promise<boolean>`）：
+ * 「拿不到麥克風」有好幾種完全不同的成因，而長輩要做的下一步也完全不同。一律
+ * 顯示「請到設定開啟」的話——沒有麥克風的桌機、用區網 IP（`http://192.168.x.x`）
+ * 連進來的組員，都會去找一個根本不存在的權限開關。這正是 P3 Task 5／7 對相機
+ * 做過的同一件事（`QrScannerError` 由兩種擴充成六種），麥克風沿用同一套原則。
+ *
+ * - `"granted"`：拿得到麥克風。
+ * - `"insecure-origin"`：網址不是安全來源（非 HTTPS 且非 `localhost`）。瀏覽器
+ *   在這種情境下連 `navigator.mediaDevices` 都不會給，換瀏覽器沒有用、換網址才有。
+ * - `"unsupported"`：瀏覽器沒有 `getUserMedia`。
+ * - `"denied"`／`"not-found"`／`"in-use"`：見 `mediaErrors.ts`。
+ */
+export type MicrophoneProbeResult =
+  | "granted"
+  | "denied"
+  | "not-found"
+  | "in-use"
+  | "insecure-origin"
+  | "unsupported";
+
+/** 注入點：jsdom 沒有實作 `isSecureContext`（同 `qrScanner.ts` 的既有慣例）。 */
+export type MicrophoneProbeDeps = {
+  isSecureContext?: () => boolean;
+};
+
+/**
+ * 只問權限、不錄音：拿到權限後立刻把軌道關掉。
+ *
+ * ⚠️ **為什麼要在進畫面時就問**：權限對話框跳出來的當下，長輩的手指可能正按在
+ * 麥克風鍵上。等他按下去才問，第一次錄音會被對話框吃掉——App 端在 iOS 上踩過
+ * 同一個坑（2026-07-18 診斷，見 `docs/dev/17`），網頁一樣。
+ *
+ * ⚠️ **軌道一定要關**：這裡只是探測，不關的話分頁上的錄音指示燈會從進畫面就
+ * 一直亮著，長輩（與展示現場的觀眾）會以為它在偷聽。
+ */
+export async function probeMicrophone(
+  deps: MicrophoneProbeDeps = {},
+): Promise<MicrophoneProbeResult> {
+  const { isSecureContext = () => window.isSecureContext ?? true } = deps;
+  if (!isSecureContext()) {
+    return "insecure-origin";
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return "unsupported";
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach((track) => track.stop());
+    return "granted";
+  } catch (error) {
+    return classifyMediaError(error);
+  }
 }

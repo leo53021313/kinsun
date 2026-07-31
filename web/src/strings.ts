@@ -5,6 +5,12 @@
  * 這樣改一句話不必動後端、不必重啟服務——展示前一天要改文案是常態。
  */
 
+/**
+ * 鈴鐺的用途說明。`elderNotifications.bell` 與 `bellWithUnread` 都要用到它，
+ * 抽成常數而非兩處各寫一次同樣的字面值——兩處寫死的話，改一處就會漂。
+ */
+const ELDER_BELL_LABEL = "看金孫的提醒";
+
 export const strings = {
   common: {
     loading: "載入中…",
@@ -254,12 +260,40 @@ export const strings = {
     // 還有幾位」，改講排隊名次本身。
     queued: (position: number) => `金孫正在跟別人說話，您排第 ${position} 位…`,
     micUnsupported: "這個瀏覽器不能錄音，請換 Chrome、Safari 或 Firefox。",
+    // ⚠️ 麥克風拿不到有好幾種成因，長輩要做的下一步完全不同（P3 Task 8 補齊，
+    // 對應 `talk/recorder.ts::MicrophoneProbeResult` 的六種結果）。一律講「請到
+    // 設定開啟」的話，沒有麥克風的桌機、用區網 IP 連進來的組員，都會去找一個
+    // 根本不存在的權限開關——這與 Task 5／7 對相機做過的擴充是同一件事。
+    micNotFound: "這台裝置沒有麥克風，請換一台有麥克風的手機或平板。",
+    micInUse: "麥克風正被別的畫面用著，請把其他在錄音或講電話的畫面關掉再試一次。",
+    // ⚠️ 不可講「換一家瀏覽器」：真正原因是網址不是安全來源（非 https 且非
+    // localhost），常見於組員用區網 IP（如 http://192.168.x.x）連線。措辭與
+    // `elderBind.cameraInsecureOrigin` 一致。
+    micInsecureOrigin: "這個網址不能錄音，請改用家人給您、開頭是 https 的網址。",
+    // 權限有了、但這一次就是打不開（裝置忙、系統把麥克風收走）。與
+    // `fallback`（「金孫沒聽清楚」）刻意分開：錄音根本沒開始，說「沒聽清楚」
+    // 會讓長輩以為是自己講得不夠大聲，於是一次比一次更用力喊。
+    micStartFailed: "麥克風打不開，請再按一次試試看。",
+    // 送出了、卻等不到任何回應（連線斷在半路、後端那一輪掉了）。⚠️ 沒有這條
+    // 保險的話，畫面會永遠停在「金孫想一下…」而麥克風鍵一直是停用的——長輩
+    // 從此按不動，也不知道發生什麼事。
+    noAnswer: "金孫這次沒有回話，再說一次好嗎？",
+    // 虛擬形象的可讀說明（讀螢幕軟體會唸出來；畫面上只有一個表情符號）。
+    avatar: {
+      idle: "金孫現在在等您說話",
+      listening: "金孫現在在聽",
+      thinking: "金孫現在在想",
+      speaking: "金孫現在在說話",
+    },
+    confirmLogoutButton: "確定登出",
   },
   // 長輩看的提醒（X-01，2026-07-29）：用詞比家屬版更白話，不用「通知」這個詞。
   elderNotifications: {
     title: "金孫的提醒",
     empty: "現在沒有要提醒您的事。時間到了金孫會跟您說。",
     back: "回去講話",
-    bell: "看金孫的提醒",
+    bell: ELDER_BELL_LABEL,
+    // 讀螢幕的人聽不到紅色數字，未讀數必須進可及名稱裡（App 端同一套作法）。
+    bellWithUnread: (count: number) => `${ELDER_BELL_LABEL}，${count} 則新的`,
   },
 };

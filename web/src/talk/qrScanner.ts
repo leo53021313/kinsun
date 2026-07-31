@@ -34,6 +34,8 @@
 
 import { prepareZXingModule, readBarcodes } from "zxing-wasm/reader";
 
+import { classifyMediaError } from "./mediaErrors";
+
 /**
  * wasm 與本頁同源。用 `import.meta.env.BASE_URL` 而非寫死 `"/demo/"`——
  * `vite.config.ts` 的 `base` 一改，這裡自動跟著變，不必兩處同步（審查
@@ -133,20 +135,6 @@ function createDefaultScanFrame(): (video: HTMLVideoElement) => Promise<string |
   };
 }
 
-/** `getUserMedia` 拒絕時，把瀏覽器的 `DOMException.name` 對應到白話分類。 */
-function classifyGetUserMediaError(error: unknown): QrScannerError {
-  const name = error instanceof Error ? error.name : "";
-  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
-    return "not-found";
-  }
-  if (name === "NotReadableError" || name === "TrackStartError") {
-    return "in-use";
-  }
-  // 涵蓋 NotAllowedError（使用者拒絕）與其他無法歸類的成因；「denied」是
-  // 最安全的預設——大多數不明成因也是引導使用者去檢查權限設定。
-  return "denied";
-}
-
 /**
  * 呼叫端的 callback（`onCode`／`onError`）若擲出，不能讓例外卡在本模組的
  * async 呼叫鏈裡變成沒人接住的 unhandled rejection，也不能完全靜默——那是
@@ -242,7 +230,9 @@ export function createQrScanner(
         video: { facingMode: "environment" },
       });
     } catch (error) {
-      invokeCallback(() => onError?.(classifyGetUserMediaError(error)));
+      // ⚠️ 三種成因的對應表與麥克風探測共用（`talk/mediaErrors.ts`）：同一支
+      // `getUserMedia`、同一組 `DOMException` 名稱，兩份會漂。
+      invokeCallback(() => onError?.(classifyMediaError(error)));
       return;
     }
     if (stopped) {

@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createRecorder } from "./recorder";
+import { createRecorder, probeMicrophone } from "./recorder";
 
 class FakeMediaRecorder {
   static lastInstance: FakeMediaRecorder | null = null;
@@ -181,5 +181,45 @@ describe("createRecorder", () => {
     const bytes = await stopPromise;
     expect(bytes).toBeInstanceOf(ArrayBuffer);
     expect(stop).toHaveBeenCalled();
+  });
+});
+
+describe("probeMicrophone", () => {
+  it("拿得到麥克風時回 granted，並立刻把軌道關掉", async () => {
+    // ⚠️ 探測完不關軌道的話，分頁上的錄音指示燈從進畫面就一直亮著——長輩會
+    // 以為金孫在偷聽，而他其實還沒按過任何按鈕。
+    const { stop } = stubBrowser();
+    expect(await probeMicrophone({ isSecureContext: () => true })).toBe("granted");
+    expect(stop).toHaveBeenCalled();
+  });
+
+  it.each([
+    ["NotAllowedError", "denied"],
+    ["NotFoundError", "not-found"],
+    ["NotReadableError", "in-use"],
+    ["SomethingWeirdError", "denied"],
+  ])("getUserMedia 擲出 %s 時分類成 %s", async (name, expected) => {
+    // 「NotFoundError」對長輩沒有意義。四種成因要對到四句不同的「下一步做什麼」
+    //（沒有麥克風的桌機不必去找權限開關），下游文案才有辦法講對。
+    const error = new Error(name);
+    error.name = name;
+    vi.stubGlobal("navigator", {
+      mediaDevices: { getUserMedia: vi.fn().mockRejectedValue(error) },
+    });
+    expect(await probeMicrophone({ isSecureContext: () => true })).toBe(expected);
+  });
+
+  it("網址不是安全來源時回 insecure-origin，而且完全不去碰 getUserMedia", async () => {
+    // 區網 IP 直連（http://192.168.x.x，組員自測最常見）在瀏覽器裡連
+    // navigator.mediaDevices 都不會有——講「換一家瀏覽器」是錯的方向，要換網址。
+    const getUserMedia = vi.fn();
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
+    expect(await probeMicrophone({ isSecureContext: () => false })).toBe("insecure-origin");
+    expect(getUserMedia).not.toHaveBeenCalled();
+  });
+
+  it("瀏覽器沒有 getUserMedia 時回 unsupported，不擲例外", async () => {
+    vi.stubGlobal("navigator", { mediaDevices: undefined });
+    expect(await probeMicrophone({ isSecureContext: () => true })).toBe("unsupported");
   });
 });
