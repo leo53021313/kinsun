@@ -26,8 +26,9 @@
  * 不會誤導以後同時讀這兩個檔案的人。
  *
  * ⚠️ 本元件不管理佇列：連續來好幾則時，後面那則直接取代前面那則、重新播一次
- * 進場動畫（`key` 綁 `item.id`）。要不要排隊、疊圖，是未來資料來源呼叫端的責任，
- * 不是這顆純展示元件的——目前尚未接上任何資料來源。
+ * 進場動畫（`key` 綁 `item.id`）。要不要排隊、疊圖，是資料來源呼叫端的責任，
+ * 不是這顆純展示元件的——呼叫端是 `stage/StagePage.tsx`（P4 Task 4，2026-08-01
+ * 接上，見該檔），佇列邏輯住在 `notify/useNotificationFeed.ts`。
  */
 
 import { useState } from "react";
@@ -44,14 +45,29 @@ export type BannerItem = {
   at: number;
   /**
    * 通知的嚴重度：`"notice"`（預設，一般提醒／關懷，禮貌宣告）或 `"alert"`
-   * （危急警報，供未來的家屬欄接線使用）。
+   * （危急警報）。
    *
-   * ⚠️ 目前只是型別預留，尚未接上任何升級行為——`stage/PhoneFrame.tsx` 的
-   * 通知容身處固定宣告 `role="status"`／`aria-live="polite"`。等真的有呼叫端
-   * 會送出 `"alert"` 時，那顆容器需要能依這個欄位動態切成 `role="alert"`／
-   * `aria-live="assertive"`（換同一個節點的屬性值，不是整個重新掛載，AT 仍
-   * 追得到）。現在只加型別，不追加沒有真實呼叫端的推測性 wiring——本工項
-   * 尚未接上任何資料來源，不知道未來呼叫端會怎麼傳這個值。
+   * ⚠️ **目前仍只是型別預留，`stage/StagePage.tsx`（P4 Task 4）接上真實資料
+   * 來源之後也一律不傳這個欄位、恆為預設值 `"notice"`——這不是「還沒接」，
+   * 是刻意不接，且短期內不會有人接：後端 `app_notifications` 資料表（見
+   * `src/kinsun/notifications/store.py::AppNotification`）與
+   * `kinsun-shared/types.ts::AppNotification` 型別都只有 `content`／
+   * `created_at` 兩個欄位，沒有任何分類欄位可以分辨「這是危急警報」還是
+   * 「這是一般提醒」。危急事件與一般提醒目前寫進同一張表，寫入時就沒有
+   * 留下分類線索。
+   *
+   * ⚠️ **看到這裡想「用 `content` 字串比對關鍵字（如『跌倒』『危急』）湊一個
+   * `severity` 出來」之前，請先讀這句**：那是臆測而非真實訊號，會讓「什麼算
+   * 危急」這個判斷散落在展示用的前端字串比對邏輯裡，而不是後端 `safety/`
+   * 模組已有的權威分級結果——這正是本檔（見上方）「不追加沒有真實呼叫端的
+   * 推測性 wiring」要擋住的事，也是 AGENTS.md「資訊不足時不要自行猜測」的
+   * 具體案例。是否要在後端加分類欄位，待 Leo 裁決（見 `docs/dev/12` §4／
+   * `07` §7 的完整討論）。
+   *
+   * `stage/PhoneFrame.tsx` 的通知容身處目前固定宣告 `role="status"`／
+   * `aria-live="polite"`，也還沒有依這個欄位動態切換 `role="alert"`／
+   * `aria-live="assertive"` 的邏輯——真的決定要接的話，那邊需要一併補上
+   * （換同一個節點的屬性值，不是整個重新掛載，AT 仍追得到）。
    */
   severity?: "notice" | "alert";
 };

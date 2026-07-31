@@ -73,8 +73,8 @@ export function TalkScreen(props: {
             // 紅點只是給看得見的人的捷徑；真正的數字在上面的 aria-label 裡。
             // ⚠️ 字級仍受長輩端 22px 下限（`--text-elder-min`）約束——「捷徑」是給
             // **看得見的長輩**用的，14px 的數字他看不清，那條捷徑就不存在。圓點跟著
-            // 放大到 32px 才裝得下（`leading-none` 讓它不被行高撐開）。目前
-            // `ElderApp` 寫死 `unread={0}`、這一段不會渲染，P4 接上輪詢時才會現形。
+            // 放大到 32px 才裝得下（`leading-none` 讓它不被行高撐開）。`ElderApp`
+            // 已於 P4 Task 4（2026-08-01）接上真正的輪詢結果（見該檔 `unread` prop）。
             <span
               aria-hidden
               className="absolute right-0 top-0 flex min-w-8 items-center justify-center rounded-full bg-danger px-1 text-elder-min font-bold leading-none text-white"

@@ -286,7 +286,14 @@ describe("通知橫幅", () => {
     await act(async () => {
       document.dispatchEvent(new Event("visibilitychange"));
     });
-    expect(await screen.findByText("提醒您：降血壓藥")).toBeInTheDocument();
+    const content = await screen.findByText("提醒您：降血壓藥");
+    expect(content).toBeInTheDocument();
+    // ⚠️ 審查發現的 Important 4：`size="big"` 若被拿掉（例如日後有人把兩欄的
+    // `notificationSlot` 抽成共用元件時漏傳），長輩欄橫幅會退回 12px／14px、
+    // 跌破 22px 下限——而這句「提醒您：降血壓藥」恰好是長輩唯一該讀的話。
+    // 已實測：拿掉 `size="big"` 之後 `StagePage.test.tsx`＋`NotificationBanner.test.tsx`
+    // 兩支測試合計 35/35 全過，沒有任何一條會發現。
+    expect(content.className).toContain("text-elder-min");
   });
 
   /**
@@ -374,7 +381,7 @@ describe("通知輪詢的可見性接線（elderVisible／guardianVisible／visi
 });
 
 describe("通知輪詢的 401 出口接線（onTokenRevoked）", () => {
-  it("長輩欄的通知輪詢收到 401（token 被撤銷）時，立刻退回配對畫面", async () => {
+  it("長輩欄的通知輪詢收到 401（token 被撤銷）時，立刻退回配對畫面且顯示說明", async () => {
     localStorage.setItem(
       "kinsun_web_session_elder",
       JSON.stringify({ role: "elder", token: "tok", display_name: "王阿嬤" }),
@@ -400,6 +407,48 @@ describe("通知輪詢的 401 出口接線（onTokenRevoked）", () => {
     // 沒有這條接線的話，這支輪詢會每 2 秒收到一次註定失敗的 401、完全靜默
     // 丟棄，長輩欄會停在對講機畫面，不會回到配對畫面。
     expect(await screen.findByText("掃描家人給的方塊圖，或輸入號碼")).toBeInTheDocument();
+    // ⚠️ 審查發現的 Important 1：只回到配對畫面還不夠——若輪詢直接呼叫
+    // `signOut()`（繞過 `ElderApp` 的 `loseSession`），會搶在 `useTalk` 既有的
+    // 401 判定前面把人靜默登出，配對畫面上不會有任何說明。這句話必須出現。
+    expect(screen.getByText("家人幫您重新設定了，請再掃一次他給的方塊圖，或輸入新的號碼。")).toBeInTheDocument();
+  });
+
+  /**
+   * ⚠️ **審查發現的 Important 3**：`elderFeed`／`guardianFeed` 的
+   * `onTokenRevoked` 是幾乎逐字相同的兩段複製貼上，日後任何人動這裡接錯（例如
+   * 把 `guardian.signOut` 誤植為 `elder.signOut`），後果是「家屬 token 過期時
+   * 被登出的是長輩欄，家屬欄反而留在原畫面每 2 秒吃一次註定失敗的 401」——
+   * 且**沒有任何既有測試會在它被接錯時變紅**。上面那條長輩欄測試不會發現這個
+   * 錯誤（那次測試裡家屬欄根本沒有 session，`guardianFeed` 的 token 是空字串，
+   * 不會打任何請求），故獨立補一條家屬欄專屬的測試。
+   */
+  it("家屬欄的通知輪詢收到 401 時，退回登入畫面（不是長輩欄被登出）", async () => {
+    localStorage.setItem(
+      "kinsun_web_session_guardian",
+      JSON.stringify({ role: "guardian", token: "tok", display_name: "兒子" }),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((path: string) => {
+        if (String(path).includes("/api/v1/notifications")) {
+          return Promise.resolve({
+            status: 401,
+            json: async () => ({
+              success: false,
+              data: null,
+              error: { code: "invalid_token", message: "請重新登入" },
+              meta: null,
+            }),
+          });
+        }
+        return Promise.resolve({ status: 200, json: async () => envelope([]) });
+      }),
+    );
+    render(<StagePage />);
+    // 窄螢幕預設在長輩端頁籤，家屬欄的通知輪詢要先切過去才會開始打
+    // （`guardianVisible` 接線，見上面「通知輪詢的可見性接線」describe）。
+    await userEvent.click(screen.getByRole("tab", { name: "家屬端" }));
+    expect(await screen.findByRole("heading", { name: "家屬登入" })).toBeInTheDocument();
   });
 });
 

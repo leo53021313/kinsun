@@ -8,7 +8,7 @@
  *（會丟掉打到一半的號碼）。`ElderApp` 自己不需要這個資訊。
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useScreenStack } from "@/nav/useScreenStack";
 import { ElderSession } from "@/session/contexts";
@@ -59,8 +59,29 @@ export function ElderApp(props: {
   visible?: boolean;
   /** 鈴鐺未讀數（P4 Task 4 接上真的輪詢結果，見 `stage/StagePage.tsx` 的 `elderFeed.unread`）。 */
   unread?: number;
+  /**
+   * 通知輪詢（`stage/StagePage.tsx` 的 `elderFeed`）偵測到 401 時遞增的序號
+   * （P4 Task 4 全分支審查修正）。
+   *
+   * ⚠️ **為什麼是遞增序號、不是單純呼叫一個 callback**：`stage/StagePage.tsx`
+   * 持有這支 hook，而收到 401 之後要顯示的說明（`signedOutNotice`）是這個元件
+   * 自己的本地狀態——外面沒有辦法「呼叫」進來，只能靠 props 的值變化讓這裡的
+   * `useEffect` 偵測到、再呼叫本檔既有的 `loseSession`。用遞增序號（同
+   * `ElderCodeDelivery.seq` 的理由）而非布林值：同一位長輩若連續被撤銷兩次
+   * （彩排時常見），布林值第二次不會變化、偵測不到。
+   *
+   * ⚠️ **審查發現的 Important 1（2026-08-01）**：本輪之前，`stage/StagePage.tsx`
+   * 的通知輪詢收到 401 直接呼叫 `signOut()`，完全繞過這裡——而 `useTalk.ts` 自己
+   * 的 401 判定（掛在 `postTurn` 的 catch，只有長輩**按下麥克風講話**才會觸發）
+   * 才會走 `loseSession(strings.elderBind.signedOutByGuardian)`、顯示那句說明。
+   * 輪詢每 2 秒打一次，長輩若停在對講機不說話，輪詢的靜默登出**先贏**，說明永遠
+   * 不會出現——這不是「補上一條原本沒有的出口」，而是「搶在既有出口前面把人
+   * 靜默登出」。改為兩條路徑都走同一支 `loseSession`，確保不論哪條先觸發，
+   * 長輩都看得到那句說明。
+   */
+  tokenRevokedSeq?: number;
 }) {
-  const { visible = true, unread = 0 } = props;
+  const { visible = true, unread = 0, tokenRevokedSeq = 0 } = props;
   const { session, signOut } = ElderSession.useSession();
   const stack = useScreenStack<ElderRoute>(session ? { name: "talk" } : { name: "bind" });
   const { reset } = stack;
@@ -97,6 +118,22 @@ export function ElderApp(props: {
       reset({ name: "bind" });
     }
   }, [loggedIn, reset]);
+
+  // 通知輪詢偵測到 401：走與對講機／提醒畫面完全相同的 `loseSession` 路徑，
+  // 讓長輩看得到「家人幫您重新設定了…」，不會被靜默踢出（見 `tokenRevokedSeq`
+  // 的說明）。⚠️ 刻意用 `useEffect`（不是 render 期間比對）：`loseSession` 會呼叫
+  // `signOut()`，那是**別的元件**（`ElderSession.Provider`）持有的 state setter，
+  // 在 render 期間呼叫別的元件的 setState 會被 React 判定為不安全（「Cannot
+  // update a component while rendering a different component」），與
+  // `useNotificationFeed.ts` 那種「只碰自己元件的 state」的 render 期間比對不是
+  // 同一種情形。
+  const lastTokenRevokedSeqRef = useRef(tokenRevokedSeq);
+  useEffect(() => {
+    if (tokenRevokedSeq !== lastTokenRevokedSeqRef.current) {
+      lastTokenRevokedSeqRef.current = tokenRevokedSeq;
+      loseSession(strings.elderBind.signedOutByGuardian);
+    }
+  }, [tokenRevokedSeq, loseSession]);
 
   const body = (() => {
     switch (stack.current.name) {

@@ -635,5 +635,55 @@ describe("useNotificationFeed", () => {
       });
       expect(api.guardian).toHaveBeenCalledTimes(1);
     });
+
+    /**
+     * ⚠️ **審查發現的 Important 2（2026-08-01）**：`shownUpTo` 原本只在
+     * `audience`／`token` 改變時歸零，不隨 `visible` 重設——切回可見時
+     * `pickNewItems` 會把隱藏期間累積的每一則都當成新的一次性補播出來，一則
+     * 3.5 秒、`QUEUE_MAX`（20）上限下最壞連播 70 秒。這正是本檔反覆稱為
+     * 「展示現場最尷尬的失敗」的那件事，只是從「一進站」搬到了「切回來」。
+     */
+    it("visible 從 false 再度變回 true 時，不會把隱藏期間累積的通知一次性補播出來", async () => {
+      api.guardian.mockResolvedValueOnce([item(100)]); // 掛載第一輪：建立基準
+      const { result, rerender } = renderHook(
+        (props: { visible: boolean }) =>
+          useNotificationFeed({
+            audience: "guardian",
+            token: "tok",
+            intervalMs: 60_000,
+            visible: props.visible,
+          }),
+        { initialProps: { visible: true } },
+      );
+      await act(async () => {});
+      expect(result.current.banner).toBeNull();
+
+      rerender({ visible: false }); // 切走：這段期間效果不打任何請求
+
+      // 隱藏期間後端累積了三則新通知——切回來時這些都是「舊聞」，不該被當成
+      // 剛發生的事一次補播完。
+      api.guardian.mockResolvedValueOnce([
+        item(100),
+        item(200, "隱藏期間第一則"),
+        item(300, "隱藏期間第二則"),
+        item(400, "隱藏期間第三則"),
+      ]);
+      rerender({ visible: true }); // 切回來：第一輪只重建基準，不補播
+      await act(async () => {});
+      expect(result.current.banner).toBeNull();
+
+      // 之後真的有新資料時，仍然照常顯示——不是整支功能被關掉了。
+      api.guardian.mockResolvedValueOnce([
+        item(100),
+        item(200, "隱藏期間第一則"),
+        item(300, "隱藏期間第二則"),
+        item(400, "隱藏期間第三則"),
+        item(500, "切回來之後的新提醒"),
+      ]);
+      await act(async () => {
+        result.current.reload();
+      });
+      expect(result.current.banner?.content).toBe("切回來之後的新提醒");
+    });
   });
 });

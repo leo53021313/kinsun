@@ -171,20 +171,39 @@ function StageBody() {
   // （最多兩秒）——展示時那兩秒剛好落在「你看，左邊出現了」這句話的中間。
   const guardianWrote = useStageEvent("guardian-wrote");
 
+  /**
+   * 長輩欄通知輪詢收到 401 時遞增的序號，交給 `ElderApp` 的 `tokenRevokedSeq`
+   * （見該檔說明）。
+   *
+   * ⚠️ **審查發現的 Important 1（2026-08-01）**：這裡原本直接呼叫 `elder.signOut()`，
+   * 但那樣會**搶在** `elder/useTalk.ts` 既有的 401 判定（掛在 `postTurn` 的
+   * catch，只有長輩按下麥克風講話才會觸發、才會顯示「家人幫您重新設定了…」）
+   * 前面把人靜默登出——輪詢每 2 秒打一次，長輩若停在對講機不說話，輪詢一定先到。
+   * 失效情境（展示主路徑）：家屬按「重新產生長輩綁定碼」→ 長輩停在對講機沒說話
+   * → 2 秒內被輪詢的 401 靜默登出、配對畫面上一個字的解釋都沒有。改為只遞增
+   * 序號、不直接呼叫 `signOut()`，讓 `ElderApp` 自己的 `loseSession` 統一處理
+   * signOut＋說明兩件事，兩條 401 出口殊途同歸。
+   */
+  const [elderTokenRevokedSeq, setElderTokenRevokedSeq] = useState(0);
+  const elderTokenRevokedSeqRef = useRef(0);
+
   const elderFeed = useNotificationFeed({
     audience: "elder",
     token: elder.session?.token ?? "",
     reloadSignal: guardianWrote,
     visible: elderVisible,
-    // 401（家屬按了「重新產生長輩綁定碼」）：清掉這一欄的登入狀態，`ElderApp`
-    // 自己的守衛會把畫面導回配對畫面。⚠️ 已知落差見 `useNotificationFeed.ts`
-    // 檔頭「接線狀態 2」——不會帶出「家人幫您重新設定了…」那句說明。
-    onTokenRevoked: elder.signOut,
+    onTokenRevoked: () => {
+      elderTokenRevokedSeqRef.current += 1;
+      setElderTokenRevokedSeq(elderTokenRevokedSeqRef.current);
+    },
   });
   const guardianFeed = useNotificationFeed({
     audience: "guardian",
     token: guardian.session?.token ?? "",
     visible: guardianVisible,
+    // ⚠️ 家屬欄沒有對應 `ElderApp::signedOutNotice` 那種「被誰登出」的說明需求
+    // （家屬帳密是自己設定的，401 只代表 token 過期／別處登出所有裝置），故
+    // 直接呼叫 `signOut()` 已足夠——`GuardianApp` 的登入守衛會自動導回登入畫面。
     onTokenRevoked: guardian.signOut,
   });
 
@@ -237,6 +256,11 @@ function StageBody() {
               // size="big"：這張橫幅一旦被塞進長輩欄，恰好是長輩該讀的那句話
               // （如「提醒您：降血壓藥」），字級要守長輩端 22px 下限（見
               // `notify/NotificationBanner.tsx` 該 prop 的說明）。
+              //
+              // ⚠️ 不傳 `item.severity`：兩支 `useNotificationFeed` 產生的
+              // `BannerItem` 恆為預設 `"notice"`——後端 `app_notifications` 沒有
+              // 任何欄位可以分辨危急警報與一般提醒，接了也只能靠猜 `content`
+              // 字串，詳細理由與待裁決事項見 `BannerItem.severity` 的型別註解。
               <NotificationBanner
                 item={elderFeed.banner}
                 os={os}
@@ -245,7 +269,12 @@ function StageBody() {
               />
             }
           >
-            <ElderApp visible={elderVisible} prefilledCode={prefilledCode} unread={elderFeed.unread} />
+            <ElderApp
+              visible={elderVisible}
+              prefilledCode={prefilledCode}
+              unread={elderFeed.unread}
+              tokenRevokedSeq={elderTokenRevokedSeq}
+            />
           </PhoneFrame>
         </div>
         <div className={pane === "guardian" ? "" : "hidden lg:block"}>

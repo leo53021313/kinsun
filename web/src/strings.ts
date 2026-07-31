@@ -5,6 +5,8 @@
  * 這樣改一句話不必動後端、不必重啟服務——展示前一天要改文案是常態。
  */
 
+import type { PhoneOs } from "@/stage/PhoneFrame";
+
 /**
  * 鈴鐺的用途說明。`elderNotifications.bell` 與 `bellWithUnread` 都要用到它，
  * 抽成常數而非兩處各寫一次同樣的字面值——兩處寫死的話，改一處就會漂。
@@ -82,7 +84,11 @@ export const strings = {
     guardianTitle: "家屬的手機",
     // 手動切換鈕的可及名稱（P4 Task 4）：UA 只能給一個合理的預設，展示時觀眾
     // 會想看兩種、投影用的筆電也只有一種 UA，故一定要能手動切換。
-    notificationStyle: (os: string) => (os === "ios" ? "通知樣式：iOS" : "通知樣式：Android"),
+    // ⚠️ 審查發現的 Minor 5：型別原本收 `string`，傳入拼錯的值會靜默落到
+    // 「通知樣式：Android」而不是編譯期報錯——同檔其他帶參數的文案都用精確
+    // 型別，這裡改用 `PhoneOs`（`stage/PhoneFrame.tsx` 的原始出處，型別限定
+    // 匯入、編譯期抹除，非執行期依賴）。
+    notificationStyle: (os: PhoneOs) => (os === "ios" ? "通知樣式：iOS" : "通知樣式：Android"),
   },
   guardianLogin: {
     title: "家屬登入",
