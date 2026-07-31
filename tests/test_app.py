@@ -92,6 +92,42 @@ def test_build_app_wires_show_transcript_to_every_voice_delivery(monkeypatch):
     assert all(captured), f"有 VoiceReplyDelivery 漏傳 show_transcript：{captured}"
 
 
+def test_build_app_shares_one_turn_admission_between_turns_and_ws(monkeypatch):
+    """對講機兩條路徑必須共用**同一個** `TurnAdmission`（P3 Task 2）。
+
+    這是本工項最承重的不變量：若日後有人把 `app.py` 的 `turn_admission` 拆成
+    兩個各自的 `TurnAdmission(...)`（或合併衝突時各留一份），實際全域上限會
+    悄悄變成 `2 × TURN_CONCURRENCY_LIMIT × WEB_WORKERS`，且兩條路徑可以互相
+    繞過對方的容量上限——`turns.py`／`ws.py` 各自的既有測試完全測不到這件事
+    （它們各自建構自己的路由器，本來就只會看到自己拿到的那個閘門物件）。
+    比照 `test_build_app_wires_show_transcript_to_every_voice_delivery` 的
+    monkeypatch 手法：攔兩個路由器工廠、記下它們各自收到的 kwargs，斷言
+    `admission`／`rate_limiter` 兩者皆為同一個物件（`is`，不是 `==`）。
+    """
+    captured: dict = {}
+    original_turns = app_module.create_app_turns_router
+    original_ws = app_module.create_app_ws_router
+
+    def _spy_turns(**kwargs):
+        captured["turns"] = kwargs
+        return original_turns(**kwargs)
+
+    def _spy_ws(**kwargs):
+        captured["ws"] = kwargs
+        return original_ws(**kwargs)
+
+    monkeypatch.setattr(app_module, "create_app_turns_router", _spy_turns)
+    monkeypatch.setattr(app_module, "create_app_ws_router", _spy_ws)
+
+    _build_app(monkeypatch)
+
+    assert captured["turns"]["admission"] is not None, "容量閘門必須真的被注入，不能是 None"
+    assert captured["turns"]["admission"] is captured["ws"]["admission"], (
+        "兩條路徑拿到的必須是同一個 TurnAdmission 物件，否則可以互相繞過對方的上限"
+    )
+    assert captured["turns"]["rate_limiter"] is captured["ws"]["rate_limiter"]
+
+
 def test_build_app_installs_security_headers_and_envelope(monkeypatch):
     app = _build_app(monkeypatch)
     with TestClient(app) as client:

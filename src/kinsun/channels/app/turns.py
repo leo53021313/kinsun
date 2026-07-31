@@ -164,6 +164,17 @@ def create_app_turns_router(
         def _run_with_admission() -> dict:
             # ⚠️ 在執行緒池裡取名額：這個 handler 是 async 的，在事件迴圈上阻塞
             # 等待會讓**所有人**的請求一起停住——包含那些根本沒有要用對講機的。
+            #
+            # ⚠️ 這裡的名額涵蓋範圍與 `ws.py` **刻意不同**：`ws.py::_run_turn` 只把
+            # `dispatch(...)` 包進閘門，`_save_location`／`start_inbound_upload`
+            # 等非 GPU 工作留在閘門外——那份 docstring 講的理由是「提早佔位只會讓
+            # 排隊位置變得不誠實」。但 POST 這條路徑**沒有** `queued` 訊框可以回報
+            # 排隊位置（逾時前只會靜默等待，成功／逾時才各自回一次），故「位置不
+            # 誠實」這個顧慮本來就不適用；而 `_save_location`（一次 DB 寫入）與
+            # `start_inbound_upload`（背景起執行緒，近乎立即返回）都不是耗時操作，
+            # 讓它們留在整個 `_run_turn` 裡（含在名額涵蓋範圍內）換來程式碼不必為了
+            # 對齊 ws.py 而把 `_run_turn` 拆成「閘門前／閘門內」兩段——後者是更大幅
+            # 的重構，風險高於這裡的些微時間差。
             with turn_gate.admit():
                 return _run_turn(
                     audio=audio,

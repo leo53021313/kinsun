@@ -22,7 +22,10 @@
 下行（皆帶 `turn_id`）：
 - `ack`——模型決定要查東西時。欄位：`text`、`audio_url`、`duration_ms`
 - `queued`——容量閘門滿載時排隊告知位置（spec 2026-07-30 §10 B2，P3 Task 2）。
-  欄位：`position`（前面還有幾位）。
+  欄位：`position`（**排隊名次**，1-based；`admission.py::admit` 的
+  `position = len(self._queue)`。⚠️ **不是「前面還有幾位」**——`limit=1` 時
+  兩者剛好相等，但正式環境 `limit=TURN_CONCURRENCY_LIMIT`（預設 6）時，
+  排隊名次 1 的人前面其實還有 6 輪正在跑，只是不在佇列裡）。
 - `reply`——答案算完但**沒有音檔**（TTS 失敗退純文字）。欄位：`text`、`audio_url`（空）、
   `duration_ms`、`chunk_count`、`reply_digest`
 - `error`——任一段失敗，或排隊逾時／每分鐘輪數保險絲觸發。欄位：`text`（回退話術，
@@ -239,12 +242,14 @@ class _Sender:
         self._websocket = websocket
         self._loop = loop
 
-    def send(self, payload: dict) -> None:
+    def send(self, payload: dict, *, timeout: float = 5.0) -> None:
+        """送出一則下行訊框；`timeout` 決定呼叫端最長願意等多久（見 `notify_queued`
+        為什麼要傳短一點的原因）。"""
         try:
             future = asyncio.run_coroutine_threadsafe(
                 self._websocket.send_json(payload), self._loop
             )
-            future.result(timeout=5)
+            future.result(timeout=timeout)
         except Exception:  # noqa: BLE001 - 連線斷掉不可中斷那一輪的其餘工作
             logger.warning("WebSocket 送出失敗 type=%s", payload.get("type"))
 
@@ -384,12 +389,18 @@ def create_app_ws_router(
         directive = "" if in_flight.is_latest(turn_id) else _LATE_REPLY_DIRECTIVE
 
         def notify_queued(position: int) -> None:
-            # 只把訊框丟進送出佇列，不做其他 I/O：這個回呼在閘門**沒有持鎖**時被
-            # 呼叫（見 `admission.py::admit` docstring），但仍會讓排在這位之後的
-            # 每一位多等 `_Sender.send` 最長 5 秒的 `future.result(timeout=5)`——
-            # 這是刻意接受的代價，換來位置回報對長輩是「真話」而不是收到訊框時
-            # 已經過期的猜測值。
-            sender.send({"type": "queued", "turn_id": turn_id, "position": position})
+            # ⚠️ 短逾時（1 秒，而非 `send` 預設的 5 秒）：`admission.py::admit`
+            # docstring 講的還輕——這個回呼雖然在閘門**沒有持鎖**時被呼叫，但
+            # 呼叫當下這個號碼已經**在佇列裡**（取號在鎖內完成、佇列非空才走到
+            # 這裡），故快速通道的「佇列是空的」這個前提在此刻對所有人都不成立：
+            # 任何人在這段時間嘗試 `admit()`（不管有沒有空位）都會被逼進佇列、
+            # 等這通回呼結束才恢復正常——一支訊號不良的手機（送出被 TCP 背壓卡住）
+            # 可讓**全域**入場停擺，GPU 閒置、`active()` 顯示滿載，卻沒有人在
+            # 做事，正是這個閘門要避免的畫面。壓到 1 秒把曝險窗縮到原本的五分之一；
+            # `queued` 本身是禮貌訊框（送丟了長輩仍會在逾時或答案好時收到
+            # error／reply，不會真的音訊全無），值得用較短的逾時換全域入場的
+            # 反應性。
+            sender.send({"type": "queued", "turn_id": turn_id, "position": position}, timeout=1.0)
 
         try:
             try:

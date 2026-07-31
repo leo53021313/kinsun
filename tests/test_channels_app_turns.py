@@ -555,32 +555,36 @@ def _admission_client(svc, *, asr, admission=None, rate_limiter=None):
 
 def test_容量閘門滿載且排隊逾時時回_503_而不是裸_429_或靜默掛住():
     """長輩看不懂 429，也等不到一個永遠不會來的回應；503＋同一句人話，與 WS
-    路徑同一套文案（見 `channels/app/ws.py::_BUSY_REPLY`）。"""
+    路徑同一套文案（見 `channels/app/ws.py::_BUSY_REPLY`）。
+
+    ⚠️ 用 `with _admission_client(...) as client:`：讓兩個請求共用**同一個**
+    事件迴圈（見 `test_排隊等待不佔住事件迴圈` 的說明），與正式環境「一個 worker
+    一個事件迴圈」的實際情形一致，而不是各自開一個互不相干的迴圈。
+    """
     svc = _service()
     _, token = _bound_elder_token(svc)
     asr = _BlockingAsr()
-    client = _admission_client(svc, asr=asr, admission=TurnAdmission(1, queue_timeout=0.2))
+    with _admission_client(svc, asr=asr, admission=TurnAdmission(1, queue_timeout=0.2)) as client:
+        holder: dict = {}
 
-    holder: dict = {}
+        def send_first() -> None:
+            holder["response"] = _post_audio(client, token)
 
-    def send_first() -> None:
-        holder["response"] = _post_audio(client, token)
+        t = threading.Thread(target=send_first)
+        t.start()
+        assert asr.entered.wait(5.0), "第一個請求應該已經進到辨識裡、正持有名額"
 
-    t = threading.Thread(target=send_first)
-    t.start()
-    assert asr.entered.wait(5.0), "第一個請求應該已經進到辨識裡、正持有名額"
+        res = _post_audio(client, token, body=b"\x00second-audio")
+        assert res.status_code == 503
+        body = res.json()
+        assert body["error"]["code"] == "too_many_requests"
+        # 是人話不是狀態碼，且與 WS 路徑同一句「還在忙」——不是管線一般性失敗的文案。
+        assert "還在忙" in body["error"]["message"]
 
-    res = _post_audio(client, token, body=b"\x00second-audio")
-    assert res.status_code == 503
-    body = res.json()
-    assert body["error"]["code"] == "too_many_requests"
-    # 是人話不是狀態碼，且與 WS 路徑同一句「還在忙」——不是管線一般性失敗的文案。
-    assert "還在忙" in body["error"]["message"]
-
-    asr.release.set()
-    t.join(5.0)
-    assert not t.is_alive()
-    assert holder["response"].status_code == 201
+        asr.release.set()
+        t.join(5.0)
+        assert not t.is_alive()
+        assert holder["response"].status_code == 201
 
 
 def test_名額在請求失敗時也要釋放():
@@ -617,46 +621,56 @@ def test_名額在請求失敗時也要釋放():
     _, token = _bound_elder_token(svc)
     asr = _ExplodingAsr()
     admission = TurnAdmission(1, queue_timeout=5.0)
-    client = _admission_client(svc, asr=asr, admission=admission)
+    with _admission_client(svc, asr=asr, admission=admission) as client:
 
-    def send_first() -> None:
-        # 未預期例外冒到框架層是既有行為（`turns.py::_run_turn` 本來就沒有
-        # try/except），本測試不關心這條路徑的 HTTP 回應，只關心名額有沒有釋放。
-        try:
-            _post_audio(client, token)
-        except Exception:  # noqa: BLE001 - 背景執行緒吞例外只為了不留殘局
-            pass
+        def send_first() -> None:
+            # 未預期例外冒到框架層是既有行為（`turns.py::_run_turn` 本來就沒有
+            # try/except），本測試不關心這條路徑的 HTTP 回應，只關心名額有沒有釋放。
+            try:
+                _post_audio(client, token)
+            except Exception:  # noqa: BLE001 - 背景執行緒吞例外只為了不留殘局
+                pass
 
-    t1 = threading.Thread(target=send_first)
-    t1.start()
-    assert asr.entered.wait(5.0), "第一個請求應該已經進到辨識裡、正持有名額"
+        t1 = threading.Thread(target=send_first)
+        t1.start()
+        assert asr.entered.wait(5.0), "第一個請求應該已經進到辨識裡、正持有名額"
 
-    second_holder: dict = {}
+        second_holder: dict = {}
 
-    def send_second() -> None:
-        second_holder["response"] = _post_audio(client, token, body=b"\x00second-audio")
+        def send_second() -> None:
+            second_holder["response"] = _post_audio(client, token, body=b"\x00second-audio")
 
-    t2 = threading.Thread(target=send_second)
-    t2.start()
-    deadline = time.monotonic() + 2.0
-    while admission.waiting() == 0 and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert admission.waiting() == 1, "第二個請求應該已經排上隊，才測得到釋放"
+        t2 = threading.Thread(target=send_second)
+        t2.start()
+        deadline = time.monotonic() + 2.0
+        while admission.waiting() == 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert admission.waiting() == 1, "第二個請求應該已經排上隊，才測得到釋放"
 
-    asr.release.set()
-    t1.join(5.0)
-    t2.join(5.0)
-    assert not t1.is_alive()
-    assert not t2.is_alive()
+        asr.release.set()
+        t1.join(5.0)
+        t2.join(5.0)
+        assert not t1.is_alive()
+        assert not t2.is_alive()
 
-    assert second_holder["response"].status_code == 201, "名額釋放後第二個請求應該正常完成"
-    assert admission.active() == 0
+        assert second_holder["response"].status_code == 201, "名額釋放後第二個請求應該正常完成"
+        assert admission.active() == 0
 
 
 def test_排隊等待不佔住事件迴圈_其他請求仍可進行():
     """⚠️ 這個 handler 是 async 的；若閘門的等待被誤放在事件迴圈上，會讓所有人
     的請求一起停住——包含根本沒有要用對講機的那些。用一支完全不吃閘門的探針
-    端點驗證：有人真的卡在閘門的阻塞等待時，事件迴圈仍然接得下別的請求。"""
+    端點驗證：有人真的卡在閘門的阻塞等待時，事件迴圈仍然接得下別的請求。
+
+    ⚠️ **必須用 `with TestClient(app) as client:`**（審查抓到的第 12 個假測試）：
+    `starlette/testclient.py` 的 `_portal_factory` 只有在 `__enter__` 設過
+    `self.portal` 時才會讓同一個 client 的所有請求共用**同一個**事件迴圈；否則
+    每次 `.get()`／`.post()` 各自 `start_blocking_portal()`，等於各自開一個全新
+    的事件迴圈執行緒——`/probe` 因此永遠跑在與被卡住的請求完全無關的迴圈上，
+    不管閘門的等待有沒有誤放在事件迴圈上，這條測試都會通過。已用 mutation 驗證：
+    把 `run_in_threadpool(_run_with_admission)` 換成直接呼叫 `_run_with_admission()`
+    （brief 明文警告過的錯誤），在沒有 `with` 時這條測試依然 PASS。
+    """
     svc = _service()
     _, token = _bound_elder_token(svc)
     asr = _BlockingAsr()
@@ -688,36 +702,37 @@ def test_排隊等待不佔住事件迴圈_其他請求仍可進行():
         ),
         prefix="/api/v1",
     )
-    client = TestClient(app)
 
-    def send_first() -> None:
-        _post_audio(client, token)
+    with TestClient(app) as client:
 
-    def send_second() -> None:
-        _post_audio(client, token, body=b"\x00second-audio")
+        def send_first() -> None:
+            _post_audio(client, token)
 
-    t1 = threading.Thread(target=send_first)
-    t1.start()
-    assert asr.entered.wait(5.0), "第一個請求應該已經進到辨識裡、正持有名額"
+        def send_second() -> None:
+            _post_audio(client, token, body=b"\x00second-audio")
 
-    t2 = threading.Thread(target=send_second)
-    t2.start()
-    deadline = time.monotonic() + 2.0
-    while admission.waiting() == 0 and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert admission.waiting() == 1, "第二個請求應該已經卡在閘門的排隊等待裡"
+        t1 = threading.Thread(target=send_first)
+        t1.start()
+        assert asr.entered.wait(5.0), "第一個請求應該已經進到辨識裡、正持有名額"
 
-    start = time.monotonic()
-    res = client.get("/probe")
-    elapsed = time.monotonic() - start
-    assert res.status_code == 200
-    assert elapsed < 1.0, f"/probe 被閘門的排隊等待卡住了，耗時 {elapsed} 秒"
+        t2 = threading.Thread(target=send_second)
+        t2.start()
+        deadline = time.monotonic() + 2.0
+        while admission.waiting() == 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert admission.waiting() == 1, "第二個請求應該已經卡在閘門的排隊等待裡"
 
-    asr.release.set()
-    t1.join(5.0)
-    t2.join(5.0)
-    assert not t1.is_alive()
-    assert not t2.is_alive()
+        start = time.monotonic()
+        res = client.get("/probe")
+        elapsed = time.monotonic() - start
+        assert res.status_code == 200
+        assert elapsed < 1.0, f"/probe 被閘門的排隊等待卡住了，耗時 {elapsed} 秒"
+
+        asr.release.set()
+        t1.join(5.0)
+        t2.join(5.0)
+        assert not t1.is_alive()
+        assert not t2.is_alive()
 
 
 def test_每分鐘輪數保險絲觸發時回_429_而不是靜默丟掉():

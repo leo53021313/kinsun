@@ -807,7 +807,10 @@ def test_併發超過上限時先送排隊訊框_不靜默丟掉那句話():
         ws.send_bytes(b"audio-2")
         frame = _receive_frame(ws)
         assert frame["type"] == "queued"
-        assert frame["position"] == 1, "前面有 1 位"
+        # ⚠️ position 是排隊名次（1-based），不是「前面還有幾位」——這裡剛好
+        # limit=1 讓兩種說法數值相同，正式環境 limit=6 時就會不相等（見
+        # ws.py 模組 docstring／06 §5 的更正說明）。
+        assert frame["position"] == 1, "應該排隊第 1 位"
         asr.release.set()
 
 
@@ -938,3 +941,45 @@ def test_節流放行時不受影響_對真人操作等同無限():
         ws.send_bytes(b"\x00fake-audio")
         frame = _receive_frame(ws)
     assert frame["type"] == "reply"
+
+
+def test_排隊訊框送出用較短逾時_不拖住全域入場(monkeypatch):
+    """⚠️ 審查發現：`on_queued` 被呼叫當下，這個號碼已經**在佇列裡**（取號在鎖內
+    完成），此刻佇列非空，代表**任何人**嘗試 `admit()`（不管有沒有空位）都會被
+    逼進佇列、等這通回呼結束才恢復正常——一支訊號不良的手機（送出被 TCP 背壓
+    卡住）可讓全域入場停擺到 `_Sender.send` 的逾時值。`notify_queued` 因此改傳
+    `timeout=1.0`（而非 `send` 給其他訊框用的預設 5.0），把曝險窗縮到五分之一。
+
+    這裡直接記錄 `_Sender.send` 實際被呼叫時的 `timeout` 值——比起端到端量測
+    「卡住的連線讓全域入場慢了幾秒」（需要精準控制兩個獨立連線的時序，容易
+    flaky），直接釘住這個實作選擇更穩定，且正是回歸時最容易被悄悄改掉的地方
+    （例如有人「順手」把 `timeout=1.0` 又改回省略、退回預設 5 秒）。
+    """
+    from kinsun.channels.app.ws import _Sender
+
+    calls: list[tuple[str, float]] = []
+    original_send = _Sender.send
+
+    def _spy_send(self, payload, *, timeout=5.0):
+        calls.append((payload.get("type"), timeout))
+        return original_send(self, payload, timeout=timeout)
+
+    monkeypatch.setattr(_Sender, "send", _spy_send)
+
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    asr = _BlockingAsr()
+    client = _client(svc, asr=asr, admission=TurnAdmission(1, queue_timeout=5.0))
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_bytes(b"audio-1")
+        assert asr.entered.wait(5.0), "第一輪應該已經進到辨識裡、正持有名額"
+        ws.send_bytes(b"audio-2")
+        frame = _receive_frame(ws)
+        assert frame["type"] == "queued"
+        asr.release.set()
+
+    queued_calls = [timeout for kind, timeout in calls if kind == "queued"]
+    assert queued_calls, "應該至少送出一次 queued 訊框，才測得到它的逾時設定"
+    assert all(timeout == 1.0 for timeout in queued_calls), (
+        f"queued 訊框應使用短逾時（1 秒）避免拖住全域入場，而不是預設的 5 秒：{queued_calls}"
+    )
