@@ -11,7 +11,6 @@ export const strings = {
     retry: "再試一次",
     close: "關閉",
     loadFailed: "載入失敗，請稍後再試。",
-    loadFailedShort: "載入失敗",
     connectionFailed: "連線失敗，請稍後再試。",
     saveFailed: "儲存失敗，請稍後再試。",
     deleteFailed: "刪除失敗，請稍後再試。",
