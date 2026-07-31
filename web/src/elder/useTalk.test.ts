@@ -407,8 +407,10 @@ describe("時序", () => {
     await act(async () => {
       h.view.result.current.pressOut();
     });
-    // ⚠️ 走完整輪（含錄音結束後的補播時機）都不可以聽到排隊中的那一則——它在長輩
-    // 按下去的那一刻就該被丟掉。
+    // 排隊中被丟掉的那一則同樣是「被跳過的回覆」，要跟收音期間才抵達的那些一視同仁
+    //（✅ 裁決：抵達時機是實作細節）——不可以靜默丟棄。
+    expect(h.view.result.current.replyText).toBe("上一個問題就先跳過了，金孫想一下…");
+    // ⚠️ 走完整輪都不可以聽到排隊中的那一則——它在長輩按下去的那一刻就該被丟掉。
     await act(async () => {
       vi.advanceTimersByTime(40_000);
     });
@@ -451,15 +453,22 @@ describe("時序", () => {
     expect(h.view.result.current.replyText).toBe("金孫在聽…");
   });
 
-  it("錄音結束之後，剛才收下來的答案要補播出來，不是靜靜丟掉", async () => {
-    // 不補播的話，長輩問了一句、聽到「我幫您查一下喔」，然後那個答案永遠不會來
-    // ——那是空頭承諾，比沒有回答更糟。
+  it("收音期間抵達的回覆一律丟棄，收音結束也不補播——但要告訴長輩上一個問題跳過了", async () => {
+    // ✅ **專案裁決 2026-07-31**：同一類東西（一個已被跳過的回合、還沒被聽到的
+    // 回覆）不該因為抵達時機不同而有不同待遇——按下麥克風的語意就是「我現在要
+    // 講話，你先別說」，抵達時機是實作細節。而對長輩更糟的是「突然冒出來的
+    // 聲音」：他問了 A、等不及改問 B，十秒後金孫開始回答 A——他不會記得自己問過
+    // A，只會覺得金孫在自言自語。這與「打斷就是打斷、不要留半條尾巴在後面追上
+    // 來」（Critical 3）是同一個方向。
+    // ⚠️ 但**不可以靜默丟棄**：長輩要知道那一句不會有答案了、不必再等。
     const h = setup();
     await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
     h.socket.open();
     act(() => h.view.result.current.pressIn());
     act(() => h.recorder.finishStart());
     await waitFor(() => expect(h.view.result.current.avatar).toBe("listening"));
+
+    const revokedBefore = h.revokeQueuedReplyAudio.mock.calls.length;
     h.socket.emit({
       ...REPLY,
       type: "reply",
@@ -469,6 +478,9 @@ describe("時序", () => {
     });
     await act(async () => {});
     expect(h.player.played).not.toContain("https://cdn.example/answer.m4a");
+    // 丟掉的那一則若是 WS 直送落地的 blob URL，沒有人會再去 replace() 它——這裡
+    // 不回收就沒有人回收了。
+    expect(h.revokeQueuedReplyAudio.mock.calls.length).toBeGreaterThan(revokedBefore);
 
     await act(async () => {
       vi.advanceTimersByTime(600);
@@ -476,9 +488,52 @@ describe("時序", () => {
     await act(async () => {
       h.view.result.current.pressOut();
     });
-    await waitFor(() => expect(h.player.played).toContain("https://cdn.example/answer.m4a"));
-    // 字幕要跟著補上，不然長輩聽到的跟看到的是兩件事。
-    await waitFor(() => expect(h.view.result.current.replyText).toBe("附近有 205 跟 622"));
+    await act(async () => {});
+    // 收音結束也不補播。
+    expect(h.player.played).not.toContain("https://cdn.example/answer.m4a");
+    // 但要講出來，不可以靜默丟棄。
+    expect(h.view.result.current.replyText).toBe("上一個問題就先跳過了，金孫想一下…");
+
+    // 下一輪沒有東西被跳過，就不可以再講一次——那句話會變成謎語。
+    h.socket.emit({ type: "error", turn_id: "t1", text: "金孫有點忙，等一下再說好嗎" });
+    await holdAndRelease(h);
+    expect(h.view.result.current.replyText).toBe("金孫想一下…");
+  });
+
+  it("開錄失敗時，排隊中那幾則也不可以趁機播出來", async () => {
+    // `clear()` 在多數路徑上與「收音中抵達就丟掉」那道守門重疊（兩者都讓排隊中的
+    // 那一則播不出來），唯獨這條路徑只有它守得住：開錄失敗時收音狀態立刻放開，
+    // 若佇列沒被清空，drain 會接著把排隊中的那幾則播出來——長輩剛被告知「麥克風
+    // 打不開」，緊接著卻聽到一段舊回覆。
+    const h = setup({ startFails: true });
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    h.socket.emit({
+      type: "ack",
+      turn_id: "t1",
+      text: "好，我幫您查一下喔",
+      audio_url: "https://cdn.example/ack.m4a",
+      duration_ms: 30_000,
+    });
+    h.socket.emit({ ...REPLY, type: "reply", turn_id: "t1", audio_url: "https://cdn.example/queued.m4a" });
+    await waitFor(() => expect(h.player.played).toContain("https://cdn.example/ack.m4a"));
+    expect(h.player.played).not.toContain("https://cdn.example/queued.m4a");
+
+    act(() => h.view.result.current.pressIn());
+    await act(async () => {
+      h.recorder.finishStart();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(40_000);
+    });
+    expect(h.view.result.current.replyText).toBe("麥克風打不開，請再按一次試試看。");
+    expect(h.player.played).not.toContain("https://cdn.example/queued.m4a");
+
+    // ⚠️ 開錄失敗之後收音狀態必須放開：沒放開的話，之後每一則回覆都會被當成
+    // 「錄音中抵達」而丟掉——長輩從此聽不到任何回答，而他只是按了一次沒開成的
+    // 麥克風。
+    h.socket.emit({ ...REPLY, type: "reply", turn_id: "t2", audio_url: "https://cdn.example/after.m4a" });
+    await waitFor(() => expect(h.player.played).toContain("https://cdn.example/after.m4a"));
   });
 
   it("打斷一則長回覆之後，下一句的語音要立刻播，不必等舊那則的保險逾時", async () => {
@@ -535,10 +590,9 @@ describe("時序", () => {
     await waitFor(() => expect(h.player.played.length).toBe(1));
     act(() => h.view.result.current.pressIn());
     act(() => h.recorder.finishStart());
-    // 傳的是「要留著的那幾則」：正在播的那一則（src 還掛在播放器上）＋收音期間收
-    // 下來待補播的那幾則（這裡沒有）。其餘一律回收。
+    // 傳的是「要留著的那一則」＝正在播的（src 還掛在播放器上）；其餘一律回收。
     await waitFor(() =>
-      expect(h.revokeQueuedReplyAudio).toHaveBeenCalledWith(["https://cdn.example/a.m4a"]),
+      expect(h.revokeQueuedReplyAudio).toHaveBeenCalledWith("https://cdn.example/a.m4a"),
     );
   });
 });
