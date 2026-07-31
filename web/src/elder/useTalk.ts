@@ -162,6 +162,18 @@ export function useTalk(options: {
   const thinkingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const micReadyRef = useRef(false);
   const avatarRef = useRef<AvatarState>("idle");
+  /**
+   * 麥克風正在收音（從按下去到 `recorder.stop()` 回來為止）。
+   *
+   * ⚠️ 刻意不用 `avatar === "listening"` 代替：那個值要等 `recorder.start()` 解出
+   * 之後才設，而清佇列／暫停播放在 `await` 之前就發生了——中間那段窗口正是「訊框
+   * 剛好這時抵達」會出事的地方。
+   */
+  const micActiveRef = useRef(false);
+  /** 收音期間抵達、先收下來不播的回覆；錄音結束後補播（見 flushDeferredPlayback）。 */
+  const deferredItemsRef = useRef<PlaybackItem[]>([]);
+  /** 中止「正在播的那一則」的等待（見播放回呼裡的 Promise.race）。 */
+  const abortPlaybackRef = useRef<(() => void) | null>(null);
 
   const clearThinkingWatchdog = useCallback(() => {
     if (thinkingTimerRef.current !== null) {
@@ -211,6 +223,23 @@ export function useTalk(options: {
       alive = false;
     };
   }, [deps]);
+
+  /**
+   * 錄音結束了：把收音期間收下來的那幾則補播出去。
+   *
+   * ⚠️ 不補播的話，長輩問了一句、聽到「好，我幫您查一下喔」，然後那個答案就永遠
+   * 不會來——那是空頭承諾，比沒有回答更糟。
+   */
+  const flushDeferredPlayback = useCallback(() => {
+    const items = deferredItemsRef.current;
+    if (items.length === 0) {
+      return;
+    }
+    deferredItemsRef.current = [];
+    for (const item of items) {
+      playQueueRef.current?.push(item);
+    }
+  }, []);
 
   /** 背景取下一段；取不到（409／網路／合成失敗）就記成 null，播完這段即收工。 */
   const prefetchNext = useCallback(
@@ -270,9 +299,36 @@ export function useTalk(options: {
     const gesture = gestureRef.current;
 
     const queue = createPlaybackQueue(async (item: PlaybackItem) => {
+      // ⚠️ 長輩正按著麥克風：這一則先收下來，錄完再播。放出去的話金孫自己的聲音
+      // 會被錄進去——後端是明文設計的 ack→reply 兩段式，「安撫話播完、長輩不耐煩
+      // 開口問下一句、第一輪的真正答案這時才回來」是常態而不是邊角。
+      if (micActiveRef.current) {
+        deferredItemsRef.current.push(item);
+        return;
+      }
       setAvatarBoth("speaking");
       playingUriRef.current = item.audioUrl;
-      const outcome = await playAndWait(player, item);
+      // 字幕跟著**真的播出來的那一則**走：收音期間收下來的那幾則，字幕要等補播時
+      // 才顯示，否則長輩聽到的跟看到的是兩件事。
+      if (item.text) {
+        setReplyText(item.text);
+      }
+      // ⚠️ **與「被打斷」賽跑**：`player.pause()` 之後 `didJustFinish` 永遠不會來，
+      // `playAndWait` 只能等滿「時長＋3 秒」的保險才放行；而那期間
+      // `createPlaybackQueue` 的 `running` 是 true，新回覆只能排隊。一則 30 秒的
+      // 回覆被打斷後，下一句的語音要等 29 秒才播得出來，這 29 秒內 avatar 停在
+      // 「在想」、麥克風鍵按不動——正是本模組其他地方拚命要避免的那種卡死，只是
+      // 換一條路徑進來。⚠️ 修在這一層，不動搬移過來的 `talkSocket.ts`。
+      //
+      // 被搶走的那顆 `playAndWait` 仍會在自己的保險逾時後自行收尾（移除監聽、清
+      // 計時器），不會洩漏；它之後解出來的值沒有人要，這正是我們要的。
+      const outcome = await Promise.race([
+        playAndWait(player, item),
+        new Promise<"aborted">((resolve) => {
+          abortPlaybackRef.current = () => resolve("aborted");
+        }),
+      ]);
+      abortPlaybackRef.current = null;
       if (outcome === "timeout") {
         // 事件沒來、靠保險放行。留 log 而不是靜默——真的常發生的話代表音訊有
         // 別的問題，那是另一件要查的事。
@@ -287,31 +343,54 @@ export function useTalk(options: {
       }
     });
 
+    // ⚠️ 這一輪 effect 是否已經收掉。舊連線的 `onclose`／`onerror` 可能在新連線的
+    // `onopen` **之後**才抵達（快速切走再切回來），沒有這道守門的話它會把
+    // `socketOpenRef` 洗回 false——那一輪於是退回 POST 降級，講得了話但沒有安撫話、
+    // 延遲較長。晚到的訊框同理，不該再影響已經換人的畫面。
+    let disposed = false;
+
     const socket = createTalkSocket({
       baseUrl: window.location.origin,
       token,
       createSocket: deps.createSocket,
       writeAudio: writeReplyAudio,
       onStatus: (status) => {
+        if (disposed) {
+          return;
+        }
         socketOpenRef.current = status === "open";
       },
       onFrame: (frame: TalkFrame) => {
+        if (disposed) {
+          return;
+        }
         // 只要後端還在跟我們說話，「等不到回話」的保險就重新起算。
         if (avatarRef.current === "thinking") {
           armThinkingWatchdog();
         }
+        // ⚠️ 長輩正按著麥克風時，畫面歸他：不要用上一輪的字蓋掉「金孫在聽…」，
+        // 也不要把 avatar 從「在聽」搶走。那一則的字幕會在它真的播出來的時候補上
+        //（見上面的播放回呼）。
+        const canTakeOverScreen = !micActiveRef.current;
         if (frame.type === "error") {
+          // 錯誤訊息照顯示（長輩需要知道），但收音中不動 avatar。
           setReplyText(frame.text);
-          setAvatarBoth("idle");
+          if (canTakeOverScreen) {
+            setAvatarBoth("idle");
+          }
           return;
         }
         if (frame.type === "queued") {
           // ⚠️ 靜默排隊與當機對長輩來說長得一模一樣，他只會再講一次——而那會讓
           // 已經滿載的 GPU 雪上加霜。
-          setReplyText(strings.talk.queued(frame.position));
+          if (canTakeOverScreen) {
+            setReplyText(strings.talk.queued(frame.position));
+          }
           return;
         }
-        setReplyText(frame.text);
+        if (canTakeOverScreen) {
+          setReplyText(frame.text);
+        }
         if (frame.type === "reply") {
           // 上一輪的續拉就此作廢（advanceQueue 以物件識別比對，舊佇列自行退場）。
           chunkQueueRef.current = null;
@@ -333,7 +412,7 @@ export function useTalk(options: {
             text: frame.text,
             durationMs: frame.duration_ms ?? 0,
           });
-        } else if (frame.type === "reply") {
+        } else if (frame.type === "reply" && canTakeOverScreen) {
           // ⚠️ 這一輪有字沒有聲音（TTS 掛掉、或音檔落地失敗——`talkSocket` 刻意
           // 仍把訊框交出來，字幕照樣有用）。不回到待機的話，畫面永遠停在「金孫
           // 想一下…」而麥克風鍵一直是停用的，長輩從此按不動。`ack` 不在此列：
@@ -355,6 +434,13 @@ export function useTalk(options: {
       }
       clearThinkingWatchdog();
       gesture.reset();
+      disposed = true;
+      // 收音狀態與待補播的那幾則一併歸零：這一輪的播放器與長連線都要丟掉了，
+      // 留著只會讓下一輪憑空多播幾則上一位長輩的回覆。
+      micActiveRef.current = false;
+      deferredItemsRef.current = [];
+      abortPlaybackRef.current?.();
+      abortPlaybackRef.current = null;
       // ⚠️ 麥克風軌道：等開錄流程跑完再停。開錄還卡在權限對話框時
       // `recorder.stop()` 是 no-op（那時 `MediaRecorder` 還沒建立），而對話框回來
       // 之後才拿到的那顆 `MediaStream` 就再也沒有人關了。
@@ -402,16 +488,30 @@ export function useTalk(options: {
     if (!micReadyRef.current || avatarRef.current === "thinking") {
       return false;
     }
+    // ⚠️ 從這一刻起就算「收音中」，而不是等 `recorder.start()` 解出之後——中間那段
+    // 等權限／等裝置的窗口裡若有訊框抵達，照播的話一樣會被錄進去。
+    micActiveRef.current = true;
     // ⚠️ 按下去就是要講話：不清掉還沒播的、不停掉正在播的，金孫自己的聲音會被
     // 錄進去。
     playQueueRef.current?.clear();
-    // ⚠️ `clear()` 只把項目從佇列丟掉，那些已經造出來的 blob URL 一個都不會被
-    // 回收（Task 4 刻意把回收能力放在 playback 模組、由呼叫端一起呼叫）。正在播
-    // 的那一則要排除在外——它的 src 還掛在播放器上。
-    deps.revokeQueuedReplyAudio(playingUriRef.current ?? undefined);
+    // ⚠️ 中止「正在播的那一則」的等待。只 `pause()` 的話 `didJustFinish` 永遠不會
+    // 來，播放佇列會被卡住整整「時長＋3 秒」，下一輪的語音得排在後面（見播放回呼）。
+    abortPlaybackRef.current?.();
+    abortPlaybackRef.current = null;
     playerRef.current?.pause();
+    // ⚠️ `clear()` 只把項目從佇列丟掉，那些已經造出來的 blob URL 一個都不會被
+    // 回收（Task 4 刻意把回收能力放在 playback 模組、由呼叫端一起呼叫）。兩種要
+    // 留著：正在播的那一則（src 還掛在播放器上），以及收音期間收下來待補播的那
+    // 幾則（回收掉的話補播出來會是無聲）。
+    deps.revokeQueuedReplyAudio([
+      ...(playingUriRef.current === null ? [] : [playingUriRef.current]),
+      ...deferredItemsRef.current.map((item) => item.audioUrl),
+    ]);
     const started = (await recorderRef.current?.start()) ?? false;
     if (!started) {
+      // 沒在收音了：收下來的那幾則該放出來（這一輪根本沒錄到東西）。
+      micActiveRef.current = false;
+      flushDeferredPlayback();
       // ⚠️ 不講「金孫沒聽清楚」：錄音根本沒開始，那句話會讓長輩以為是自己講得
       // 不夠大聲，於是一次比一次更用力喊。
       setReplyText(strings.talk.micStartFailed);
@@ -424,7 +524,7 @@ export function useTalk(options: {
     setAvatarBoth("listening");
     setReplyText(strings.talk.listening);
     return true;
-  }, [deps, setAvatarBoth]);
+  }, [deps, setAvatarBoth, flushDeferredPlayback]);
 
   const stopAndSend = useCallback(async () => {
     // ⚠️ 等開錄流程完成再停。放開常比開錄先到——App 版先前用 avatar state 守門
@@ -439,6 +539,8 @@ export function useTalk(options: {
     setReplyText(strings.talk.thinking);
     try {
       const audio = await recorderRef.current?.stop();
+      // 收音結束（無論後面送不送得出去）：畫面與播放權還給金孫。
+      micActiveRef.current = false;
       // ⚠️ 也擋 0 位元組：手指一碰就放、或系統把軌道搶走時，`MediaRecorder` 一
       // 個位元組都沒收到。照送的話後端只會回一句聽不懂，白白吃掉一輪 GPU。
       if (!audio || audio.byteLength === 0) {
@@ -481,8 +583,22 @@ export function useTalk(options: {
         setReplyText(strings.talk.fallback);
       }
       setAvatarBoth("idle");
+    } finally {
+      // ⚠️ 放在 finally：長連線那條路徑是 `return` 出去的，而 `recorder.stop()`
+      // 本身理論上不擲例外但不該把這件事賭在上面。收音一結束就要補播——不補的話，
+      // 長輩問了一句、聽到「好，我幫您查一下喔」，那個答案就永遠不會來。
+      micActiveRef.current = false;
+      flushDeferredPlayback();
     }
-  }, [deps, token, onBindingLost, prefetchNext, setAvatarBoth, armThinkingWatchdog]);
+  }, [
+    deps,
+    token,
+    onBindingLost,
+    prefetchNext,
+    setAvatarBoth,
+    armThinkingWatchdog,
+    flushDeferredPlayback,
+  ]);
 
   const pressIn = useCallback(() => {
     // 第一次互動時解鎖音訊（iOS Safari）。必須在使用者手勢之內，之後才播得動
@@ -490,11 +606,21 @@ export function useTalk(options: {
     //
     // ⚠️ **這個時機是有風險的取捨**：`docs/dev/17` 記載 2026-07-18 的故障——
     // App 端當初在同一個手勢裡先播提示音再開錄，WebKit 的音訊工作階段被播放
-    // 搶走，iPhone 錄到的音檔全數 ≤0.72 秒且近無聲。這裡的形狀相同（按下去 →
-    // 播 50ms 無聲檔 → 立刻開錄），只是無聲檔一輩子只播一次。無頭測試環境判定
-    // 不了，已列入人工驗收清單：真 iPhone 上把**第一次按下麥克風**講的那句送
-    // 出去，確認 ASR 轉出完整句子。若真的重演，修法是把 `unlockAudio` 移到更早
-    // 的手勢（例如進舞台的那一下），而不是動麥克風鍵本身。
+    // 搶走，iPhone 錄到的音檔**全數 ≤0.72 秒且近無聲**（不是品質差一點，是整句
+    // 話沒了；而那一句往往是展示的開場白）。這裡的形狀看起來相同：按下去 → 播
+    // 50ms 無聲檔 → 立刻開錄。
+    //
+    // 真正讓兩者不同的，不是「無聲檔很短」，而是**`startRecording` 在
+    // `recorder.start()` 之前就先 `player.pause()` 了**（見下方）——`pressIn` 這
+    // 一整段是同步的，無聲檔在 `getUserMedia` 被呼叫**之前**就已經停止，音訊
+    // 工作階段的佔用不會與錄音重疊。App 那次是提示音與開錄真的並行。
+    //
+    // 即使如此，這仍然**無法在無頭環境判定**（jsdom 沒有音訊工作階段），已列入
+    // 人工驗收清單：真 iPhone 上把**第一次按下麥克風**講的那句送出去，確認 ASR
+    // 轉出完整句子。⚠️ 影響面不只「頁面載入後的第一句」——解鎖粒度是每顆播放器
+    // 一次（見 `audioUnlock.ts`），而切頁籤／重新掛載都會換一顆，所以是「每次
+    // 換播放器之後的第一句」。若真的重演，修法是把 `unlockAudio` 移到更早、與
+    // 開錄不同的手勢（例如進舞台的那一下），而不是動麥克風鍵本身。
     if (playerRef.current) {
       unlockAudio(playerRef.current);
     }

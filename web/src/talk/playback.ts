@@ -54,17 +54,20 @@ export function writeReplyAudio(bytes: Uint8Array): { uri: string } {
  * 塞進去會讓一支通用 FIFO 佇列耦合到「播放媒介剛好是網頁 blob URL」這個
  * web 端專屬細節；App 端同一支佇列用的是本地檔路徑，完全不需要這件事。
  * 改把回收能力放在本模組，由呼叫端（接線佇列的任務）在 `queue.clear()`
- * 的**同時**呼叫這支函式，並傳入目前正在播放中的 uri（若有）以免連正在
- * 播的那一則都被回收掉。
+ * 的**同時**呼叫這支函式，並傳入「還需要留著」的 uri 以免連正在播的、或
+ * 已經收下來等錄音結束再播的那幾則都被回收掉。
  *
- * ⚠️ **本輪的已知缺口**：目前沒有任何呼叫端呼叫這支函式——`queue.clear()`
- * 本身仍然不會觸發回收。本函式只是把回收能力準備好，實際「兩者一起呼叫」
- * 要等佇列真正接線的任務完成才會發生；在那之前，長輩插嘴中斷播放仍然會
- * 漏掉還沒播到那幾則的 blob URL（已記入人工驗收清單與任務報告）。
+ * ⚠️ **Task 4 記載的「尚未接線」缺口已於 P3 Task 8 收斂**：
+ * `elder/useTalk.ts::startRecording` 在 `playQueue.clear()` 的同一處呼叫本
+ * 函式，並傳入目前正在播的那一則＋錄音期間收下來待補播的那幾則；effect
+ * cleanup（切頁籤／卸載／換 token）另有一次全掃。
+ *
+ * `except` 收單一字串或字串陣列——單一字串是既有呼叫端的用法，保留不動。
  */
-export function revokeQueuedReplyAudio(exceptUri?: string): void {
+export function revokeQueuedReplyAudio(except?: string | readonly string[]): void {
+  const keep = new Set(typeof except === "string" ? [except] : (except ?? []));
   for (const uri of pendingBlobUrls) {
-    if (uri !== exceptUri) {
+    if (!keep.has(uri)) {
       URL.revokeObjectURL(uri);
       pendingBlobUrls.delete(uri);
     }

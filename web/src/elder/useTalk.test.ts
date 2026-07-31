@@ -99,35 +99,52 @@ function makeRecorder(options: { granted?: boolean; emptyRecording?: boolean } =
   return api;
 }
 
+/**
+ * 假播放器工廠。
+ *
+ * ⚠️ **`create()` 每次都造一顆新的**，因為正式的 `createWebPlayer()` 也是——它每次
+ * 都 `new Audio()`。這一點是承重的：iOS 的音訊解鎖**綁在單一 `HTMLMediaElement`
+ * 上**（`playback.ts` 自己寫下的前提），換一顆播放器等於沒解鎖。假物件若全域共用
+ * 一顆，「切走再切回來之後新播放器有沒有重新解鎖」這件事在測試裡根本觀察不到——
+ * 而那正是審查抓到的 Critical 1（iPhone 切一次頁籤之後再也聽不到聲音）。
+ *
+ * 監聽者依實例各自持有（真播放器也是），`finish()` 只對最近建立的那一顆生效。
+ */
 function makePlayer() {
-  const listeners = new Set<(status: { didJustFinish: boolean }) => void>();
+  let latestListeners = new Set<(status: { didJustFinish: boolean }) => void>();
   const api = {
     played: [] as string[],
     paused: 0,
     disposed: 0,
-    /** 模擬「這一則播完了」。 */
+    created: 0,
+    /** 模擬「這一則播完了」（對最近建立的那一顆播放器）。 */
     finish() {
-      listeners.forEach((listener) => listener({ didJustFinish: true }));
+      latestListeners.forEach((listener) => listener({ didJustFinish: true }));
     },
-    instance: {
-      addListener(
-        _event: "playbackStatusUpdate",
-        listener: (s: { didJustFinish: boolean }) => void,
-      ) {
-        listeners.add(listener);
-        return { remove: () => listeners.delete(listener) };
-      },
-      replace(source: { uri: string }) {
-        api.played.push(source.uri);
-      },
-      play() {},
-      pause() {
-        api.paused += 1;
-      },
-      dispose() {
-        api.disposed += 1;
-      },
-      element: null as unknown as HTMLAudioElement,
+    create() {
+      api.created += 1;
+      const listeners = new Set<(status: { didJustFinish: boolean }) => void>();
+      latestListeners = listeners;
+      return {
+        addListener(
+          _event: "playbackStatusUpdate",
+          listener: (s: { didJustFinish: boolean }) => void,
+        ) {
+          listeners.add(listener);
+          return { remove: () => listeners.delete(listener) };
+        },
+        replace(source: { uri: string }) {
+          api.played.push(source.uri);
+        },
+        play() {},
+        pause() {
+          api.paused += 1;
+        },
+        dispose() {
+          api.disposed += 1;
+        },
+        element: null as unknown as HTMLAudioElement,
+      };
     },
   };
   return api;
@@ -214,7 +231,7 @@ function setup(
         onBindingLost: harness.onBindingLost,
         deps: {
           createRecorder: () => harness.recorder.create(),
-          createPlayer: () => harness.player.instance,
+          createPlayer: () => harness.player.create(),
           createSocket: harness.socket.factory,
           postTurn: harness.postTurn,
           getTurnChunk: harness.getTurnChunk,
@@ -302,6 +319,26 @@ describe("短按切換", () => {
     expect(h.recorder.stopped).toBe(0);
   });
 
+  it("按住不到半秒就放開仍算短按——長按門檻不可以縮到 0", async () => {
+    // 上界有人守著（門檻拉長到 5 秒會讓十一條變紅），下界原本沒有：把 LONG_PRESS_MS
+    // 改成 0，「未達長按門檻」那條仍然綠——因為它按下去之後立刻放開，計時器根本
+    // 沒有機會跑。真實的長輩手指沒那麼快，按個三四百毫秒是常態，那時門檻若是 0
+    // 就會被判成「按住說話」而直接送出，短按切換模式等於不存在。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    act(() => h.view.result.current.pressIn());
+    act(() => h.recorder.finishStart());
+    await act(async () => {
+      vi.advanceTimersByTime(400);
+    });
+    await act(async () => {
+      h.view.result.current.pressOut();
+    });
+    expect(h.recorder.stopped).toBe(0);
+    expect(h.view.result.current.avatar).toBe("listening");
+  });
+
   it("再按一下就送出", async () => {
     const h = setup();
     await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
@@ -340,14 +377,151 @@ describe("時序", () => {
 
   it("開錄之前先清掉還沒播的、並暫停正在播的", async () => {
     // ⚠️ 不清的話金孫自己的聲音會被錄進去。
+    //
+    // ⚠️ **審查抓到的第十八個假測試**：brief 這條原本只 emit 一則訊框，而它立刻
+    // 被播掉——`clear()` 被呼叫時佇列本來就是空的，這條測試在結構上不可能觀察到
+    // 「清掉」那一半。實測：把 `playQueueRef.current?.clear()` 整行刪掉，30 條全綠。
+    // 要有鑑別力就得讓佇列裡**真的有東西在排隊**：後端的 ack→reply 兩段式正好會
+    // 連續送兩則，第一則播著、第二則在等。
     const h = setup();
     await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
     h.socket.open();
-    h.socket.emit({ ...REPLY, type: "reply", turn_id: "t1" });
-    await waitFor(() => expect(h.player.played.length).toBe(1));
+    h.socket.emit({
+      type: "ack",
+      turn_id: "t1",
+      text: "好，我幫您查一下喔",
+      audio_url: "https://cdn.example/ack.m4a",
+      duration_ms: 30_000,
+    });
+    h.socket.emit({ ...REPLY, type: "reply", turn_id: "t1", audio_url: "https://cdn.example/second.m4a" });
+    await waitFor(() => expect(h.player.played).toContain("https://cdn.example/ack.m4a"));
+    // 第二則還在排隊（一次只播一則）。
+    expect(h.player.played).not.toContain("https://cdn.example/second.m4a");
+
     act(() => h.view.result.current.pressIn());
     act(() => h.recorder.finishStart());
     await waitFor(() => expect(h.player.paused).toBeGreaterThan(0));
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    await act(async () => {
+      h.view.result.current.pressOut();
+    });
+    // ⚠️ 走完整輪（含錄音結束後的補播時機）都不可以聽到排隊中的那一則——它在長輩
+    // 按下去的那一刻就該被丟掉。
+    await act(async () => {
+      vi.advanceTimersByTime(40_000);
+    });
+    expect(h.player.played).not.toContain("https://cdn.example/second.m4a");
+  });
+
+  it("長輩正按著麥克風時，晚到的回覆不可以放音——金孫的聲音會被錄進去", async () => {
+    // ⚠️ **審查抓到的 Critical 2**。後端 `ws.py` 是明文設計的 ack→reply 兩段式：
+    // 先回一句「好，我幫您查一下喔」，答案好了再送第二則。長輩不耐煩、播完 ack
+    // 就按住麥克風講第二句，而第一輪的真正答案 5～10 秒後才回來——原本那一則會
+    // 在他還按著麥克風講話時放出來，ASR 收到的是長輩的話混著金孫的聲音。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    h.socket.emit({
+      type: "ack",
+      turn_id: "t1",
+      text: "好，我幫您查一下喔",
+      audio_url: "https://cdn.example/ack.m4a",
+      duration_ms: 900,
+    });
+    await waitFor(() => expect(h.player.played).toContain("https://cdn.example/ack.m4a"));
+
+    act(() => h.view.result.current.pressIn());
+    act(() => h.recorder.finishStart());
+    await waitFor(() => expect(h.view.result.current.avatar).toBe("listening"));
+
+    // 第一輪的真正答案這時才回來——長輩還按著麥克風。
+    h.socket.emit({
+      ...REPLY,
+      type: "reply",
+      turn_id: "t1",
+      text: "附近有 205 跟 622",
+      audio_url: "https://cdn.example/answer.m4a",
+    });
+    await act(async () => {});
+    expect(h.player.played).not.toContain("https://cdn.example/answer.m4a");
+    // 也不可以把畫面從「金孫在聽…」搶走——長輩還在講話。
+    expect(h.view.result.current.avatar).toBe("listening");
+    expect(h.view.result.current.replyText).toBe("金孫在聽…");
+  });
+
+  it("錄音結束之後，剛才收下來的答案要補播出來，不是靜靜丟掉", async () => {
+    // 不補播的話，長輩問了一句、聽到「我幫您查一下喔」，然後那個答案永遠不會來
+    // ——那是空頭承諾，比沒有回答更糟。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    act(() => h.view.result.current.pressIn());
+    act(() => h.recorder.finishStart());
+    await waitFor(() => expect(h.view.result.current.avatar).toBe("listening"));
+    h.socket.emit({
+      ...REPLY,
+      type: "reply",
+      turn_id: "t1",
+      text: "附近有 205 跟 622",
+      audio_url: "https://cdn.example/answer.m4a",
+    });
+    await act(async () => {});
+    expect(h.player.played).not.toContain("https://cdn.example/answer.m4a");
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    await act(async () => {
+      h.view.result.current.pressOut();
+    });
+    await waitFor(() => expect(h.player.played).toContain("https://cdn.example/answer.m4a"));
+    // 字幕要跟著補上，不然長輩聽到的跟看到的是兩件事。
+    await waitFor(() => expect(h.view.result.current.replyText).toBe("附近有 205 跟 622"));
+  });
+
+  it("打斷一則長回覆之後，下一句的語音要立刻播，不必等舊那則的保險逾時", async () => {
+    // ⚠️ **審查抓到的 Critical 3**：`pause()` 之後 `ended` 永遠不會來，`playAndWait`
+    // 只能等滿「時長＋3 秒」的保險；那期間 `createPlaybackQueue` 的 `running` 是
+    // true，新回覆只能排隊。審查實跑：一則 30 秒的回覆播到第 1 秒被打斷、後端 3 秒
+    // 後回覆，新答案的**字**出現了但**語音再過 29 秒才播**，這 29 秒內 avatar 停在
+    // 「在想」、麥克風鍵按不動。75 秒保險也救不了——訊框有到，它剛被重新起算。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    h.socket.emit({
+      ...REPLY,
+      type: "reply",
+      turn_id: "t1",
+      audio_url: "https://cdn.example/long.m4a",
+      duration_ms: 30_000,
+    });
+    await waitFor(() => expect(h.player.played).toContain("https://cdn.example/long.m4a"));
+
+    // 長輩插嘴問新問題
+    act(() => h.view.result.current.pressIn());
+    act(() => h.recorder.finishStart());
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    await act(async () => {
+      h.view.result.current.pressOut();
+    });
+    // 後端三秒後回覆（遠早於舊那則的 30000+3000 保險）
+    await act(async () => {
+      vi.advanceTimersByTime(3000);
+    });
+    h.socket.emit({
+      ...REPLY,
+      type: "reply",
+      turn_id: "t2",
+      reply_digest: "d2",
+      audio_url: "https://cdn.example/fresh.m4a",
+      duration_ms: 1200,
+    });
+    await waitFor(() => expect(h.player.played).toContain("https://cdn.example/fresh.m4a"));
+    expect(h.view.result.current.avatar).toBe("speaking");
   });
 
   it("長輩插嘴時，還沒播到那幾則的音檔記憶體要回收，正在播的那一則不可回收", async () => {
@@ -361,8 +535,10 @@ describe("時序", () => {
     await waitFor(() => expect(h.player.played.length).toBe(1));
     act(() => h.view.result.current.pressIn());
     act(() => h.recorder.finishStart());
+    // 傳的是「要留著的那幾則」：正在播的那一則（src 還掛在播放器上）＋收音期間收
+    // 下來待補播的那幾則（這裡沒有）。其餘一律回收。
     await waitFor(() =>
-      expect(h.revokeQueuedReplyAudio).toHaveBeenCalledWith("https://cdn.example/a.m4a"),
+      expect(h.revokeQueuedReplyAudio).toHaveBeenCalledWith(["https://cdn.example/a.m4a"]),
     );
   });
 });
@@ -556,6 +732,23 @@ describe("降級與失敗", () => {
     expect(h.view.result.current.avatar).toBe("idle");
   });
 
+  it("開錄失敗之後手勢要復位，下一次按下去是真的重新開始錄音", async () => {
+    // ⚠️ 審查發現這行（`gestureRef.current.reset()`）刪掉全套仍綠。後果：麥克風
+    // 打不開之後，長輩下一次按下去會被手勢狀態機判成「短按切換的第二下」，
+    // `stopAndSend` 因 `started === false` 直接返回——**那一按完全沒有反應**，
+    // 要按第三下才會真的開始錄音。
+    const h = setup({ startFails: true });
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    act(() => h.view.result.current.pressIn());
+    await act(async () => {
+      h.recorder.finishStart();
+    });
+    expect(h.recorder.started).toBe(1);
+    // 第二次按下去必須是「重新開始錄音」，不是被當成第二下而什麼都沒發生。
+    act(() => h.view.result.current.pressIn());
+    expect(h.recorder.started).toBe(2);
+  });
+
   it("麥克風被拒時顯示白話說明，且不再開錄", async () => {
     const h = setup({ granted: false });
     await waitFor(() => expect(h.view.result.current.micReady).toBe(false));
@@ -610,6 +803,36 @@ describe("這一欄被切到背景", () => {
     expect(h.view.result.current.avatar).toBe("idle");
   });
 
+  it("切走再切回來之後，新的播放器要在使用者手勢內重新解鎖", async () => {
+    // ⚠️ **審查抓到的 Critical 1**：`audioUnlock` 的旗標原本是**每個頁面一次**，
+    // 而播放器是**每次 effect 重跑一顆新的**（`createWebPlayer()` 每次都 `new Audio()`，
+    // 而長連線 effect 的相依含 `visible`）。`playback.ts` 自己寫著「iOS 的解鎖綁在
+    // 單一 HTMLMediaElement 上，換一顆播放器等於沒解鎖」——所以 iPhone 上切一次
+    // 頁籤（或登出後重新配對，`TalkScreen` 重新掛載）之後，新播放器從未在使用者
+    // 手勢內被 play() 過，`playAndWait` 的 play() 被 iOS 擋下、rejection 被
+    // `playback.ts` 靜靜吞掉——長輩只看得到字、聽不到任何聲音，本次頁面載入內
+    // 永久如此。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    act(() => h.view.result.current.pressIn());
+    act(() => h.recorder.finishStart());
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    await act(async () => {
+      h.view.result.current.pressOut();
+    });
+    expect(h.player.played).toContain("/demo/silent.wav");
+
+    h.player.played.length = 0;
+    h.view.rerender({ visible: false });
+    h.view.rerender({ visible: true });
+    expect(h.player.created).toBe(2);
+
+    act(() => h.view.result.current.pressIn());
+    expect(h.player.played).toContain("/demo/silent.wav");
+  });
+
   it("切回來時重新連線，長輩可以繼續講話", async () => {
     const h = setup();
     await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
@@ -620,6 +843,26 @@ describe("這一欄被切到背景", () => {
     h.socket.open();
     await holdAndRelease(h);
     expect(h.recorder.stopped).toBe(1);
+    expect(h.socket.sent.some((item) => item instanceof ArrayBuffer)).toBe(true);
+  });
+
+  it("舊連線晚到的斷線通知，不可以把新連線的狀態洗掉", async () => {
+    // ⚠️ 審查發現的舊回呼競態：快速切走再切回來時，舊連線的 `onclose` 可能在新連線
+    // 的 `onopen` **之後**才抵達，把 `socketOpenRef` 洗回 false。後果有限（那一輪
+    // 改走 POST 降級，仍講得了話，只是沒有安撫話、延遲較長），但那是真的沒有防護
+    // 的競態。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    const firstSocket = h.socket.socket;
+    h.view.rerender({ visible: false });
+    h.view.rerender({ visible: true });
+    h.socket.open();
+    // 舊連線的斷線通知這時才姍姍來遲
+    act(() => {
+      firstSocket?.onclose?.({} as CloseEvent);
+    });
+    await holdAndRelease(h);
+    expect(h.postTurn).not.toHaveBeenCalled();
     expect(h.socket.sent.some((item) => item instanceof ArrayBuffer)).toBe(true);
   });
 
