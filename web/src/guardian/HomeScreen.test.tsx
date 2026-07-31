@@ -133,6 +133,11 @@ describe("HomeScreen", () => {
         status: 201,
         json: async () =>
           envelope({ elder_id: "e9", name: "阿公", nickname: "阿公", invite_code: "AB12CD" }),
+      })
+      // 建立成功後會重打一次列表（見 HomeScreen 的 addElder）。
+      .mockResolvedValueOnce({
+        status: 200,
+        json: async () => envelope([{ elder_id: "e9", name: "阿公", nickname: "阿公" }]),
       });
     vi.stubGlobal("fetch", spy);
     renderHome();
@@ -141,6 +146,43 @@ describe("HomeScreen", () => {
     await userEvent.click(screen.getByRole("button", { name: "建立長輩檔案" }));
     expect(await screen.findByText("AB12CD")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /阿公/ })).toBeInTheDocument();
+  });
+
+  // ⚠️ 這一條守的是「錯誤旗標不可以蓋掉家屬剛建立成功的長輩」。列表載入失敗之後
+  // 錯誤訊息佔著清單的位置，樂觀追加的那一筆看不見，而清單其實也還少了他原有的
+  // 其他長輩——家屬會以為建立失敗而再按一次，重新走回重複建檔那條路。建立成功
+  // 代表後端此刻是通的，重打一次列表同時解決這兩件事。
+  it("列表載入失敗後建立成功，會重打列表、錯誤消失且原有的長輩也回來", async () => {
+    const spy = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 500,
+        json: async () => failure("server_error", "系統忙碌，請稍後再試"),
+      })
+      .mockResolvedValueOnce({
+        status: 201,
+        json: async () =>
+          envelope({ elder_id: "e9", name: "阿公", nickname: "", invite_code: "AB12CD" }),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        json: async () =>
+          envelope([
+            { elder_id: "e1", name: "王阿嬤", nickname: "" },
+            { elder_id: "e9", name: "阿公", nickname: "" },
+          ]),
+      });
+    vi.stubGlobal("fetch", spy);
+    renderHome();
+    await screen.findByText("載入失敗，請稍後再試。");
+    await userEvent.type(screen.getByLabelText("長輩稱呼"), "阿公");
+    await userEvent.click(screen.getByRole("button", { name: "建立長輩檔案" }));
+
+    expect(await screen.findByRole("button", { name: /阿公/ })).toBeInTheDocument();
+    // 原有的那位也要回來——只顯示剛建的那一筆會讓家屬以為其他長輩不見了。
+    expect(screen.getByRole("button", { name: /王阿嬤/ })).toBeInTheDocument();
+    expect(screen.queryByText("載入失敗，請稍後再試。")).not.toBeInTheDocument();
+    expect(spy).toHaveBeenCalledTimes(3);
   });
 
   it("顯示代辦同意聲明", async () => {
@@ -174,6 +216,11 @@ describe("HomeScreen", () => {
         status: 201,
         json: async () =>
           envelope({ elder_id: "e9", name: "阿公", nickname: "", invite_code: "AB12CD" }),
+      })
+      // 建立成功後會重打一次列表（見 HomeScreen 的 addElder）。
+      .mockResolvedValueOnce({
+        status: 200,
+        json: async () => envelope([{ elder_id: "e9", name: "阿公", nickname: "" }]),
       });
     vi.stubGlobal("fetch", spy);
     renderHome();
@@ -199,6 +246,11 @@ describe("HomeScreen", () => {
         status: 201,
         json: async () =>
           envelope({ elder_id: "e9", name: "阿公", nickname: "", invite_code: "AB12CD" }),
+      })
+      // 建立成功後會重打一次列表（見 HomeScreen 的 addElder）。
+      .mockResolvedValueOnce({
+        status: 200,
+        json: async () => envelope([{ elder_id: "e9", name: "阿公", nickname: "" }]),
       });
     vi.stubGlobal("fetch", spy);
     renderHome();
@@ -249,6 +301,11 @@ describe("HomeScreen", () => {
         status: 201,
         json: async () =>
           envelope({ elder_id: "e9", name: "阿公", nickname: "", invite_code: "AB12CD" }),
+      })
+      // 建立成功後會重打一次列表（見 HomeScreen 的 addElder）。
+      .mockResolvedValueOnce({
+        status: 200,
+        json: async () => envelope([{ elder_id: "e9", name: "阿公", nickname: "" }]),
       });
     vi.stubGlobal("fetch", spy);
     renderHome();

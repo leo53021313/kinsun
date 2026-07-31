@@ -86,6 +86,19 @@ export function HomeScreen(props: {
       ]);
       setInviteCode(created.invite_code);
       setNewName("");
+      // ⚠️ 建立成功後重打一次列表。上面那筆樂觀追加只夠應付「列表本來就載到了」
+      // 的情形；若這一頁是帶著 hasError 進來的，錯誤訊息會佔住清單的位置、把剛
+      // 建好的那位蓋掉，而且清單其實還少了家屬原有的其他長輩——他會以為建立失敗
+      // 而再按一次，重新走回「建出刪不掉的重複長輩」那條路。
+      // 建立成功代表後端此刻是通的，這一趟通常會成功。
+      try {
+        setElders(await listElders(token));
+        setHasError(false);
+      } catch (reloadExc) {
+        if (signOutOn401(reloadExc)) return;
+        // 重打失敗不影響「建立成功」這件事本身（綁定碼已經顯示出來了）。清單維持
+        // 原狀、錯誤旗標也維持原狀——不謊稱這份清單是完整的。
+      }
     } catch (exc) {
       if (signOutOn401(exc)) return;
       setFormError(strings.guardianHome.addFailed);
