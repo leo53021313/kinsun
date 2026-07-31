@@ -414,6 +414,75 @@ describe("useNotificationFeed", () => {
     expect(onTokenRevoked).not.toHaveBeenCalled();
   });
 
+  /**
+   * ⚠️ **全分支審查發現的 Minor 6（2026-08-01）**：`handlePollError` 原本是本
+   * hook 唯一不核對 `mountedRef`／`sessionRef` 的出口。`poll()` 成功那條路徑兩個
+   * 都核對過，失敗這條卻沒有——遲到的 401 照樣會打 `onTokenRevoked`。當時擋住它
+   * 的不是設計意圖，是 `elder/BindScreen.tsx` 只在掛載當下讀一次
+   * `signedOutNotice` 這個初始化時機；哪天有人「修好」讓它響應遲到的 notice，
+   * `ElderApp` 那句只給被動登出用的「家人幫您重新設定了…」就會冒到自己按登出
+   * 的人面前。
+   */
+  it("卸載後才回來的 401 不會再觸發 onTokenRevoked", async () => {
+    const onTokenRevoked = vi.fn();
+    let rejectPoll: ((exc: unknown) => void) | null = null;
+    api.guardian.mockImplementationOnce(
+      () =>
+        new Promise<AppNotification[]>((_resolve, reject) => {
+          rejectPoll = reject;
+        }),
+    );
+    const { unmount } = renderHook(() =>
+      useNotificationFeed({
+        audience: "guardian",
+        token: "tok",
+        intervalMs: 60_000,
+        onTokenRevoked,
+      }),
+    );
+    await waitFor(() => expect(api.guardian).toHaveBeenCalledTimes(1));
+    unmount();
+
+    await act(async () => {
+      rejectPoll?.(new ApiError(401, "invalid_token"));
+    });
+    expect(onTokenRevoked).not.toHaveBeenCalled();
+  });
+
+  it("換人時，前一位使用者「還在飛」的 401 晚到，不會把新的這個人登出", async () => {
+    // ⚠️ 這條與上一條各自獨立承重：換人**不會**讓元件卸載（`mountedRef` 仍是
+    // true），只有比對「送出這一輪的當下是誰」才擋得住。
+    const onTokenRevoked = vi.fn();
+    let rejectTokA: ((exc: unknown) => void) | null = null;
+    api.guardian.mockImplementationOnce(
+      () =>
+        new Promise<AppNotification[]>((_resolve, reject) => {
+          rejectTokA = reject;
+        }),
+    );
+    const { rerender } = renderHook(
+      (props: { token: string }) =>
+        useNotificationFeed({
+          audience: "guardian",
+          token: props.token,
+          intervalMs: 60_000,
+          onTokenRevoked,
+        }),
+      { initialProps: { token: "tokA" } },
+    );
+    await waitFor(() => expect(api.guardian).toHaveBeenCalledTimes(1));
+
+    api.guardian.mockResolvedValueOnce([]);
+    rerender({ token: "tokB" });
+    await act(async () => {});
+
+    // tokA 那次註定失敗的 401 現在才回來——它屬於已經換掉的那個人。
+    await act(async () => {
+      rejectTokA?.(new ApiError(401, "invalid_token"));
+    });
+    expect(onTokenRevoked).not.toHaveBeenCalled();
+  });
+
   it("輪詢失敗時完全靜默，不影響下一輪繼續嘗試", async () => {
     api.guardian.mockRejectedValueOnce(new Error("network"));
     api.guardian.mockResolvedValueOnce([]);
@@ -537,6 +606,57 @@ describe("useNotificationFeed", () => {
       document.dispatchEvent(new Event("visibilitychange"));
     });
     await waitFor(() => expect(api.guardian).toHaveBeenCalledTimes(2));
+  });
+
+  it("瀏覽器分頁切回前景時只重建基準，不把背景期間累積的提醒一次性補播出來", async () => {
+    // ⚠️ **全分支審查發現的 Critical（2026-08-01）**：`visible` 由 false 轉 true
+    // 那條路徑（見下方 describe("visible")）已經會重建基準，但**分頁可見性**這條
+    // 沒有——而展示當天是寬螢幕兩欄並排，`elderVisible`／`guardianVisible` 恆為
+    // `true`（`stage/StagePage.tsx`），`visible` 那條轉換永遠不會觸發，
+    // `document.hidden` 是唯一剩下的觸發源：簡報者切去投影片／終端機再切回來，
+    // 背景期間累積的每一則都會被當成新的補播出來，一則 3.5 秒、`QUEUE_MAX`（20）
+    // 上限下最壞連播 70 秒。
+    api.guardian.mockResolvedValueOnce([item(100)]); // 掛載第一輪：建立基準
+    const { result } = renderHook(() =>
+      useNotificationFeed({ audience: "guardian", token: "tok", intervalMs: 60_000 }),
+    );
+    await act(async () => {});
+    expect(result.current.banner).toBeNull();
+
+    // 切到背景：這一次 visibilitychange 不該打請求（`document.hidden` 擋著），
+    // 所以下面那批 mock 不會在這裡被消耗掉。
+    stubHidden(true);
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(api.guardian).toHaveBeenCalledTimes(1);
+
+    // 背景期間後端照常累積提醒（排程時間到了、危急事件），切回來時這些都是舊聞。
+    api.guardian.mockResolvedValueOnce([
+      item(100),
+      item(200, "背景期間第一則"),
+      item(300, "背景期間第二則"),
+      item(400, "背景期間第三則"),
+    ]);
+    stubHidden(false);
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(api.guardian).toHaveBeenCalledTimes(2);
+    expect(result.current.banner).toBeNull();
+
+    // 之後真的有新提醒仍然照常滑出來——不是整支功能被關掉了。
+    api.guardian.mockResolvedValueOnce([
+      item(100),
+      item(200, "背景期間第一則"),
+      item(300, "背景期間第二則"),
+      item(400, "背景期間第三則"),
+      item(500, "切回來之後的新提醒"),
+    ]);
+    await act(async () => {
+      result.current.reload();
+    });
+    expect(result.current.banner?.content).toBe("切回來之後的新提醒");
   });
 
   it("reload() 手動觸發立刻重新拉一次，不必等下一次輪詢", async () => {

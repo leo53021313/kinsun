@@ -9,12 +9,20 @@
  * 展示現場十幾人約 **15 req/s、40+ 次 DB 查詢/秒**。吃得住，但值得記下來供
  * 日後評估是否要調大 `intervalMs` 或改真推播。
  *
- * ⚠️ **第一次載入不補播歷史，且這件事跟使用者有沒有開過提醒列表無關**（審查
- * 發現第二個阻斷性缺陷，見下方「brief 缺陷 2」）：那是展示現場最尷尬的失敗——
- * 一進站就滑進十幾張橫幅、蓋滿整個手機。「第一次」的判斷**不是**看
- * `notify/seen.ts` 的已讀水位是不是 0，是看**這支 hook 自己有沒有為目前這組
- * audience／token 成功跑過至少一輪輪詢**：只要還沒跑過第一輪，不管既有已讀
- * 水位多舊、水位之後累積了多少通知，一律不當成新的補播出來。
+ * ⚠️ **一律不補播歷史，且這件事跟使用者有沒有開過提醒列表無關**（審查發現
+ * 第二個阻斷性缺陷，見下方「brief 缺陷 2」）：那是展示現場最尷尬的失敗——
+ * 一次滑進十幾張橫幅、蓋滿整個手機。判斷的依據**不是**看 `notify/seen.ts`
+ * 的已讀水位是不是 0，是看**這支 hook 自己的 `shownUpTo` 游標**：游標為 0
+ * ＝「這一輪只用來重建基準」，不管當下已經累積了多少通知一律不播。
+ *
+ * ⚠️ **游標會歸零（＝下一輪只重建基準）的路徑一共四條**，四條是同一套語意，
+ * 少任何一條就會在對應的時機把積壓的通知整批補播出來：
+ * 1) 掛載；2) 換人（`audience`／`token` 改變）——以上兩條走同一顆 `useEffect`；
+ * 3) `visible` 由 `false` 轉 `true`（窄螢幕頁籤切回來）；
+ * 4) **瀏覽器分頁由背景切回前景**（`document.hidden` 轉 false）。
+ * ⚠️ 第 4 條是**展示當天唯一會發生**的那條：寬螢幕兩欄並排時
+ * `elderVisible`／`guardianVisible` 恆為 `true`，第 3 條在真正的展示設定下永遠
+ * 不會觸發（審查發現的 Critical，2026-08-01，見 `onVisible`）。
  *
  * ⚠️ **本檔的「水位」跟 `notify/seen.ts` 的已讀水位是兩件不同的東西，刻意不共用
  * 寫入權**：`loadSeenAt`／`saveSeenAt` 的寫入權**只**屬於
@@ -41,37 +49,31 @@
  * 會把「上次開列表之後的全部通知」整批當成新的一次播完（審查實測：已讀水位
  * 存在時掛載即播出 7 則，20 則上限下最壞可以連播 70 秒）——這正是本檔與 brief
  * 都稱為「展示現場最尷尬的失敗」的那件事，只是換了個時機發生而已。已改為
- * `shownUpTo` 一律從 `0` 起跳（掛載與換人皆同，不再讀已讀水位）；第一輪輪詢
+ * `shownUpTo` 一律從 `0` 起跳（掛載與換人皆同，不再讀已讀水位）；那一輪輪詢
  * 只用來記下目前的水位，不管當下已經累積了多少通知都不播。
  *
  * ⚠️ **接線狀態（P4 Task 4 已接，見 `stage/StagePage.tsx`）**：
- * 1) `visible?: boolean`（本輪已加進簽章並接上）：窄螢幕頁籤模式下，非活動欄
- *    （同 `elder/useTalk.ts` 的 `visible` 語意）現在會在 `!visible` 時整段跳過
- *    輪詢（含不註冊分頁可見性監聽器），由 `StagePage.tsx` 的 `elderVisible`／
+ * 1) `visible?: boolean`（已接上）：窄螢幕頁籤模式下，非活動欄（同
+ *    `elder/useTalk.ts` 的 `visible` 語意）會在 `!visible` 時整段跳過輪詢
+ *    （含不註冊分頁可見性監聽器），由 `StagePage.tsx` 的 `elderVisible`／
  *    `guardianVisible` 傳入——與相機／麥克風走同一條線，理由同該檔說明：非
  *    活動欄只是被 CSS `hidden` 蓋住，元件仍掛著，計時器與 `display:none` 無關。
- * 2) `onTokenRevoked?: () => void`（本輪已接上）：`stage/StagePage.tsx` 傳入
- *    對應 session 的 `signOut`。⚠️ **已知落差**：這裡只會清掉 session、把
- *    `ElderApp`／`GuardianApp` 導回配對／登入畫面，**不會**帶出
- *    `elder/ElderApp.tsx` 那句「家人幫您重新設定了…」的說明——那句話掛在
- *    `ElderApp` 自己的 `loseSession`，本 hook 活在舞台層、構造上碰不到它。
- *    是否要把這句說明也接上，留給下一輪裁決（多一條跨元件的訊息通道，是否
- *    值得為這個邊角情境增加複雜度）。
+ * 2) `onTokenRevoked?: () => void`（已接上）：家屬欄傳 `guardian.signOut`；
+ *    長輩欄傳的**不是** `elder.signOut`，而是一支只遞增序號的穩定回呼，由
+ *    `elder/ElderApp.tsx` 自己的 `loseSession` 統一處理「登出＋在配對畫面上
+ *    講出『家人幫您重新設定了…』」（P4 Task 4 審查修正的 Important 1；本檔
+ *    先前那句「已知落差：不會帶出那句說明」自那次修正起就不成立，2026-08-01
+ *    全分支審查一併更正）。⚠️ 長輩欄那支回呼**必須是穩定參考**，理由見
+ *    `stage/StagePage.tsx::handleElderTokenRevoked`。
  *
- * ⚠️ **已知限制（非本工項新缺陷，W-13 同款）**：窄螢幕頁籤模式下，橫幅在被
- * CSS 蓋住的那一欄一樣會照常播出、3.5 秒後照樣自動消失——使用者切過去看的
- * 時候已經錯過了。資料本身不會遺失（仍在提醒列表與未讀數裡），只有「即時跳
- * 出來」這個效果會被錯過；切走那一刻**已經**顯示著的那一則仍會照原訂時間
+ * ⚠️ **非活動欄不會播出橫幅**（2026-08-01 全分支審查更正 Minor 1）：本段先前
+ * 寫的是「窄螢幕頁籤模式下，橫幅在被 CSS 蓋住的那一欄一樣會照常播出、3.5 秒
+ * 後照樣自動消失」——那是 Task 4 把 `visible` 接進下方輪詢 effect **之前**的
+ * 行為，現在整段 effect 會早退、根本不產生橫幅。同段「資料本身不會遺失（仍在
+ * 提醒列表與未讀數裡）」也一併更正：提醒列表確實不受影響（它自己去拉），但
+ * **未讀數在該欄不可見期間同樣停止更新**（`unread` 由本 hook 的輪詢驅動），
+ * 切回來的第一輪才會補上。切走那一刻**已經**顯示著的那一則橫幅仍會照原訂時間
  * 自動消失，不受影響。
- *
- * ⚠️ **`visible` 切回 `true` 時會重建基準，不會補播隱藏期間累積的通知**
- *（審查發現的 Important 2，2026-08-01，修正前這裡曾誤宣稱「非活動欄不再
- * 繼續累積新的橫幅」就等於「沒有副作用」——那句話本身沒錯，但漏了它的
- * **結果**：`shownUpTo` 若不隨可見性重設，切回來的第一輪會把隱藏期間累積的
- * 每一則都當成新的一次補播出來，一則 3.5 秒、`QUEUE_MAX` 上限下最壞連播
- * 70 秒，這正是本檔反覆稱為「展示現場最尷尬的失敗」的那件事，只是換了個
- * 時機發生。已在下方輪詢 effect 補上：`visible` 由 `false` 轉 `true` 時把
- * `shownUpTo.current` 重設為 `0`，讓那一輪跟掛載時一樣只重建基準。
  *
  * ⚠️ **已知限制（後端）**：`unread` 徽章依賴的 `list_for_external_ids` 後端
  * 有 `LIMIT 50`（`src/kinsun/notifications/store.py`），未開放成可調整的查詢
@@ -119,7 +121,11 @@ export function useNotificationFeed(options: {
   audience: Audience;
   token: string;
   intervalMs?: number;
-  /** 值一變就立刻重拉一次（供未來跨欄連動使用，如「家屬剛設了新排程」）。 */
+  /**
+   * 值一變就立刻重拉一次（跨欄連動，接的是 `notify/bus.ts` 的 `guardian-wrote`）。
+   * ⚠️ 重拉**不重建基準**——這條與「切回可見／切回前景」刻意不同，見檔頭那份
+   * 「游標會歸零的四條路徑」清單。
+   */
   reloadSignal?: number;
   /**
    * 後端不認這支 token（401，例如家屬按了「重新產生長輩綁定碼」）。見檔頭
@@ -148,9 +154,10 @@ export function useNotificationFeed(options: {
   const queue = useRef<BannerItem[]>([]);
   /**
    * 純記憶體游標：「這則有沒有已經變成橫幅播過」，跟 `notify/seen.ts` 的已讀
-   * 水位是兩回事（見檔頭說明）。**一律從 0 起跳**（掛載與換人皆同，見下方
-   * 「render 期間比對」那段），不讀已讀水位——讀已讀水位曾經是這裡的寫法，
-   * 審查抓到那樣「第一次不補播歷史」並不會真的成立（見檔頭 brief 缺陷 2）。
+   * 水位是兩回事（見檔頭說明）。**一律從 0 起跳**，不讀已讀水位——讀已讀水位
+   * 曾經是這裡的寫法，審查抓到那樣「不補播歷史」並不會真的成立（見檔頭
+   * brief 缺陷 2）。歸零的四條路徑（掛載／換人／`visible` 轉真／分頁切回前景）
+   * 見檔頭那份清單，四條都會讓下一輪只重建基準。
    */
   const shownUpTo = useRef(0);
   /**
@@ -252,15 +259,41 @@ export function useNotificationFeed(options: {
    * 正在打後端，這支輪詢就是**唯一**還在打的請求，會每 `intervalMs` 收到一次
    * 註定失敗的 401、完全靜默丟棄，長輩畫面上不會有任何提示。網路抖動、5xx
    * 仍然完全靜默（通知是加分項，不該在畫面上留紅字）。
+   *
+   * ⚠️ **全分支審查發現的 Minor 6（2026-08-01）——這裡原本是本 hook 唯一不核對
+   * `mountedRef`／`sessionRef` 的出口**。`poll()` 成功那條路徑兩個都核對過（見
+   * 該函式），失敗這條卻沒有：①元件已卸載、②使用者已經換人，這兩種情形下遲到
+   * 的 401 一樣會照打 `onTokenRevoked`。當時擋住它的**不是設計意圖，是另一支
+   * 元件的初始化時機**——`elder/BindScreen.tsx` 只在掛載當下讀一次
+   * `signedOutNotice`，遲到的通知因此看不到；哪天有人「修好」讓它響應遲到的
+   * notice，`elder/ElderApp.tsx` 那句明文只給被動登出用的「家人幫您重新設定
+   * 了…」就會出現在**自己按登出**的人面前，變成一句假話。
+   *
+   * `from` 是「送出這一輪輪詢的當下是誰」，由 `runPoll` 於呼叫當下拍照帶進來
+   * ——`handlePollError` 本身是穩定參考，從它自己身上看不出這批錯誤屬於誰。
    */
   const handlePollError = useCallback(
-    (exc: unknown) => {
+    (exc: unknown, from: { audience: Audience; token: string }) => {
+      if (!mountedRef.current) return;
+      if (sessionRef.current.audience !== from.audience || sessionRef.current.token !== from.token) {
+        return;
+      }
       if (exc instanceof ApiError && exc.status === 401) {
         onTokenRevoked?.();
       }
     },
     [onTokenRevoked],
   );
+
+  /**
+   * 送出一次輪詢，錯誤導向 `handlePollError`（連同「送出當下是誰」）。
+   *
+   * ⚠️ 輪詢 effect 與對外的 `reload()` 共用這一支，兩條路徑的錯誤處理才不會漂開。
+   */
+  const runPoll = useCallback(() => {
+    const from = { audience, token };
+    void poll().catch((exc) => handlePollError(exc, from));
+  }, [poll, handlePollError, audience, token]);
 
   /**
    * 換人（audience 或 token 換掉，含登出＝token 變 ""）：橫幅與未讀徽章立刻
@@ -319,9 +352,12 @@ export function useNotificationFeed(options: {
      * 重設 `shownUpTo`，隱藏期間後端累積的每一則通知都會被 `pickNewItems`
      * 判定為「新的」而一次性補播出來——一則 3.5 秒，`QUEUE_MAX`（20）上限下
      * 最壞連播 70 秒。這正是本檔反覆稱為「展示現場最尷尬的失敗」的那件事，
-     * 只是從「一進站」搬到了「切回來」，且檔頭 `:62-65`（已一併更正）原本誤
-     * 宣稱不會發生。切回可見的第一輪要跟掛載時一樣，只重建基準、不補播歷史
-     * ——同一套「brief 缺陷 2」語意。
+     * 只是從「一進站」搬到了「切回來」。切回可見的第一輪要跟掛載時一樣，
+     * 只重建基準、不補播歷史——同一套「brief 缺陷 2」語意。
+     *
+     * ⚠️ **這條只管窄螢幕頁籤**：寬螢幕兩欄並排時 `visible` 恆為 `true`，這裡
+     * 永遠不會觸發，該情境由 `onVisible`（分頁可見性）那條負責——那是 2026-08-01
+     * 全分支審查抓到的 Critical，兩條缺一不可。
      *
      * 只重設 `shownUpTo`，不動 `queue`／`banner`：隱藏期間本來就不會有新項目
      * 進佇列（整條 effect 早退），既有的橫幅與佇列狀態不受影響。
@@ -338,7 +374,7 @@ export function useNotificationFeed(options: {
     if (!token || !visible) return;
     let alive = true;
     const run = () => {
-      void poll().catch(handlePollError);
+      runPoll();
     };
     const tick = () => {
       // 瀏覽器分頁被切到背景時不打這一輪：展示現場常見「開著但沒在看」，
@@ -349,7 +385,25 @@ export function useNotificationFeed(options: {
     run();
     const timer = setInterval(tick, intervalMs);
     const onVisible = () => {
-      if (alive && !document.hidden) run();
+      if (!alive || document.hidden) return;
+      /**
+       * ⚠️ **全分支審查發現的 Critical（2026-08-01）**：切回前景要跟上面
+       * 「`visible` 由 false 轉 true」那條路徑走**同一套語意**——只重建基準、
+       * 不補播。少了這一行，背景期間後端累積的每一則都會被 `pickNewItems`
+       * 判成「新的」而一次補播出來，一則 3.5 秒、`QUEUE_MAX`（20）上限下最壞
+       * 連播 70 秒。
+       *
+       * ⚠️ **而且展示當天只有這條路徑會發生**：寬螢幕兩欄並排時
+       * `elderVisible`／`guardianVisible` 恆為 `true`（見 `stage/StagePage.tsx`
+       * 的 `isWide || pane === ...`），上面那條 `visible` 轉換在真正的展示設定下
+       * 永遠不會觸發，`document.hidden` 是**唯一剩下的觸發源**：簡報者切去投影片
+       * ／終端機（或最小化瀏覽器）再切回來，走的就是這裡。
+       *
+       * ⚠️ 這裡只在「切回**前景**」時重設（`document.hidden` 為真時上面已早退）
+       * ——切去背景那一次 `visibilitychange` 不會動到基準，也不會打請求。
+       */
+      shownUpTo.current = 0;
+      run();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
@@ -357,7 +411,7 @@ export function useNotificationFeed(options: {
       clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [poll, token, intervalMs, reloadSignal, handlePollError, visible]);
+  }, [runPoll, token, intervalMs, reloadSignal, visible]);
 
   // 橫幅自動消失。3.5 秒足夠看完一句話，又不會擋住底下的操作太久。
   //
@@ -374,6 +428,6 @@ export function useNotificationFeed(options: {
     banner,
     unread,
     dismiss: shift,
-    reload: () => void poll().catch(handlePollError),
+    reload: runPoll,
   };
 }

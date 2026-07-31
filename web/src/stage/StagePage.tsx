@@ -23,7 +23,7 @@
  * 綁在一起。
  */
 
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 
 import { type ElderCodeDelivery } from "@/elder/BindScreen";
 import { ElderApp } from "@/elder/ElderApp";
@@ -167,8 +167,11 @@ function StageBody() {
     setPane("elder");
   }
 
-  // 家屬寫入之後（新增長輩、編輯排程）立刻叫長輩端重拉通知，不等下一次輪詢
-  // （最多兩秒）——展示時那兩秒剛好落在「你看，左邊出現了」這句話的中間。
+  // 家屬寫入之後（新增長輩、編輯排程）立刻叫長輩端重拉一次通知，不等下一次輪詢。
+  //
+  // ⚠️ **不要以為「按下新增排程，左欄就會跳出橫幅」**（2026-08-01 全分支審查更正
+  // 的假前提）：`app_notifications` 全部由排程器／危急事件寫入，建立排程本身一則
+  // 都不會產生。這條線的真實效果與保留理由見 `notify/bus.ts` 檔頭。
   const guardianWrote = useStageEvent("guardian-wrote");
 
   /**
@@ -187,15 +190,31 @@ function StageBody() {
   const [elderTokenRevokedSeq, setElderTokenRevokedSeq] = useState(0);
   const elderTokenRevokedSeqRef = useRef(0);
 
+  /**
+   * ⚠️ **全分支審查發現的 Minor 5（2026-08-01）——必須是穩定參考**：這裡原本是
+   * 寫在 `useNotificationFeed({...})` 裡的行內箭頭函式，每次 render 都是一顆新
+   * 的函式，於是 hook 內的 `handlePollError`（`useCallback` 相依 `onTokenRevoked`）
+   * 跟著換身分、輪詢 effect 的相依陣列跟著變 → **`StageBody` 每重繪一次，長輩欄
+   * 的輪詢 effect 就被拆掉重建並立刻 `run()` 一輪**，`setInterval` 也重新起算。
+   * 家屬欄那邊傳的是 `guardian.signOut`（`createSessionContext` 裡的
+   * `useCallback(..., [])`，穩定），所以只有長輩欄會這樣，兩欄接線原本不對稱。
+   *
+   * ⚠️ 這不只是「多打幾次請求」：輪詢自己的 `setUnread` 就會讓 `StageBody` 重繪，
+   * 於是「輪詢 → 重繪 → 重建 effect → 再輪詢」會連鎖跑好幾輪才收斂（實測：一次
+   * `render()` 之後長輩欄打了 **4** 次請求，而不是 1 次），中間那幾輪還會把
+   * 「切回前景只重建基準」這類以輪詢次數為前提的行為整個打亂。
+   */
+  const handleElderTokenRevoked = useCallback(() => {
+    elderTokenRevokedSeqRef.current += 1;
+    setElderTokenRevokedSeq(elderTokenRevokedSeqRef.current);
+  }, []);
+
   const elderFeed = useNotificationFeed({
     audience: "elder",
     token: elder.session?.token ?? "",
     reloadSignal: guardianWrote,
     visible: elderVisible,
-    onTokenRevoked: () => {
-      elderTokenRevokedSeqRef.current += 1;
-      setElderTokenRevokedSeq(elderTokenRevokedSeqRef.current);
-    },
+    onTokenRevoked: handleElderTokenRevoked,
   });
   const guardianFeed = useNotificationFeed({
     audience: "guardian",

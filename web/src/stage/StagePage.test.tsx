@@ -4,6 +4,8 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { emitStageEvent } from "@/notify/bus";
+
 import { StagePage } from "./StagePage";
 
 function envelope(data: unknown) {
@@ -252,17 +254,27 @@ describe("跨欄連動：家屬把綁定碼送到長輩欄", () => {
  * 且與已讀水位無關，一律以自己掛載後第一輪輪詢為準」互相矛盾（見該檔「brief
  * 缺陷 2」）：第一輪輪詢只會把這批資料當成基準記下來，之後同一批資料的
  * `created_at` 不會再大於這個基準，橫幅永遠不會出現（實測驗證：套用 brief 原始
- * 寫法跑到逾時）。改為兩輪：第一輪回舊資料建立基準，第二輪追加一則更新的，
- * 觸發方式沿用 `useNotificationFeed.test.ts` 自己的既有手法——分派
- * `visibilitychange` 事件讓 hook 立刻重拉一次，不必等 2 秒的真實輪詢間隔。
+ * 寫法跑到逾時）。
+ *
+ * ⚠️ **全分支審查修正的 Critical（2026-08-01）——這條測試原本釘住了錯的那一邊**：
+ * 上一版改為兩輪，觸發第二輪的手法是分派 `visibilitychange` 讓 hook 立刻重拉，
+ * 並期待第二輪**補播**出橫幅。但「切回前景只重建基準、不補播背景期間累積的提醒」
+ * 才是正確行為（見 `notify/useNotificationFeed.ts` 的 `onVisible`）——照上一版寫，
+ * 誰把那個 Critical 修好，誰就會先看到這條測試變紅。已改為驗證真正該成立的兩件事：
+ * ①切回前景後，背景期間累積的舊提醒**不會**補播；②切回前景之後**新**發生的提醒
+ * 照樣滑出橫幅（接線是通的）。第三輪的觸發改走 `notify/bus.ts` 的
+ * `guardian-wrote`（家屬欄寫入後叫長輩欄重拉的真實產品路徑，`StageBody` 已接成
+ * `reloadSignal`），那條路徑不重建基準。
  */
 describe("通知橫幅", () => {
-  it("長輩端有新提醒時在左邊的手機外框上滑出橫幅", async () => {
+  it("切回前景不補播背景期間累積的舊提醒，之後新發生的提醒仍在左邊的手機外框上滑出橫幅", async () => {
     localStorage.setItem(
       "kinsun_web_session_elder",
       JSON.stringify({ role: "elder", token: "tok", display_name: "王阿嬤" }),
     );
     let pollCount = 0;
+    const older = { content: "舊提醒", created_at: 1754000050 };
+    const duringHidden = { content: "背景期間累積的提醒", created_at: 1754000080 };
     vi.stubGlobal(
       "fetch",
       vi.fn().mockImplementation((path: string) => {
@@ -270,24 +282,35 @@ describe("通知橫幅", () => {
           pollCount += 1;
           const data =
             pollCount === 1
-              ? [{ content: "舊提醒", created_at: 1754000050 }]
-              : [
-                  { content: "舊提醒", created_at: 1754000050 },
-                  { content: "提醒您：降血壓藥", created_at: 1754000100 },
-                ];
+              ? [older]
+              : pollCount === 2
+                ? [older, duringHidden]
+                : [older, duringHidden, { content: "提醒您：降血壓藥", created_at: 1754000100 }];
           return Promise.resolve({ status: 200, json: async () => envelope(data) });
         }
         return Promise.resolve({ status: 200, json: async () => envelope([]) });
       }),
     );
     render(<StagePage />);
-    // 第一輪輪詢（建立基準，不播）跑完再觸發第二輪。
-    await waitFor(() => expect(pollCount).toBe(1));
+    await waitFor(() => expect(pollCount).toBe(1)); // 第一輪：建立基準，不播
+
+    // 簡報者切去投影片再切回來：這一輪只重建基準，背景期間累積的那則是舊聞。
     await act(async () => {
       document.dispatchEvent(new Event("visibilitychange"));
     });
+    await waitFor(() => expect(pollCount).toBe(2));
+    await act(async () => {});
+    expect(screen.queryByText("背景期間累積的提醒")).not.toBeInTheDocument();
+
+    // 家屬欄寫入後發出的訊號會讓長輩欄立刻重拉一輪（`notify/bus.ts`，接成
+    // `reloadSignal`）——這條路徑不重建基準，之後**新**發生的提醒照樣滑出橫幅。
+    await act(async () => {
+      emitStageEvent("guardian-wrote");
+    });
     const content = await screen.findByText("提醒您：降血壓藥");
     expect(content).toBeInTheDocument();
+    // 背景期間那則不會擠在前面先播掉 3.5 秒（若補播回來，這裡會是它佔著橫幅）。
+    expect(screen.queryByText("背景期間累積的提醒")).not.toBeInTheDocument();
     // ⚠️ 審查發現的 Important 4：`size="big"` 若被拿掉（例如日後有人把兩欄的
     // `notificationSlot` 抽成共用元件時漏傳），長輩欄橫幅會退回 12px／14px、
     // 跌破 22px 下限——而這句「提醒您：降血壓藥」恰好是長輩唯一該讀的話。
@@ -377,6 +400,52 @@ describe("通知輪詢的可見性接線（elderVisible／guardianVisible／visi
       document.dispatchEvent(new Event("visibilitychange"));
     });
     expect(elderCalls).toBe(0);
+  });
+});
+
+/**
+ * ⚠️ **全分支審查發現的 Minor 5（2026-08-01）**：「一次 render 對應幾次請求」
+ * 這件事在本檔完全零覆蓋。長輩欄的 `onTokenRevoked` 原本是行內箭頭函式（家屬欄
+ * 傳的是穩定的 `guardian.signOut`，兩欄不對稱），每次 render 都換一顆新函式 →
+ * hook 內 `handlePollError` 換身分 → 輪詢 effect 的相依陣列跟著變 → **`StageBody`
+ * 每重繪一次，長輩欄的輪詢就被拆掉重建並立刻補打一輪**，`setInterval` 也重新起算。
+ *
+ * 這裡用兩個觀察窗釘住它：①掛載後自己會重繪一次（輪詢拿到資料 → `setUnread`）
+ * ——修好前實測是 **2** 次請求，修好後 1 次；②按下與長輩欄完全無關的「通知樣式」
+ * 切換鈕（只改 `os` state）——修好前會再多打一輪。
+ */
+describe("輪詢 effect 的身分穩定性（一次 render 對應幾次請求）", () => {
+  it("長輩欄重繪不會多打一輪輪詢：掛載後一次，按下無關的「通知樣式」鈕後仍是一次", async () => {
+    localStorage.setItem(
+      "kinsun_web_session_elder",
+      JSON.stringify({ role: "elder", token: "tok", display_name: "王阿嬤" }),
+    );
+    let elderCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((path: string) => {
+        if (String(path).includes("elder-notifications")) {
+          elderCalls += 1;
+          // 刻意回一則：讓 `setUnread` 由 0 變 1，逼出「輪詢自己造成的重繪」。
+          return Promise.resolve({
+            status: 200,
+            json: async () => envelope([{ content: "吃藥囉", created_at: 1754000100 }]),
+          });
+        }
+        return Promise.resolve({ status: 200, json: async () => envelope([]) });
+      }),
+    );
+    render(<StagePage />);
+    await waitFor(() => expect(elderCalls).toBeGreaterThan(0));
+    // 讓「輪詢 → setUnread → 重繪 →（若 effect 身分不穩）重建 effect → 再輪詢」
+    // 這條連鎖有機會跑完。
+    await act(async () => {});
+    await act(async () => {});
+    expect(elderCalls).toBe(1);
+
+    await userEvent.click(screen.getByRole("button", { name: /通知樣式/ }));
+    await act(async () => {});
+    expect(elderCalls).toBe(1);
   });
 });
 
