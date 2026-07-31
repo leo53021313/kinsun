@@ -748,6 +748,8 @@ def test_pipeline_with_voice_profiles_but_no_profile_for_elder_passes_none():
     tts = pipeline._tts
     pipeline.process(b"\x00", elder_id="e1")
     assert tts.voices == [None]
+
+
 class _SlowSession:
     """assemble 固定睡 delay 秒的會話替身，供管線層驗證情境組裝有沒有先行啟動。"""
 
