@@ -92,6 +92,23 @@ describe("長輩端框內導覽", () => {
   });
 });
 
+describe("這一欄看不看得見要一路傳到對講機", () => {
+  it("ElderApp 的 visible 真的傳到 useTalk", () => {
+    // ⚠️ **審查實測**：把 `ElderApp.tsx` 的 `visible={visible}` 整行刪掉，125/125
+    // 全綠——`TalkScreen.test.tsx` 只驗得到「TalkScreen → useTalk」那一段，
+    // 「ElderApp → TalkScreen」這一段沒有人看著。刪掉它就是 Task 7 那個 Critical
+    // 在麥克風上重演：切到家屬端頁籤後麥克風、播放器與長連線全都不會被收掉，
+    // 指示燈一直亮到分頁關閉，長輩以為被偷聽。
+    renderSignedIn({ visible: false });
+    expect(talkOptions.current).toMatchObject({ token: "tok", visible: false });
+  });
+
+  it("沒有指定時視為看得見（獨立渲染 ElderApp 的既有用法）", () => {
+    renderSignedIn();
+    expect(talkOptions.current).toMatchObject({ visible: true });
+  });
+});
+
 describe("登出", () => {
   it("伺服器沒有回應時照樣登出——不可以卡在對講機畫面等一個不會回來的請求", async () => {
     // ⚠️ 全分支審查抓到的 Minor：原本寫成 `await logoutSession(...).catch(...)`。

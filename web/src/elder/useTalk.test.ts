@@ -150,13 +150,24 @@ function makePlayer() {
   return api;
 }
 
-/** 可以由測試決定何時「連上」、並直接餵下行訊框的假 WebSocket。 */
+/**
+ * 可以由測試決定何時「連上」、並直接餵下行訊框的假 WebSocket。
+ *
+ * ⚠️ **送出的東西依實例各自持有**（`api.sent` 讀的永遠是**最新那條連線**的）：真正的
+ * `WebSocket` 在切走／重連之後是另一個物件，往舊的那條送出去不會抵達對方。假物件
+ * 若讓所有實例共用一份 `sent`，「切頁籤之後切回來，送出去的是新連線」這件事在測試裡
+ * 就恆真——與 Task 8 挖出的假播放器（全域共用一顆，iOS 解鎖「換一顆等於沒解鎖」因此
+ * 觀察不到）是同一種不忠實。目前還沒有測試依賴它，先讓假物件對得起真實的形狀。
+ */
 function makeSocket() {
   const api = {
-    sent: [] as (string | ArrayBuffer)[],
     socket: null as FakeWebSocket | null,
+    /** 最新那條連線送出去的東西。 */
+    get sent(): (string | ArrayBuffer)[] {
+      return api.socket?.sent ?? [];
+    },
     factory(url: string) {
-      api.socket = new FakeWebSocket(url, api.sent);
+      api.socket = new FakeWebSocket(url);
       return api.socket as unknown as WebSocket;
     },
     open() {
@@ -173,16 +184,15 @@ class FakeWebSocket {
   binaryType = "blob";
   readyState = 1;
   closed = 0;
+  /** 這**一條連線**（不是這一次測試）送出去的東西。 */
+  sent: (string | ArrayBuffer)[] = [];
   onopen: ((event: Event) => void) | null = null;
   onmessage: ((event: MessageEvent) => void) | null = null;
   onclose: ((event: CloseEvent) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;
-  constructor(
-    public url: string,
-    private sink: (string | ArrayBuffer)[],
-  ) {}
+  constructor(public url: string) {}
   send(payload: string | ArrayBuffer) {
-    this.sink.push(payload);
+    this.sent.push(payload);
   }
   close() {
     this.closed += 1;
@@ -939,7 +949,7 @@ describe("這一欄被切到背景", () => {
     expect(h.player.played).toContain("/demo/silent.wav");
   });
 
-  it("切回來時重新連線，長輩可以繼續講話", async () => {
+  it("切回來時重新連線，而且那句話是走**新**連線送出去的", async () => {
     const h = setup();
     await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
     const firstSocket = h.socket.socket;
@@ -950,6 +960,16 @@ describe("這一欄被切到背景", () => {
     await holdAndRelease(h);
     expect(h.recorder.stopped).toBe(1);
     expect(h.socket.sent.some((item) => item instanceof ArrayBuffer)).toBe(true);
+    // ⚠️ 舊那條連線已經 `close()` 過了，往它送出去的東西不會抵達後端——長輩會覺得
+    // 金孫從此不理他。
+    //
+    // ⚠️ **誠實說明這條斷言的份量**：目前的實作在結構上踩不到它（effect 的 cleanup
+    // 會把 `socketRef.current` 清成 `null`、下一輪 effect 一定重新指派），實測找不到
+    // 任何**單一**產品變異能讓它獨自變紅。留著是因為它守的是一個很可能被改動的形狀：
+    // P4 若為了省下切頁籤時的重連而改成「重用上一條連線」，這一行會立刻變紅。
+    // 它同時也是 `sent` 改成每條連線各自持有的理由——在全域共用一份 `sent` 的舊寫法
+    // 下，這句話**寫不出來**（送到哪一條連線都記在同一份陣列裡，它恆為 true）。
+    expect(firstSocket?.sent.some((item) => item instanceof ArrayBuffer)).toBe(false);
   });
 
   it("舊連線晚到的斷線通知，不可以把新連線的狀態洗掉", async () => {
