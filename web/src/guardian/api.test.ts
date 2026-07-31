@@ -18,6 +18,7 @@ import {
   loginGuardian,
   logoutGuardian,
   registerGuardian,
+  revokeElderDeviceBindings,
   setElderAccount,
   updateSchedule,
 } from "./api";
@@ -129,11 +130,22 @@ describe("家屬端 API", () => {
   });
 
   it("代辦長輩帳密用 PUT，送 phone 與 password", async () => {
-    const spy = vi.fn().mockResolvedValue({ status: 204, json: async () => ({}) });
-    vi.stubGlobal("fetch", spy);
+    // ⚠️ 200＋`ok({elder_id})`，不是 204：後端 `elders.py` 的 `set_elder_account`
+    // 回的是信封。假回應與後端實況不符時，測試守的是一個不存在的世界——204 那條
+    // 路在共用 client 裡是提早 return，根本沒走到解信封。
+    const spy = mockFetch({ elder_id: "e1" });
     await setElderAccount("e1", "0912345678", "correct-horse-8", "tok");
     expect(spy.mock.calls[0][0]).toBe("/api/v1/elders/e1/account");
     expect(spy.mock.calls[0][1].method).toBe("PUT");
     expect(bodyOf(spy)).toEqual({ phone: "0912345678", password: "correct-horse-8" });
+  });
+
+  it("重新產生長輩綁定碼用 DELETE 打 device-bindings，回的是新的碼本身", async () => {
+    // 後端這支刻意回 200＋新碼而不是 204：重綁流程需要新碼，省一次額外請求。
+    const spy = mockFetch({ invite_code: "NEW123" });
+    expect(await revokeElderDeviceBindings("e1", "tok")).toBe("NEW123");
+    expect(spy.mock.calls[0][0]).toBe("/api/v1/elders/e1/device-bindings");
+    expect(spy.mock.calls[0][1].method).toBe("DELETE");
+    expect((spy.mock.calls[0][1].headers as Headers).get("Authorization")).toBe("Bearer tok");
   });
 });

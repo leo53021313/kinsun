@@ -14,7 +14,15 @@ import { EmptyHint, ErrorText, NoticeText } from "@/ui/Feedback";
 import { Field } from "@/ui/Field";
 import { Section } from "@/ui/Section";
 
-import { createGuardianInvite, getHealthReport, listDailySummaries, listSchedules, setElderAccount } from "./api";
+import {
+  createGuardianInvite,
+  getHealthReport,
+  listDailySummaries,
+  listSchedules,
+  revokeElderDeviceBindings,
+  setElderAccount,
+} from "./api";
+import { InviteCard } from "./InviteCard";
 import { describeGroup } from "./schedules";
 
 const MIN_PASSWORD_LENGTH = 8;
@@ -56,6 +64,15 @@ export function ElderDetailScreen(props: {
 
   const [inviteCode, setInviteCode] = useState("");
   const [inviteBusy, setInviteBusy] = useState(false);
+
+  // 長輩綁定碼的重取路徑。原本這組碼只活在 `HomeScreen` 建立長輩當下的暫態 state：
+  // 家屬點進詳情頁一次，`HomeScreen` 卸載、碼歸零，返回後 `GET /elders` 的回應裡
+  // 也沒有它——想配對長輩手機只剩「再建一位長輩」這條路，而那會留下一筆刪不掉的
+  // 重複資料（後端沒有 DELETE /elders）。P3 更有三句錯誤訊息叫長輩「請家人重新
+  // 產生一組」，在此之前那三句是死路。
+  const [bindingCode, setBindingCode] = useState("");
+  const [bindingError, setBindingError] = useState("");
+  const [bindingBusy, setBindingBusy] = useState(false);
 
   useEffect(() => {
     if (!token) {
@@ -221,6 +238,32 @@ export function ElderDetailScreen(props: {
         />
         <NoticeText message={accountMessage} />
         <ErrorText message={accountError} />
+      </Section>
+
+      <Section title={strings.elderDetail.bindingSection}>
+        <p className="text-xs leading-5 text-ink-soft">{strings.elderDetail.bindingHelp}</p>
+        {/* 後果寫在按鈕上面、按下去之前就看得到；用 danger 色但不掛 role="alert"
+            ——它是常駐的警語，不是剛剛發生的錯誤。 */}
+        <p className="text-xs leading-5 text-danger">{strings.elderDetail.bindingWarning}</p>
+        <Button
+          label={strings.elderDetail.regenerateBinding}
+          variant="outline"
+          busy={bindingBusy}
+          onClick={async () => {
+            setBindingBusy(true);
+            setBindingError("");
+            try {
+              setBindingCode(await revokeElderDeviceBindings(elderId, token));
+            } catch (exc) {
+              if (signOutOn401(exc)) return;
+              setBindingError(strings.elderDetail.bindingFailed);
+            } finally {
+              setBindingBusy(false);
+            }
+          }}
+        />
+        {bindingCode ? <InviteCard code={bindingCode} /> : null}
+        <ErrorText message={bindingError} />
       </Section>
 
       <Section title={strings.elderDetail.inviteSection}>

@@ -239,4 +239,59 @@ describe("ElderDetailScreen", () => {
     await userEvent.click(await screen.findByRole("button", { name: "產生家屬邀請碼" }));
     expect(await screen.findByText("XY99")).toBeInTheDocument();
   });
+
+  // ⚠️ 綁定碼原本只活在 `HomeScreen` 的暫態 state：家屬建完長輩點進詳情頁再返回，
+  // 碼就永久不見了（`GET /elders` 的回應裡沒有它），而詳情頁的「邀請其他家屬」發
+  // 的是家屬邀請碼、不是長輩綁定碼。這也是 P3 的硬阻斷——P3 有三句錯誤訊息叫長輩
+  // 「請家人重新產生一組」，而家屬端根本沒有重新產生的路徑，那三句是死路。
+  describe("重新產生長輩綁定碼", () => {
+    it("成功後顯示新的綁定碼", async () => {
+      mockByPath({
+        "health-report": { risk_events: [], reminders: [] },
+        "daily-summaries": [],
+        schedules: [],
+        "device-bindings": { invite_code: "NEW789" },
+      });
+      renderDetail();
+      await userEvent.click(
+        await screen.findByRole("button", { name: "重新產生長輩綁定碼" }),
+      );
+      expect(await screen.findByText("NEW789")).toBeInTheDocument();
+    });
+
+    it("按下去之前就先講清楚後果：長輩手機上的金孫會被登出", async () => {
+      // 這是一個不可逆的破壞性操作，畫面必須先講後果，別讓家屬誤按。
+      mockByPath({
+        "health-report": { risk_events: [], reminders: [] },
+        "daily-summaries": [],
+        schedules: [],
+      });
+      renderDetail();
+      expect(
+        await screen.findByText(
+          "注意：一產生新碼，長輩目前手機上的金孫就會被登出，他要用新碼重綁一次才能" +
+            "再跟金孫說話。只是想邀請另一位家屬看資料的話，請用下面的「產生家屬邀請碼」。",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("失敗時就地顯示錯誤，不會安靜地什麼都沒發生", async () => {
+      mockMixedByPath({
+        "health-report": { status: 200, body: envelope({ risk_events: [], reminders: [] }) },
+        "daily-summaries": { status: 200, body: envelope([]) },
+        schedules: { status: 200, body: envelope([]) },
+        "device-bindings": {
+          status: 500,
+          body: failure("server_error", "系統忙碌，請稍後再試"),
+        },
+      });
+      renderDetail();
+      await userEvent.click(
+        await screen.findByRole("button", { name: "重新產生長輩綁定碼" }),
+      );
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "重新產生綁定碼失敗，請稍後再試。",
+      );
+    });
+  });
 });

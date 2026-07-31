@@ -58,6 +58,29 @@ export async function createGuardianInvite(elderId: string, token: string): Prom
   return body.invite_code;
 }
 
+/**
+ * 撤銷長輩已綁定的裝置並取得一組新的長輩綁定碼（✅ D-25 修訂）。
+ *
+ * ⚠️ 動詞取 `revoke` 而非 `delete`（`deleteSchedule` 那種 REST 慣例）：後端這支
+ * handler 自己就叫 `revoke_device_bindings`，專案在這條端點上早已做過同一個判斷
+ * ——它不是單純的刪除。它撤掉該長輩全部 token＋拆掉 App 通道綁定的**同時**發一組
+ * 新的綁定碼，並以 200＋`{invite_code}` 回來（刻意不是 204，重綁流程需要新碼、
+ * 省一次往返）。取名只講「重新產生綁定碼」會讓呼叫端看不出長輩手機會被登出，
+ * 而那正是這支端點最需要被看見的那一半。
+ *
+ * 回的是碼本身、不是整包物件，與 `createGuardianInvite` 一致。
+ */
+export async function revokeElderDeviceBindings(
+  elderId: string,
+  token: string,
+): Promise<string> {
+  const body = await request<{ invite_code: string }>(
+    `/api/v1/elders/${elderId}/device-bindings`,
+    { method: "DELETE", token },
+  );
+  return body.invite_code;
+}
+
 /** 統一排程（D-76 P3）：用藥、回診與長輩自訂共用一支資源，操作單位是 group。 */
 export function listSchedules(
   elderId: string,

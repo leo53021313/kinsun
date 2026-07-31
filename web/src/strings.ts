@@ -124,6 +124,16 @@ export const strings = {
     accountPhonePlaceholder: "09xxxxxxxx",
     accountPasswordLabel: "密碼（至少 8 碼）",
     saveAccount: "儲存帳密",
+    bindingSection: "長輩手機綁定",
+    bindingHelp: "長輩換手機、或手機不見了，在這裡重新產生一組綁定碼給他重新綁定。",
+    // ⚠️ 這是不可逆的破壞性操作，後果要寫在按鈕**上面**、按下去之前就看得到。
+    // 另外要把它跟「產生家屬邀請碼」講清楚——兩個都是「產生一組碼」，但一個會
+    // 把長輩登出、一個不會。
+    bindingWarning:
+      "注意：一產生新碼，長輩目前手機上的金孫就會被登出，他要用新碼重綁一次才能" +
+      "再跟金孫說話。只是想邀請另一位家屬看資料的話，請用下面的「產生家屬邀請碼」。",
+    regenerateBinding: "重新產生長輩綁定碼",
+    bindingFailed: "重新產生綁定碼失敗，請稍後再試。",
     inviteSection: "邀請其他家屬",
     makeInvite: "產生家屬邀請碼",
   },
