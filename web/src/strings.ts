@@ -171,9 +171,11 @@ export const strings = {
     title: "通知",
     empty: "目前沒有通知。金孫有事會第一時間放在這裡。",
   },
-  // 長輩端文案沿用 app/src/lib/strings.ts 的既有措辭（用字更白話，不用「通知」
-  // 「綁定」這類詞），並補上網頁端獨有的三條：receivedFromGuardian／queued／
-  // micUnsupported（App 沒有這三種情境）。
+  // 長輩端文案逐字沿用 app/src/lib/strings.ts 的既有措辭：口語敘述一律用
+  // 「號碼」「方塊圖」，比「通知」「綁定」更白話；`codePlaceholder`（輸入框
+  // 精簡標籤）與逐字沿用的 `notPaired`／`bindingLost` 仍帶「綁定」二字，
+  // 是 App 既有例外、非本輪新增。並補上網頁端獨有的三條：
+  // receivedFromGuardian／queued／micUnsupported（App 沒有這三種情境）。
   elderBind: {
     inviteNotFound: "找不到這組號碼，請跟家人再確認一次。",
     inviteUsed: "這組號碼已經用過了，請家人重新產生一組。",
@@ -189,7 +191,10 @@ export const strings = {
     start: "開始使用",
     loginLink: "用過金孫？帳號密碼登入",
     // 網頁端獨有：兩欄舞台的長輩欄可以直接看到家屬欄產生的碼，App 沒有這個情境。
-    receivedFromGuardian: "已從右邊的家屬手機收到綁定碼",
+    // ⚠️ 不寫死方位：`lg` 以下是頁籤擇一顯示（見 stage/StagePage.tsx），家屬欄
+    // 不一定在畫面上，「右邊」在窄螢幕（組員拿手機自測）是錯的方向指示。
+    // 沿用本段其餘欄位的口語用字「號碼」，不用「綁定碼」。
+    receivedFromGuardian: "已從家屬手機收到號碼",
   },
   elderLogin: {
     notPaired: "這支手機還沒跟家人配對過，請先請家人給您綁定圖（QR）掃描一次。",
@@ -217,7 +222,11 @@ export const strings = {
     debugDenied: "未授權",
     // 網頁端獨有：容量閘門排隊位置（App 對應畫面待 P3 續行時另接）與瀏覽器錄音
     // 不支援的提示（App 是原生殼，不會遇到瀏覽器不支援錄音的情況）。
-    queued: (position: number) => `金孫正在跟別人說話，前面還有 ${position} 位…`,
+    // ⚠️ `position` 是排隊名次（1-based），不是「前面還有幾位」——正式環境併發
+    // 上限 > 1 時，排隊名次 1 的人前面其實還有好幾輪正在跑、只是不在佇列裡
+    // （見 channels/app/ws.py 與 06_API設計規範 §5 的既有裁決）。故不報「前面
+    // 還有幾位」，改講排隊名次本身。
+    queued: (position: number) => `金孫正在跟別人說話，您排第 ${position} 位…`,
     micUnsupported: "這個瀏覽器不能錄音，請換 Chrome、Safari 或 Firefox。",
   },
   // 長輩看的提醒（X-01，2026-07-29）：用詞比家屬版更白話，不用「通知」這個詞。

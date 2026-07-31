@@ -56,26 +56,37 @@ describe("長輩端 API", () => {
     // ⚠️ 2026-07-28 的實際故障：App 送 place、後端讀 location，位置從此沒寫進庫，
     // 而症狀只是「金孫每次問地點都反問您人在哪裡」——看起來像模型行為。
     const spy = mockFetch(REPLY);
-    await postTurn(new ArrayBuffer(8), "tok", { place: "台南市", latitude: 22.99, longitude: 120.2 });
+    const audio = new ArrayBuffer(8);
+    await postTurn(audio, "tok", { place: "台南市", latitude: 22.99, longitude: 120.2 });
     const url = spy.mock.calls[0][0] as string;
     expect(url).toContain("location=");
     expect(url).toContain("latitude=22.99");
     expect(url).toContain("longitude=120.2");
     expect(url).not.toContain("place=");
+    // 位置走 query 不代表音檔本體被忘記帶——這裡曾經漏斷言，刪掉 `body: audio`
+    // 整行時三條 postTurn 測試會全數維持綠燈，長輩的錄音將一個位元組都送不出去。
+    expect(spy.mock.calls[0][1].body).toBe(audio);
   });
 
   it("沒有位置時完全不帶參數", async () => {
-    // null＝「這輪沒有位置」，不是「他不在任何地方」。帶空字串會讓後端寫入空地名。
+    // null＝「這輪沒有位置」，不是「他不在任何地方」。
+    // ⚠️ 不是因為「帶空字串會讓後端寫入空地名」——後端 is_valid_place 對空字串／
+    // 純空白一律回 False、是早退不寫入（locations/store.py），從不會真的落庫空
+    // 地名；這裡刻意不帶參數，純粹是不留沒有意義的 query 雜訊與存取日誌紀錄。
     const spy = mockFetch(REPLY);
-    await postTurn(new ArrayBuffer(8), "tok", null);
+    const audio = new ArrayBuffer(8);
+    await postTurn(audio, "tok", null);
     expect(spy.mock.calls[0][0]).toBe("/api/v1/turns");
+    expect(spy.mock.calls[0][1].body).toBe(audio);
   });
 
   it("送出一輪帶 Bearer 與音檔內容型別", async () => {
     const spy = mockFetch(REPLY);
-    await postTurn(new ArrayBuffer(8), "tok", null);
+    const audio = new ArrayBuffer(8);
+    await postTurn(audio, "tok", null);
     const init = spy.mock.calls[0][1];
     expect(init.method).toBe("POST");
+    expect(init.body).toBe(audio);
     expect((init.headers as Headers).get("Authorization")).toBe("Bearer tok");
     expect((init.headers as Headers).get("Content-Type")).toBe("audio/m4a");
   });

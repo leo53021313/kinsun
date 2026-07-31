@@ -1,7 +1,10 @@
 /**
- * currentPlace 的三條路徑（無 API、成功、失敗）皆為「靜默降級」——錯了不會拋
- * 例外、不會有人發現，只會讓金孫默默失去「問天氣不反問所在地」的能力。
- * 這種 bug 沒有測試永遠抓不到（同 App 版 `lib/location.test.ts` 的理由）。
+ * currentPlace 目前一律回 null（見 location.ts 開頭說明：網頁拿不到反查地名
+ * API，送半套座標換不到任何後端行為卻已經讓座標離開瀏覽器，故連「成功取得
+ * 座標」這條路徑都刻意回 null，不是遺漏）。「一律降級」這種設計若被不小心
+ * 改掉（比如有人以為「拿到座標就該送出去」），症狀是長輩每一句話都在瀏覽器
+ * 端多打一次定位、卻毫無對話品質改善，且精確座標可能就此離開裝置，沒有
+ * 測試永遠抓不到。
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -16,28 +19,13 @@ describe("currentPlace", () => {
     await expect(currentPlace()).resolves.toBeNull();
   });
 
-  it("定位成功時回傳模糊座標，地名一律空字串（網頁端沒有反查地名的 API）", async () => {
+  it("即使成功取得座標也回 null——網頁沒有反查地名，送半套座標換不到任何後端行為", async () => {
     const getCurrentPosition = vi.fn((success: PositionCallback) => {
-      success({ coords: { latitude: 22.9876, longitude: 120.2134 } } as GeolocationPosition);
+      success({ coords: { latitude: 22.99, longitude: 120.21 } } as GeolocationPosition);
     });
     vi.stubGlobal("navigator", { geolocation: { getCurrentPosition } });
 
-    await expect(currentPlace()).resolves.toEqual({
-      place: "",
-      latitude: 22.99,
-      longitude: 120.21,
-    });
-  });
-
-  it("座標四捨五入到 0.01 度（約 1.1 公里），精確值不外流", async () => {
-    const getCurrentPosition = vi.fn((success: PositionCallback) => {
-      success({ coords: { latitude: 25.0261234, longitude: 121.5439876 } } as GeolocationPosition);
-    });
-    vi.stubGlobal("navigator", { geolocation: { getCurrentPosition } });
-
-    const got = await currentPlace();
-    expect(got?.latitude).toBe(25.03);
-    expect(got?.longitude).toBe(121.54);
+    await expect(currentPlace()).resolves.toBeNull();
   });
 
   it("使用者拒絕定位或逾時，回 null 而非往外拋", async () => {
