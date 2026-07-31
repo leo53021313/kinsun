@@ -240,6 +240,38 @@ describe("ElderDetailScreen", () => {
     expect(await screen.findByText("XY99")).toBeInTheDocument();
   });
 
+  it("產生邀請碼失敗後重試成功，舊的錯誤要一併消失", async () => {
+    // 不清的話，頁面最上方掛著紅字「產生邀請碼失敗」，下方同時顯示一組有效的
+    // 邀請碼——家屬不知道該相信哪一個。
+    let inviteCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((path: string) => {
+        if (String(path).includes("guardian-invites")) {
+          inviteCalls += 1;
+          return Promise.resolve(
+            inviteCalls === 1
+              ? { status: 500, json: async () => failure("server_error", "系統忙碌，請稍後再試") }
+              : { status: 201, json: async () => envelope({ invite_code: "XY99" }) },
+          );
+        }
+        if (String(path).includes("health-report")) {
+          return Promise.resolve({
+            status: 200,
+            json: async () => envelope({ risk_events: [], reminders: [] }),
+          });
+        }
+        return Promise.resolve({ status: 200, json: async () => envelope([]) });
+      }),
+    );
+    renderDetail();
+    await userEvent.click(await screen.findByRole("button", { name: "產生家屬邀請碼" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("產生邀請碼失敗");
+    await userEvent.click(screen.getByRole("button", { name: "產生家屬邀請碼" }));
+    expect(await screen.findByText("XY99")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   // ⚠️ 綁定碼原本只活在 `HomeScreen` 的暫態 state：家屬建完長輩點進詳情頁再返回，
   // 碼就永久不見了（`GET /elders` 的回應裡沒有它），而詳情頁的「邀請其他家屬」發
   // 的是家屬邀請碼、不是長輩綁定碼。這也是 P3 的硬阻斷——P3 有三句錯誤訊息叫長輩

@@ -8,8 +8,6 @@
 export const strings = {
   common: {
     loading: "載入中…",
-    retry: "再試一次",
-    close: "關閉",
     loadFailed: "載入失敗，請稍後再試。",
     connectionFailed: "連線失敗，請稍後再試。",
     saveFailed: "儲存失敗，請稍後再試。",
@@ -104,7 +102,6 @@ export const strings = {
     qrAlt: "長輩綁定用的 QR 圖",
   },
   elderDetail: {
-    title: "長輩詳情",
     accountSaved: "已設定完成。長輩手機用這組號碼＋密碼登入一次就會一直記住。",
     accountSaveFailed: "設定失敗，請稍後再試。",
     inviteFailed: "產生邀請碼失敗",
@@ -113,7 +110,6 @@ export const strings = {
     remindersCount: (count: number) => `近 30 天提醒 ${count} 則`,
     dailySummarySection: "每日摘要",
     noSummaries: "還沒有摘要——長輩與金孫聊過天後，隔天早上就會出現。",
-    schedulesSection: "全部行程",
     noSchedules: "還沒有任何提醒，點下方「管理行程」新增。",
     manageSchedules: "管理行程",
     accountSection: "長輩登入帳密（代辦）",
@@ -138,8 +134,10 @@ export const strings = {
     makeInvite: "產生家屬邀請碼",
   },
   schedules: {
-    title: "行程管理",
+    // 帶長輩稱呼：家屬管兩位以上長輩時，光是「行程管理」四個字沒有告訴他正在編誰的。
+    title: (elderName: string) => `${elderName}的行程管理`,
     confirmDelete: (title: string) => `確定要刪除「${title}」嗎？`,
+    /** 長輩詳情頁的行程摘要區塊也用這一把——同一個概念不要兩把鍵。 */
     listSection: "全部行程",
     empty: "還沒有任何提醒，從下方新增第一筆。",
     editSection: "編輯提醒",

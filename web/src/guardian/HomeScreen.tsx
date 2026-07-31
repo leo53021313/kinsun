@@ -37,6 +37,11 @@ export function HomeScreen(props: {
   // 「載入失敗」會黏在建立表單下方，讀起來像「建立失敗」，但失敗的其實是列表。
   const [formError, setFormError] = useState("");
   const [busy, setBusy] = useState(false);
+  // 登出也要防連按：`Button` 早就有這個能力（註解還寫明「家屬連按兩下『建立長輩
+  // 檔案』會建出兩位長輩」），登出這顆先前沒接上——連按兩下會送出兩次撤銷 token
+  // 的請求，第二次必然吃 401。不需要在結束時歸零：`signOut()` 之後這個畫面就被
+  // `GuardianApp` 換掉了。
+  const [logoutBusy, setLogoutBusy] = useState(false);
 
   // makeSignOutOnAuthError 是工廠、回傳的是函式值，所以用 useMemo 而非 useCallback
   // （useCallback 收的應該是行內函式表達式，react-hooks 規則會擋）。signOut 在
@@ -145,7 +150,9 @@ export function HomeScreen(props: {
       <Button
         label={strings.guardianHome.logout}
         variant="outline"
+        busy={logoutBusy}
         onClick={async () => {
+          setLogoutBusy(true);
           await logoutGuardian(token).catch(() => undefined);
           signOut();
         }}

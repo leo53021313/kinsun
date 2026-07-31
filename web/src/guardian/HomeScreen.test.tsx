@@ -210,6 +210,37 @@ describe("HomeScreen", () => {
     expect(await screen.findByRole("button", { name: "已複製" })).toBeInTheDocument();
   });
 
+  it("登出鈕按下去就停用，連按兩下不會送出兩次登出", async () => {
+    // ⚠️ 用手動控制的 promise：要驗的是「登出請求還在路上的那段時間」按鈕是不是
+    // 已經停用了，用 mockResolvedValue 的話那段時間根本不存在。
+    // `Button` 早就有 busy 能力（註解還寫明「家屬連按兩下『建立長輩檔案』會建出
+    // 兩位長輩」），登出這顆先前沒接上。
+    let resolveLogout: (value: unknown) => void = () => {};
+    const spy = vi.fn().mockImplementation((_path: string, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        return new Promise((resolve) => {
+          resolveLogout = resolve;
+        });
+      }
+      return Promise.resolve({ status: 200, json: async () => envelope([]) });
+    });
+    vi.stubGlobal("fetch", spy);
+    renderHome();
+    await screen.findByText("還沒有長輩檔案，先在上面建立一位吧。");
+    const logout = screen.getByRole("button", { name: "登出" });
+    const logoutCalls = () =>
+      spy.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === "DELETE")
+        .length;
+
+    await userEvent.click(logout);
+    await waitFor(() => expect(logout).toBeDisabled());
+    expect(logout).toHaveAttribute("aria-busy", "true");
+    expect(logoutCalls()).toBe(1);
+    await userEvent.click(logout);
+    expect(logoutCalls()).toBe(1);
+    resolveLogout({ status: 204, json: async () => ({}) });
+  });
+
   it("綁定碼旁邊有 QR 圖", async () => {
     const spy = vi
       .fn()

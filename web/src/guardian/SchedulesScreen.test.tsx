@@ -42,7 +42,7 @@ function renderScreen(fetchImpl: ReturnType<typeof vi.fn>) {
   );
   return render(
     <GuardianSession.Provider>
-      <SchedulesScreen elderId="e1" />
+      <SchedulesScreen elderId="e1" elderName="王阿嬤" />
     </GuardianSession.Provider>,
   );
 }
@@ -51,6 +51,13 @@ beforeEach(() => localStorage.clear());
 afterEach(() => vi.unstubAllGlobals());
 
 describe("SchedulesScreen", () => {
+  // 家屬管兩位以上長輩時，這一頁若只寫「行程管理」，畫面上沒有任何字告訴他正在
+  // 編誰的提醒——而相鄰的 ElderDetailScreen 是刻意把 elderName 傳進去當標題的。
+  it("標題帶上長輩的稱呼，家屬才知道正在編誰的提醒", async () => {
+    renderScreen(vi.fn().mockResolvedValue({ status: 200, json: async () => envelope([]) }));
+    expect(await screen.findByRole("heading", { name: "王阿嬤的行程管理" })).toBeInTheDocument();
+  });
+
   it("列出既有的行程", async () => {
     renderScreen(vi.fn().mockResolvedValue({ status: 200, json: async () => envelope([WALK]) }));
     expect(await screen.findByText("散步（每天 17:00）")).toBeInTheDocument();
@@ -148,16 +155,19 @@ describe("SchedulesScreen", () => {
     renderScreen(vi.fn().mockResolvedValue({ status: 200, json: async () => envelope([WALK]) }));
     await userEvent.click(await screen.findByRole("button", { name: "編輯" }));
     expect(screen.getByLabelText("提醒內容")).toHaveValue("散步");
-    expect(screen.getByRole("alert")).toHaveTextContent("修改後請重新填一次提醒時間。");
+    // ⚠️ status 而非 alert：按「編輯」是一個**成功**的操作，這句話是操作指示、
+    // 不是錯誤。掛 role="alert" 會讓螢幕報讀軟體當警示打斷朗讀，畫面上也會跳紅字。
+    expect(screen.getByRole("status")).toHaveTextContent("修改後請重新填一次提醒時間。");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "更新" })).toBeInTheDocument();
   });
 
   it("按取消編輯回到新增模式時，重填提示要一併消失", async () => {
     renderScreen(vi.fn().mockResolvedValue({ status: 200, json: async () => envelope([WALK]) }));
     await userEvent.click(await screen.findByRole("button", { name: "編輯" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("修改後請重新填一次提醒時間。");
+    expect(screen.getByRole("status")).toHaveTextContent("修改後請重新填一次提醒時間。");
     await userEvent.click(screen.getByRole("button", { name: "取消編輯" }));
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(screen.getByLabelText("提醒內容")).toHaveValue("");
   });
 

@@ -24,7 +24,9 @@ export type GuardianRoute =
   | { name: "register" }
   | { name: "home" }
   | { name: "elder"; elderId: string; elderName: string }
-  | { name: "schedules"; elderId: string }
+  // elderName 跟著一起帶：家屬管兩位以上長輩時，行程管理頁若只有「行程管理」
+  // 四個字，畫面上沒有任何字告訴他正在編誰的提醒。
+  | { name: "schedules"; elderId: string; elderName: string }
   | { name: "notifications" };
 
 export function GuardianApp() {
@@ -79,11 +81,17 @@ export function GuardianApp() {
           <ElderDetailScreen
             elderId={route.elderId}
             elderName={route.elderName}
-            onManageSchedules={() => stack.push({ name: "schedules", elderId: route.elderId })}
+            onManageSchedules={() =>
+              stack.push({
+                name: "schedules",
+                elderId: route.elderId,
+                elderName: route.elderName,
+              })
+            }
           />
         );
       case "schedules":
-        return <SchedulesScreen elderId={route.elderId} />;
+        return <SchedulesScreen elderId={route.elderId} elderName={route.elderName} />;
       case "notifications":
         return <NotificationsScreen />;
       default: {

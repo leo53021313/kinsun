@@ -189,7 +189,7 @@ export function ElderDetailScreen(props: {
         )}
       </Section>
 
-      <Section title={strings.elderDetail.schedulesSection}>
+      <Section title={strings.schedules.listSection}>
         {groupsError ? (
           <ErrorText message={strings.common.loadFailed} />
         ) : groups === null ? (
@@ -273,6 +273,9 @@ export function ElderDetailScreen(props: {
           busy={inviteBusy}
           onClick={async () => {
             setInviteBusy(true);
+            // 重試前先清掉上一次的失敗：不清的話，頁面最上方掛著紅字「產生邀請碼
+            // 失敗」，下方同時顯示一組有效的邀請碼，家屬不知道該相信哪一個。
+            setError("");
             try {
               setInviteCode(await createGuardianInvite(elderId, token));
             } catch (exc) {

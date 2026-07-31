@@ -16,7 +16,7 @@ import { GuardianSession } from "@/session/contexts";
 import { makeSignOutOnAuthError } from "@/session/useSignOutOnAuthError";
 import { strings } from "@/strings";
 import { Button } from "@/ui/Button";
-import { EmptyHint, ErrorText } from "@/ui/Feedback";
+import { EmptyHint, ErrorText, NoticeText } from "@/ui/Feedback";
 import { Field } from "@/ui/Field";
 import { Section } from "@/ui/Section";
 
@@ -25,8 +25,8 @@ import { KIND_OPTIONS, SLOTS, describeGroup, toOccurrences } from "./schedules";
 
 type Kind = ScheduleGroup["kind"];
 
-export function SchedulesScreen(props: { elderId: string }) {
-  const { elderId } = props;
+export function SchedulesScreen(props: { elderId: string; elderName: string }) {
+  const { elderId, elderName } = props;
   const { session, signOut } = GuardianSession.useSession();
   const token = session?.token ?? "";
   // ⚠️ 用 useMemo 而非 useCallback：makeSignOutOnAuthError 是**工廠**，回傳的是函式
@@ -48,6 +48,10 @@ export function SchedulesScreen(props: { elderId: string }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ScheduleGroup | null>(null);
   const [error, setError] = useState("");
+  // ⚠️ 與 error 分開：「修改後請重新填一次提醒時間。」是按下「編輯」之後的**操作
+  // 指示**，不是錯誤。走 ErrorText 的話畫面會對一個成功的操作跳紅字，螢幕報讀
+  // 軟體還會把它當警示朗讀（Feedback.tsx 檔頭寫明該元件是給錯誤與空狀態用的）。
+  const [hint, setHint] = useState("");
   const [busy, setBusy] = useState(false);
 
   // 刪除確認列（role="alertdialog"）：出現時要把焦點移進去，讀螢幕的人才聽得到
@@ -90,7 +94,7 @@ export function SchedulesScreen(props: { elderId: string }) {
     };
   }, [elderId, token, signOutOn401]);
 
-  // 按下「編輯」進來的紅字提示（「修改後請重新填一次提醒時間。」）若不在這裡一併
+  // 按下「編輯」進來的提示（「修改後請重新填一次提醒時間。」）若不在這裡一併
   // 清掉，按「取消編輯」回到新增模式後那句提示會留在畫面上，跟眼前空白的表單對
   // 不上——家屬會以為剛才什麼操作出錯了。
   function resetForm() {
@@ -99,6 +103,7 @@ export function SchedulesScreen(props: { elderId: string }) {
     setWhen("");
     setEditingId(null);
     setError("");
+    setHint("");
   }
 
   // 確認列一出現就把焦點移進去（見上面 confirmDialogRef 的說明）。
@@ -116,6 +121,9 @@ export function SchedulesScreen(props: { elderId: string }) {
   }
 
   async function submit() {
+    // 送出時先收掉「請重新填一次時間」那句指示：它已經被照做（或被無視）了，
+    // 留著會跟下面可能出現的格式錯誤訊息疊在一起講同一件事。
+    setHint("");
     const body = buildBody();
     if (!body) {
       setError(strings.schedules.whenRequired);
@@ -159,8 +167,9 @@ export function SchedulesScreen(props: { elderId: string }) {
 
   return (
     <div className="flex flex-col gap-3 p-4">
-      <h1 className="text-lg font-bold text-ink">{strings.schedules.title}</h1>
+      <h1 className="text-lg font-bold text-ink">{strings.schedules.title(elderName)}</h1>
       <ErrorText message={error} />
+      <NoticeText message={hint} />
 
       <Section title={strings.schedules.listSection}>
         {/* 順序固定為 錯誤 → 載入中 → 空狀態 → 清單（與 ElderDetailScreen 一致）。 */}
@@ -201,7 +210,8 @@ export function SchedulesScreen(props: { elderId: string }) {
                     // 因為三種類型共用同一支表單、同一套「時間留空＋提示重填」的規則
                     // 比替每種類型各寫一套精確反推邏輯單純得多，所以即使 daily／weekly／
                     // once 技術上可以做到無損回填，這裡仍統一請家屬重填一次。
-                    setError(strings.schedules.editHint);
+                    setError("");
+                    setHint(strings.schedules.editHint);
                   }}
                 />
                 <Button
