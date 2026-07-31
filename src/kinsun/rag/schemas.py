@@ -103,6 +103,12 @@ class Source:
     allowed_domains: tuple[str, ...] = field(default_factory=tuple)
     notes: str = ""
     role: SourceRole = SourceRole.ANSWER
+    # 內容頁（文章）的網址樣式（regex），留空＝一視同仁。兩個用途：
+    # ①待爬清單優先抓文章，不把預算耗在導覽與列表頁（2026-07-30 實測：爬 885 頁
+    #   只換到 58 篇文章）；②導覽區塊的連結原則上不收，但符合本樣式者例外——
+    #   hpa 把文章連結放在 nav／header／footer（列表頁 37 個文章連結有 29 個在那），
+    #   一律不收會把文章一起砍掉。
+    content_url_pattern: str = ""
 
 
 @dataclass(frozen=True)

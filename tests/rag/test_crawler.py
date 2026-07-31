@@ -320,3 +320,66 @@ def test_fetch_raises_runtime_error_after_exhausting_retries(monkeypatch):
 
     # retries+1=3 次嘗試、之間睡兩次；最後一次失敗後不再多睡（tenacity 語意）。
     assert sleeps == [0.5, 0.5]
+
+
+def test_navigation_links_are_dropped_but_article_links_survive():
+    """導覽區的一般連結不收，但符合內容樣式的文章連結必須保留。
+
+    2026-07-30 實測 hpa 列表頁：站內連結 234 個、只有 55 個在內容區塊內，
+    跟著爬會把預算耗在整站共用的選單上；但**文章連結恰恰多半也在導覽區**
+    （37 個 Detail 連結有 29 個位於 nav／header／footer），一律不收會連文章
+    一起砍掉——這是差點犯下的錯，故留此測試同時釘住兩邊。
+    """
+    from dataclasses import replace
+
+    source = replace(
+        SourceRegistry().get("hpa_elder_health"), content_url_pattern=r"Detail\.aspx"
+    )
+    page = _page(
+        source.url,
+        "<html><body>"
+        '<nav><a href="/Pages/List.aspx?nodeid=9">選單</a>'
+        '<a href="/Pages/Detail.aspx?nodeid=1&pid=2">導覽區的文章</a></nav>'
+        '<div><p>內文</p><a href="/Pages/Detail.aspx?nodeid=1&pid=3">內容區的文章</a></div>'
+        '<footer><a href="/Pages/privacy.aspx">隱私權</a></footer>'
+        "</body></html>",
+    )
+
+    parsed = DomainParserRegistry().parse(page, source)
+
+    assert any("pid=2" in link for link in parsed.links), "導覽區的文章連結不可丟"
+    assert any("pid=3" in link for link in parsed.links)
+    assert not any("List.aspx" in link for link in parsed.links), "導覽選單不收"
+    assert not any("privacy" in link for link in parsed.links), "頁尾不收"
+
+
+def test_crawler_visits_content_pages_before_navigation_pages():
+    """待爬清單先抓文章頁：預算有限時，先花在內容而不是列表與導覽。"""
+    from dataclasses import replace
+
+    source = replace(
+        SourceRegistry().get("hpa_elder_health"), content_url_pattern=r"Detail\.aspx"
+    )
+    pages = {
+        source.url: _page(
+            source.url,
+            "<html><body><div>"
+            '<a href="/Pages/List.aspx?nodeid=1">列表一</a>'
+            '<a href="/Pages/List.aspx?nodeid=2">列表二</a>'
+            '<a href="/Pages/Detail.aspx?nodeid=1&pid=9">文章</a>'
+            "</div></body></html>",
+        ),
+    }
+    for path in ("List.aspx?nodeid=1", "List.aspx?nodeid=2", "Detail.aspx?nodeid=1&pid=9"):
+        url = f"https://www.hpa.gov.tw/Pages/{path}"
+        pages[url] = _page(url, "<html><body><p>內容。</p></body></html>")
+
+    crawler = HealthEducationCrawler(
+        config=CrawlerConfig(max_pages_per_source=2, delay_seconds=0),
+        fetcher=lambda url: pages[url],
+        sleeper=lambda seconds: None,
+    )
+
+    result = crawler.crawl(source)
+
+    assert any("Detail.aspx" in p.url for p in result.pages), "文章頁必須排在列表頁之前被抓到"

@@ -86,9 +86,10 @@ class CrawlResult:
 
 
 class HtmlTextExtractor(HTMLParser):
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, content_pattern: re.Pattern[str] | None = None) -> None:
         super().__init__(convert_charrefs=True)
         self._base_url = base_url
+        self._content_pattern = content_pattern
         self._skip_depth = 0
         self._title_depth = 0
         self._title_parts: list[str] = []
@@ -105,10 +106,19 @@ class HtmlTextExtractor(HTMLParser):
             self._title_depth += 1
         if tag in _PRIMARY_TAGS:
             self._primary_depth += 1
+        # 導覽／頁尾的連結原則上不收（整站共用的選單，跟著爬等於把預算花在同一批
+        # 頁面上；2026-07-30 實測 hpa 列表頁 234 個站內連結只有 55 個在內容區內），
+        # 但符合內容樣式者例外——hpa 恰恰把文章連結放在 nav／header／footer
+        # （37 個 Detail 連結有 29 個在那），一律不收會把文章一起砍掉。
         if tag == "a":
             href = dict(attrs).get("href")
             if href:
-                self._links.append(urllib.parse.urljoin(self._base_url, href))
+                absolute = urllib.parse.urljoin(self._base_url, href)
+                is_content = self._content_pattern is not None and self._content_pattern.search(
+                    absolute
+                )
+                if self._skip_depth == 0 or is_content:
+                    self._links.append(absolute)
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
@@ -175,7 +185,7 @@ class DomainParserRegistry:
 
     def _parse_html(self, page: FetchedPage, source: Source) -> ParsedPage:
         html = page.body.decode(_guess_charset(page.content_type), errors="ignore")
-        parser = HtmlTextExtractor(page.url)
+        parser = HtmlTextExtractor(page.url, _content_pattern(source))
         parser.feed(html)
         title = parser.title or source.title
         text = parser.text
@@ -257,14 +267,19 @@ class HealthEducationCrawler:
         )
 
     def crawl(self, source: Source) -> CrawlResult:
+        # 兩條佇列：文章頁優先於其他頁。max_pages 有限時，先把預算花在內容上
+        # （2026-07-30 實測純 BFS 爬 885 頁只換到 58 篇文章，其餘是導覽與列表頁）。
+        pattern = _content_pattern(source)
+        content_queue: deque[str] = deque()
         queue = deque([source.url])
         seen: set[str] = set()
         pages: list[ParsedPage] = []
         skipped: list[str] = []
         failed: list[tuple[str, str]] = []
 
-        while queue and len(seen) < self._config.max_pages_per_source:
-            url = _upgrade_to_https(_strip_fragment(queue.popleft()))
+        while (content_queue or queue) and len(seen) < self._config.max_pages_per_source:
+            pending = content_queue or queue
+            url = _upgrade_to_https(_strip_fragment(pending.popleft()))
             if url in seen:
                 continue
             seen.add(url)
@@ -278,10 +293,16 @@ class HealthEducationCrawler:
                     pages.append(parsed)
                 else:
                     skipped.append(url)
+                budget = self._config.max_pages_per_source
                 for link in parsed.links:
-                    if len(seen) + len(queue) >= self._config.max_pages_per_source:
-                        break
-                    if _is_allowed_url(link, source.allowed_domains) and link not in seen:
+                    if not _is_allowed_url(link, source.allowed_domains) or link in seen:
+                        continue
+                    if pattern is not None and pattern.search(link):
+                        # 文章連結一律收（只受總量上限節制）：預算檢查若一視同仁，
+                        # 排在導覽連結後面的文章會永遠擠不進待爬清單。
+                        if len(content_queue) < budget:
+                            content_queue.append(link)
+                    elif len(seen) + len(queue) + len(content_queue) < budget:
                         queue.append(link)
                 self._sleep(self._config.delay_seconds)
             except Exception as exc:  # noqa: BLE001 - 單頁失敗不可中斷整批
@@ -345,6 +366,16 @@ class HealthEducationCrawler:
             )(_once)
         except RetryError as exc:
             raise RuntimeError(exc.last_attempt.exception() or "fetch failed") from exc
+
+
+def _content_pattern(source: Source) -> re.Pattern[str] | None:
+    if not source.content_url_pattern:
+        return None
+    try:
+        return re.compile(source.content_url_pattern)
+    except re.error as exc:
+        logger.warning("RAG 來源 %s 的 content_url_pattern 無效：%s", source.source_id, exc)
+        return None
 
 
 def _clean_inline(text: str) -> str:

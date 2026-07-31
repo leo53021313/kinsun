@@ -44,6 +44,7 @@ DEFAULT_SOURCES: tuple[Source, ...] = (
         True,
         ("hpa.gov.tw",),
         "官方長者衛教入口。",
+        content_url_pattern=r"Detail\.aspx",
     ),
     Source(
         "hpa_elder_chronic",
@@ -57,6 +58,7 @@ DEFAULT_SOURCES: tuple[Source, ...] = (
         True,
         ("hpa.gov.tw",),
         "官方老人健康與慢性病衛教入口。",
+        content_url_pattern=r"Detail\.aspx",
     ),
     Source(
         "hpa_chronic_disease",
@@ -70,6 +72,7 @@ DEFAULT_SOURCES: tuple[Source, ...] = (
         True,
         ("hpa.gov.tw",),
         "官方慢性病防治衛教入口。",
+        content_url_pattern=r"Detail\.aspx",
     ),
     Source(
         "hpa_handbooks",
@@ -109,6 +112,7 @@ DEFAULT_SOURCES: tuple[Source, ...] = (
         True,
         ("hpa.gov.tw",),
         "官方 FAQ，適合一般民眾理解。",
+        content_url_pattern=r"Detail\.aspx",
     ),
     Source(
         "health99",
