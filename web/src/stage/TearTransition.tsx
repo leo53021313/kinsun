@@ -8,9 +8,13 @@
  * 使用者會平白多等 700 毫秒，而那正是他最沒有耐心的時刻。
  *
  * ⚠️ 尊重 prefers-reduced-motion（W-11）：純視覺享受不該讓對動態敏感的人不舒服。
+ * 判斷式抽到 `stage/reducedMotion.ts`，與 `notify/NotificationBanner.tsx` 共用
+ * 同一份（審查修正，2026-07-31）——原本兩處各自宣告一份一模一樣的函式。
  */
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+
+import { prefersReducedMotion } from "./reducedMotion";
 
 export const TEAR_DURATION_MS = 700;
 export const REDUCED_MOTION_MS = 200;
@@ -27,10 +31,6 @@ function clipPath(side: "left" | "right"): string {
   return side === "left"
     ? `polygon(0% 0%, ${points.join(", ")}, 0% 100%)`
     : `polygon(100% 0%, ${points.join(", ")}, 100% 100%)`;
-}
-
-function prefersReducedMotion(): boolean {
-  return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 export function TearTransition(props: {

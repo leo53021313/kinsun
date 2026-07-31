@@ -6,6 +6,14 @@
  *
  * ⚠️ 通知橫幅由呼叫端以 notificationSlot 注入，本元件不知道通知是怎麼來的
  * ——外框只負責「有一個地方可以放它」，這樣外框可以完全獨立測試。
+ *
+ * ⚠️ 通知容身處的 `role="status"`／`aria-live="polite"` 掛在本元件（審查修正，
+ * 2026-07-31）：這個容器從 `PhoneFrame` 掛載那一刻就存在，不管
+ * `notificationSlot` 傳了什麼、有沒有內容都不會被卸載重掛。輔助科技必須先
+ * 「看見」live region 存在，才會追蹤它之後的文字變化——若把這個屬性掛在隨
+ * 通知出現／消失而整顆掛載／卸載的元件上（`notify/NotificationBanner.tsx`
+ * 曾經的作法），容器與內容會在同一次 DOM 變更一起冒出來，AT 收到的是「新元素
+ * 出現」而非「我在追蹤的區域文字變了」，多數 AT 因此不會播報。
  */
 
 import type { ReactNode } from "react";
@@ -43,8 +51,13 @@ export function PhoneFrame(props: {
         </span>
       </div>
 
-      {/* 通知橫幅的容身處：絕對定位疊在內容之上，不擠壓版面。 */}
-      <div className="pointer-events-none absolute inset-x-0 top-10 z-20 px-3">
+      {/* 通知橫幅的容身處：絕對定位疊在內容之上，不擠壓版面。role="status"／
+          aria-live="polite" 見上方檔案說明。 */}
+      <div
+        role="status"
+        aria-live="polite"
+        className="pointer-events-none absolute inset-x-0 top-10 z-20 px-3"
+      >
         {notificationSlot}
       </div>
 
