@@ -17,6 +17,7 @@ import { strings } from "@/strings";
 import { logoutSession } from "./api";
 import { BindScreen } from "./BindScreen";
 import { LoginScreen } from "./LoginScreen";
+import { NotificationsScreen } from "./NotificationsScreen";
 import { TalkScreen } from "./TalkScreen";
 
 export type ElderRoute =
@@ -71,10 +72,14 @@ export function ElderApp(props: { prefilledCode?: string; visible?: boolean }) {
             onBindingLost={signOut}
           />
         );
-      default:
-        // notifications 由 Task 9 接上。文案仍走 strings.ts——即使是暫時性的
-        // 佔位畫面，元件裡也不可出現裸中文字串。
-        return <div className="p-5 text-elder-min text-ink-soft">{strings.common.comingSoon}</div>;
+      case "notifications":
+        return <NotificationsScreen />;
+      default: {
+        // 走到這裡代表新增了路由卻忘了接畫面。編譯期就會抓到（never 型別，
+        // 與家屬端 GuardianApp 同款窮盡檢查）。
+        const unreachable: never = stack.current;
+        throw new Error(`未接線的長輩端畫面：${JSON.stringify(unreachable)}`);
+      }
     }
   })();
 

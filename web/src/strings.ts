@@ -30,9 +30,6 @@ export const strings = {
     passwordPlaceholder: "至少 8 碼",
     emailLabel: "Email",
     emailPlaceholder: "you@example.com",
-    // 長輩端對講機／提醒畫面接線前的暫時佔位文字（P3 Task 8／9 接上後這個分支
-    // 就不會再被走到）；元件裡不可出現裸中文字串，即使只是暫時性的畫面也一樣。
-    comingSoon: "這裡還在準備，請再等一下。",
   },
   gate: {
     brand: "金孫",
