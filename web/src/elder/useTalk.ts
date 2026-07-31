@@ -253,10 +253,10 @@ export function useTalk(options: {
 
   // 建立錄音器、播放器、播放佇列與長連線。
   //
-  // ⚠️ 相依只有 `token` 與 `visible` 兩個會變的東西：`deps` 恆定（useConstant），
-  // 而 `advanceQueue`／`prefetchNext`／`setAvatarBoth`／`armThinkingWatchdog` 全都
-  // 只隨 `token` 變。所以這條 effect 不需要 eslint-disable——它真的只在換人登入或
-  // 這一欄被切走／切回來時重跑。
+  // ⚠️ 相依只有 `token` 與 `visible` 兩個會變的東西：`deps` 只算一次（見上方
+  // `useState` 惰性初始化那段），而 `advanceQueue`／`prefetchNext`／`setAvatarBoth`／
+  // `armThinkingWatchdog` 全都只隨 `token` 變。所以這條 effect 不需要 eslint-disable
+  // ——它真的只在換人登入或這一欄被切走／切回來時重跑。
   useEffect(() => {
     if (!token || !visible) {
       return;
@@ -366,6 +366,10 @@ export function useTalk(options: {
       subscription.remove();
       socket.close();
       player.dispose();
+      // ⚠️ 這一行對正式的 `createWebPlayer` 是重複的（它的 `dispose()` 自己就會掃一次），
+      // 刻意保留：`createPlayer` 是注入點，而 `WebPlayer` 這個型別並沒有「dispose 會回收
+      // blob URL」的承諾。把回收寫在這裡，這條 cleanup 的「全部放掉」才是它自己保證的事，
+      // 不是靠另一個模組的內部行為順便達成的。重複呼叫無副作用（集合已空）。
       deps.revokeQueuedReplyAudio();
       chunkQueueRef.current = null;
       placeRef.current = null;
