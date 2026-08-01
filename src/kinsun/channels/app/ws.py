@@ -36,6 +36,11 @@
 - **binary frame（type="chunk"）**——續段語音（2026-08-01）。header 欄位：
   `turn_id`、`index`（從 1 起）、`text`、`duration_ms`、`is_last`。
   ⚠️ `turn_id` 是必要的：併發之下同時可能有多輪在推段，前端靠它歸屬。
+  ⚠️ `index` 有一個例外：續段合成中途失敗（或本來就切不出第二段）時，會補送一個
+  `index=0、text=""、audio` 為空、`is_last=true` 的終止訊框——`index` 因此**不保證 ≥1**。
+  `index=0` 不是續段編號，是「這輪講完了（不論是不是講完整）」的哨兵值，前端只要看到
+  `is_last=true` 就該結束這一輪，不必等 `index` 對得上實際段數（見
+  `_push_continuation_chunks`）。
 
 ⚠️ **為什麼 header 要嵌在 binary frame 裡，而不是「先送 JSON 再送 binary」**：同一條
 連線最多三輪併發（`_MAX_CONCURRENT_TURNS`），兩輪幾乎同時算完時，「JSON(A)、JSON(B)、
