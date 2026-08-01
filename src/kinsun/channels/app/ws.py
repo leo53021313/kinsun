@@ -557,7 +557,7 @@ def create_app_ws_router(
                     # Important 1）：走到這裡代表答案已經送到長輩耳朵、且本輪記憶已寫進
                     # `turns` 表（`pipeline._settle_memory_write` 盡力而為 0.5 秒上限、逾時記
                     # warning 放行——永不阻擋回覆送出；但若背景寫入落後超過 0.5 秒且長輩在那
-                    # 窗口內插嘴，A 的問句會同時缺席 `shortterm.recent()` 與 `pending_utterances`），
+                    # 窗口內插嘴，A 的問句會同時缺席 `shortterm.recent()` 與在途清單），
                     # 這一輪對「還在處理中」的定義而言已經結束。續段迴圈還要跑 7～10 秒，若把
                     # 解除留給下面的 finally，長輩這段期間插嘴問 B 時，B 的情境會同時
                     # 看到 A 的問句（`shortterm.recent()` 已含 A 的問答配對）與
