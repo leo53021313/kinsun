@@ -13,6 +13,16 @@ function envelope(data: unknown) {
   return { success: true, data, error: null, meta: null };
 }
 
+/** 帶 meta 的信封：排程寫入用 `meta.warnings` 告訴家屬有一顆鬧鐘沒建成（06 §5）。 */
+function envelopeWithWarnings(data: unknown, warnings: string[]) {
+  return { success: true, data, error: null, meta: { warnings } };
+}
+
+/** 後端 `wording.appointment_day_before_skipped_text(8)` 逐字產出的那句話。 */
+const DAY_BEFORE_SKIPPED =
+  "回診前一天的提醒時間（08:00）已經過了，這次只設定了回診當天 08:00 的提醒；" +
+  "前一天那次請您自己跟長輩提一聲。";
+
 const WALK = {
   group_id: "g1",
   kind: "custom",
@@ -133,6 +143,71 @@ describe("SchedulesScreen", () => {
       title: "降血壓藥",
       occurrences: [{ repeat: "daily", time: "08:00" }],
     });
+  });
+
+  // ⚠️ 這一組釘的是「不可靜默」：8/1 15:00 家屬替**明天**的回診設提醒時，後端建得起來
+  // 但只建了一顆（前一天 08:00 已經過了），並用 meta.warnings 說明。少掉的那顆在畫面上
+  // 沒有任何痕跡——回診清單顯示的單位是「一件事」，不逐顆列鬧鐘——所以這句話不顯示出來，
+  // 家屬就會帶著「前一天也會提醒」的預期離開，而且永遠不會發現。
+  it("後端說前一天那顆提醒沒建成時，畫面要顯示那句話", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 200, json: async () => envelope([]) })
+      .mockResolvedValueOnce({
+        status: 201,
+        json: async () => envelopeWithWarnings(APPT, [DAY_BEFORE_SKIPPED]),
+      })
+      .mockResolvedValueOnce({ status: 200, json: async () => envelope([APPT]) });
+    renderScreen(fetchImpl);
+    await screen.findByText("還沒有任何提醒，從下方新增第一筆。");
+    await userEvent.click(screen.getByRole("radio", { name: "回診" }));
+    await userEvent.type(screen.getByLabelText("提醒內容"), "心臟科回診");
+    await userEvent.type(screen.getByLabelText("回診日期"), "2026-08-02");
+    await userEvent.click(screen.getByRole("button", { name: "新增" }));
+
+    // ⚠️ status 而非 alert：寫入是**成功**的，這是中性告知不是錯誤。
+    expect(await screen.findByRole("status")).toHaveTextContent(DAY_BEFORE_SKIPPED);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  // ⚠️ 這條是上一條的對照組：沒有它的話，「畫面顯示了那句話」也可能是因為畫面**永遠**
+  // 顯示某句話。同時釘住 `resetForm()` 仍然把上一次的提示清乾淨。
+  it("後端沒有話要說時，送出成功後不留任何提示", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 200, json: async () => envelope([]) })
+      .mockResolvedValueOnce({ status: 201, json: async () => envelope(APPT) })
+      .mockResolvedValueOnce({ status: 200, json: async () => envelope([APPT]) });
+    renderScreen(fetchImpl);
+    await screen.findByText("還沒有任何提醒，從下方新增第一筆。");
+    await userEvent.click(screen.getByRole("radio", { name: "回診" }));
+    await userEvent.type(screen.getByLabelText("提醒內容"), "心臟科回診");
+    await userEvent.type(screen.getByLabelText("回診日期"), "2026-08-20");
+    await userEvent.click(screen.getByRole("button", { name: "新增" }));
+
+    await waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(3));
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  // 編輯走的是 updateSchedule 這條線，接線與新增各接各的——只接新增等於只做一半。
+  it("編輯既有回診時，後端的提醒同樣要顯示出來", async () => {
+    const gone = "回診前一天的提醒時間（08:00）已經過了，這次更新後只留下回診當天 08:00 的提醒。";
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 200, json: async () => envelope([APPT]) })
+      .mockResolvedValueOnce({
+        status: 200,
+        json: async () => envelopeWithWarnings(APPT, [gone]),
+      })
+      .mockResolvedValueOnce({ status: 200, json: async () => envelope([APPT]) });
+    renderScreen(fetchImpl);
+    await userEvent.click(await screen.findByRole("button", { name: "編輯" }));
+    await userEvent.type(screen.getByLabelText("回診日期"), "2026-08-02");
+    await userEvent.click(screen.getByRole("button", { name: "更新" }));
+
+    // ⚠️ 這裡同時擋住一個順序陷阱：`resetForm()` 會 setHint("")，這句話若排在它之前
+    // 就會被當場清掉——而畫面上看不出任何異狀（「修改後請重新填一次」本來就該消失）。
+    expect(await screen.findByRole("status")).toHaveTextContent(gone);
   });
 
   it("時間格式看不懂時擋下來，不打後端", async () => {

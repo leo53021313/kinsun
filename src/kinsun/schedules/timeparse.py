@@ -93,8 +93,11 @@ def build_appointment_reminders(
 
     **時刻已過的那幾顆直接不建**——你沒辦法提醒一個人昨天。下午替明天的回診設提醒時，
     「前一天 `hour` 點」是今天早上，原本會讓服務層以「那個時間已經過去了」擋掉**整筆**
-    排程（不是只少一顆），而家屬填的明明是明天。兩顆都過去了才拋錯，並把話講在回診日
-    上——那才是家屬能改的東西。
+    排程（不是只少一顆），而家屬填的明明是明天。
+
+    兩顆都過去了才拋錯，且訊息講的是**真正的原因**（提醒固定在那個鐘點），不是叫家屬
+    去改一個沒錯的欄位：上午十點登記「今天下午三點」的回診時，回診日期完全正確，錯的
+    是這個系統只在 `hour` 點提醒——叫他去確認日期，他會什麼都找不到然後再試一次。
     """
     event_day = datetime.fromtimestamp(event_at, now.tzinfo).date()
     current = now.timestamp()
@@ -111,5 +114,9 @@ def build_appointment_reminders(
             continue
         occurrences.append(Occurrence(RepeatKind.ONCE, scheduled_at=at))
     if not occurrences:
-        raise TimeParseError("這個回診的提醒時間都已經過了，請確認回診日期。")
+        stamp = f"{hour:02d}:00"
+        raise TimeParseError(
+            f"回診的提醒固定在前一天與當天的 {stamp}，這兩個時刻都已經過了。"
+            "如果回診就在今天，請您直接跟長輩說一聲；不然請確認回診日期。"
+        )
     return AppointmentReminders(tuple(occurrences), is_day_before_skipped)

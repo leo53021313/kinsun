@@ -149,9 +149,27 @@ def test_a_reminder_landing_exactly_on_now_counts_as_passed():
 
 
 def test_appointment_whose_reminders_have_all_passed_is_rejected():
-    """今天下午設今天的回診：兩顆都過去了，話要講在回診日上——那才是家屬改得動的。"""
+    """今天下午設今天的回診：兩顆都過去了，訊息要講真正的原因（提醒固定在那個鐘點）。
+
+    ⚠️ 這個情境下**回診日期完全正確**，錯的是這個系統只在 08:00 提醒。訊息若只叫家屬
+    去確認日期，他會檢查一個沒錯的欄位、什麼也找不到，然後重試、再失敗。
+    """
     afternoon = datetime(2026, 7, 25, 15, 0, tzinfo=TZ)
-    with pytest.raises(TimeParseError, match="回診"):
+    with pytest.raises(TimeParseError) as exc:
         build_appointment_reminders(
             event_at=parse_epoch("2026-07-25", "", now=afternoon), hour=8, now=afternoon
         )
+    message = str(exc.value)
+    assert "08:00" in message
+    assert "直接跟長輩說" in message
+
+
+def test_the_all_passed_message_names_the_configured_hour():
+    """鐘點可調，訊息寫死 08:00 就會對著改過設定的家屬說謊。"""
+    afternoon = datetime(2026, 7, 25, 23, 0, tzinfo=TZ)
+    with pytest.raises(TimeParseError) as exc:
+        build_appointment_reminders(
+            event_at=parse_epoch("2026-07-25", "", now=afternoon), hour=21, now=afternoon
+        )
+    assert "21:00" in str(exc.value)
+    assert "08:00" not in str(exc.value)

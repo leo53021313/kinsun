@@ -25,6 +25,16 @@ const client = createApiClient({
 
 export const request = client.request;
 
+/**
+ * 與 `request` 同一條路，但**連信封的 `meta` 一起帶回來**。
+ *
+ * `request` 只取 `data`、把 `meta` 丟掉，絕大多數端點也確實沒有 meta。但排程寫入
+ * 會用 `meta.warnings` 告訴家屬「回診前一天那顆提醒沒建成」（06 §5）——那件事只
+ * 存在於 meta，用 `request` 打就等於後端講了、前端沒在聽，家屬帶著「前一天也會
+ * 提醒」的預期離開，而回診清單只顯示一件事、不逐顆列鬧鐘，他沒有任何地方會發現。
+ */
+export const requestWithMeta = client.requestWithMeta;
+
 /** 運營狀態（spec W-03）。分項的鍵與狀態值皆為後端定義的字面值，文案在 strings.ts。 */
 export type DemoStatus = {
   overall: string;

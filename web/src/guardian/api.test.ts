@@ -24,11 +24,21 @@ import {
   updateSchedule,
 } from "./api";
 
-function mockFetch(data: unknown, status = 200) {
-  const spy = vi.fn().mockResolvedValue({ status, json: async () => ({ success: true, data, error: null, meta: null }) });
+function mockFetch(data: unknown, status = 200, meta: unknown = null) {
+  const spy = vi.fn().mockResolvedValue({ status, json: async () => ({ success: true, data, error: null, meta }) });
   vi.stubGlobal("fetch", spy);
   return spy;
 }
+
+/** 排程寫入回應的 data 形狀；三支測試共用。 */
+const WRITTEN = {
+  group_id: "g",
+  kind: "custom",
+  title: "散步",
+  created_by: "guardian",
+  event_at: null,
+  occurrences: [],
+};
 
 function bodyOf(spy: ReturnType<typeof vi.fn>): Record<string, unknown> {
   return JSON.parse(spy.mock.calls[0][1].body as string);
@@ -100,7 +110,7 @@ describe("家屬端 API", () => {
   });
 
   it("建立排程送的鍵名與後端 ScheduleIn 完全一致", async () => {
-    const spy = mockFetch({ group_id: "g", kind: "custom", title: "散步", created_by: "guardian", event_at: null, occurrences: [] });
+    const spy = mockFetch(WRITTEN);
     await createSchedule(
       "e1",
       { kind: "custom", title: "散步", occurrences: [{ repeat: "daily", time: "17:00" }] },
@@ -115,11 +125,57 @@ describe("家屬端 API", () => {
   });
 
   it("修改排程用 PUT，路徑帶 group_id", async () => {
-    const spy = mockFetch({ group_id: "g", kind: "custom", title: "散步", created_by: "guardian", event_at: null, occurrences: [] });
+    const spy = mockFetch(WRITTEN);
     await updateSchedule("e1", "g9", { kind: "custom", title: "散步", occurrences: [] }, "tok");
     expect(spy.mock.calls[0][0]).toBe("/api/v1/elders/e1/schedules/g9");
     expect(spy.mock.calls[0][1].method).toBe("PUT");
     expect(bodyOf(spy)).toEqual({ kind: "custom", title: "散步", occurrences: [] });
+  });
+
+  // ⚠️ 這一組守的是 request → requestWithMeta 的那一步。`request` 只取 data、把 meta
+  // 丟掉，改回去不會有任何型別錯誤或執行期例外——後端照樣講、前端就是聽不到，而唯一的
+  // 症狀是家屬少看到一句話。
+  it("建立排程把 meta.warnings 帶回來給呼叫端顯示", async () => {
+    mockFetch(WRITTEN, 201, { warnings: ["回診前一天的提醒時間（08:00）已經過了。"] });
+    const written = await createSchedule(
+      "e1",
+      { kind: "appointment", title: "回診", occurrences: [], event_date: "2026-08-02" },
+      "tok",
+    );
+    expect(written.group.group_id).toBe("g");
+    expect(written.warnings).toEqual(["回診前一天的提醒時間（08:00）已經過了。"]);
+  });
+
+  it("修改排程同樣把 meta.warnings 帶回來", async () => {
+    mockFetch(WRITTEN, 200, { warnings: ["回診前一天的提醒時間（08:00）已經過了。"] });
+    const written = await updateSchedule(
+      "e1",
+      "g9",
+      { kind: "appointment", title: "回診", occurrences: [], event_date: "2026-08-02" },
+      "tok",
+    );
+    expect(written.warnings).toEqual(["回診前一天的提醒時間（08:00）已經過了。"]);
+  });
+
+  it("meta 為 null（絕大多數情形）時 warnings 是空陣列，不是 undefined", async () => {
+    // 呼叫端會直接 `.join("")`，給 undefined 會在成功路徑上炸掉整頁。
+    mockFetch(WRITTEN, 201);
+    const written = await createSchedule("e1", { kind: "custom", title: "散步", occurrences: [] }, "tok");
+    expect(written.warnings).toEqual([]);
+  });
+
+  it("meta.warnings 混進非字串時逐項濾掉，不整包丟給畫面 render", async () => {
+    // meta 的型別是 Record<string, unknown>，內容是網路來的資料；型別斷言只是叫編譯器
+    // 閉嘴。真的收到物件時 React 會擲「Objects are not valid as a React child」整頁白。
+    mockFetch(WRITTEN, 201, { warnings: ["真的話", 42, null, { code: "x" }] });
+    const written = await createSchedule("e1", { kind: "custom", title: "散步", occurrences: [] }, "tok");
+    expect(written.warnings).toEqual(["真的話"]);
+  });
+
+  it("meta.warnings 不是陣列時退回空陣列", async () => {
+    mockFetch(WRITTEN, 201, { warnings: "一句話" });
+    const written = await createSchedule("e1", { kind: "custom", title: "散步", occurrences: [] }, "tok");
+    expect(written.warnings).toEqual([]);
   });
 
   it("刪除排程用 DELETE 且回應是 204 無內容", async () => {

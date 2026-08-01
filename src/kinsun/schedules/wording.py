@@ -62,6 +62,23 @@ def appointment_day_before_skipped_text(hour: int) -> str:
     )
 
 
+def appointment_day_before_gone_text(hour: int) -> str:
+    """**編輯**既有回診時，「前一天」那顆已過期而沒重建，要讓家屬看見的話。
+
+    ⚠️ **不可沿用 `appointment_day_before_skipped_text`**：那句請家屬「自己跟長輩提
+    一聲」，而編輯的情境下前一天那顆很可能**已經正常送出過**——回診 8/5、7/25 建立時
+    兩顆都建好了、8/4 早上真的響過，8/4 下午家屬只是改個標題。叫他去做系統已經做過的
+    事，就是在跟他說不準確的話。
+
+    要分辨「送過」與「從沒建過」得回頭讀已結案的鬧鐘（`list_for_elder` 依設計濾掉
+    `settled_at` 非空的列，讀得到的那份看不見它），成本與這件事的傷害不成比例。兩種
+    情形共同為真的只有「更新後只剩當天那顆」這個事實，故這句**只陳述事實**，不對長輩
+    是否已被提醒下任何斷言——家屬要接手與否，由他自己判斷。
+    """
+    stamp = f"{hour:02d}:00"
+    return f"回診前一天的提醒時間（{stamp}）已經過了，這次更新後只留下回診當天 {stamp} 的提醒。"
+
+
 def custom_text(elder_name: str, title: str, minutes_ahead: int) -> str:
     """提前提醒才講「再過幾分鐘」；準時提醒講「提醒您」。"""
     if minutes_ahead > 0:

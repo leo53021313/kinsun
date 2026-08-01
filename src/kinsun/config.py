@@ -277,7 +277,13 @@ class Settings(_BaseEnvSettings):
     medication_noon_hour: int = 12
     medication_evening_hour: int = 18
     medication_bedtime_hour: int = 21
-    appointment_reminder_hour: int = 8
+    # ⚠ 必須是真的鐘點：`schedules/timeparse.py` 拿它去 `datetime(..., hour, 0, ...)`，
+    # 誤設成 24 會擲 `ValueError: hour must be in 0..23`，而 REST 那條路徑只攔
+    # `TimeParseError`（是 `ValueError` 的子類，反向不成立），於是家屬每建一筆回診都
+    # 收到 HTTP 500。啟動時就擋掉，比讓它在家屬按下送出時才炸開好得多。
+    appointment_reminder_hour: Annotated[
+        int, BeforeValidator(_hour("APPOINTMENT_REMINDER_HOUR"))
+    ] = 8
     # 統一排程（spec 2026-07-25）：每位長輩的有效排程上限，防模型連續誤判灌爆行程表。
     schedule_max_active_per_elder: Annotated[
         int, BeforeValidator(_positive("SCHEDULE_MAX_ACTIVE_PER_ELDER"))

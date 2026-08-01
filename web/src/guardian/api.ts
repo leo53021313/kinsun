@@ -17,7 +17,32 @@ import type {
   ScheduleInput,
 } from "kinsun-shared/types";
 
-import { request } from "@/api";
+import { request, requestWithMeta } from "@/api";
+
+/**
+ * 排程寫入的結果：建好的那一組，外加**後端要對家屬說的話**。
+ *
+ * `warnings` 不是錯誤——寫入是成功的。它目前唯一的內容是「回診前一天那顆提醒的
+ * 時刻已經過了，只建了當天那顆」（06 §5）。這件事不講，家屬沒有任何地方會發現：
+ * 回診清單顯示的單位是「一件事」，不逐顆列鬧鐘。
+ */
+export type ScheduleWriteResult = {
+  group: ScheduleGroup;
+  /** 可直接顯示的繁中人話，逐條列出；沒有話要說時是空陣列。 */
+  warnings: string[];
+};
+
+/**
+ * 從信封的 `meta` 取出 `warnings`。
+ *
+ * ⚠️ 逐項檢查型別而不是 `as string[]`：`meta` 在共用包裡的型別是
+ * `Record<string, unknown>`，內容是**網路來的資料**，型別斷言只是叫編譯器閉嘴。
+ * 真的收到非字串時寧可少顯示一則，也不要讓 React 拿著一個物件去 render。
+ */
+function warningsOf(meta: Record<string, unknown> | null): string[] {
+  const raw = meta?.warnings;
+  return Array.isArray(raw) ? raw.filter((item): item is string => typeof item === "string") : [];
+}
 
 export function registerGuardian(
   email: string,
@@ -90,29 +115,29 @@ export function listSchedules(
   return request(`/api/v1/elders/${elderId}/schedules${kind ? `?kind=${kind}` : ""}`, { token });
 }
 
-export function createSchedule(
+export async function createSchedule(
   elderId: string,
   body: ScheduleInput,
   token: string,
-): Promise<ScheduleGroup> {
-  return request(`/api/v1/elders/${elderId}/schedules`, {
-    method: "POST",
-    body: JSON.stringify(body),
-    token,
-  });
+): Promise<ScheduleWriteResult> {
+  const { data, meta } = await requestWithMeta<ScheduleGroup>(
+    `/api/v1/elders/${elderId}/schedules`,
+    { method: "POST", body: JSON.stringify(body), token },
+  );
+  return { group: data, warnings: warningsOf(meta) };
 }
 
-export function updateSchedule(
+export async function updateSchedule(
   elderId: string,
   groupId: string,
   body: ScheduleInput,
   token: string,
-): Promise<ScheduleGroup> {
-  return request(`/api/v1/elders/${elderId}/schedules/${groupId}`, {
-    method: "PUT",
-    body: JSON.stringify(body),
-    token,
-  });
+): Promise<ScheduleWriteResult> {
+  const { data, meta } = await requestWithMeta<ScheduleGroup>(
+    `/api/v1/elders/${elderId}/schedules/${groupId}`,
+    { method: "PUT", body: JSON.stringify(body), token },
+  );
+  return { group: data, warnings: warningsOf(meta) };
 }
 
 export function deleteSchedule(elderId: string, groupId: string, token: string): Promise<void> {

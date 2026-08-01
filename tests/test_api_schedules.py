@@ -202,7 +202,11 @@ def test_skipping_the_day_before_reminder_is_told_to_the_guardian():
 
 
 def test_appointment_whose_reminders_have_all_passed_says_so_in_plain_chinese():
-    """今天下午才設今天的回診：兩顆都過去了，明說是回診日的問題，不含糊帶過。"""
+    """今天下午才設今天的回診：兩顆都過去了，訊息要講**真正的原因**。
+
+    ⚠️ 這裡的回診日期**完全正確**（就是今天），錯的是這個系統只在 08:00 提醒。訊息若
+    叫家屬「請確認回診日期」，他會去檢查一個沒錯的欄位、什麼都找不到，然後重試、再失敗。
+    """
     client, elder_id = _make_client(now=datetime(2026, 7, 25, 15, 0, tzinfo=TZ))
     created = _post(
         client,
@@ -215,7 +219,43 @@ def test_appointment_whose_reminders_have_all_passed_says_so_in_plain_chinese():
     assert created.status_code == 400
     body = created.json()["error"]
     assert body["code"] == "invalid_schedule"
-    assert "回診" in body["message"] and "已經過了" in body["message"]
+    message = body["message"]
+    assert "08:00" in message  # 講出提醒固定的鐘點＝真正的原因
+    assert "已經過了" in message
+    assert "直接跟長輩說" in message  # 回診就在今天的情形，給得出動作
+
+
+def test_editing_an_appointment_does_not_claim_the_elder_was_never_reminded():
+    """編輯路徑不可沿用新增那句「請您自己跟長輩提一聲」。
+
+    ⚠️ 失效情境：回診 8/5、7/25 建立時兩顆都建好了 → 8/4 08:00 的提醒**真的送出過**
+    → 8/4 15:00 家屬只是改個標題 → 前一天那顆判定為已過期。此時叫他「自己跟長輩提
+    一聲」，是叫他去做系統今天早上已經做過的事。
+    """
+    client, elder_id = _make_client(now=datetime(2026, 8, 4, 15, 0, tzinfo=TZ))
+    group_id = _post(
+        client,
+        elder_id,
+        kind="appointment",
+        title="心臟科回診",
+        occurrences=[{"repeat": "once", "date": "2026-08-05", "time": "08:00"}],
+        event_date="2026-08-05",
+    ).json()["data"]["group_id"]
+    updated = client.put(
+        f"/api/v1/elders/{elder_id}/schedules/{group_id}",
+        json={
+            "kind": "appointment",
+            "title": "心臟科回診（改約）",
+            "occurrences": [{"repeat": "once", "date": "2026-08-05", "time": "08:00"}],
+            "event_date": "2026-08-05",
+        },
+        headers=AUTH,
+    )
+    assert updated.status_code == 200
+    warnings = updated.json()["meta"]["warnings"]
+    assert len(warnings) == 1
+    assert "更新後只留下" in warnings[0]  # 只陳述事實
+    assert "自己跟長輩提一聲" not in warnings[0]  # 不對「長輩沒被提醒過」下斷言
 
 
 def test_update_also_recomputes_the_day_before(client_and_elder):

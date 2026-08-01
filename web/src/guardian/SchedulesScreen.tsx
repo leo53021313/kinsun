@@ -52,6 +52,9 @@ export function SchedulesScreen(props: { elderId: string; elderName: string }) {
   // ⚠️ 與 error 分開：「修改後請重新填一次提醒時間。」是按下「編輯」之後的**操作
   // 指示**，不是錯誤。走 ErrorText 的話畫面會對一個成功的操作跳紅字，螢幕報讀
   // 軟體還會把它當警示朗讀（Feedback.tsx 檔頭寫明該元件是給錯誤與空狀態用的）。
+  //
+  // 送出成功後後端的 `meta.warnings`（「回診前一天那顆提醒沒建成」）也走這裡：
+  // 那同樣是**寫入成功**之後的中性告知，不是錯誤。
   const [hint, setHint] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -133,12 +136,16 @@ export function SchedulesScreen(props: { elderId: string; elderName: string }) {
     setError("");
     setBusy(true);
     try {
-      if (editingId) {
-        await updateSchedule(elderId, editingId, body, token);
-      } else {
-        await createSchedule(elderId, body, token);
-      }
+      const written = editingId
+        ? await updateSchedule(elderId, editingId, body, token)
+        : await createSchedule(elderId, body, token);
       resetForm();
+      // ⚠️ **必須排在 `resetForm()` 之後**：`resetForm` 會 `setHint("")`，順序顛倒
+      // 就當場把這句話清掉，而畫面上看不出任何異狀——後端講了、家屬還是沒看到。
+      //
+      // 中文句子以句號分隔、句間不留空白，故直接串接（今天只會有一則：回診前一天
+      // 那顆提醒的時刻已經過了，只建了當天那顆）。
+      setHint(written.warnings.join(""));
       // 讓長輩欄立刻去拉，不必等下一次輪詢（見 notify/bus 的說明）。
       emitStageEvent("guardian-wrote");
       await reload();

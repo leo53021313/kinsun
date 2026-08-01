@@ -20,7 +20,10 @@ from kinsun.schedules.timeparse import (
     build_occurrence,
     parse_epoch,
 )
-from kinsun.schedules.wording import appointment_day_before_skipped_text
+from kinsun.schedules.wording import (
+    appointment_day_before_gone_text,
+    appointment_day_before_skipped_text,
+)
 from kinsun.web.envelope import ok
 from kinsun.web.errors import ErrorCode
 from kinsun.web.routers.deps import GuardianAuth, GuardianScope
@@ -115,7 +118,7 @@ def create_schedules_router(
             raise HTTPException(status_code=400, detail=ErrorCode.INVALID_DATE) from exc
 
     def plan(
-        body: ScheduleIn, kind: ScheduleKind
+        body: ScheduleIn, kind: ScheduleKind, *, is_creating: bool
     ) -> tuple[tuple[Occurrence, ...], float | None, list[str]]:
         """回傳（鬧鐘, 事件時刻, 要告訴家屬的話）。
 
@@ -142,12 +145,16 @@ def create_schedules_router(
                 status_code=400,
                 detail={"code": ErrorCode.INVALID_SCHEDULE, "message": str(exc)},
             ) from exc
-        warnings = (
-            [appointment_day_before_skipped_text(appointment_hour)]
-            if reminders.is_day_before_skipped
-            else []
+        if not reminders.is_day_before_skipped:
+            return reminders.occurrences, event_at, []
+        # 新增與編輯講的話不同：新增時這一組是全新的，前一天那顆從沒建過，可以放心請
+        # 家屬自己補講；編輯時它很可能今天早上已經正常送出過（見 `..._gone_text`）。
+        text = (
+            appointment_day_before_skipped_text(appointment_hour)
+            if is_creating
+            else appointment_day_before_gone_text(appointment_hour)
         )
-        return reminders.occurrences, event_at, warnings
+        return reminders.occurrences, event_at, [text]
 
     def find_group(elder_id: str, group_id: str) -> ScheduleGroup:
         for group in schedules.groups_for_elder(elder_id):
@@ -169,7 +176,7 @@ def create_schedules_router(
     ) -> dict:
         scope.assert_manages(auth, elder_id)
         kind = parse_kind(body.kind)
-        occurrences, event_at, warnings = plan(body, kind)
+        occurrences, event_at, warnings = plan(body, kind, is_creating=True)
         try:
             rows = schedules.create(
                 elder_id=elder_id,
@@ -206,7 +213,7 @@ def create_schedules_router(
         # 呼叫端才知道要改類型得刪掉重建。
         if parse_kind(body.kind) is not group.kind:
             raise HTTPException(status_code=400, detail=ErrorCode.KIND_NOT_CHANGEABLE)
-        occurrences, event_at, warnings = plan(body, group.kind)
+        occurrences, event_at, warnings = plan(body, group.kind, is_creating=False)
         try:
             schedules.replace_group(
                 group_id,
