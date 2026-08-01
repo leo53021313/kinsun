@@ -26,14 +26,14 @@ class PgVoiceProfileStore:
     def save(self, profile: VoiceProfile) -> None:
         self._db.execute(
             "INSERT INTO voice_profiles "
-            "(elder_id, prompt_audio_url, prompt_text, consented_by, granted_at, revoked_at) "
+            "(elder_id, prompt_audio_path, prompt_text, consented_by, granted_at, revoked_at) "
             "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (elder_id) DO UPDATE SET "
-            "prompt_audio_url = EXCLUDED.prompt_audio_url, prompt_text = EXCLUDED.prompt_text, "
+            "prompt_audio_path = EXCLUDED.prompt_audio_path, prompt_text = EXCLUDED.prompt_text, "
             "consented_by = EXCLUDED.consented_by, granted_at = EXCLUDED.granted_at, "
             "revoked_at = EXCLUDED.revoked_at",
             (
                 profile.elder_id,
-                profile.prompt_audio_url,
+                profile.prompt_audio_path,
                 profile.prompt_text,
                 profile.consented_by,
                 profile.granted_at,
@@ -43,7 +43,7 @@ class PgVoiceProfileStore:
 
     def get_active(self, elder_id: str) -> VoiceProfile | None:
         rows = self._db.query(
-            "SELECT elder_id, prompt_audio_url, prompt_text, consented_by, granted_at, revoked_at "
+            "SELECT elder_id, prompt_audio_path, prompt_text, consented_by, granted_at, revoked_at "
             "FROM voice_profiles WHERE elder_id = %s AND revoked_at IS NULL",
             (elder_id,),
         )

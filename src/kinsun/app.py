@@ -116,6 +116,14 @@ def build_app() -> FastAPI:
     # ⚠️ LINE 不可加入——它一輪只能回一則語音訊息，給它第一句等於把後面的話吞掉；
     # 分段需要投遞端「逐段拉、接著播」的配合，目前只有 App 對講機做得到。
     tts_client = build_tts_client(settings)
+    # ⚠️ 建立位置必須早於 VoicePipeline（2026-08-01 從下方上移）：長輩客製化聲音的參考
+    # 音檔要靠它現簽短效網址，pipeline 建構時就得拿到。它同時仍供應回覆音檔上傳（下方
+    # ack_audio 與 turns router 續用同一個實例，簽章快取因此共用）。
+    publisher = (
+        build_audio_publisher(settings, clock=clock, new_id=lambda: uuid.uuid4().hex)
+        if settings.tts_backend == "dgx"
+        else None
+    )
     pipeline = VoicePipeline(
         asr=build_asr_client(settings),
         agent=core.agent,
@@ -140,9 +148,16 @@ def build_app() -> FastAPI:
         # 一輪的總時間上限（辛-21）：逐次逾時攔不住三次呼叫相加。
         turn_budget_seconds=settings.turn_budget_seconds,
         moderator=moderator,
-        # 長輩客製化聲音（2026-07-30 voice_profiles）：未傳此參數時 _resolve_voice 一律回
+        # 長輩客製化聲音（2026-07-30 voice_profiles）：未傳此參數時 resolve_voice 一律回
         # None，DGX 端沿用全域預設聲音且全程無任何錯誤訊息——設定檔存在也不會生效。
-        voice_profiles=PgVoiceProfileStore(db),
+        #
+        # 兩者同進同出（publisher 為 None＝TTS 非 dgx，客製化聲音本就無從生效）：
+        # 設定檔存的是 bucket 內物件路徑，沒有簽章函式就組不出 DGX 能下載的網址，
+        # 故 VoicePipeline 的建構子會擋下「只給 store 不給 signer」。
+        voice_profiles=PgVoiceProfileStore(db) if publisher is not None else None,
+        # 現簽短效網址（2026-08-01）。publisher 內部在效期內快取，不會每輪真的
+        # 打一次 Supabase（實測簽一次約 384ms，落在長輩等回覆的關鍵路徑上）。
+        sign_voice_url=publisher.signed_url_for if publisher is not None else None,
     )
     binding_sessions = PgBindingSessionStore(db)
     schedule_menu = ScheduleMenu(
@@ -177,11 +192,6 @@ def build_app() -> FastAPI:
         ConsentGate(core.accounts)
         if settings.binding_gate_enabled
         else AllowAllGate(core.accounts)  # 旁路模式也解析 elder_id（✅ D-19）
-    )
-    publisher = (
-        build_audio_publisher(settings, clock=clock, new_id=lambda: uuid.uuid4().hex)
-        if settings.tts_backend == "dgx"
-        else None
     )
     # 安撫話音檔（spec 2026-07-28 P2）：啟動時把語庫的十幾句合成上傳好，對話中只查表。
     # ⚠️ 用**獨立的 prefix**（`acks/`）：`publisher` 的 `cleanup(retention_days)` 會依

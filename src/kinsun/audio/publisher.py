@@ -19,6 +19,12 @@ from kinsun.transport import HttpxTransport, Transport, TransportError, read_jso
 
 logger = logging.getLogger("kinsun.audio")
 
+# 長輩客製化聲音參考音檔的簽章網址效期與快取（2026-08-01）。
+# 一小時足夠涵蓋一輪對話與 DGX 端的下載，又短到就算外流也很快失效；
+# 提前 5 分鐘換發，避免把「剩沒幾秒」的網址交給 DGX 而在下載途中過期。
+_VOICE_URL_TTL_SECONDS = 3600
+_VOICE_URL_REFRESH_MARGIN_SECONDS = 300
+
 
 class AudioPublishError(Exception):
     """音檔上傳／清理失敗。"""
@@ -51,6 +57,8 @@ class SupabaseAudioPublisher:
         self._prefix = prefix.strip("/")
         self._transport = transport or HttpxTransport()
         self._signed_url_expires_seconds = signed_url_expires_seconds
+        # 物件路徑 → (簽章網址, 這份快取的失效時刻)。見 signed_url_for 的說明。
+        self._voice_url_cache: dict[str, tuple[str, datetime]] = {}
 
     def _object_path(self, name: str) -> str:
         return f"{self._prefix}/{self._clock().strftime('%Y%m%d')}/{name}"
@@ -77,9 +85,34 @@ class SupabaseAudioPublisher:
             raise AudioPublishError(f"音檔上傳失敗：{exc}") from exc
         return self._create_signed_url(path)
 
-    def _create_signed_url(self, path: str) -> str:
+    def signed_url_for(self, path: str) -> str:
+        """為 bucket 內**既有**物件簽一個短效讀取網址（長輩客製化聲音的參考音檔用）。
+
+        與 `publish` 不同：這裡不上傳，只針對已存在的路徑取用網址。`voice_profiles`
+        存的是物件路徑而非網址，正是為了每次現簽——存死的簽章 URL 會過期，過期後
+        DGX 端下載失敗會讓整輪退化成純文字（長輩完全沒聲音）。
+
+        ⚠️ 帶行程內快取：DGX 端拿到音檔後會自行快取，之後每輪其實用不到這個網址，
+        但應用層無從得知對方的快取狀態，只能每輪都附上。實測簽一次約 384ms，且落在
+        「長輩講完話到聽見回覆」的關鍵路徑上，故在效期內重用同一個網址。
+        """
+        now = self._clock()
+        cached = self._voice_url_cache.get(path)
+        if cached is not None and cached[1] > now:
+            return cached[0]
+        url = self._create_signed_url(path, expires_in=_VOICE_URL_TTL_SECONDS)
+        # 提前 _VOICE_URL_REFRESH_MARGIN_SECONDS 失效：避免發出一個「就快過期」的網址，
+        # 讓 DGX 端在下載途中才過期。
+        self._voice_url_cache[path] = (
+            url,
+            now + timedelta(seconds=_VOICE_URL_TTL_SECONDS - _VOICE_URL_REFRESH_MARGIN_SECONDS),
+        )
+        return url
+
+    def _create_signed_url(self, path: str, *, expires_in: int | None = None) -> str:
         sign_url = f"{self._base}/storage/v1/object/sign/{self._bucket}/{path}"
-        body = json.dumps({"expiresIn": self._signed_url_expires_seconds}).encode("utf-8")
+        seconds = self._signed_url_expires_seconds if expires_in is None else expires_in
+        body = json.dumps({"expiresIn": seconds}).encode("utf-8")
         try:
             response = self._transport.request(
                 "POST",

@@ -22,7 +22,7 @@ def store(request):
 def test_save_and_get_active_roundtrip(store, ns):
     profile = VoiceProfile(
         elder_id=f"{ns}e1",
-        prompt_audio_url="https://example.test/voice.wav",
+        prompt_audio_path="voice-refs/voice.wav",
         prompt_text="午安，我是小明。",
         consented_by="孫子小明本人於通話中同意",
         granted_at=1000.0,
@@ -40,7 +40,7 @@ def test_save_upserts_existing_profile(store, ns):
     store.save(
         VoiceProfile(
             elder_id=f"{ns}e1",
-            prompt_audio_url="https://example.test/v1.wav",
+            prompt_audio_path="voice-refs/v1.wav",
             prompt_text="舊逐字稿",
             consented_by="舊同意人",
             granted_at=1000.0,
@@ -49,14 +49,14 @@ def test_save_upserts_existing_profile(store, ns):
     store.save(
         VoiceProfile(
             elder_id=f"{ns}e1",
-            prompt_audio_url="https://example.test/v2.wav",
+            prompt_audio_path="voice-refs/v2.wav",
             prompt_text="新逐字稿",
             consented_by="新同意人",
             granted_at=2000.0,
         )
     )
     got = store.get_active(f"{ns}e1")
-    assert got.prompt_audio_url == "https://example.test/v2.wav"
+    assert got.prompt_audio_path == "voice-refs/v2.wav"
     assert got.prompt_text == "新逐字稿"
 
 
@@ -64,7 +64,7 @@ def test_revoke_makes_profile_inactive(store, ns):
     store.save(
         VoiceProfile(
             elder_id=f"{ns}e1",
-            prompt_audio_url="https://example.test/voice.wav",
+            prompt_audio_path="voice-refs/voice.wav",
             prompt_text="逐字稿",
             consented_by="同意人",
             granted_at=1000.0,

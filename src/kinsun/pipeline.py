@@ -59,6 +59,7 @@ class VoicePipeline:
         response_window_seconds: int = 3600,
         moderator: AbuseModerator | None = None,
         voice_profiles: VoiceProfileStore | None = None,
+        sign_voice_url: Callable[[str], str] | None = None,
         chunked_channels: frozenset[str] = frozenset(),
         turn_budget_seconds: float = 0.0,
     ) -> None:
@@ -77,6 +78,19 @@ class VoicePipeline:
         # 選填（預設 None＝所有長輩皆用 DGX 端全域預設聲音）：長輩客製化聲音複製
         # （2026-07-30），未設定時不影響既有呼叫端與測試。
         self._voice_profiles = voice_profiles
+        # 設定檔存的是 bucket 內的物件路徑，要現簽成短效網址才能交給 DGX 下載
+        # （2026-08-01，見 VoiceProfile.prompt_audio_path 的說明）。
+        #
+        # ⚠️ 給了 store 卻沒給 signer 是接線錯誤，在建構當下就擋掉：放它過去的話
+        # resolve_voice 只能回 None，於是「設定檔明明存在、聲音卻沒換」，而且全程
+        # 不會有任何錯誤訊息——這正是 2026-07-31 花了大半天才查出來的那類缺陷。
+        if voice_profiles is not None and sign_voice_url is None:
+            raise ValueError(
+                "傳了 voice_profiles 就必須一併傳 sign_voice_url："
+                "設定檔存的是物件路徑，沒有簽章函式就組不出 DGX 能下載的網址，"
+                "長輩客製化聲音會靜默失效。"
+            )
+        self._sign_voice_url = sign_voice_url
         self._response_window_seconds = response_window_seconds
         # 選填（預設 None＝不審核，等同 SAFETY_MODERATION_ENABLED=false）。
         self._moderator = moderator
@@ -504,13 +518,33 @@ class VoicePipeline:
         不經本類別的 speak 流程，得自己解析同一位長輩的參考語音——否則第 0 段是
         客製化聲音、第 1 段起換回預設聲音，長輩會聽到回覆講到一半換人。
         """
-        if self._voice_profiles is None:
+        if self._voice_profiles is None or self._sign_voice_url is None:
             return None
         profile = self._voice_profiles.get_active(elder_id)
         if profile is None:
             return None
+        # 舊資料護欄（2026-08-01）：欄位從 prompt_audio_url 改名為 prompt_audio_path 時
+        # 只改名、不轉換值（功能未上線、正式環境無資料，見 db.py 的遷移說明）。若哪個
+        # 環境的舊值是網址，拿去簽會組出 .../object/sign/<bucket>/https://... 而 404，
+        # 然後靜默退回預設聲音。這裡先攔下並吼出來，讓它至少是看得見的失效。
+        if profile.prompt_audio_path.startswith(("http://", "https://")):
+            logger.error(
+                "voice_profiles.prompt_audio_path 存的是網址而非 bucket 內路徑，"
+                "本輪改用全域預設聲音；請重新註冊這位長輩的參考語音 elder_id=%s",
+                elder_id,
+            )
+            return None
+        # 設定檔存路徑、這裡才現簽成短效網址（2026-08-01）。簽章失敗不讓整輪陪葬：
+        # 退回全域預設聲音，長輩至少聽得到金孫說話。
+        try:
+            url = self._sign_voice_url(profile.prompt_audio_path)
+        except Exception:  # noqa: BLE001 - 簽章端的例外型別由注入的實作決定
+            logger.warning(
+                "客製化聲音簽章失敗，本輪改用全域預設聲音 elder_id=%s", elder_id, exc_info=True
+            )
+            return None
         return VoiceReference(
             elder_id=profile.elder_id,
-            prompt_audio_url=profile.prompt_audio_url,
+            prompt_audio_url=url,
             prompt_text=profile.prompt_text,
         )

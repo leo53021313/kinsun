@@ -329,6 +329,10 @@ def _chunking_client(svc, memory, tts, publisher, voice_profiles=None):
         risk_events=FakeRiskEventStore(),
         chunked_channels=frozenset({"app"}),
         voice_profiles=voice_profiles,
+        # 設定檔存物件路徑，簽章函式在此以假實作代替（2026-08-01）。
+        sign_voice_url=(
+            None if voice_profiles is None else lambda path: f"https://signed.test/{path}"
+        ),
     )
     app = FastAPI()
     install_error_envelope(app)
@@ -396,7 +400,7 @@ def test_every_chunk_uses_the_elders_custom_voice():
     profiles.save(
         VoiceProfile(
             elder_id=elder.elder_id,
-            prompt_audio_url="https://cdn.test/grandson.wav",
+            prompt_audio_path="voice-refs/grandson.wav",
             prompt_text="阿嬤我是小明",
             consented_by="孫子小明本人同意",
             granted_at=NOW.timestamp(),
@@ -415,7 +419,7 @@ def test_every_chunk_uses_the_elders_custom_voice():
     assert tts.voices[0] is not None and tts.voices[1] is not None
     # 兩段必須是同一個聲音——不是「都有值」就好，換成別人的聲音一樣是錯的。
     assert tts.voices[0] == tts.voices[1]
-    assert tts.voices[1].prompt_audio_url == "https://cdn.test/grandson.wav"
+    assert tts.voices[1].prompt_audio_url == "https://signed.test/voice-refs/grandson.wav"
 
 
 def test_stale_digest_is_rejected_so_the_app_stops_playing_the_old_turn():

@@ -138,3 +138,76 @@ def test_object_path_uses_prefix():
         prefix="inbound",
     )
     assert publisher._object_path("abc.m4a") == "inbound/20260703/abc.m4a"
+
+
+# --- 長輩客製化聲音參考音檔的簽章（2026-08-01） ---
+
+_VOICE_SIGN_RESPONSE = Response(
+    200,
+    {},
+    b'{"signedURL":"/object/sign/tts-audio/voice-refs/e1.wav?token=vtok"}',
+)
+
+
+def test_signed_url_for_signs_an_existing_object_without_uploading():
+    """voice_profiles 存的是物件路徑，這裡只簽網址、不上傳。"""
+    transport = FakeTransport([_VOICE_SIGN_RESPONSE])
+    url = _publisher(transport).signed_url_for("voice-refs/e1.wav")
+
+    assert url == (
+        "https://proj.supabase.co/storage/v1/object/sign/tts-audio/voice-refs/e1.wav?token=vtok"
+    )
+    assert len(transport.calls) == 1, "只該打簽章端點，不該有上傳"
+    method, call_url, data, _headers, _timeout = transport.calls[0]
+    assert method == "POST"
+    assert call_url == "https://proj.supabase.co/storage/v1/object/sign/tts-audio/voice-refs/e1.wav"
+    assert json.loads(data)["expiresIn"] == 3600, "用參考音檔專屬效期，不是回覆音檔那個"
+
+
+def test_signed_url_for_reuses_the_cached_url_within_its_lifetime():
+    """效期內重用：實測簽一次約 384ms，且落在長輩等回覆的關鍵路徑上。
+
+    DGX 端拿到音檔後會自行快取、之後根本用不到這個網址，但應用層無從得知對方的
+    快取狀態，只能每輪都附上——所以省下這次往返的唯一辦法就是自己記住。
+    """
+    transport = FakeTransport([_VOICE_SIGN_RESPONSE])
+    publisher = _publisher(transport)
+
+    first = publisher.signed_url_for("voice-refs/e1.wav")
+    second = publisher.signed_url_for("voice-refs/e1.wav")
+
+    assert first == second
+    assert len(transport.calls) == 1, "第二次不該再打 Supabase"
+
+
+def test_signed_url_for_resigns_after_the_cache_entry_expires():
+    """換發要早於網址本身到期，免得把「剩沒幾秒」的網址交給 DGX 而在下載途中過期。"""
+    now = _NOW
+    transport = FakeTransport([_VOICE_SIGN_RESPONSE, _VOICE_SIGN_RESPONSE])
+    publisher = SupabaseAudioPublisher(
+        "https://proj.supabase.co",
+        "service-key",
+        "tts-audio",
+        timeout=10.0,
+        clock=lambda: now,
+        new_id=lambda: "abc123",
+        transport=transport,
+    )
+
+    publisher.signed_url_for("voice-refs/e1.wav")
+    now = _NOW + timedelta(seconds=3600 - 300 + 1)  # 過了換發點（效期 3600、提前 300 換）
+    publisher.signed_url_for("voice-refs/e1.wav")
+
+    assert len(transport.calls) == 2
+
+
+def test_signed_url_for_caches_per_path():
+    """兩位長輩各有各的參考音檔，不能互相汙染。"""
+    transport = FakeTransport([_VOICE_SIGN_RESPONSE, _VOICE_SIGN_RESPONSE])
+    publisher = _publisher(transport)
+
+    publisher.signed_url_for("voice-refs/e1.wav")
+    publisher.signed_url_for("voice-refs/e2.wav")
+
+    assert len(transport.calls) == 2
+    assert transport.calls[1][1].endswith("/voice-refs/e2.wav")

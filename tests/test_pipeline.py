@@ -697,7 +697,10 @@ class SpyTts:
         return TtsResult(text=text, audio=b"AUDIO")
 
 
-def _voice_pipeline(voice_profiles=None):
+def _voice_pipeline(voice_profiles=None, sign_voice_url=None):
+    """設定檔存的是物件路徑，簽章函式預設為「路徑加個前綴當網址」的假實作。"""
+    if voice_profiles is not None and sign_voice_url is None:
+        sign_voice_url = lambda path: f"https://signed.test/{path}?token=abc"  # noqa: E731
     return VoicePipeline(
         asr=MockAsrClient("阿公早安"),
         agent=CareAgent(EchoLLM(), NullSession()),
@@ -706,6 +709,7 @@ def _voice_pipeline(voice_profiles=None):
         notifier=SpyNotifier(),
         risk_events=FakeRiskEventStore(),
         voice_profiles=voice_profiles,
+        sign_voice_url=sign_voice_url,
     )
 
 
@@ -719,12 +723,12 @@ def test_pipeline_without_voice_profiles_passes_none():
 
 def test_pipeline_with_voice_profile_passes_reference():
     """長輩客製化聲音複製（2026-07-30）：elder 有生效中的設定檔時，TTS 收到對應的
-    VoiceReference。"""
+    VoiceReference——且**存的路徑已被簽成網址**（2026-08-01）。"""
     profiles = FakeVoiceProfileStore()
     profiles.save(
         VoiceProfile(
             elder_id="e1",
-            prompt_audio_url="https://example.test/e1.wav",
+            prompt_audio_path="voice-refs/e1.wav",
             prompt_text="午安，我是小明。",
             consented_by="孫子小明本人同意",
             granted_at=1000.0,
@@ -736,10 +740,51 @@ def test_pipeline_with_voice_profile_passes_reference():
     assert tts.voices == [
         VoiceReference(
             elder_id="e1",
-            prompt_audio_url="https://example.test/e1.wav",
+            prompt_audio_url="https://signed.test/voice-refs/e1.wav?token=abc",
             prompt_text="午安，我是小明。",
         )
     ]
+
+
+def test_pipeline_requires_a_signer_when_voice_profiles_is_given():
+    """接線防呆（2026-08-01）：只給 store 不給簽章函式時，建構當下就要炸。
+
+    放它過去的話 resolve_voice 只能回 None——「設定檔明明存在、聲音卻沒換」且全程
+    沒有錯誤訊息，正是這個功能最難查的失效模式。
+    """
+    with pytest.raises(ValueError, match="sign_voice_url"):
+        VoicePipeline(
+            asr=MockAsrClient("阿公早安"),
+            agent=CareAgent(EchoLLM(), NullSession()),
+            tts=SpyTts(),
+            detector=StubDetector(RiskTier.L0),
+            notifier=SpyNotifier(),
+            risk_events=FakeRiskEventStore(),
+            voice_profiles=FakeVoiceProfileStore(),
+        )
+
+
+def test_pipeline_falls_back_to_default_voice_when_signing_fails():
+    """簽章失敗（Supabase 不通等）只犧牲客製化聲音，不讓整輪沒聲音。"""
+    profiles = FakeVoiceProfileStore()
+    profiles.save(
+        VoiceProfile(
+            elder_id="e1",
+            prompt_audio_path="voice-refs/e1.wav",
+            prompt_text="午安，我是小明。",
+            consented_by="孫子小明本人同意",
+            granted_at=1000.0,
+        )
+    )
+
+    def boom(_path: str) -> str:
+        raise RuntimeError("Supabase 暫時不通")
+
+    pipeline = _voice_pipeline(profiles, sign_voice_url=boom)
+    tts = pipeline._tts
+    result = pipeline.process(b"\x00", elder_id="e1")
+    assert tts.voices == [None]  # 退回全域預設聲音
+    assert result.audio is not None  # 但這一輪仍然有聲音
 
 
 def test_pipeline_with_voice_profiles_but_no_profile_for_elder_passes_none():
@@ -1043,3 +1088,28 @@ def test_no_budget_configured_means_no_limit(monkeypatch):
     pipeline.process(b"\x00", elder_id="u1")
 
     assert llm.seen == [None]
+
+
+def test_pipeline_rejects_a_url_stored_where_a_path_belongs():
+    """舊資料護欄：欄位改名時只改名不轉值，殘留的網址要吼出來而不是靜默失效。
+
+    拿網址去簽會組出 .../object/sign/<bucket>/https://... 而 404，接著退回預設聲音——
+    長輩的專屬聲音就這樣消失且沒人知道。
+    """
+    profiles = FakeVoiceProfileStore()
+    profiles.save(
+        VoiceProfile(
+            elder_id="e1",
+            prompt_audio_path="https://proj.supabase.co/storage/v1/object/sign/b/x.wav?token=t",
+            prompt_text="午安，我是小明。",
+            consented_by="孫子小明本人同意",
+            granted_at=1000.0,
+        )
+    )
+    signed = []
+    pipeline = _voice_pipeline(profiles, sign_voice_url=lambda p: signed.append(p) or "x")
+    tts = pipeline._tts
+    pipeline.process(b"\x00", elder_id="e1")
+
+    assert tts.voices == [None], "應退回全域預設聲音"
+    assert signed == [], "不該拿網址去簽"
