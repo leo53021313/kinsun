@@ -273,10 +273,29 @@ RISK_NOTIFICATION_LOGS_DDL = (
 )
 
 # App 內通知（✅ D-12，甲-6）：App 出站 adapter 落地訊息，登入後拉取。
+#
+# severity（2026-08-01，Leo 裁決）：危急警報與用藥提醒先前寫進同一張表、**沒有
+# 任何欄位分得出來**，前端拿到的只有一段文字，於是「跌倒了」與「該吃藥了」在畫面
+# 上長得一模一樣。值域與「為什麼不沿用 RiskTier」見 notifications/models.py。
+#
+# ⚠️ 三段順序不可調換：建表（既有庫 no-op）→ ALTER 補欄 → 建索引。既有庫的
+# app_notifications 早已存在（D-12 上線至今），CREATE TABLE IF NOT EXISTS 對它
+# 是 no-op、**不會**生出 severity 欄；只把欄位寫進 CREATE TABLE 的話，新庫吃得到
+# 而既有庫永遠缺欄位，線上第一次寫通知就炸 UndefinedColumn。
+#
+# ⚠️ DEFAULT 'notice' 是**刻意的失真**：既有列裡確實混著真正的危急警報，但寫入
+# 當時沒有留下任何分類線索，無從回溯分辨——一律當成一般通知是唯一誠實的選擇
+# （猜錯的方向是「把危急警報顯示成一般通知」，與現況相同，不會比現在更糟；反過來
+# 全部標成 alert 則會讓每一則舊的用藥提醒都變成紅色警報）。此限制已記入
+# docs/dev/07 §7 與 12 §4 的已知限制。
+# 預設值同時是 NOT NULL 能就地加在既有非空表上的前提，不可拿掉。
 APP_NOTIFICATIONS_DDL = (
     "CREATE TABLE IF NOT EXISTS app_notifications ("
     "app_notification_id TEXT PRIMARY KEY, external_id TEXT NOT NULL, "
-    "content TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+    "content TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL, "
+    "severity TEXT NOT NULL DEFAULT 'notice');"
+    "ALTER TABLE app_notifications "
+    "ADD COLUMN IF NOT EXISTS severity TEXT NOT NULL DEFAULT 'notice';"
     "CREATE INDEX IF NOT EXISTS idx_app_notifications_external_created "
     "ON app_notifications (external_id, created_at);"
 )
