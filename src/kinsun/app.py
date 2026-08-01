@@ -452,10 +452,6 @@ def build_app() -> FastAPI:
             locations=core.locations,
             clock=clock,
             max_audio_bytes=settings.audio_max_upload_bytes,
-            # 分段串流的後續段落：從長輩自己最後一則回覆重新切句、逐段合成上傳。
-            memory=core.memory,
-            tts=tts_client,
-            audio_publisher=publisher,
             admission=turn_admission,
             rate_limiter=turn_rate_limiter,
         ),
