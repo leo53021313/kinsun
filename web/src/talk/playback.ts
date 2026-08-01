@@ -57,10 +57,14 @@ export function writeReplyAudio(bytes: Uint8Array): { uri: string } {
  * 的**同時**呼叫這支函式，並傳入目前正在播放中的 uri（若有）以免連正在
  * 播的那一則都被回收掉。
  *
- * ⚠️ **Task 4 記載的「尚未接線」缺口已於 P3 Task 8 收斂**，目前有三個呼叫端：
- * `elder/useTalk.ts::startRecording`（`playQueue.clear()` 的同一處）、同檔播放
- * 佇列丟棄「收音期間抵達的那一則」時，以及 effect cleanup（切頁籤／卸載／換
- * token，不帶例外、全掃）。
+ * ⚠️ **Task 4 記載的「尚未接線」缺口已於 P3 Task 8 收斂**，目前有兩個呼叫端：
+ * `elder/useTalk.ts::startRecording`（開錄失敗時，與 `playQueue.clear()` 的
+ * 同一處）與 effect cleanup（切頁籤／卸載／換 token，不帶例外、全掃）。
+ * ⚠️ **這裡曾經記載第三個呼叫端**（「播放佇列丟棄收音期間抵達的那一則」時），
+ * 那是插嘴後**整題直接丟棄**的舊行為；`27b9c7c`（2026-08-01，「插嘴之後前一題
+ * 的答案改成補播」）把它換成收進 `elder/useTalk.ts::deferredTurnsRef` 等講完
+ * 再補播，不再有「收音期間抵達就回收」這件事——本行原本沒有跟著改，是與那次
+ * 重新命名無關的既有落差，2026-08-01 續段語音 WS 直送收尾（Task 8）查出後更正。
  */
 export function revokeQueuedReplyAudio(exceptUri?: string): void {
   for (const uri of pendingBlobUrls) {

@@ -37,9 +37,6 @@ class ErrorCode(StrEnum):
     JOB_NOT_RUNNABLE_HERE = "job_not_runnable_here"
     STRATEGY_NOT_FOUND = "strategy_not_found"
 
-    # --- 分段語音串流（2026-07-26 延遲優化）---
-    SPEECH_UNAVAILABLE = "speech_unavailable"  # 合成或上傳失敗，後續段落取不到
-
     # --- 帳號 ---
     EMAIL_TAKEN = "email_taken"
     PHONE_TAKEN = "phone_taken"

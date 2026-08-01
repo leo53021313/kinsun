@@ -59,7 +59,6 @@ ERROR_MESSAGES: dict[str, str] = {
     "unsupported_media_type": "上傳格式不正確，請使用語音錄音",
     "job_not_found": "找不到這個排程任務",
     "job_not_runnable_here": "這個排程由其他程序執行，後台無法在此立即觸發",
-    "speech_unavailable": "語音合成暫時無法使用",
     "internal_testing_disabled": "內部測試模式未開啟",
     "admin_disabled": "服務未開放",
 }
