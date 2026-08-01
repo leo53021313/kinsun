@@ -551,6 +551,77 @@ def test_greeting_hour_bounds_must_be_a_real_hour(key, raw):
     assert raw in message  # 訊息要自解釋：含實際數值
 
 
+@pytest.mark.parametrize("raw", ["-1", "24", "99", "abc"])
+def test_appointment_reminder_hour_must_be_a_real_hour(raw):
+    """回診提醒鐘點必須落在 0..23，否則啟動就擋下來。
+
+    ⚠️ 誤設的後果不是「提醒時間怪怪的」而是 **HTTP 500**：`timeparse.py` 拿它去
+    `datetime(..., hour, 0, ...)`，24 會擲 `ValueError: hour must be in 0..23`，而
+    REST 那條路徑只攔 `TimeParseError`（它是 `ValueError` 的**子類**，反向不成立），
+    例外直接穿出去——家屬每建一筆回診都收到 500，而 log 以外沒有任何線索指向設定。
+    """
+    with pytest.raises(ConfigError) as exc:
+        load_settings({**BASE_ENV, "APPOINTMENT_REMINDER_HOUR": raw})
+    message = str(exc.value)
+    assert "APPOINTMENT_REMINDER_HOUR" in message
+    assert raw in message  # 訊息要自解釋：含實際數值
+
+
+@pytest.mark.parametrize("raw", ["0", "8", "23"])
+def test_appointment_reminder_hour_accepts_the_whole_valid_range(raw):
+    """邊界兩端都是合法鐘點——擋過頭會讓半夜或深夜提醒的設定無法啟動。"""
+    settings = load_settings({**BASE_ENV, "APPOINTMENT_REMINDER_HOUR": raw})
+    assert settings.appointment_reminder_hour == int(raw)
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "LONGTERM_CONSOLIDATION_HOUR",
+        "PROACTIVE_INACTIVITY_HOUR",
+        "MEDICATION_MORNING_HOUR",
+        "MEDICATION_NOON_HOUR",
+        "MEDICATION_EVENING_HOUR",
+        "MEDICATION_BEDTIME_HOUR",
+    ],
+)
+@pytest.mark.parametrize("raw", ["-1", "24", "abc"])
+def test_every_hour_setting_must_be_a_real_hour(key, raw):
+    """七個鐘點欄位全部要在載入當下就擋，不能只擋其中兩個。
+
+    ⚠️ 這一條的由來（T2 審查）：`APPOINTMENT_REMINDER_HOUR` 補上驗證時發現同檔還有
+    六個鐘點欄位是裸 `int`。用藥那四個誤設的後果比回診輕（走字串路徑被 service 擋成
+    400 而非 500），但「每次建立用藥提醒都失敗」與「每次建立回診都失敗」對家屬是同一
+    件事——都是功能壞掉而畫面不說原因。本專案對這類設定的既定立場寫在 `_speech_backend`
+    的 docstring：**靜默降級比啟動失敗更糟**，所以一律 fail-fast。
+    """
+    with pytest.raises(ConfigError) as exc:
+        load_settings({**BASE_ENV, key: raw})
+    message = str(exc.value)
+    assert key in message
+    assert raw in message  # 訊息要自解釋：含實際數值
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "LONGTERM_CONSOLIDATION_HOUR",
+        "PROACTIVE_INACTIVITY_HOUR",
+        "MEDICATION_MORNING_HOUR",
+        "MEDICATION_NOON_HOUR",
+        "MEDICATION_EVENING_HOUR",
+        "MEDICATION_BEDTIME_HOUR",
+    ],
+)
+def test_every_hour_setting_accepts_midnight(key):
+    """0 點是合法鐘點——`LONGTERM_CONSOLIDATION_HOUR` 的預設值就是 0。
+
+    擋過頭的話（例如誤用「至少要 1」那個驗證器）夜間整理的預設設定會直接啟動失敗。
+    """
+    settings = load_settings({**BASE_ENV, key: "0"})
+    assert getattr(settings, key.lower()) == 0
+
+
 def test_greeting_hour_bounds_reject_out_of_range_pair_that_passes_the_order_check():
     """`-5` 配 `99` 同時滿足順序檢查，卻是「等於沒有夾取」的區間；範圍驗證必須先擋下。"""
     with pytest.raises(ConfigError, match="PROACTIVE_GREETING_EARLIEST_HOUR"):

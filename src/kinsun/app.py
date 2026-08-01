@@ -5,8 +5,11 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import time
 import uuid
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -14,6 +17,9 @@ from zoneinfo import ZoneInfo
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from linebot.v3 import WebhookParser
+from starlette.exceptions import HTTPException
+from starlette.responses import Response
+from starlette.types import Scope
 
 from kinsun import background, tracing
 from kinsun.accounts.models import Channel
@@ -21,6 +27,7 @@ from kinsun.audio.publisher import build_audio_publisher
 from kinsun.binding.flow import BindingFlow
 from kinsun.binding.gate import AllowAllGate, ConsentGate
 from kinsun.binding.session import PgBindingSessionStore
+from kinsun.channels.app.admission import TurnAdmission
 from kinsun.channels.app.turns import create_app_turns_router
 from kinsun.channels.app.ws import create_app_ws_router
 from kinsun.channels.inbound import FALLBACK_PROMPT, VoiceReplyDelivery
@@ -35,6 +42,7 @@ from kinsun.logging_setup import setup_logging
 from kinsun.pipeline import VoicePipeline
 from kinsun.rag.releases import PgRagReleaseStore
 from kinsun.safety.classifier import LlmRiskClassifier
+from kinsun.safety.combined_classifier import LlmCombinedSafetyClassifier
 from kinsun.safety.deliveries import PgRiskNotificationLogStore
 from kinsun.safety.detector import RiskDetector
 from kinsun.safety.moderation import AbuseModerator, LlmAbuseClassifier
@@ -45,7 +53,7 @@ from kinsun.speech.asr import build_asr_client
 from kinsun.speech.tts import build_tts_client
 from kinsun.web.auth import LineIdTokenVerifier
 from kinsun.web.envelope import install_error_envelope
-from kinsun.web.ratelimit import PgRateLimiter
+from kinsun.web.ratelimit import PgRateLimiter, SlidingWindowRateLimiter
 from kinsun.web.routers import (
     create_admin_jobs_router,
     create_admin_router,
@@ -54,7 +62,82 @@ from kinsun.web.routers import (
     create_guardian_face_router,
     create_meta_router,
 )
+from kinsun.web.routers.demo_status import (
+    create_demo_status_router,
+    database_probe,
+    llm_probe,
+    scheduler_probe,
+    service_probe,
+)
 from kinsun.web.security import install_security_headers
+
+logger = logging.getLogger("kinsun.app")
+
+# 運營狀態探針的逾時（秒）。刻意很短：這是使用者進站看到的第一個畫面，
+# 不可以被一個連不上的服務拖住。
+_DEMO_PROBE_TIMEOUT = 1.5
+
+
+def _static_mounts(root: Path) -> list[tuple[str, Path]]:
+    """回傳「掛載路徑 → 靜態目錄」清單，只含真的 build 過的。
+
+    ⚠️ 不存在就不掛（既有行為）：部署時若前端還沒 build，整個後端不該因此起不來。
+    """
+    candidates = [
+        ("/liff", root / "frontend" / "dist"),
+        ("/admin", root / "frontend" / "dist-admin"),
+        # 網頁版全功能前端（spec 2026-07-30 W-16）：與 API 同源，免 CORS。
+        ("/demo", root / "web" / "dist"),
+    ]
+    return [(path, directory) for path, directory in candidates if directory.is_dir()]
+
+
+class _SpaStaticFiles(StaticFiles):
+    """單頁應用的靜態檔：找不到的路徑回 index.html，讓前端路由自己處理。
+
+    三個前端（/liff、/admin、/demo）都是前端路由的單頁應用：網址列上的
+    `/demo/stage` 這種路徑在磁碟上不存在，直接向伺服器要就是 404。使用者做的事
+    完全正常——進到舞台後按重整、或把網址複製給別人——卻拿到一頁 Not Found。
+
+    ⚠️ **只對「看起來不是資產」的路徑回退**（最後一段沒有副檔名）。全部回退的話，
+    一個打錯的圖片或 JS 路徑會拿到 200 ＋ 一頁 HTML，而瀏覽器會安靜地渲染失敗
+    ——那比 404 難查得多。
+    """
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        try:
+            return await super().get_response(path, scope)
+        except HTTPException as exc:
+            if exc.status_code != 404 or "." in path.rsplit("/", 1)[-1]:
+                raise
+            return await super().get_response("index.html", scope)
+
+
+def _mount_static(app: FastAPI, root: Path) -> None:
+    """把 build 過的前端掛上去。三個掛載點共用同一個單頁應用回退。"""
+    for mount_path, directory in _static_mounts(root):
+        app.mount(
+            mount_path, _SpaStaticFiles(directory=directory, html=True), name=mount_path.lstrip("/")
+        )
+
+
+# 危急分級脈絡窗的長度，理由見 `build_app` 裡接線處的說明。
+_RISK_CONTEXT_TURNS = 6
+
+
+def _recent_elder_utterances(memory) -> Callable[[str], list[str]]:
+    """回傳「取這位長輩本輪之前說過的最後幾句」的函式，供危急分級當脈絡。
+
+    抽成具名函式而非行內 lambda：它有兩個容易寫錯又測不出來的細節——只取
+    `role="user"`、只取最後 `_RISK_CONTEXT_TURNS` 句——寫成 lambda 就沒有地方
+    掛這段說明，也沒有地方掛測試。
+    """
+
+    def fetch(elder_id: str) -> list[str]:
+        turns = memory.recent(elder_id)
+        return [m.content for m in turns if m.role == "user"][-_RISK_CONTEXT_TURNS:]
+
+    return fetch
 
 
 def build_app() -> FastAPI:
@@ -111,6 +194,27 @@ def build_app() -> FastAPI:
         if settings.safety_moderation_enabled
         else None
     )
+    # 分級＋審核合併成一次 Gemini 呼叫（2026-07-30 延遲優化 C2）：預設關，見
+    # settings.safety_combined_classifier_enabled 的說明。單獨開合併分類器沒有
+    # 意義（moderator 為 None 時管線不會用到它），故一併判斷審核是否啟用。
+    combined_classifier = (
+        LlmCombinedSafetyClassifier(safety_llm)
+        if settings.safety_combined_classifier_enabled and settings.safety_moderation_enabled
+        else None
+    )
+    if settings.safety_combined_classifier_enabled and not settings.safety_moderation_enabled:
+        # 半開狀態靜默失效最難查（維運者以為開了）：留一行明確的 warning。
+        logger.warning(
+            "SAFETY_COMBINED_CLASSIFIER_ENABLED=true 但 SAFETY_MODERATION_ENABLED=false，"
+            "合併分類器不會生效（合併的目的是同時省下審核那次呼叫）"
+        )
+    # 危急分級的脈絡窗（2026-08-01）：本輪之前、長輩自己說過的最後幾句。
+    # ⚠️ 不做成環境變數：這不是維運要調的旋鈕，是安全行為的一部分——能被關掉的
+    # 安全防線遲早會在某台機器上是關著的。六句夠一段完整的情緒鋪陳，又不至於把
+    # 半天前不相干的話拖進來影響判定。
+    # ⚠️ 只取 role="user"：金孫的安撫話術（「聽了真讓人好擔心」）帶著危急詞彙，
+    # 混進去會讓分級器對著自己的回覆升級。
+    # 本輪原話此刻還沒進庫（記憶由 `agent.handle` 在分級之後才寫），故不會重複。
     # TTS 分段串流（2026-07-26 延遲優化）：只對 App 通道啟用。
     # ⚠️ LINE 不可加入——它一輪只能回一則語音訊息，給它第一句等於把後面的話吞掉；
     # 分段需要投遞端「逐段拉、接著播」的配合，目前只有 App 對講機做得到。
@@ -139,6 +243,8 @@ def build_app() -> FastAPI:
         # 一輪的總時間上限（辛-21）：逐次逾時攔不住三次呼叫相加。
         turn_budget_seconds=settings.turn_budget_seconds,
         moderator=moderator,
+        combined_classifier=combined_classifier,
+        recent_utterances=_recent_elder_utterances(core.memory),
     )
     binding_sessions = PgBindingSessionStore(db)
     schedule_menu = ScheduleMenu(
@@ -251,6 +357,8 @@ def build_app() -> FastAPI:
             risk_events=risk_events,
             reminder_logs=core.reminder_logs,
             summaries=summaries,
+            # 與 ScheduleMenu 同一個來源：回診提醒的鐘點只有一份設定。
+            appointment_hour=settings.appointment_reminder_hour,
         ),
         prefix="/api/v1",
     )
@@ -312,6 +420,19 @@ def build_app() -> FastAPI:
         ),
         prefix="/api/v1",
     )
+    # 對講機容量閘門（spec 2026-07-30 §10 B2）：POST /turns 與 WS /ws/talk 共用
+    # **同一個**閘門物件——各自建一個的話，兩條路徑合計的併發可以繞過對方的上限，
+    # 而 GPU 不在乎請求是從哪條路進來的。⚠️ `turn_concurrency_limit` 是**每個
+    # worker 各自**的上限，實際全域上限＝本值×`WEB_WORKERS`（見 admission.py
+    # 模組 docstring）。
+    turn_admission = TurnAdmission(
+        settings.turn_concurrency_limit,
+        queue_timeout=settings.turn_queue_timeout_seconds,
+    )
+    # 每位長輩每分鐘的輪數保險絲：純粹防前端 bug（重連迴圈狂送），對真人操作
+    # 等同無限（單進程記憶體實作，多 worker 下各進程獨立計數——與認證節流的
+    # `SlidingWindowRateLimiter` 同一種前提，見 `web/ratelimit.py`）。
+    turn_rate_limiter = SlidingWindowRateLimiter(settings.turn_rate_limit_per_minute, 60.0)
     # App 對講機：JSON 回應固定帶文字（include_text 與 LINE 的訊息額度考量無關）。
     app.include_router(
         create_app_turns_router(
@@ -331,10 +452,8 @@ def build_app() -> FastAPI:
             locations=core.locations,
             clock=clock,
             max_audio_bytes=settings.audio_max_upload_bytes,
-            # 分段串流的後續段落：從長輩自己最後一則回覆重新切句、逐段合成上傳。
-            memory=core.memory,
-            tts=tts_client,
-            audio_publisher=publisher,
+            admission=turn_admission,
+            rate_limiter=turn_rate_limiter,
         ),
         prefix="/api/v1",
     )
@@ -356,10 +475,14 @@ def build_app() -> FastAPI:
             traces=core.traces,
             inbound_audio=inbound_audio,
             ack_audio=ack_audio,
+            # 續段直送（2026-08-01）：第一段之後的句子由本 router 自己逐段合成推出。
+            tts=tts_client,
             locations=core.locations,
             new_id=lambda: uuid.uuid4().hex,
             clock=clock,
             max_audio_bytes=settings.audio_max_upload_bytes,
+            admission=turn_admission,
+            rate_limiter=turn_rate_limiter,
         ),
         prefix="/api/v1",
     )
@@ -368,10 +491,25 @@ def build_app() -> FastAPI:
         create_meta_router(internal_testing_enabled=settings.internal_testing_enabled),
         prefix="/api/v1",
     )
-    dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
-    if dist.is_dir():
-        app.mount("/liff", StaticFiles(directory=dist, html=True), name="liff")
-    admin_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist-admin"
-    if admin_dist.is_dir():
-        app.mount("/admin", StaticFiles(directory=admin_dist, html=True), name="admin")
+    # 公開運營狀態（spec 2026-07-30 W-03）：網頁版前端進站即查，據此決定
+    # 「開始使用」能不能按。不需認證，只回粗粒度狀態——見 demo_status.py 的說明。
+    #
+    # ⚠️ `settings.asr_endpoint`／`tts_endpoint` 在 backend=mock／bubble 的開發設定
+    # 下是空字串，此時探針回 unknown（「這個部署沒接語音服務」），而 unknown 不影響
+    # 整體可用——本機開發不該因為沒接 DGX 就進不去。
+    app.include_router(
+        create_demo_status_router(
+            probes={
+                "database": database_probe(db),
+                "asr": service_probe(settings.asr_endpoint, timeout=_DEMO_PROBE_TIMEOUT),
+                "tts": service_probe(settings.tts_endpoint, timeout=_DEMO_PROBE_TIMEOUT),
+                "llm": llm_probe(core.traces, clock=time.time),
+                "scheduler": scheduler_probe(
+                    PgScheduleStateStore(db, tz), job_specs(settings), clock=clock
+                ),
+            }
+        ),
+        prefix="/api/v1",
+    )
+    _mount_static(app, Path(__file__).resolve().parents[2])
     return app

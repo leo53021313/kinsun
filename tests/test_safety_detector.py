@@ -6,7 +6,7 @@ class FakeClassifier:
     def __init__(self, assessment: RiskAssessment) -> None:
         self._a = assessment
 
-    def classify(self, text: str) -> RiskAssessment:
+    def classify(self, text: str, *, recent: list[str] | None = None) -> RiskAssessment:
         return self._a
 
 
@@ -48,7 +48,7 @@ def test_clean_is_l0():
 
 
 class _BoomClassifier:
-    def classify(self, text: str) -> RiskAssessment:
+    def classify(self, text: str, *, recent: list[str] | None = None) -> RiskAssessment:
         raise RuntimeError("boom")
 
 

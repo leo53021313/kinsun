@@ -50,6 +50,7 @@ def _client(verifier, accounts):
             risk_events=FakeRiskEventStore(),
             reminder_logs=FakeReminderLogStore(),
             summaries=FakeConversationSummaryStore(),
+            appointment_hour=8,
         ),
         prefix="/api/v1",
     )

@@ -16,7 +16,7 @@ from pathlib import Path
 from kinsun import tracing
 from kinsun.db import Database, ensure_schema
 from kinsun.rag.crawler import CrawlerConfig, HealthEducationCrawler
-from kinsun.rag.embeddings import GeminiEmbeddingModel
+from kinsun.rag.embeddings import build_embedding_model
 from kinsun.rag.evaluation import evaluate_golden_set, load_golden_set
 from kinsun.rag.ingestion import (
     IngestionPipeline,
@@ -25,7 +25,7 @@ from kinsun.rag.ingestion import (
 )
 from kinsun.rag.releases import PgRagReleaseStore, QualityGateInput
 from kinsun.rag.retriever import HealthEducationRetriever
-from kinsun.rag.schemas import ContentPolicy
+from kinsun.rag.schemas import RAG_EMBEDDING_DIMENSIONS, ContentPolicy
 from kinsun.rag.source_registry import SourceRegistry, order_answer_first
 from kinsun.rag.source_validator import SourceValidator
 from kinsun.rag.vector_store import PgVectorStore
@@ -36,7 +36,9 @@ def main() -> None:
     _load_dotenv(Path(".env"))
     args = _parse_args()
     database_url = _require_env("DATABASE_URL")
-    gemini_api_key = _require_env("GEMINI_API_KEY")
+    embedding_backend = os.environ.get("RAG_EMBEDDING_BACKEND", "gemini")
+    # 地端不需要金鑰；雲端才強制要求，避免只想跑地端的人被卡住。
+    gemini_api_key = "" if embedding_backend == "local" else _require_env("GEMINI_API_KEY")
     embedding_model = os.environ.get("RAG_EMBEDDING_MODEL", "gemini-embedding-001")
     content_policy = ContentPolicy(os.environ.get("RAG_CONTENT_POLICY", "allowed_only"))
     ensure_schema(database_url)
@@ -52,15 +54,19 @@ def main() -> None:
             embedding_model=embedding_model,
             content_policy=content_policy,
         )
-        embedder = GeminiEmbeddingModel(
-            api_key=gemini_api_key,
+        embedder = build_embedding_model(
+            backend=embedding_backend,
             model=embedding_model,
+            dimensions=RAG_EMBEDDING_DIMENSIONS,
+            request_timeout_seconds=args.embedding_timeout,
+            batch_size=args.embedding_batch_size,
+            endpoint=os.environ.get("RAG_EMBEDDING_ENDPOINT", ""),
+            local_api_key=os.environ.get("RAG_EMBEDDING_API_KEY", ""),
+            gemini_api_key=gemini_api_key,
             request_delay_seconds=args.embedding_delay,
             max_retries=args.embedding_retries,
             retry_initial_delay_seconds=args.embedding_retry_initial_delay,
             retry_max_delay_seconds=args.embedding_retry_max_delay,
-            request_timeout_seconds=args.embedding_timeout,
-            batch_size=args.embedding_batch_size,
         )
         pipeline = IngestionPipeline(
             store=store,
@@ -162,8 +168,10 @@ def _crawl_and_ingest(
         if not validation.can_ingest:
             print(f"[skip] {source_id}: {'; '.join(validation.issues)}")
             continue
-        result = crawler.crawl(source)
-        pipeline.ingest_pages(
+        # 有 sitemap 就讀清單，沒有才退回爬連結。爬連結在每頁都渲染全站選單的
+        # 網站上必然主題漂移（2026-08-01 實測，見 Source.sitemap_url 的註解）。
+        result = crawler.crawl_sitemap(source) if source.sitemap_url else crawler.crawl(source)
+        admitted = pipeline.ingest_pages(
             source,
             result.pages,
             operator_or_job_id=index_version,
@@ -182,7 +190,8 @@ def _crawl_and_ingest(
                 operator_or_job_id=index_version,
             )
         print(
-            f"[crawl] {source_id}: pages={len(result.pages)} "
+            f"[crawl] {source_id}: pages={len(result.pages)} 收錄={len(admitted)} "
+            f"未收錄={len(result.pages) - len(admitted)} "
             f"failed={len(result.failed_urls)} skipped={len(result.skipped_urls)}"
         )
 
@@ -190,7 +199,7 @@ def _crawl_and_ingest(
 def _evaluate_and_publish(
     db: Database,
     releases: PgRagReleaseStore,
-    embedder: GeminiEmbeddingModel,
+    embedder,
     *,
     index_version: str,
     golden_set: Path,

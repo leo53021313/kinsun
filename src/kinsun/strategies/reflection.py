@@ -52,7 +52,11 @@ from kinsun import tracing
 from kinsun.llm import Message
 from kinsun.memory.shortterm import MemoryStore, previous_day_bounds
 from kinsun.reports.reminders import ReminderLog, ReminderLogStore
-from kinsun.strategies.models import STRATEGY_STATUS_ADOPTED, Strategy
+from kinsun.strategies.models import (
+    STRATEGY_CATEGORY_ADDRESS,
+    STRATEGY_STATUS_ADOPTED,
+    Strategy,
+)
 from kinsun.strategies.policy import MAX_CONTENT_CHARS, Candidate, admit_all
 from kinsun.strategies.store import StrategyError, StrategyStore
 
@@ -124,7 +128,11 @@ REFLECTION_PROMPT = (
     "不可加標題。\n"
     "7. 每條守則必須有跨多天、重複出現的證據。單一天的一次觀察不算數"
     "（長輩可能只是那天心情不好），此類一律不要產出。\n"
-    "8. 已經生效的守則不要重複產出。\n\n"
+    # 第 9 條同樣**不是**防線——`_split_ungrounded_address` 才是。文字稿必然含金孫
+    # 自己的回覆（`_ROLE_LABELS` 把 assistant 標成「金孫」），模型看到滿滿的「阿公」
+    # 就會歸納出「稱呼長輩為阿公」，卻不覺得自己在猜。這裡寫清楚只為少掉候選。
+    "9. 稱謂（阿公、阿嬤、爺爺、奶奶……）只能依**長輩自己說出口**的話認定，"
+    "金孫自己用過的稱呼不算證據——那是金孫的猜測，不是長輩的偏好。\n\n"
     "【回傳格式】只回傳 JSON 陣列，不要任何其他文字或 markdown 標記。每個元素：\n"
     '{"content": "一句話的守則", "category": "四類之一", '
     '"evidence": "你依據的觀察", "observed_days": 這個模式在幾天中出現過的整數, '
@@ -199,6 +207,7 @@ def reflect_days(
         return
 
     plausible, forged = _split_forged_evidence(candidates, lookback_days)
+    plausible, ungrounded = _split_ungrounded_address(plausible, turns)
     accepted, rejected = admit_all(
         plausible,
         min_observed_days=min_observed_days,
@@ -212,7 +221,7 @@ def reflect_days(
             "strategies": [{"category": c.category, "content": c.content} for c in accepted]
         }
     )
-    for candidate, reason in [*forged, *rejected]:
+    for candidate, reason in [*forged, *ungrounded, *rejected]:
         # 逐條記錄、理由原文照登：理由字串本身就是拒絕分類（醫療攔截／輕蔑攔截／結構
         # 驗證／證據不足／證據捏造／撞上限），聚合成一句就失去可分類統計的價值。
         # 「守則分類」是模型自填的 category（address／tone／…），**不是**拒絕分類——欄位
@@ -254,6 +263,74 @@ def _split_forged_evidence(
         else:
             plausible.append(candidate)
     return plausible, forged
+
+
+# 會斷定性別或輩分的稱謂。清單刻意只收「一喊出口就把性別／輩分定死」的詞——
+# 名字、綽號、職稱（老師、醫師）沒有這個問題，不必經過這道濾網。
+_KINSHIP_TITLES = (
+    "阿公",
+    "阿嬤",
+    "阿婆",
+    "阿伯",
+    "阿姨",
+    "阿叔",
+    "爺爺",
+    "奶奶",
+    "外公",
+    "外婆",
+    "伯伯",
+    "叔叔",
+    "婆婆",
+    "公公",
+    "先生",
+    "小姐",
+    "女士",
+)
+
+
+def _split_ungrounded_address(
+    candidates: list[Candidate], turns: list[Message]
+) -> tuple[list[Candidate], list[tuple[Candidate, str]]]:
+    """擋掉「只有金孫自己講過那個稱謂」的 address 守則——那是把猜測學回來。
+
+    2026-08-01 正式環境實況：長輩的 `name` 是「阿嬤」、沒設 nickname，於是
+    `accounts/facts.py` 注入「系統沒有性別資料，不要自行猜測用『阿公』或『阿嬤』
+    這類稱謂，除非她／他自己說過」；而反思產出的「稱呼長輩為阿公」同時注入。
+    同一份 system prompt 裡兩段直接打架，實測是後注入的守則贏——十一句全叫阿公。
+
+    根因指得出行：`_transcript_message` 把 `turns` 整段餵給模型，而 `_ROLE_LABELS`
+    把 `assistant` 標成「金孫」。金孫先前每一句猜出來的「阿公」都成了模型眼中的
+    觀察，於是「除非她／他自己說過」這個前提被自己的輸出滿足了——猜測經過一晚的
+    反思就洗成永久守則，而且一旦寫進去，往後每一輪都在強化它。
+
+    這道檢查只能做在這裡：`policy` 只收到候選本身，看不到逐字稿，無從判斷一個稱謂
+    究竟是誰先講的。拒絕理由刻意自成一桶（「稱謂未經長輩自述」），與「證據不足」
+    分開——這桶的計數就是「模型多常把自己的猜測學回來」這個指標。
+
+    已知且**接受**的誤殺：長輩用別的方式表達過稱謂偏好（皺眉、改口、由家屬轉述），
+    而那兩個字始終沒從他自己嘴裡出來，這條守則會被擋。緩解方式是家屬去後台設
+    `elders.nickname`（那才是稱謂的權威來源），不是放寬這裡。
+    """
+    said_by_elder = "\n".join(m.content for m in turns if m.role == "user")
+    grounded: list[Candidate] = []
+    ungrounded: list[tuple[Candidate, str]] = []
+    for candidate in candidates:
+        titles = [t for t in _KINSHIP_TITLES if t in candidate.content]
+        if (
+            candidate.category == STRATEGY_CATEGORY_ADDRESS
+            and titles
+            and not any(t in said_by_elder for t in titles)
+        ):
+            ungrounded.append(
+                (
+                    candidate,
+                    f"稱謂未經長輩自述：守則指定「{'、'.join(titles)}」，"
+                    "但這段期間只有金孫自己這樣叫過",
+                )
+            )
+        else:
+            grounded.append(candidate)
+    return grounded, ungrounded
 
 
 def _record(strategies: StrategyStore, elder_id: str, candidate: Candidate) -> None:

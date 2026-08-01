@@ -131,7 +131,7 @@ RAG_DDL = (
     "CREATE TABLE IF NOT EXISTS rag_chunks ("
     "chunk_id TEXT PRIMARY KEY, document_id TEXT NOT NULL REFERENCES rag_documents(document_id) "
     "ON DELETE CASCADE, source_id TEXT NOT NULL REFERENCES rag_sources(source_id), "
-    "text TEXT NOT NULL, embedding vector(768), title TEXT NOT NULL, publisher TEXT NOT NULL, "
+    "text TEXT NOT NULL, embedding vector(1024), title TEXT NOT NULL, publisher TEXT NOT NULL, "
     "source_url TEXT NOT NULL, source_type TEXT NOT NULL, language TEXT NOT NULL, "
     "topic TEXT NOT NULL, audience TEXT NOT NULL, medical_scope TEXT NOT NULL, "
     "trust_level TEXT NOT NULL, approved_for_rag BOOLEAN NOT NULL, "
@@ -140,6 +140,24 @@ RAG_DDL = (
     "source_role TEXT NOT NULL DEFAULT 'answer', embedding_model TEXT NOT NULL DEFAULT '');"
     "ALTER TABLE rag_chunks ADD COLUMN IF NOT EXISTS source_role TEXT NOT NULL DEFAULT 'answer';"
     "ALTER TABLE rag_chunks ADD COLUMN IF NOT EXISTS embedding_model TEXT NOT NULL DEFAULT '';"
+    # 向量維度遷移。CREATE TABLE IF NOT EXISTS 不會改既有表，空測試庫跑得過但正式庫
+    # 不會升級（2026-08-01 從 Gemini 768 維換成 BGE-M3 1024 維時就靠這段）。
+    # 換維度等於既有向量全部作廢，故直接重建欄位；HNSW 索引必須先刪、之後由下方
+    # 的 CREATE INDEX IF NOT EXISTS 重建（順序：建表 → 遷移 → 建索引）。
+    "DO $$"
+    "DECLARE current_dimensions integer;"
+    "BEGIN"
+    "  SELECT a.atttypmod INTO current_dimensions FROM pg_attribute a"
+    "  JOIN pg_class c ON c.oid = a.attrelid"
+    "  WHERE c.relname = 'rag_chunks' AND a.attname = 'embedding' AND NOT a.attisdropped;"
+    "  IF current_dimensions IS NOT NULL AND current_dimensions <> 1024 THEN"
+    "    RAISE NOTICE 'rag_chunks.embedding 由 % 維改為 1024 維，既有向量作廢，需重建索引版本',"
+    "      current_dimensions;"
+    "    DROP INDEX IF EXISTS idx_rag_chunks_embedding;"
+    "    ALTER TABLE rag_chunks DROP COLUMN embedding;"
+    "    ALTER TABLE rag_chunks ADD COLUMN embedding vector(1024);"
+    "  END IF;"
+    "END $$;"
     "CREATE INDEX IF NOT EXISTS idx_rag_chunks_source_topic ON rag_chunks (source_id, topic);"
     "CREATE INDEX IF NOT EXISTS idx_rag_chunks_embedding "
     "ON rag_chunks USING hnsw (embedding vector_cosine_ops);"
@@ -273,10 +291,29 @@ RISK_NOTIFICATION_LOGS_DDL = (
 )
 
 # App 內通知（✅ D-12，甲-6）：App 出站 adapter 落地訊息，登入後拉取。
+#
+# severity（2026-08-01，Leo 裁決）：危急警報與用藥提醒先前寫進同一張表、**沒有
+# 任何欄位分得出來**，前端拿到的只有一段文字，於是「跌倒了」與「該吃藥了」在畫面
+# 上長得一模一樣。值域與「為什麼不沿用 RiskTier」見 notifications/models.py。
+#
+# ⚠️ 三段順序不可調換：建表（既有庫 no-op）→ ALTER 補欄 → 建索引。既有庫的
+# app_notifications 早已存在（D-12 上線至今），CREATE TABLE IF NOT EXISTS 對它
+# 是 no-op、**不會**生出 severity 欄；只把欄位寫進 CREATE TABLE 的話，新庫吃得到
+# 而既有庫永遠缺欄位，線上第一次寫通知就炸 UndefinedColumn。
+#
+# ⚠️ DEFAULT 'notice' 是**刻意的失真**：既有列裡確實混著真正的危急警報，但寫入
+# 當時沒有留下任何分類線索，無從回溯分辨——一律當成一般通知是唯一誠實的選擇
+# （猜錯的方向是「把危急警報顯示成一般通知」，與現況相同，不會比現在更糟；反過來
+# 全部標成 alert 則會讓每一則舊的用藥提醒都變成紅色警報）。此限制已記入
+# docs/dev/07 §7 與 12 §4 的已知限制。
+# 預設值同時是 NOT NULL 能就地加在既有非空表上的前提，不可拿掉。
 APP_NOTIFICATIONS_DDL = (
     "CREATE TABLE IF NOT EXISTS app_notifications ("
     "app_notification_id TEXT PRIMARY KEY, external_id TEXT NOT NULL, "
-    "content TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+    "content TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL, "
+    "severity TEXT NOT NULL DEFAULT 'notice');"
+    "ALTER TABLE app_notifications "
+    "ADD COLUMN IF NOT EXISTS severity TEXT NOT NULL DEFAULT 'notice';"
     "CREATE INDEX IF NOT EXISTS idx_app_notifications_external_created "
     "ON app_notifications (external_id, created_at);"
 )

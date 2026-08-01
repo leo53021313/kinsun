@@ -62,10 +62,15 @@ def create_guardian_face_router(
     risk_events: RiskEventStore,
     reminder_logs: ReminderLogStore,
     summaries: ConversationSummaryStore,
+    appointment_hour: int,
 ) -> APIRouter:
     """家屬面聚合：長輩／排程／健康報告／每日摘要，共用雙認證與可及範圍守門。
 
     用藥與回診自 D-76 P3 起併入 schedules 單一資源，不再各有一支 router。
+
+    `appointment_hour` 沒有預設值是刻意的：它必須與 LINE 選單（`ScheduleMenu`）拿的
+    是同一個 `APPOINTMENT_REMINDER_HOUR`，給了預設值就等於留一條會靜靜漂移的路——
+    而漂移的後果要等到那個時刻沒響才會發現。
     """
     current_guardian = build_current_guardian(verifier, accounts)
     scope = GuardianScope(accounts)
@@ -79,6 +84,7 @@ def create_guardian_face_router(
             current_guardian=current_guardian,
             scope=scope,
             clock=clock,
+            appointment_hour=appointment_hour,
         )
     )
     router.include_router(

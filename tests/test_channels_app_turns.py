@@ -1,6 +1,8 @@
 """App 對講機通道測試：POST /api/app/turns 收音檔、回文字＋語音 URL。"""
 
 import asyncio
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from itertools import count
 
@@ -12,6 +14,7 @@ from kinsun.accounts.models import ConsentBy, InviteRole
 from kinsun.accounts.service import AccountService
 from kinsun.agent import CareAgent
 from kinsun.binding.gate import ConsentGate
+from kinsun.channels.app.admission import TurnAdmission
 from kinsun.channels.app.turns import create_app_turns_router
 from kinsun.channels.inbound import VoiceReplyDelivery
 from kinsun.llm import Message
@@ -43,7 +46,7 @@ class _NullSession:
 
 
 class _NullClassifier:
-    def classify(self, text):
+    def classify(self, text, *, recent=None):
         from kinsun.safety.tiers import RiskAssessment, RiskTier
 
         return RiskAssessment(RiskTier.L0, 0.0, "", [])
@@ -269,145 +272,6 @@ def test_location_write_failure_does_not_break_the_turn():
     assert res.status_code == 201
 
 
-# ── TTS 分段串流（2026-07-26 延遲優化）──────────────────────────────
-_CHUNKED_REPLY = "阿公今天早上好嗎。今天天氣不錯，要不要出去走走？"
-
-
-class _ChunkedLLM:
-    def generate(self, *, system_prompt: str, messages: list[Message]) -> str:
-        return _CHUNKED_REPLY
-
-
-class _SpyChunkTts:
-    def __init__(self) -> None:
-        self.spoken: list[str] = []
-
-    def synthesize(self, text: str) -> TtsResult:
-        self.spoken.append(text)
-        return TtsResult(text=text, audio=b"fake-m4a", duration_ms=900)
-
-
-class _RecordingMemory:
-    """短期記憶替身：分段端點靠它取回「這位長輩最後一則金孫回覆」。"""
-
-    def __init__(self) -> None:
-        self.messages: list[Message] = []
-
-    def assemble(self, elder_id, query):
-        from types import SimpleNamespace
-
-        return SimpleNamespace(system_suffix="", history=[])
-
-    def record_turn(self, elder_id, *messages, at=None):
-        self.messages.extend(messages)
-
-    def recent(self, elder_id):
-        return list(self.messages)
-
-
-class _SpyPublisher:
-    def __init__(self) -> None:
-        self.count = 0
-
-    def publish(self, audio: bytes, *, content_type: str) -> str:
-        self.count += 1
-        return f"https://cdn.test/chunk-{self.count}.m4a"
-
-
-def _chunking_client(svc, memory, tts, publisher):
-    pipeline = VoicePipeline(
-        asr=MockAsrClient("阿公早安"),
-        agent=CareAgent(_ChunkedLLM(), memory),
-        tts=tts,
-        detector=RiskDetector(_NullClassifier()),
-        notifier=_NullNotifier(),
-        risk_events=FakeRiskEventStore(),
-        chunked_channels=frozenset({"app"}),
-    )
-    app = FastAPI()
-    install_error_envelope(app)
-    app.include_router(
-        create_app_turns_router(
-            accounts=svc,
-            pipeline=pipeline,
-            gate=ConsentGate(svc),
-            voice=VoiceReplyDelivery(publisher, include_text=True),
-            new_id=lambda: "trace-1",
-            clock=lambda: NOW,
-            memory=memory,
-            tts=tts,
-            audio_publisher=publisher,
-        ),
-        prefix="/api/v1",
-    )
-    return TestClient(app)
-
-
-def _chunk_setup():
-    svc = _service()
-    _, token = _bound_elder_token(svc)
-    memory, tts, publisher = _RecordingMemory(), _SpyChunkTts(), _SpyPublisher()
-    return _chunking_client(svc, memory, tts, publisher), token, tts, publisher
-
-
-def test_turn_reports_chunk_count_and_digest_when_chunked():
-    """App 拿到的第一段只是開頭，回應要告訴它總共幾段、以及這是哪一輪的回覆。"""
-    client, token, tts, _ = _chunk_setup()
-
-    body = _post_audio(client, token).json()["data"]
-
-    assert body["text"] == _CHUNKED_REPLY  # 文字仍是完整的一段
-    assert tts.spoken == ["阿公今天早上好嗎。"]  # 但只合成了第一句
-    assert body["chunk_count"] == 2
-    assert len(body["reply_digest"]) == 16
-
-
-def test_fetching_the_second_chunk_synthesizes_only_that_sentence():
-    client, token, tts, publisher = _chunk_setup()
-    body = _post_audio(client, token).json()["data"]
-
-    res = client.get(
-        f"/api/v1/turns/chunks/1?digest={body['reply_digest']}",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-
-    assert res.status_code == 200
-    assert res.json()["data"]["text"] == "今天天氣不錯，要不要出去走走？"
-    assert res.json()["data"]["audio_url"] == "https://cdn.test/chunk-2.m4a"
-    assert tts.spoken == ["阿公今天早上好嗎。", "今天天氣不錯，要不要出去走走？"]
-
-
-def test_stale_digest_is_rejected_so_the_app_stops_playing_the_old_turn():
-    """長輩又講了一句時，舊那輪的後續段落不可以再被播出去。"""
-    client, token, _, _ = _chunk_setup()
-    _post_audio(client, token)
-
-    res = client.get(
-        "/api/v1/turns/chunks/1?digest=0000000000000000",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-
-    assert res.status_code == 409
-    assert res.json()["error"]["code"] == "chunk_superseded"
-
-
-def test_index_out_of_range_is_not_found():
-    client, token, _, _ = _chunk_setup()
-    body = _post_audio(client, token).json()["data"]
-
-    for index in (0, 2, 99):  # 第 0 段已隨 POST 回過，2 之後不存在
-        res = client.get(
-            f"/api/v1/turns/chunks/{index}?digest={body['reply_digest']}",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        assert res.status_code == 404, index
-
-
-def test_chunk_endpoint_requires_an_elder_token():
-    client, _, _, _ = _chunk_setup()
-    assert client.get("/api/v1/turns/chunks/1").status_code == 401
-
-
 class _LoopWatchingAsr:
     """記下自己是不是跑在事件迴圈的執行緒上。
 
@@ -500,3 +364,268 @@ def test_boundary_coordinates_are_accepted_over_rest():
     assert locations.get_for_elder(elder.elder_id) == ElderLocation(
         elder.elder_id, "北極點", NOW.timestamp(), 90.0, 180.0
     )
+
+
+# ── 容量閘門（spec 2026-07-30 §10 B2，P3 Task 2）──────────────────────────
+#
+# ⚠️ brief 本身沒有給這條路徑的測試案例（只給了 ws.py 的容量閘門四條＋接線步驟），
+# POST 路徑同樣接了同一個 `TurnAdmission`（與 ws.py 共用）＋節流保險絲，沒有測試
+# 就是接線但沒人守——尤其這條路徑的等待若不小心放錯位置，會直接卡住整個事件迴圈。
+
+
+class _BlockingAsr:
+    """卡在辨識裡不出來的 ASR：用來讓第一個請求一直佔著名額（與 ws.py 測試同款）。"""
+
+    def __init__(self, transcript: str = "阿公早安") -> None:
+        self._transcript = transcript
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def transcribe(self, audio: bytes, *, content_type: str) -> str:
+        self.entered.set()
+        self.release.wait(5.0)
+        return self._transcript
+
+
+def _admission_client(svc, *, asr, admission=None, rate_limiter=None):
+    pipeline = VoicePipeline(
+        asr=asr,
+        agent=CareAgent(_EchoLLM(), _NullSession()),
+        tts=TextBubbleTts(),
+        detector=RiskDetector(_NullClassifier()),
+        notifier=_NullNotifier(),
+        risk_events=FakeRiskEventStore(),
+    )
+    app = FastAPI()
+    install_error_envelope(app)
+    app.include_router(
+        create_app_turns_router(
+            accounts=svc,
+            pipeline=pipeline,
+            gate=ConsentGate(svc),
+            voice=VoiceReplyDelivery(None, include_text=True),
+            new_id=lambda: "trace-1",
+            clock=lambda: NOW,
+            admission=admission,
+            rate_limiter=rate_limiter,
+        ),
+        prefix="/api/v1",
+    )
+    return TestClient(app)
+
+
+def test_容量閘門滿載且排隊逾時時回_503_而不是裸_429_或靜默掛住():
+    """長輩看不懂 429，也等不到一個永遠不會來的回應；503＋同一句人話，與 WS
+    路徑同一套文案（見 `channels/app/ws.py::_BUSY_REPLY`）。
+
+    ⚠️ 用 `with _admission_client(...) as client:`：讓兩個請求共用**同一個**
+    事件迴圈（見 `test_排隊等待不佔住事件迴圈` 的說明），與正式環境「一個 worker
+    一個事件迴圈」的實際情形一致，而不是各自開一個互不相干的迴圈。
+    """
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    asr = _BlockingAsr()
+    with _admission_client(svc, asr=asr, admission=TurnAdmission(1, queue_timeout=0.2)) as client:
+        holder: dict = {}
+
+        def send_first() -> None:
+            holder["response"] = _post_audio(client, token)
+
+        t = threading.Thread(target=send_first)
+        t.start()
+        assert asr.entered.wait(5.0), "第一個請求應該已經進到辨識裡、正持有名額"
+
+        res = _post_audio(client, token, body=b"\x00second-audio")
+        assert res.status_code == 503
+        body = res.json()
+        assert body["error"]["code"] == "too_many_requests"
+        # 是人話不是狀態碼，且與 WS 路徑同一句「還在忙」——不是管線一般性失敗的文案。
+        assert "還在忙" in body["error"]["message"]
+
+        asr.release.set()
+        t.join(5.0)
+        assert not t.is_alive()
+        assert holder["response"].status_code == 201
+
+
+def test_名額在請求失敗時也要釋放():
+    """⚠️ 管線炸掉時若沒釋放名額，那個名額就永久消失；漏到滿之後所有人從此排隊，
+    而伺服器看起來完全健康。刻意讓第一個請求**持有名額時**炸掉、且第二個請求
+    **真的已經排上隊**（用 `admission.waiting()` 確認，POST 路徑沒有 WS 的
+    `queued` 訊框可以回報）——兩者之間毫無時間重疊的話，即使閘門忘了寫 `with`
+    （完全沒接上）這條測試也會照樣通過。
+
+    ⚠️ 拋 `RuntimeError` 而非 `ASRError`：`channels/inbound.py::_run_pipeline`
+    會把 `ASRError`／`LLMError`／`MemoryStoreError` 三種就地接住並退回覆話術，
+    例外根本不會冒出 `dispatch()`，測不到閘門在未預期例外時是否正確釋放。
+    """
+
+    class _ExplodingAsr:
+        """第一次呼叫卡住直到被釋放、釋放後拋出（模擬持有名額時真的炸掉）；
+        第二次呼叫正常返回——與 ws.py 版本不同，這裡刻意讓第二個請求能夠
+        真正完成，才能斷言它拿到 201 而非又是一次例外。"""
+
+        def __init__(self) -> None:
+            self.entered = threading.Event()
+            self.release = threading.Event()
+            self.calls = 0
+
+        def transcribe(self, audio: bytes, *, content_type: str) -> str:
+            self.calls += 1
+            if self.calls == 1:
+                self.entered.set()
+                self.release.wait(5.0)
+                raise RuntimeError("這一輪炸了（非 ASRError，管線不會就地接住）")
+            return "阿公早安"
+
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    asr = _ExplodingAsr()
+    admission = TurnAdmission(1, queue_timeout=5.0)
+    with _admission_client(svc, asr=asr, admission=admission) as client:
+
+        def send_first() -> None:
+            # 未預期例外冒到框架層是既有行為（`turns.py::_run_turn` 本來就沒有
+            # try/except），本測試不關心這條路徑的 HTTP 回應，只關心名額有沒有釋放。
+            try:
+                _post_audio(client, token)
+            except Exception:  # noqa: BLE001 - 背景執行緒吞例外只為了不留殘局
+                pass
+
+        t1 = threading.Thread(target=send_first)
+        t1.start()
+        assert asr.entered.wait(5.0), "第一個請求應該已經進到辨識裡、正持有名額"
+
+        second_holder: dict = {}
+
+        def send_second() -> None:
+            second_holder["response"] = _post_audio(client, token, body=b"\x00second-audio")
+
+        t2 = threading.Thread(target=send_second)
+        t2.start()
+        deadline = time.monotonic() + 2.0
+        while admission.waiting() == 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert admission.waiting() == 1, "第二個請求應該已經排上隊，才測得到釋放"
+
+        asr.release.set()
+        t1.join(5.0)
+        t2.join(5.0)
+        assert not t1.is_alive()
+        assert not t2.is_alive()
+
+        assert second_holder["response"].status_code == 201, "名額釋放後第二個請求應該正常完成"
+        assert admission.active() == 0
+
+
+def test_排隊等待不佔住事件迴圈_其他請求仍可進行():
+    """⚠️ 這個 handler 是 async 的；若閘門的等待被誤放在事件迴圈上，會讓所有人
+    的請求一起停住——包含根本沒有要用對講機的那些。用一支完全不吃閘門的探針
+    端點驗證：有人真的卡在閘門的阻塞等待時，事件迴圈仍然接得下別的請求。
+
+    ⚠️ **必須用 `with TestClient(app) as client:`**（審查抓到的第 12 個假測試）：
+    `starlette/testclient.py` 的 `_portal_factory` 只有在 `__enter__` 設過
+    `self.portal` 時才會讓同一個 client 的所有請求共用**同一個**事件迴圈；否則
+    每次 `.get()`／`.post()` 各自 `start_blocking_portal()`，等於各自開一個全新
+    的事件迴圈執行緒——`/probe` 因此永遠跑在與被卡住的請求完全無關的迴圈上，
+    不管閘門的等待有沒有誤放在事件迴圈上，這條測試都會通過。已用 mutation 驗證：
+    把 `run_in_threadpool(_run_with_admission)` 換成直接呼叫 `_run_with_admission()`
+    （brief 明文警告過的錯誤），在沒有 `with` 時這條測試依然 PASS。
+    """
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    asr = _BlockingAsr()
+    admission = TurnAdmission(1, queue_timeout=5.0)
+    pipeline = VoicePipeline(
+        asr=asr,
+        agent=CareAgent(_EchoLLM(), _NullSession()),
+        tts=TextBubbleTts(),
+        detector=RiskDetector(_NullClassifier()),
+        notifier=_NullNotifier(),
+        risk_events=FakeRiskEventStore(),
+    )
+    app = FastAPI()
+    install_error_envelope(app)
+
+    @app.get("/probe")
+    def probe() -> dict:
+        return {"ok": True}
+
+    app.include_router(
+        create_app_turns_router(
+            accounts=svc,
+            pipeline=pipeline,
+            gate=ConsentGate(svc),
+            voice=VoiceReplyDelivery(None, include_text=True),
+            new_id=lambda: "trace-1",
+            clock=lambda: NOW,
+            admission=admission,
+        ),
+        prefix="/api/v1",
+    )
+
+    with TestClient(app) as client:
+
+        def send_first() -> None:
+            _post_audio(client, token)
+
+        def send_second() -> None:
+            _post_audio(client, token, body=b"\x00second-audio")
+
+        t1 = threading.Thread(target=send_first)
+        t1.start()
+        assert asr.entered.wait(5.0), "第一個請求應該已經進到辨識裡、正持有名額"
+
+        t2 = threading.Thread(target=send_second)
+        t2.start()
+        deadline = time.monotonic() + 2.0
+        while admission.waiting() == 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert admission.waiting() == 1, "第二個請求應該已經卡在閘門的排隊等待裡"
+
+        start = time.monotonic()
+        res = client.get("/probe")
+        elapsed = time.monotonic() - start
+        assert res.status_code == 200
+        assert elapsed < 1.0, f"/probe 被閘門的排隊等待卡住了，耗時 {elapsed} 秒"
+
+        asr.release.set()
+        t1.join(5.0)
+        t2.join(5.0)
+        assert not t1.is_alive()
+        assert not t2.is_alive()
+
+
+def test_每分鐘輪數保險絲觸發時回_429_而不是靜默丟掉():
+    """對真人操作等同無限，但前端重連迴圈狂送時不能任由它一路打穿到 GPU。"""
+
+    class _DenyingRateLimiter:
+        def hit(self, key: str) -> bool:
+            return False
+
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    client = _admission_client(
+        svc, asr=MockAsrClient("阿公早安"), rate_limiter=_DenyingRateLimiter()
+    )
+    res = _post_audio(client, token)
+    assert res.status_code == 429
+    body = res.json()
+    assert body["error"]["code"] == "too_many_requests"
+    assert "還在忙" in body["error"]["message"]
+
+
+def test_節流放行時不受影響_對真人操作等同無限_over_rest():
+    """一律放行的節流器不該讓既有行為變樣——保險絲對真人操作必須是無感的。"""
+
+    class _AllowingRateLimiter:
+        def hit(self, key: str) -> bool:
+            return True
+
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    client = _admission_client(
+        svc, asr=MockAsrClient("阿公早安"), rate_limiter=_AllowingRateLimiter()
+    )
+    res = _post_audio(client, token)
+    assert res.status_code == 201

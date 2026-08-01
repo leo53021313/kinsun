@@ -106,3 +106,57 @@ def test_reconfigure_replaces_the_previous_writer():
 
     assert background._writer is not first
     assert first is not None and first.is_closed
+
+
+# ── 完成訊號（2026-07-30 審查 H2）─────────────────────────────────────
+#
+# 多數呼叫端不理 handle（觀測稽核沒有人在等）。少數呼叫端有一條「後續步驟真的會讀
+# 這筆寫入」的路徑，需要在交出回應前收斂——見 `agent._record_turn_background`。
+
+
+def test_inline_mode_returns_an_already_done_handle():
+    """同步模式：run() 回來時就已經做完了，wait 不可以真的等。"""
+    handle = background.run(lambda: None)
+    assert handle.wait(0.0)
+
+
+def test_handle_becomes_done_after_the_background_action_finishes():
+    background.configure(max_workers=1)
+    released = threading.Event()
+
+    handle = background.run(released.wait)
+
+    assert not handle.wait(0.05), "動作還沒做完，handle 不該是 done"
+    released.set()
+    assert handle.wait(5), "動作做完後 handle 應轉為 done"
+
+
+def test_handle_becomes_done_even_when_the_action_raises():
+    """失敗也算「這筆已經處理完」——呼叫端等的是「不會再變了」，不是「成功了」。"""
+    background.configure(max_workers=1)
+
+    def boom() -> None:
+        raise RuntimeError("boom")
+
+    handle = background.run(boom)
+
+    assert handle.wait(5)
+
+
+def test_handle_never_completes_when_the_queue_is_full(caplog):
+    """佇列滿＝整筆被丟棄，handle 永遠不會 done——這正是呼叫端該看到的事實。
+
+    刻意不在丟棄時把 handle 標記完成：那會讓「寫入被丟掉」偽裝成「寫入完成」，
+    而 B2 之後被丟掉的是**長輩的對話記憶**，不再只是稽核。
+    """
+    background.configure(max_workers=1, max_pending=1)
+    released = threading.Event()
+    background.run(released.wait)  # 佔住唯一的 worker
+    background.run(lambda: None)  # 填滿佇列
+
+    dropped = background.run(lambda: None)
+
+    assert not dropped.wait(0.05)
+    released.set()
+    background.shutdown()
+    assert "背景落庫佇列已滿" in caplog.text

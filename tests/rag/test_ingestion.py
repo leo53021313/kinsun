@@ -95,7 +95,7 @@ def test_ingestion_rejects_chunk_limit_outside_80_to_700(max_chunk_chars):
 
 
 def test_ingestion_writes_source_document_chunks_and_audit_log():
-    source = SourceRegistry().get("hpa_elder_health")
+    source = SourceRegistry().get("hpa_health_education")
     store = _FakeStore()
     pipeline = IngestionPipeline(
         store=store,
@@ -128,7 +128,7 @@ def test_ingestion_writes_source_document_chunks_and_audit_log():
 
 
 def test_ingestion_deduplicates_url_and_content_with_audit_logs():
-    source = SourceRegistry().get("hpa_elder_health")
+    source = SourceRegistry().get("hpa_health_education")
     store = _FakeStore()
     pipeline = IngestionPipeline(
         store=store,
@@ -157,7 +157,7 @@ def test_ingestion_deduplicates_url_and_content_with_audit_logs():
 
 
 def test_same_url_and_timestamp_deduplication_is_order_independent():
-    source = SourceRegistry().get("hpa_elder_health")
+    source = SourceRegistry().get("hpa_health_education")
 
     def kept_text(seed_documents):
         store = _FakeStore()
@@ -228,7 +228,7 @@ def test_same_url_from_two_sources_is_ingested_once_per_run():
     來源的批次內去重，看不到跨來源的重複。
     """
     registry = SourceRegistry()
-    first = registry.get("hpa_elder_health")
+    first = registry.get("hpa_health_education")
     second = registry.get("hpa_chronic_disease")
     shared_url = "https://www.hpa.gov.tw/Home/Index.aspx"
     store = _FakeStore()
@@ -256,7 +256,7 @@ def test_same_url_from_two_sources_is_ingested_once_per_run():
 def test_cross_source_claim_does_not_block_different_urls():
     """去重只針對相同 URL，不同頁面照收——別把整個來源誤殺。"""
     registry = SourceRegistry()
-    first = registry.get("hpa_elder_health")
+    first = registry.get("hpa_health_education")
     second = registry.get("hpa_chronic_disease")
     store = _FakeStore()
     pipeline = IngestionPipeline(
@@ -281,3 +281,138 @@ def test_cross_source_claim_does_not_block_different_urls():
         )
 
     assert len(store.documents) == 2
+
+
+def _parsed_page(url: str, title: str, text: str):
+    from kinsun.rag.crawler import ParsedPage
+
+    return ParsedPage(
+        url=url,
+        title=title,
+        text=text,
+        links=(),
+        published_at=None,
+        parser_used="html:test",
+    )
+
+
+_HPA_ARTICLE = """衛生福利部國民健康署 - 不運動就瘦不下來嗎？
+跳到主要內容區塊
+:::
+保健闢謠
+定位點
+:::
+首頁
+>
+服務園地
+>
+保健闢謠
+不運動就瘦不下來嗎？
+facebook
+列印
+發布單位：社區健康組
+發布日期：2019/12/03
+事實上相較於運動，飲食控制對減重的效果更明顯，但合併運動可以帶來更多健康益處。
+運動可以有效降低體脂肪及內臟脂肪，並幫助改善血糖及血壓。
+上一則
+您可能會喜歡
+老人家血壓太高沒關係？
+回首頁"""
+
+
+def test_ingest_pages_strips_page_furniture_before_chunking():
+    """入庫的內文不可含導覽與文末相關文章。
+
+    2026-08-01 盤點正式庫：10,209 個 chunk 有 61% 含導覽字樣，文末「您可能會喜歡」
+    還會夾帶其他文章標題，等於把 A 文章的向量污染成 B。
+    """
+    source = SourceRegistry().get("hpa_health_education")
+    store = _FakeStore()
+    pipeline = IngestionPipeline(
+        store=store,
+        embedding_model=CharacterHashEmbedding(dimensions=8),
+        max_chunk_chars=400,
+        clock=lambda: datetime(2026, 8, 1, 10, 0),
+    )
+
+    pipeline.ingest_pages(
+        source,
+        (
+            _parsed_page(
+                "https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=127&pid=1",
+                "衛生福利部國民健康署 - 不運動就瘦不下來嗎？",
+                _HPA_ARTICLE,
+            ),
+        ),
+        operator_or_job_id="test",
+    )
+
+    assert store.documents, "文章應被收錄"
+    text = store.documents[0].text
+    assert "飲食控制對減重的效果更明顯" in text
+    for furniture in ("跳到主要內容區塊", ":::", "定位點", "facebook", "發布日期", "回首頁"):
+        assert furniture not in text, furniture
+    assert "老人家血壓太高沒關係？" not in text, "文末相關文章標題不可留在內文"
+
+
+def test_ingest_pages_rejects_administrative_pages_with_audit_log():
+    """行政文書不入庫，但要留稽核紀錄說明為什麼被擋。"""
+    source = SourceRegistry().get("hpa_health_education")
+    store = _FakeStore()
+    pipeline = IngestionPipeline(
+        store=store,
+        embedding_model=CharacterHashEmbedding(dimensions=8),
+        max_chunk_chars=400,
+        clock=lambda: datetime(2026, 8, 1, 10, 0),
+    )
+
+    pipeline.ingest_pages(
+        source,
+        (
+            _parsed_page(
+                "https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=913&pid=2",
+                "107年國民健康署法定預算",
+                "本案依相關規定辦理，詳如附件所載之內容與作業程序說明，"
+                "並自公告日起生效施行，請各相關單位配合辦理查照。",
+            ),
+        ),
+        operator_or_job_id="test",
+    )
+
+    assert store.documents == []
+    assert store.chunks == []
+    assert store.logs, "被擋下來的頁面仍要留稽核紀錄"
+    assert store.logs[0]["status"] == "skipped"
+    assert "行政文書" in store.logs[0]["error_message"]
+
+
+def test_ingest_pages_strips_publisher_prefix_from_title():
+    """網頁 <title> 常是「機關名 - 文章標題」，前綴要剝掉。
+
+    2026-08-01 對真實網站煙霧測試時發現：前綴留著會讓「內文只是標題複讀」的
+    判定失效（內文寫的是裸標題，比對對象卻帶著機關名），附件索引頁因此矇混過關。
+    """
+    source = SourceRegistry().get("hpa_health_education")
+    store = _FakeStore()
+    pipeline = IngestionPipeline(
+        store=store,
+        embedding_model=CharacterHashEmbedding(dimensions=8),
+        max_chunk_chars=400,
+        clock=lambda: datetime(2026, 8, 1, 10, 0),
+    )
+
+    pipeline.ingest_pages(
+        source,
+        (
+            _parsed_page(
+                "https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=127&pid=5",
+                f"{source.publisher} - 連喝水也會胖",
+                "連喝水也會胖\n維生素、礦物質和水分不會產生熱量，但水分本是人體所需，"
+                "所以正常喝水並不會增加體重，也不會產生肥肉。",
+            ),
+        ),
+        operator_or_job_id="test",
+    )
+
+    assert store.documents[0].title == "連喝水也會胖"
+    assert not store.documents[0].text.startswith("連喝水也會胖\n連喝水也會胖")

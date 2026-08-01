@@ -49,6 +49,7 @@ def _setup(line_user_id="U-son"):
             risk_events=FakeRiskEventStore(),
             reminder_logs=FakeReminderLogStore(),
             summaries=FakeConversationSummaryStore(),
+            appointment_hour=8,
         ),
         prefix="/api/v1",
     )
@@ -87,6 +88,7 @@ def test_liff_first_elder_names_guardian_from_id_token():
             risk_events=FakeRiskEventStore(),
             reminder_logs=FakeReminderLogStore(),
             summaries=FakeConversationSummaryStore(),
+            appointment_hour=8,
         ),
         prefix="/api/v1",
     )

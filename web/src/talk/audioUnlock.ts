@@ -1,0 +1,67 @@
+/**
+ * iOS Safari 音訊解鎖（spec §12 R-1）。
+ *
+ * ⚠️ **為什麼需要它**：iOS Safari 不允許在沒有使用者手勢的情況下播放音訊，而金孫
+ * 的回覆是在 WebSocket 訊框抵達時才播——那已經脫離「按下麥克風」的手勢鏈。不做
+ * 這件事的症狀是「iPhone 上只看得到字、聽不到聲音，桌機一切正常」，而那種只在
+ * 特定裝置出現的症狀查起來非常久。
+ *
+ * 做法：在第一次使用者互動時播一段極短的無聲音檔，之後這個播放器就解鎖了。
+ *
+ * ⚠️ 無聲音檔必須是**同源的靜態檔**，不可用 `data:` URI——CSP 的
+ * `media-src 'self' https: blob:` 不含 `data:`，用 data URI 會被自家政策擋掉，
+ * 而症狀正好也是「iPhone 上沒有聲音」，兩者混在一起會查到懷疑人生。
+ *
+ * ⚠️ **不要在「開始錄音」的同一個手勢裡呼叫這個函式**：`docs/dev/17_前端資訊
+ * 架構.md` 記載 2026-07-18 的一次真實故障——App 端當初在手勢裡先播提示音再
+ * 開始錄音，WebKit 的音訊工作階段被播放搶走，導致 iPhone 錄到的音檔全部
+ * ≤0.72 秒且近無聲，修法是「開錄的那一刻不要播任何東西」。
+ *
+ * ✅ **呼叫時機已定案（專案裁決 2026-08-01，選項 B）**：主要呼叫點是
+ * `elder/useTalk.ts` 在建立播放器的同一條 effect 裡掛的 `window` `pointerdown`
+ * 監聽器——「**這顆播放器誕生之後的第一個觸碰**」，與開錄無關。麥克風鍵
+ * （`pressIn`）保留一次呼叫當補漏，已解鎖就會早退。⚠️ 解鎖不能更早（例如配對
+ * 畫面的「開始使用」）：那時播放器還不存在，而 iOS 的解鎖綁在單一
+ * `HTMLMediaElement` 上（見下方 `WeakSet` 說明），對別顆播放器解鎖等於沒解鎖。
+ * ⚠️ 因此「長輩進畫面後第一個動作就是按麥克風」這條路徑仍與開錄同一個手勢，
+ * 風險未完全消除，且**無法在無頭測試環境判定**——見任務報告的人工驗收清單。
+ */
+
+import { UNLOCK_AUDIO_URI } from "./playback";
+
+/**
+ * 已經解鎖過的播放器。
+ *
+ * ⚠️ **粒度必須是「每顆播放器一次」，不是「每個頁面一次」**（2026-07-31 審查發現
+ * 的 Critical）：iOS 的解鎖綁在單一 `HTMLMediaElement` 上（見 `playback.ts` 的
+ * `addListener` 說明），而 `createWebPlayer()` 每次都 `new Audio()`——長輩端在
+ * 窄螢幕切一次頁籤、或登出後重新配對，`useTalk` 的 effect 就會重跑、換一顆新的
+ * 播放器。旗標若是單一布林值，第二顆播放器會在這裡被早退掉、**從未在使用者手勢
+ * 內被 `play()` 過**，之後 WebSocket 送下來的回覆一律被 iOS 擋下，而
+ * `playback.ts::play()` 把 rejection 吞掉了——症狀是「長輩只看得到字、聽不到
+ * 任何聲音，而且本次頁面載入內永久如此」。
+ *
+ * 用 `WeakSet`：播放器被丟棄後這裡不會攔著它不讓垃圾回收。
+ */
+let unlockedPlayers = new WeakSet<object>();
+
+export function unlockAudio(player: { play: () => void; replace: (s: { uri: string }) => void }): void {
+  if (unlockedPlayers.has(player)) {
+    return;
+  }
+  // ⚠️ 先上鎖再播放：`player.play()` 是 `PlayerLike` 的同步介面（不回傳
+  // promise），本函式**看不到**底層播放到底成不成功——`WebPlayer.play()`
+  // 內部把 `HTMLMediaElement.play()` 的 rejection 吞掉（見 playback.ts），
+  // 就算改成「拿到成功訊號才上鎖」也等不到任何訊號可用。這代表若真的解鎖
+  // 失敗（例如未來改成在非手勢時機呼叫、被 iOS 擋下），旗標仍會維持
+  // `true`、之後不會再嘗試。目前的呼叫時機（使用者手勢的同步呼叫堆疊內）
+  // 下這不是問題；若日後改動呼叫時機，須連同這裡的假設一起重新檢視。
+  unlockedPlayers.add(player);
+  player.replace({ uri: UNLOCK_AUDIO_URI });
+  player.play();
+}
+
+/** 測試用：把解鎖狀態歸零。 */
+export function resetAudioUnlockForTest(): void {
+  unlockedPlayers = new WeakSet();
+}

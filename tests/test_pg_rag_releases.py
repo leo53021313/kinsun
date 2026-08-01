@@ -8,7 +8,7 @@ import pytest
 from kinsun.rag.embeddings import CharacterHashEmbedding
 from kinsun.rag.ingestion import IngestionPipeline, SeedDocument
 from kinsun.rag.releases import PgRagReleaseStore, RagReleaseError, ReleaseStatus
-from kinsun.rag.schemas import ContentPolicy
+from kinsun.rag.schemas import RAG_EMBEDDING_DIMENSIONS, ContentPolicy
 from kinsun.rag.source_registry import SourceRegistry
 from kinsun.rag.vector_store import PgVectorStore
 
@@ -37,7 +37,7 @@ def cleanup_release_rows(pg_database, ns):
 
 class _NamedCharacterHashEmbedding(CharacterHashEmbedding):
     def __init__(self, model_name: str) -> None:
-        super().__init__(dimensions=768)
+        super().__init__(dimensions=RAG_EMBEDDING_DIMENSIONS)
         self._model_name = model_name
 
     @property
@@ -52,7 +52,7 @@ def _build_document(
     text: str = "高血壓要規律量血壓。",
     model_name: str = "character-hash-test",
 ) -> str:
-    source = SourceRegistry().get("hpa_elder_health")
+    source = SourceRegistry().get("hpa_health_education")
     pipeline = IngestionPipeline(
         store=PgVectorStore(pg_database),
         embedding_model=_NamedCharacterHashEmbedding(model_name),
@@ -94,7 +94,7 @@ def test_candidate_invisible_then_atomic_publish_and_rollback(pg_database, ns):
     second = f"{ns}v2"
     _begin(releases, first)
     _build_document(pg_database, version=first)
-    query = CharacterHashEmbedding(dimensions=768).embed_query("高血壓")
+    query = CharacterHashEmbedding(dimensions=RAG_EMBEDDING_DIMENSIONS).embed_query("高血壓")
     assert PgVectorStore(pg_database).search(query) == ()
 
     pg_database.execute(
@@ -152,7 +152,7 @@ def test_unchanged_document_reuses_compatible_chunks(pg_database, ns):
     releases.publish(first)
     _begin(releases, second)
 
-    source = SourceRegistry().get("hpa_elder_health")
+    source = SourceRegistry().get("hpa_health_education")
     row = pg_database.query_one(
         "SELECT source_id, url, title, publisher, text, content_hash, source_type, language, "
         "topic, audience, medical_scope, trust_level, copyright_status, published_at, "
@@ -224,7 +224,7 @@ def test_discovery_document_has_membership_without_embedding_or_orphan(pg_databa
     source = SourceRegistry().get("hpa_news_api")
     pipeline = IngestionPipeline(
         store=PgVectorStore(pg_database),
-        embedding_model=CharacterHashEmbedding(dimensions=768),
+        embedding_model=CharacterHashEmbedding(dimensions=RAG_EMBEDDING_DIMENSIONS),
     )
 
     pipeline.ingest_seed_documents(
@@ -272,7 +272,7 @@ def test_failed_release_atomic_document_can_be_reused(pg_database, ns):
     releases.mark_failed(failed, error_message="外部服務逾時")
     _begin(releases, resumed)
 
-    source = SourceRegistry().get("hpa_elder_health")
+    source = SourceRegistry().get("hpa_health_education")
     row = pg_database.query_one(
         "SELECT source_id, url, title, publisher, text, content_hash, source_type, language, "
         "topic, audience, medical_scope, trust_level, copyright_status, published_at, "
@@ -291,3 +291,38 @@ def test_failed_release_atomic_document_can_be_reused(pg_database, ns):
 
     assert reused is True
     assert releases.structural_metrics(resumed)["chunk_count"] > 0
+
+
+@pytest.mark.skipif(os.environ.get("KINSUN_IT") != "1", reason="需要 KINSUN_IT=1 與測試資料庫")
+def test_ensure_schema_upgrades_existing_768_dimension_column():
+    """既有庫的向量欄位維度要能升級。
+
+    `CREATE TABLE IF NOT EXISTS` 不會改既有表——空測試庫跑得過，正式庫卻不會升級。
+    2026-08-01 把 RAG 從 Gemini（768 維）換成 BGE-M3（1024 維）時就靠這條守住。
+    """
+    from kinsun.db import connect, ensure_schema
+
+    url = os.environ["KINSUN_TEST_DATABASE_URL"]
+    ensure_schema(url)
+    with connect(url) as conn:
+        # 先把欄位退回舊維度，模擬「已經跑過舊版的正式庫」
+        conn.execute("DROP INDEX IF EXISTS idx_rag_chunks_embedding")
+        conn.execute("ALTER TABLE rag_chunks DROP COLUMN IF EXISTS embedding")
+        conn.execute("ALTER TABLE rag_chunks ADD COLUMN embedding vector(768)")
+
+    ensure_schema(url)
+
+    with connect(url) as conn:
+        dimensions = conn.execute(
+            """
+            SELECT a.atttypmod FROM pg_attribute a
+            JOIN pg_class c ON c.oid = a.attrelid
+            WHERE c.relname = 'rag_chunks' AND a.attname = 'embedding'
+            """
+        ).fetchone()[0]
+        has_index = conn.execute(
+            "SELECT COUNT(*) FROM pg_indexes WHERE indexname = 'idx_rag_chunks_embedding'"
+        ).fetchone()[0]
+
+    assert dimensions == RAG_EMBEDDING_DIMENSIONS
+    assert has_index == 1, "維度升級後 HNSW 索引必須重建"

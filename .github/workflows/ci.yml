@@ -132,6 +132,38 @@ jobs:
         run: npm test
         working-directory: app
 
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安裝 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: 安裝網頁版依賴
+        run: npm ci
+        working-directory: web
+
+      - name: 型別檢查
+        run: npm run typecheck
+        working-directory: web
+
+      - name: Lint
+        run: npm run lint
+        working-directory: web
+
+      - name: 測試
+        run: npm test
+        working-directory: web
+
+      - name: 建置
+        run: npm run build
+        working-directory: web
+
   audit:
     # 依賴安全掃描：警示不擋門（continue-on-error）——新揭露的 CVE 不應在
     # 發表前夕擋死所有合併，但每次 PR 都看得到紅字、需人為決定處置。
@@ -155,3 +187,7 @@ jobs:
       - name: npm audit（app）
         run: npm audit --audit-level=high
         working-directory: app
+
+      - name: npm audit（網頁版）
+        run: npm audit --audit-level=high
+        working-directory: web

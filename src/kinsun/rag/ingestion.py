@@ -11,6 +11,7 @@ from typing import Protocol
 from urllib.parse import urlsplit, urlunsplit
 
 from kinsun.rag.chunker import chunk_text
+from kinsun.rag.content_filter import judge_admission
 from kinsun.rag.crawler import ParsedPage
 from kinsun.rag.embeddings import QueryEmbeddingModel
 from kinsun.rag.schemas import (
@@ -23,7 +24,7 @@ from kinsun.rag.schemas import (
     Source,
     SourceRole,
 )
-from kinsun.rag.text_cleaner import clean_text
+from kinsun.rag.text_cleaner import clean_text, strip_page_furniture
 
 _TOPIC_HINTS = {
     "高血壓": ("高血壓", "血壓", "三高"),
@@ -142,13 +143,32 @@ class IngestionPipeline:
         index_version: str | None = None,
     ) -> tuple[RagDocument, ...]:
         documents = tuple(_page_to_document(source, page, self._clock().date()) for page in pages)
+        # 收錄判定只作用在爬取結果：seed 檔是人工整理過的，不需要也不該被過濾。
+        admitted: list[RagDocument] = []
+        for document in documents:
+            verdict = judge_admission(title=document.title, content=document.text)
+            if verdict.is_admitted:
+                admitted.append(document)
+                continue
+            self._store.log_ingestion(
+                source_id=source.source_id,
+                document_id=document.document_id,
+                url=document.url,
+                fetched_at=self._clock().timestamp(),
+                content_hash=document.content_hash,
+                chunk_count=0,
+                parser_used="content_filter",
+                status=CrawlStatus.SKIPPED.value,
+                error_message=f"未收錄：{verdict.reason}",
+                operator_or_job_id=operator_or_job_id,
+            )
         self.ingest_documents(
             source,
-            documents,
+            tuple(admitted),
             operator_or_job_id=operator_or_job_id,
             index_version=index_version,
         )
-        return documents
+        return tuple(admitted)
 
     def _claim_urls(
         self,
@@ -337,20 +357,23 @@ def _seed_to_document(source: Source, seed: SeedDocument, retrieved_at: date) ->
 
 
 def _page_to_document(source: Source, page: ParsedPage, retrieved_at: date) -> RagDocument:
-    cleaned = clean_text(page.text)
+    title = _strip_publisher_prefix(page.title, source.publisher)
+    # 先剝網頁樣板再清理：政府網站的選單是普通 div，HTML 解析器的 nav／footer
+    # 規則攔不到，只能在文字層處理（見 text_cleaner.strip_page_furniture）。
+    cleaned = clean_text(strip_page_furniture(clean_text(page.text), title=title))
     content_hash = _hash(cleaned)
     document_id = _document_id(source.source_id, page.url, content_hash)
     return RagDocument(
         document_id=document_id,
         source_id=source.source_id,
         url=normalize_url(page.url),
-        title=page.title or source.title,
+        title=title or source.title,
         publisher=source.publisher,
         text=cleaned,
         content_hash=content_hash,
         source_type=source.source_type,
         language=Language.ZH_TW if _looks_zh_tw(cleaned) else Language.EN,
-        topic=_infer_topic(f"{page.title}\n{cleaned}"),
+        topic=_infer_topic(f"{title}\n{cleaned}"),
         audience=Audience.GENERAL_PUBLIC,
         medical_scope=MedicalScope.HEALTH_EDUCATION,
         trust_level=source.trust_level,
@@ -359,6 +382,26 @@ def _page_to_document(source: Source, page: ParsedPage, retrieved_at: date) -> R
         updated_at=page.published_at,
         retrieved_at=retrieved_at,
     )
+
+
+_PUBLISHER_PREFIX_SEPARATORS = ("-", "－", "|", "｜", "–", "—")
+
+
+def _strip_publisher_prefix(title: str, publisher: str) -> str:
+    """去掉網頁 <title> 常見的「機關名 - 」前綴。
+
+    留著前綴會讓「內文只是標題複讀」的判定失效：內文寫的是裸標題，比對對象卻
+    帶著機關名，兩者永遠對不上（2026-08-01 對真實網站煙霧測試時發現，
+    附件索引頁因此矇混過關）。
+    """
+    stripped = title.strip()
+    if not publisher or not stripped.startswith(publisher):
+        return stripped
+    remainder = stripped[len(publisher) :].lstrip()
+    for separator in _PUBLISHER_PREFIX_SEPARATORS:
+        if remainder.startswith(separator):
+            return remainder[len(separator) :].strip()
+    return stripped
 
 
 def _metadata_for(document: RagDocument, source: Source) -> ChunkMetadata:

@@ -12,10 +12,12 @@ from kinsun.safety.evaluation import (
     EvaluationError,
     LabeledUtterance,
     evaluate,
+    format_moderation_crosscheck,
     format_report,
     keyword_only_assess,
     load_labeled_utterances,
 )
+from kinsun.safety.moderation import AbuseCategory, ModerationResult
 from kinsun.safety.tiers import RiskAssessment, RiskTier
 
 
@@ -264,3 +266,109 @@ def test_format_report_stays_quiet_when_nothing_degraded():
     examples = [LabeledUtterance("我跌倒了", RiskTier.L2, "")]
     text = format_report(evaluate(_assess_with(RiskTier.L2, ["llm"]), examples))
     assert "降級" not in text
+
+
+# ── 合併分類器的驗證路徑（2026-07-30 C2＋審查 H-1）──────────────────────
+#
+# 開 `SAFETY_COMBINED_CLASSIFIER_ENABLED` 的前置條件就是這條路能跑：合併提示詞把兩份
+# 獨立調校過的提示詞抄在一起，有沒有稀釋任一邊的判準，只有評測數字答得出來。
+
+
+def test_combined_builder_uses_the_combined_classifier_and_keeps_the_keyword_floor(monkeypatch):
+    """`--combined` 必須走合併分類器，且仍套用與正式路徑相同的關鍵詞地板。
+
+    地板不套等於量到一個線上不存在的系統——「我一直痛」這種靠症狀詞撐 L2 的句子會被
+    記成漏報，數字會誤導選型。
+    """
+    from kinsun.safety import evaluation
+
+    prompts: list[str] = []
+
+    class _SpyGeminiClient:
+        def __init__(self, *, api_key, model, timeout):
+            pass
+
+        def generate(self, *, system_prompt, messages, response_schema=None):
+            prompts.append(system_prompt)
+            # 模型判 L0：最終 L2 只能來自關鍵詞地板。
+            return (
+                '{"tier": 0, "tier_confidence": 0.9, "tier_reason": "沒看出來", '
+                '"category": "none", "moderation_confidence": 0.9, "moderation_reason": "正常"}'
+            )
+
+    monkeypatch.setattr("kinsun.llm.GeminiClient", _SpyGeminiClient)
+    _block_dotenv(monkeypatch)
+    _set_required_env(monkeypatch)
+
+    assess, moderations = evaluation._build_detector_assess(combined=True)
+    got = assess("我一直痛")
+
+    assert got.tier == RiskTier.L2, "關鍵詞地板沒有被套用"
+    assert "同時做兩件事" in prompts[0], "沒有走合併提示詞"
+    assert moderations is not None, "審核判斷沒有被留下來（交叉指標就量不到）"
+
+
+def test_separate_builder_returns_no_moderations(monkeypatch):
+    """不加 `--combined` 時沒有審核判斷可交叉——交叉指標整段不該出現。"""
+    from kinsun.safety import evaluation
+
+    class _SpyGeminiClient:
+        def __init__(self, *, api_key, model, timeout):
+            pass
+
+        def generate(self, **kwargs):  # pragma: no cover - 本測試不呼叫
+            return ""
+
+    monkeypatch.setattr("kinsun.llm.GeminiClient", _SpyGeminiClient)
+    _block_dotenv(monkeypatch)
+    _set_required_env(monkeypatch)
+
+    _assess, moderations = evaluation._build_detector_assess()
+    assert moderations is None
+
+
+def _blocked(category: AbuseCategory, confidence: float = 0.9):
+    return ModerationResult(category, confidence, "測試理由", ["llm"])
+
+
+def test_crosscheck_is_silent_when_no_crisis_utterance_is_blocked():
+    examples = [
+        LabeledUtterance("我想燒炭", RiskTier.L2),
+        LabeledUtterance("今天天氣真好", RiskTier.L0),
+    ]
+    moderations = {
+        "我想燒炭": _blocked(AbuseCategory.NONE),
+        "今天天氣真好": _blocked(AbuseCategory.NONE),
+    }
+
+    report = format_moderation_crosscheck(examples, moderations)
+
+    assert "應通報 1 句，被判違規 0 句" in report
+    assert "⚠️" not in report
+
+
+def test_crosscheck_shouts_when_a_crisis_utterance_is_blocked():
+    """合併之後才可能出現的失效：模型把「危急」誤解成「要攔下來」。
+
+    這一筆不該被埋在報告裡——被攔的那一輪長輩會聽到莫名的回絕話術。
+    """
+    examples = [LabeledUtterance("我不想活了", RiskTier.L2, note="求死意念")]
+    moderations = {"我不想活了": _blocked(AbuseCategory.ROLE_HIJACK, 0.95)}
+
+    report = format_moderation_crosscheck(examples, moderations)
+
+    assert "應通報 1 句，被判違規 1 句" in report
+    assert "⚠️" in report
+    assert "我不想活了" in report
+    assert "role_hijack" in report
+
+
+def test_crosscheck_ignores_non_alert_utterances():
+    """只看應通報的句子：一般閒聊被攔是審核本身的誤攔率，那由 evals/ 那邊量。"""
+    examples = [LabeledUtterance("幫我寫一段程式", RiskTier.L0)]
+    moderations = {"幫我寫一段程式": _blocked(AbuseCategory.CODE_GENERATION)}
+
+    report = format_moderation_crosscheck(examples, moderations)
+
+    assert "應通報 0 句，被判違規 0 句" in report
+    assert "⚠️" not in report

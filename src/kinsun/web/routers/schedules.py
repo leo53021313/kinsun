@@ -14,7 +14,16 @@ from pydantic import BaseModel
 
 from kinsun.schedules.models import CreatedBy, Occurrence, ScheduleGroup, ScheduleKind
 from kinsun.schedules.service import ScheduleService, ScheduleValidationError
-from kinsun.schedules.timeparse import TimeParseError, build_occurrence, parse_epoch
+from kinsun.schedules.timeparse import (
+    TimeParseError,
+    build_appointment_reminders,
+    build_occurrence,
+    parse_epoch,
+)
+from kinsun.schedules.wording import (
+    appointment_day_before_gone_text,
+    appointment_day_before_skipped_text,
+)
 from kinsun.web.envelope import ok
 from kinsun.web.errors import ErrorCode
 from kinsun.web.routers.deps import GuardianAuth, GuardianScope
@@ -56,12 +65,23 @@ def _group_json(group: ScheduleGroup) -> dict:
     }
 
 
+def _meta(warnings: list[str]) -> dict | None:
+    """有話要對家屬說才給 meta，沒有就維持 `null`（其餘端點的常態）。
+
+    形狀比照 `GET /admin/jobs` 的 `meta.warnings`：一串可直接顯示的繁中人話。
+    這裡永遠只有一則（回診前一天那顆過期沒建），用陣列是因為呼叫端的規則因此不必
+    隨新增第二種提示而改寫——「有就逐條顯示」對一則與對三則是同一段程式碼。
+    """
+    return {"warnings": warnings} if warnings else None
+
+
 def create_schedules_router(
     *,
     schedules: ScheduleService,
     current_guardian: Callable[..., GuardianAuth],
     scope: GuardianScope,
     clock: Callable[[], datetime],
+    appointment_hour: int,
 ) -> APIRouter:
     router = APIRouter(tags=["schedules"])
 
@@ -97,6 +117,45 @@ def create_schedules_router(
         except TimeParseError as exc:
             raise HTTPException(status_code=400, detail=ErrorCode.INVALID_DATE) from exc
 
+    def plan(
+        body: ScheduleIn, kind: ScheduleKind, *, is_creating: bool
+    ) -> tuple[tuple[Occurrence, ...], float | None, list[str]]:
+        """回傳（鬧鐘, 事件時刻, 要告訴家屬的話）。
+
+        **回診（帶 `event_date`）的鬧鐘由後端自己算，client 送的 `occurrences` 一律忽略**
+        （12 §9 F-16）。原本這裡把 client 的日期字串原封不動存進庫，而三份前端共用的那段
+        推算在 UTC+8 會把「前一天」算成前兩天——修前端只治得了改得動的那一份，`app/`
+        與 `frontend/` 已凍結，而下一個新寫的 client 還會再犯一次。
+
+        沒帶 `event_date` 的回診（例如長輩用說的登記、或呼叫端只想設一顆）維持原路：
+        後端沒有回診日就無從推算，收下 client 給的鬧鐘仍是唯一能做的事。
+        """
+        event_at = parse_event_at(body)
+        if kind is not ScheduleKind.APPOINTMENT or event_at is None:
+            return parse_occurrences(body.occurrences), event_at, []
+        try:
+            reminders = build_appointment_reminders(
+                event_at=event_at, hour=appointment_hour, now=clock()
+            )
+        except TimeParseError as exc:
+            # 走 A-01 的兩件式：code 給機器分支，message 用已經寫好的繁中人話。
+            # 這條路徑的 TimeParseError 只會是「提醒時間全過了」——日期格式在
+            # `parse_event_at` 就先擋掉了，不會混進來。
+            raise HTTPException(
+                status_code=400,
+                detail={"code": ErrorCode.INVALID_SCHEDULE, "message": str(exc)},
+            ) from exc
+        if not reminders.is_day_before_skipped:
+            return reminders.occurrences, event_at, []
+        # 新增與編輯講的話不同：新增時這一組是全新的，前一天那顆從沒建過，可以放心請
+        # 家屬自己補講；編輯時它很可能今天早上已經正常送出過（見 `..._gone_text`）。
+        text = (
+            appointment_day_before_skipped_text(appointment_hour)
+            if is_creating
+            else appointment_day_before_gone_text(appointment_hour)
+        )
+        return reminders.occurrences, event_at, [text]
+
     def find_group(elder_id: str, group_id: str) -> ScheduleGroup:
         for group in schedules.groups_for_elder(elder_id):
             if group.group_id == group_id:
@@ -117,7 +176,7 @@ def create_schedules_router(
     ) -> dict:
         scope.assert_manages(auth, elder_id)
         kind = parse_kind(body.kind)
-        occurrences = parse_occurrences(body.occurrences)
+        occurrences, event_at, warnings = plan(body, kind, is_creating=True)
         try:
             rows = schedules.create(
                 elder_id=elder_id,
@@ -126,7 +185,7 @@ def create_schedules_router(
                 # 走這支 API 的一律是家屬——長輩沒有 App 帳號可以打這裡。
                 created_by=CreatedBy.GUARDIAN,
                 occurrences=occurrences,
-                event_at=parse_event_at(body),
+                event_at=event_at,
             )
         except ScheduleValidationError as exc:
             # code 給機器判斷、message 用服務層已經寫好的繁中人話（A-01，2026-07-29）。
@@ -136,7 +195,7 @@ def create_schedules_router(
                 status_code=400,
                 detail={"code": ErrorCode.INVALID_SCHEDULE, "message": str(exc)},
             ) from exc
-        return ok(_group_json(find_group(elder_id, rows[0].group_id)))
+        return ok(_group_json(find_group(elder_id, rows[0].group_id)), meta=_meta(warnings))
 
     @router.put("/elders/{elder_id}/schedules/{group_id}")
     def update_schedule(
@@ -154,13 +213,13 @@ def create_schedules_router(
         # 呼叫端才知道要改類型得刪掉重建。
         if parse_kind(body.kind) is not group.kind:
             raise HTTPException(status_code=400, detail=ErrorCode.KIND_NOT_CHANGEABLE)
-        occurrences = parse_occurrences(body.occurrences)
+        occurrences, event_at, warnings = plan(body, group.kind, is_creating=False)
         try:
             schedules.replace_group(
                 group_id,
                 title=body.title,
                 occurrences=occurrences,
-                event_at=parse_event_at(body),
+                event_at=event_at,
             )
         except ScheduleValidationError as exc:
             # code 給機器判斷、message 用服務層已經寫好的繁中人話（A-01，2026-07-29）。
@@ -170,7 +229,7 @@ def create_schedules_router(
                 status_code=400,
                 detail={"code": ErrorCode.INVALID_SCHEDULE, "message": str(exc)},
             ) from exc
-        return ok(_group_json(find_group(elder_id, group_id)))
+        return ok(_group_json(find_group(elder_id, group_id)), meta=_meta(warnings))
 
     @router.delete("/elders/{elder_id}/schedules/{group_id}", status_code=204)
     def delete_schedule(

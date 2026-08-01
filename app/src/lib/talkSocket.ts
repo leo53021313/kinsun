@@ -33,6 +33,64 @@ export type TalkFrame =
 /** setTimeout 的回傳值在 RN 與瀏覽器型別不同，這裡只當成不透明代號傳來傳去。 */
 export type RetryHandle = ReturnType<typeof setTimeout>;
 
+/**
+ * 把 WS 收到的 binary 訊框正規化成 ArrayBuffer。
+ *
+ * RN 兩平台的 binary 訊框都是 `ArrayBuffer`（`react-native` 的
+ * `Libraries/WebSocket/WebSocket.js` 對 `type: 'binary'` 走
+ * `base64.toByteArray(ev.data).buffer`，而 iOS／Android 原生端一律送 `'binary'`）。
+ * `binaryType` 預設是 `undefined`——與瀏覽器預設 `"blob"` 不同，本專案不設，故永遠
+ * 拿到 ArrayBuffer。TypedArray 那一支只是防禦性處理，不是預期路徑。
+ */
+export function asArrayBuffer(data: unknown): ArrayBuffer | null {
+  if (data instanceof ArrayBuffer) {
+    return data;
+  }
+  if (ArrayBuffer.isView(data)) {
+    const view = data as ArrayBufferView;
+    return view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength) as ArrayBuffer;
+  }
+  return null;
+}
+
+/**
+ * 解析內嵌音檔的回覆訊框（2026-07-30 延遲優化 C1）。
+ *
+ * 格式：`[4 bytes 大端序 header 長度][UTF-8 JSON header][m4a bytes]`，header 的欄位
+ * 與 JSON `reply` 訊框完全相同。
+ *
+ * ⚠️ **為什麼 header 要嵌在同一個訊框裡，而不是「先收 JSON 再收 binary」**：後端同一條
+ * 連線最多三輪併發，兩輪幾乎同時算完時「JSON(A)、JSON(B)、binary(A)、binary(B)」的
+ * 交錯完全可能——靠順序配對就會把 A 的音檔配上 B 的字幕。自我描述的訊框對交錯免疫。
+ *
+ * 壞訊框回 null（只丟這一則，不可切斷連線）：外部輸入是資料不是指令。
+ */
+export function parseAudioFrame(
+  buffer: ArrayBuffer,
+): { header: Record<string, unknown>; bytes: Uint8Array } | null {
+  if (buffer.byteLength < 4) {
+    return null;
+  }
+  const headerLength = new DataView(buffer).getUint32(0, false);
+  if (headerLength === 0 || 4 + headerLength > buffer.byteLength) {
+    return null;
+  }
+  let header: unknown;
+  try {
+    header = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 4, headerLength)));
+  } catch {
+    return null;
+  }
+  if (!header || typeof header !== "object" || Array.isArray(header)) {
+    return null;
+  }
+  const fields = header as Record<string, unknown>;
+  if (typeof fields.turn_id !== "string") {
+    return null;
+  }
+  return { header: fields, bytes: new Uint8Array(buffer, 4 + headerLength) };
+}
+
 export type TalkSocketStatus = "connecting" | "open" | "closed";
 
 export type ElderPlace = {
@@ -51,6 +109,14 @@ type TalkSocketOptions = {
   /** 注入點：測試不想真的等。RetryHandle 讓兩個注入點的型別對得起來。 */
   setTimeoutFn?: (fn: () => void, ms: number) => RetryHandle;
   clearTimeoutFn?: (handle: RetryHandle) => void;
+  /**
+   * 注入點：把內嵌音檔的位元組落地成可播放的 uri（正式用
+   * `replyAudio.writeReplyAudio`，見該模組說明為什麼不在這裡直接 import）。
+   *
+   * 未提供＝收到 binary 訊框只能丟掉（本模組不知道怎麼播音檔）。這也是離線單元測試
+   * 的預設狀態：協定解析測得到，檔案系統碰不到。
+   */
+  writeAudio?: (bytes: Uint8Array) => { uri: string };
 };
 
 /**
@@ -74,6 +140,7 @@ export function createTalkSocket(options: TalkSocketOptions) {
     createSocket = (url: string) => new WebSocket(url),
     setTimeoutFn = setTimeout,
     clearTimeoutFn = clearTimeout,
+    writeAudio,
   } = options;
 
   let socket: WebSocket | null = null;
@@ -108,15 +175,33 @@ export function createTalkSocket(options: TalkSocketOptions) {
     };
 
     next.onmessage = (event: { data: unknown }) => {
-      if (typeof event.data !== "string") return;
-      let frame: TalkFrame;
-      try {
-        frame = JSON.parse(event.data);
-      } catch {
-        // 壞掉的訊框只丟掉這一則，不可讓它切斷連線（外部輸入是資料不是指令）。
+      if (typeof event.data === "string") {
+        let frame: TalkFrame;
+        try {
+          frame = JSON.parse(event.data);
+        } catch {
+          // 壞掉的訊框只丟掉這一則，不可讓它切斷連線（外部輸入是資料不是指令）。
+          return;
+        }
+        if (frame && typeof frame === "object" && "type" in frame) onFrame(frame);
         return;
       }
-      if (frame && typeof frame === "object" && "type" in frame) onFrame(frame);
+      // 內嵌音檔的回覆訊框（C1）：落地成本地檔之後，當成一則**普通的 reply**交出去
+      // ——`audio_url` 換成 `file://…`，呼叫端（含分段續拉的整套邏輯）一行都不必改。
+      const buffer = asArrayBuffer(event.data);
+      if (!buffer || !writeAudio) return;
+      const parsed = parseAudioFrame(buffer);
+      if (!parsed) return;
+      let uri: string;
+      try {
+        uri = writeAudio(parsed.bytes).uri;
+      } catch {
+        // 落地失敗＝這一則沒有聲音。刻意仍把 frame 交出去（`audio_url` 留空）：
+        // 字幕與分段資訊照樣有用，長輩至少看得到字、續拉還能繼續。
+        onFrame({ ...parsed.header, audio_url: "" } as unknown as TalkFrame);
+        return;
+      }
+      onFrame({ ...parsed.header, audio_url: uri } as unknown as TalkFrame);
     };
 
     next.onclose = () => {
