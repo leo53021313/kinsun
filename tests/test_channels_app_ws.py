@@ -30,6 +30,7 @@ from kinsun.pipeline import VoicePipeline
 from kinsun.safety.detector import RiskDetector
 from kinsun.speech.ack_audio import AckClip
 from kinsun.speech.asr import ASRError, MockAsrClient
+from kinsun.speech.chunking import split_for_speech
 from kinsun.speech.tts import TTSError, TtsResult
 from kinsun.tools.registry import ToolRegistry
 from tests.fakes import FakeAccountStore, FakeLocationStore, FakeRiskEventStore
@@ -43,11 +44,16 @@ class _EchoLLM:
         return f"你說的是：{messages[-1].content}"
 
 
+#: 切得出三句的回覆（每句皆 ≥ MIN_CHUNK_CHARS＝8 字）。抽成常數是為了讓續段測試能
+#: 拿它去跑 `split_for_speech`，斷言「推出去的段落＝管線切出來的段落」而不是抄一份字面值。
+_MULTI_SENTENCE_REPLY = "第一句話夠長可以自成一段。第二句話也夠長可以自成一段。第三句話同樣夠長。"
+
+
 class _MultiSentenceLLM:
     """回一段切得出三句的回覆，供續段測試用。每句皆 ≥ MIN_CHUNK_CHARS（8 字）。"""
 
     def generate(self, *, system_prompt, messages, response_schema=None):
-        return "第一句話夠長可以自成一段。第二句話也夠長可以自成一段。第三句話同樣夠長。"
+        return _MULTI_SENTENCE_REPLY
 
 
 class _ToolThenReplyLLM:
@@ -205,6 +211,7 @@ def _client(
     asr=None,
     admission=None,
     rate_limiter=None,
+    show_transcript=False,
 ):
     pipeline = VoicePipeline(
         asr=asr or MockAsrClient("今天有什麼新消息"),
@@ -220,7 +227,11 @@ def _client(
             accounts=svc,
             pipeline=pipeline,
             gate=ConsentGate(svc),
-            voice=VoiceReplyDelivery(publisher or _FakePublisher(), include_text=True),
+            voice=VoiceReplyDelivery(
+                publisher or _FakePublisher(),
+                include_text=True,
+                show_transcript=show_transcript,
+            ),
             ack_audio=ack_audio,
             locations=locations,
             new_id=lambda: "turn-1",
@@ -433,6 +444,37 @@ def test_continuation_chunks_are_pushed_in_order():
     assert {c["turn_id"] for c in chunks} == {"turn-1"}  # _client 的 new_id 固定回 turn-1
     assert chunks[0]["text"] == "第二句話也夠長可以自成一段。"
     assert chunks[0]["audio"] == b"fake-m4a"  # _VoiceTts 的固定音檔
+
+
+def test_chunks_come_from_the_real_reply_not_the_debug_display_string():
+    """⭐ 續段切的必須是**真正的回覆文字**，不是投遞層的顯示字串（審查 Critical 1）。
+
+    ⚠️ 這條與 `test_continuation_chunks_are_pushed_in_order` 的差別只有一個開關：
+    `show_transcript=True`（`.env` 上這台機器目前就是 `ASR_DEBUG_SHOW_TRANSCRIPT=true`）。
+    那個模式下 `inbound.py::_compose_text` 回的是「辨識：…\\n\\n回復：…」，拿它去
+    `split_for_speech` 會多切出一段「辨識：…」，於是**第一句被當成續段再唸一次**，
+    而且「回復：」三個字會被 TTS 唸出來：
+
+        pipeline 切（真回覆）：['第一句話…。', '第二句話…。', '第三句話同樣夠長。']
+        顯示字串切：          ['辨識：…\\n\\n', '回復：第一句話…。', '第二句話…。', ...]
+
+    斷言刻意寫成「＝`split_for_speech(真回覆)[1:]`」而不是抄一份字面值：兩邊必須是
+    同一個純函式的同一組輸出，這正是段落對得起來的定義（`chunking.py::reply_digest`
+    的警告寫的是同一個坑，2026-07-26 實機驗證踩過一次）。
+    """
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    client = _client(svc, llm=_MultiSentenceLLM(), show_transcript=True)
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_bytes(b"elder-audio")
+        frames = _frames(ws, 3)  # reply ＋ chunk1 ＋ chunk2
+
+    reply = frames[0]
+    # 先證明這條測試真的踩在那個分岔上——沒有這一行，show_transcript 被忽略也照樣全綠。
+    assert reply["text"].startswith("辨識："), "debug 顯示前綴沒出現，本測試沒有鑑別力"
+    chunks = [f for f in frames if f["type"] == "chunk"]
+    assert [c["text"] for c in chunks] == split_for_speech(_MULTI_SENTENCE_REPLY)[1:]
+    assert all("回復：" not in c["text"] for c in chunks), "投遞層前綴被唸給長輩聽了"
 
 
 def test_single_segment_reply_pushes_no_audio_chunk():

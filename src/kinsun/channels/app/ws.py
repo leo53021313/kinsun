@@ -138,6 +138,12 @@ class _TurnCollector:
     C1 之後多一條路：`reply_audio` 直接把音檔 frame 推出去（不經 `audio_url`），
     並登記 `audio_sent`——`_run_turn` 據此不再補送 JSON `reply`，否則長輩會收到兩份
     同一輪的回覆（音檔一份、文字一份），播放佇列會把同一句話唸兩次。
+
+    ⚠️ `self.text` 是**投遞層的顯示字串**（要放進訊框給長輩看的那一份），不是真正的
+    回覆文字：`ASR_DEBUG_SHOW_TRANSCRIPT=true` 時 `inbound.py::_compose_text` 會回
+    「辨識：…\\n\\n回復：…」。任何「拿回覆文字再做一次處理」的用途（例如續段切句）
+    一律要用 `DeliveryOutcome.reply_text`，不可用這個欄位——2026-08-01 審查
+    Critical 1 就是把它餵進 `split_for_speech` 造成的。
     """
 
     def __init__(self, sender: _Sender | None = None, turn_id: str = "") -> None:
@@ -382,6 +388,10 @@ def create_app_ws_router(
     def _push_continuation_chunks(sender: _Sender, reply_text: str, turn_id: str) -> None:
         """把第一段之後的句子逐段合成並推出去（spec 2026-08-01）。
 
+        `reply_text` 必須是**真正的回覆文字**（`DeliveryOutcome.reply_text`／
+        `TtsResult.text`），不可是投遞層的顯示字串——理由與 `speech/chunking.py::
+        reply_digest` 的警告同一個，見呼叫點的說明。
+
         ⚠️ 自己呼叫 `split_for_speech` 而不是從 `TtsResult` 拿：它是純函式，同樣輸入
         必得同樣輸出；改 `TtsResult` 協定會波及所有測試替身，換不到任何東西。已隨
         2026-08-01 續段語音 WS 直送移除的 REST 續拉端點（`turns.py::get_turn_chunk`）
@@ -513,7 +523,17 @@ def create_app_ws_router(
                         # 續段直送（2026-08-01）：第一段已經在播了，剩下的逐段合成、逐段推出去。
                         # ⚠️ 迴圈在 `turn_gate.admit()` 的 with 區塊**之內**（見上方 try 的縮排）：
                         # 續段一樣打 GPU，閘門要擋的就是這個。放外面會讓 `active()` 低估實際負載。
-                        _push_continuation_chunks(sender, collector.text, turn_id)
+                        # ⚠️ 餵的是 `outcome.reply_text`（**真正的回覆文字**），不是
+                        # `collector.text`（投遞層的顯示字串，見 `_TurnCollector.text`）：
+                        # `ASR_DEBUG_SHOW_TRANSCRIPT=true` 時後者是「辨識：…\n\n回復：…」，
+                        # 切出來的段落與 `pipeline._synthesize` 切的不是同一組，長輩會先聽到
+                        # 第一句、再聽到「回復：」加同一句重播（2026-08-01 審查 Critical 1）。
+                        # `outcome` 為 None 理論上到不了這裡（`audio_sent` 為真代表投遞層跑完
+                        # 且 `_run_pipeline` 回了 outcome）；真的發生就只送終止訊框，寧可少講
+                        # 後半段，也不要拿一串不知道是什麼的文字去合成。
+                        _push_continuation_chunks(
+                            sender, outcome.reply_text if outcome else "", turn_id
+                        )
                         return
             except AdmissionTimeout:
                 logger.warning("排隊逾時，婉拒這一輪 elder=%s turn=%s", elder_id, turn_id)

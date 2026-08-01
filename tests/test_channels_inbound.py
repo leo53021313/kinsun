@@ -556,6 +556,9 @@ def test_dispatch_reports_chunk_count_and_digest_of_the_real_reply():
 
     assert outcome.chunk_count == 2
     assert outcome.reply_digest == reply_digest(reply)
+    # 續段要切的那串文字同理（2026-08-01 審查 Critical 1）：`ws.py` 拿它去
+    # `split_for_speech`，餵成顯示字串的話第一句會被當成續段再唸一次。
+    assert outcome.reply_text == reply
     # 顯示字串確實帶了 debug 前綴——證明本測試真的踩在那個分岔上。
     assert cap.voice_sent[0][2].startswith("辨識：")
 

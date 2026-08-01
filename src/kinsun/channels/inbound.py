@@ -70,6 +70,19 @@ class DeliveryOutcome:
     # 這一輪回覆的短雜湊，前端取後續段落時帶上。⚠️ 由**真正的回覆文字**算出，不是
     # 投遞層的顯示字串——後者在 debug 模式會多「辨識：…」前綴，與 turns 的內容不同。
     reply_digest: str = ""
+    # 這一輪**真正的回覆文字**（`TtsResult.text`），給「投遞之後還要拿它做事」的呼叫端
+    # 用——目前只有 `ws.py::_push_continuation_chunks`（續段逐段合成）。
+    #
+    # ⚠️ **不是投遞層的顯示字串**（與 `reply_digest` 同一條紀律，理由也同一個）：
+    # `show_transcript` 為真時顯示字串是「辨識：…\n\n回復：…」，拿它去
+    # `split_for_speech` 切出來的段落與 `pipeline._synthesize` 切的**不是同一組**
+    # ——第一段變成「辨識：…」、原本的第一句於是被當成續段再唸一次（2026-08-01
+    # 全分支審查 Critical 1，`speech/chunking.py::reply_digest` 早在 2026-07-26
+    # 就把同一個坑寫成明文警告）。
+    #
+    # 與 `chunk_count` 住同一個物件是刻意的：一個說「我宣告了幾段」，一個說
+    # 「那幾段是從哪串文字切出來的」，兩者必須同源，分開放遲早會分岔。
+    reply_text: str = ""
 
 
 def chunk_info(result) -> tuple[int, str]:
@@ -296,8 +309,10 @@ def _run_pipeline(
         outcome = DeliveryOutcome(kind="text")
     # 段數與雜湊走 `chunk_info` 單一出處（見其 docstring）：投遞層的內嵌音檔路徑
     # 也要同一組值，兩邊各算一次遲早會分岔。
+    # `reply_text` 一併在這裡填：它與段數必須來自**同一個** `result.text`，呼叫端
+    # 才不會拿到「宣告 3 段、但那 3 段是從另一串文字切出來的」（見 DeliveryOutcome）。
     chunk_count, digest = chunk_info(result)
-    outcome = replace(outcome, chunk_count=chunk_count, reply_digest=digest)
+    outcome = replace(outcome, chunk_count=chunk_count, reply_digest=digest, reply_text=result.text)
     _record_reply(traces, msg, outcome, started, timer)
     return outcome
 
