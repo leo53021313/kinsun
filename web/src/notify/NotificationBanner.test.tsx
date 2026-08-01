@@ -205,9 +205,10 @@ describe("NotificationBanner", () => {
     expect(banner().className).not.toContain("bg-danger");
   });
 
-  it("危急警報的文字換成白色——否則近黑字壓深紅底只有約 1.5:1 對比", () => {
+  it("危急警報的文字換成白色——否則近黑字壓深紅底只有 2.70:1 對比", () => {
     // ⚠️ 換了底色卻沒換字色，等於把最該讀得清楚的那一則變成最讀不清楚的。
-    // WCAG AA 要求 4.5:1；白字對 #B91C1C 約 7.4:1。
+    // WCAG AA 要求 4.5:1；白字對 #B91C1C 實算 6.47:1（過 AA，**不過 AAA 的 7:1**）。
+    // ⚠️ 兩個數字為 T3 審查更正：原文寫「1.5:1」與「7.4:1，過 AAA」，三項都錯。
     render(
       <NotificationBanner
         item={{ ...ITEM, severity: "alert" }}

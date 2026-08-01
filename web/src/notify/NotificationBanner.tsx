@@ -81,7 +81,11 @@ export type BannerItem = {
  * 通知在該平台長什麼樣」的模擬，而危急警報要的是「一眼認出來」，跨平台一致
  * 反而正確——真實世界的 iOS 緊急警報（Emergency Alert）也不走一般通知樣式。
  *
- * 白字對 `#B91C1C` 底的對比約 7.4:1，過 WCAG AA（4.5:1）與 AAA（7:1）。
+ * 白字對 `#B91C1C` 底的對比 **6.47:1**——過 WCAG AA（4.5:1），**不過 AAA（7:1）**。
+ * ⚠️ 這兩個數字是依 WCAG 2.x 相對亮度公式對 `theme.css` 的實際 token 實算的
+ * （T3 審查更正，2026-08-01：原文寫「約 7.4:1，過 AA 與 AAA」，兩項都錯）。
+ * **不要以為還有無障礙餘裕**——距離 AA 下限只剩 1.97，再縮小字級或改用半透明
+ * 白（如 `text-white/80`）就會跌破 4.5:1。要動這組顏色請先重算。
  */
 const ALERT_STYLE = "rounded-2xl bg-danger text-white shadow-xl ring-1 ring-black/10";
 
@@ -138,7 +142,7 @@ export function NotificationBanner(props: {
   const text = TEXT_SIZE[size];
   const isAlert = item.severity === "alert";
   // ⚠️ 文字顏色必須跟著卡片一起換：`text-ink`（近黑）壓在 `bg-danger`（深紅）上
-  // 對比只有約 1.5:1，遠低於 WCAG AA 的 4.5:1——換了底色卻沒換字色，等於把
+  // 對比只有 2.70:1（實算），低於 WCAG AA 的 4.5:1——換了底色卻沒換字色，等於把
   // 最該讀得清楚的那一則變成最讀不清楚的。關閉鍵的 `text-ink-soft` 同理。
   const bodyColor = isAlert ? "text-white" : "text-ink";
   return (
