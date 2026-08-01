@@ -149,3 +149,51 @@ def test_resolve_voice_cache_evicts_oldest_when_full(monkeypatch, tmp_path):
     tts_server._resolve_voice("e2", "https://example.test/e2.wav", "e2 逐字稿")
     assert "e1" not in tts_server._voice_cache
     assert "e2" in tts_server._voice_cache
+
+
+def test_resolve_voice_falls_back_when_download_fails(monkeypatch, tmp_path):
+    """下載失敗只犧牲客製化聲音，不能讓整輪沒聲音（2026-08-01）。
+
+    原本 urlopen 未接例外：網址過期／Supabase 不通都會讓 /synthesize 回 500，
+    應用層據此退化成純文字——長輩完全聽不到聲音，而且每輪重複發生（快取永遠暖不起來）。
+    客製化聲音失效是缺憾，沒聲音是故障，兩者嚴重度差一級。
+    """
+    monkeypatch.setattr(tts_server, "_voice_cache", {})
+    monkeypatch.setattr(tts_server, "TTS_VOICE_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(tts_server, "TTS_PROMPT_WAV", "/default.wav")
+    monkeypatch.setattr(tts_server, "TTS_PROMPT_TEXT", "預設逐字稿")
+
+    def boom(_url):
+        raise OSError("HTTP Error 400: Bad Request")  # 簽章網址過期時 Supabase 的回應
+
+    monkeypatch.setattr(tts_server.urllib.request, "urlopen", boom)
+
+    assert tts_server._resolve_voice("e1", "https://expired.test/v.wav", "逐字稿") == (
+        "/default.wav",
+        "預設逐字稿",
+    )
+
+
+def test_resolve_voice_does_not_cache_a_failed_download(monkeypatch, tmp_path):
+    """失敗不入快取：下次（例如網址已換發）要能再試，否則一次失敗就永久退化。"""
+    monkeypatch.setattr(tts_server, "_voice_cache", {})
+    monkeypatch.setattr(tts_server, "TTS_VOICE_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(tts_server, "TTS_PROMPT_WAV", "/default.wav")
+    monkeypatch.setattr(tts_server, "TTS_PROMPT_TEXT", "預設逐字稿")
+
+    attempts = []
+
+    def flaky(url):
+        attempts.append(url)
+        if len(attempts) == 1:
+            raise OSError("暫時失敗")
+        return _FakeHttpResponse(b"WAVDATA")
+
+    monkeypatch.setattr(tts_server.urllib.request, "urlopen", flaky)
+
+    first = tts_server._resolve_voice("e1", "https://x.test/v.wav", "逐字稿")
+    assert first == ("/default.wav", "預設逐字稿")
+
+    second = tts_server._resolve_voice("e1", "https://x.test/v.wav", "逐字稿")
+    assert second == (str(tmp_path / "voice-e1.wav"), "逐字稿")
+    assert len(attempts) == 2

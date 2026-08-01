@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import io
+import logging
 import os
 import subprocess
 import sys
@@ -37,6 +38,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
+
+logger = logging.getLogger(__name__)
 
 TTS_MODEL_ID = os.environ.get("TTS_MODEL_ID", "FunAudioLLM/Fun-CosyVoice3-0.5B-2512")
 TTS_COSY_DIR = os.environ.get("TTS_COSY_DIR", "")
@@ -74,9 +77,20 @@ def _resolve_voice(elder_id: str, prompt_audio_url: str, prompt_text: str) -> tu
     if not prompt_audio_url or not prompt_text:
         return TTS_PROMPT_WAV, TTS_PROMPT_TEXT
     local_path = os.path.join(TTS_VOICE_CACHE_DIR, f"voice-{elder_id}.wav")
-    with urllib.request.urlopen(prompt_audio_url) as resp:  # noqa: S310 - 內部/簽章 URL
-        with open(local_path, "wb") as fh:
-            fh.write(resp.read())
+    # 下載失敗退回全域預設聲音（2026-08-01）：原本不接例外，於是任何下載問題（網址過期、
+    # Supabase 暫時不通、磁碟寫入失敗）都會讓 /synthesize 回 500 → 應用層退化成純文字，
+    # **長輩整輪完全聽不到聲音**，而且每輪重複發生（快取永遠暖不起來）。
+    # 客製化聲音失效是缺憾，沒聲音是故障——兩者嚴重度差一級，不該混為一談。
+    try:
+        with urllib.request.urlopen(prompt_audio_url) as resp:  # noqa: S310 - 內部/簽章 URL
+            with open(local_path, "wb") as fh:
+                fh.write(resp.read())
+    except Exception:
+        # 記到 ERROR：這是「長輩專屬的聲音沒生效」，不是可以忽略的雜訊。
+        logger.error(
+            "客製化參考語音下載失敗，改用全域預設聲音 elder_id=%s", elder_id, exc_info=True
+        )
+        return TTS_PROMPT_WAV, TTS_PROMPT_TEXT
     if len(_voice_cache) >= TTS_VOICE_CACHE_SIZE:
         _voice_cache.pop(next(iter(_voice_cache)))
     _voice_cache[elder_id] = (local_path, prompt_text)
