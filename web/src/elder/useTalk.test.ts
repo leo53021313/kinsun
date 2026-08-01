@@ -1201,14 +1201,19 @@ describe("續段直送（2026-08-01）", () => {
       chunk_count: 1,
     });
     await waitFor(() => expect(h.player.played).toContain("https://cdn.example/a.m4a"));
-    h.socket.emit({
-      type: "chunk",
-      turn_id: "t1",
-      index: 0,
-      text: "",
-      audio_url: "",
-      duration_ms: 0,
-      is_last: true,
+    // ⚠️ emit 包進 `act()`（2026-08-01 補）：不包的話這條測試讀到的是還沒沖出來的
+    // 舊狀態——它守的「不進播放佇列」仍然有效，但任何**狀態**層面的副作用（例如
+    // 字幕被清空，見下一條）都會被它悄悄放過。
+    await act(async () => {
+      h.socket.emit({
+        type: "chunk",
+        turn_id: "t1",
+        index: 0,
+        text: "",
+        audio_url: "",
+        duration_ms: 0,
+        is_last: true,
+      });
     });
     // 第一段播完：若終止訊框被誤推進佇列，drain 這時就會去接它。
     await act(async () => {
@@ -1217,6 +1222,89 @@ describe("續段直送（2026-08-01）", () => {
     expect(h.player.played).toEqual(["https://cdn.example/a.m4a"]);
     // 畫面要回到待機——沒有下一段可播，不可以停在「說話中」。
     await waitFor(() => expect(h.view.result.current.avatar).toBe("idle"));
+  });
+
+  it("終止訊框不可以把字幕清空（短回覆：答案剛顯示就被抹掉）", async () => {
+    // ⚠️ 2026-08-01 全分支審查 Critical 2。終止訊框刻意帶 `text: ""`、空音檔，
+    // 它確實不進播放佇列（上一條守的就是這件事），但**在那之前**會先走過
+    // `onFrame` 的字幕那三行。
+    //
+    // 這不是邊角：切不出第二段的短回覆（回退話術、被攔的回絕話術都是）在
+    // `reply` 之後**沒有任何 TTS 呼叫**，終止訊框幾毫秒後就到；播放佇列此刻
+    // 若是空的（ack 已播完，常態），`queue.push` 是同步跑完播放回呼的，字幕
+    // 不會再被補回來——長輩聽完整段 4～8 秒的回答，畫面全程空白，直到他下次
+    // 按麥克風。
+    //
+    // ⚠️ **emit 必須包在 `act()` 裡**：不包的話讀到的是還沒沖出來的舊狀態，
+    // 這條測試就算實作把字幕清空了也照樣全綠（上一條測試正是這個形狀，所以
+    // 它抓不到這個 bug）。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    await holdAndRelease(h);
+    await act(async () => {
+      h.socket.emit({
+        ...REPLY,
+        type: "reply",
+        turn_id: "t1",
+        audio_url: "https://cdn.example/a.m4a",
+      });
+    });
+    expect(h.view.result.current.replyText).toBe("今天天氣很好");
+    await act(async () => {
+      h.socket.emit({
+        type: "chunk",
+        turn_id: "t1",
+        index: 0,
+        text: "",
+        audio_url: "",
+        duration_ms: 0,
+        is_last: true,
+      });
+    });
+    expect(h.view.result.current.replyText).toBe("今天天氣很好");
+  });
+
+  it("續段合成失敗時，長輩至少還看得到已經送到的那一段字", async () => {
+    // 第二種失效情境（GPU 尖峰的常見形態）：後半段的聲音沒了，而終止訊框把
+    // 字幕一起清掉——他既聽不到後半、也看不到後半。字幕是重聽長輩取得答案的
+    // 另一半通道，不可以連它一起沒收。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    await holdAndRelease(h);
+    await act(async () => {
+      h.socket.emit({
+        ...REPLY,
+        type: "reply",
+        turn_id: "t1",
+        audio_url: "https://cdn.example/a.m4a",
+      });
+    });
+    await act(async () => {
+      h.socket.emit({
+        type: "chunk",
+        turn_id: "t1",
+        index: 1,
+        text: "第二句。",
+        audio_url: "https://cdn.example/b.m4a",
+        duration_ms: 100,
+        is_last: false,
+      });
+    });
+    expect(h.view.result.current.replyText).toBe("第二句。");
+    await act(async () => {
+      h.socket.emit({
+        type: "chunk",
+        turn_id: "t1",
+        index: 0,
+        text: "",
+        audio_url: "",
+        duration_ms: 0,
+        is_last: true,
+      });
+    });
+    expect(h.view.result.current.replyText).toBe("第二句。");
   });
 });
 

@@ -542,7 +542,19 @@ export function useTalk(options: {
         // 收窄後才讀）。
         const canTakeOverSubtitle =
           canTakeOverScreen && !(Boolean(frame.audio_url) && isSpeakingAnotherTurn);
-        if (canTakeOverSubtitle) {
+        // ⚠️ **空字串不可以蓋掉字幕**（2026-08-01 全分支審查 Critical 2）：續段的
+        // **終止訊框**刻意帶 `text: ""`、空音檔，只用來標示「這一輪講完了」。空音檔
+        // 確實不會進播放佇列（下面的 `if (frame.audio_url)` 為假），但它會先走到這裡
+        // 把字幕設成空字串——而終止訊框在兩種**常見**情形下緊跟在答案後面抵達：
+        //   ①短回覆（切不出第二段：回退話術、被攔的回絕話術都是）——`reply` 與終止
+        //     訊框之間沒有任何 TTS 呼叫，相隔幾毫秒；若播放佇列此刻是空的（ack 已播
+        //     完，常態），`queue.push` 會**同步**跑完播放回呼，字幕不會再被補回來，
+        //     長輩聽完整段 4～8 秒的回答，畫面全程空白。
+        //   ②續段合成失敗（GPU 尖峰）——後半段的聲音沒了，字幕**同時**被清掉，他
+        //     既聽不到後半也看不到後半。
+        // 播放回呼那一側早就有同一道守門（`if (item.text)`），這裡缺的是同一件事。
+        // 對重聽的長輩尤其嚴重：字幕是他取得答案的另一半通道。
+        if (canTakeOverSubtitle && frame.text) {
           setReplyText(frame.text);
         }
         // ⚠️ 續段直送（2026-08-01）的 `chunk` 訊框刻意**不**另開分支：它與
