@@ -117,6 +117,25 @@ class _FailAfterFirstTts:
         return TtsResult(text=text, audio=b"fake-m4a", duration_ms=1200)
 
 
+class _FailAfterSecondTts:
+    """第一、二次合成成功（回覆第一段＋續段第一段），第三次起擲 TTSError。
+
+    與 `_FailAfterFirstTts`（續段第一次疊代就失敗）刻意不同：這裡要讓續段迴圈
+    **先成功推出一段，下一段才失敗**——這是 `sent_terminator` 這個旗標唯一測得出
+    「送過一段就誤當成已經送過終止訊框」這種寫錯方式的情境（`_FailAfterFirstTts`
+    因為迴圈第一次疊代就 break，永遠不會走到「送出成功續段」那一行）。
+    """
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def synthesize(self, text: str) -> TtsResult:
+        self.calls += 1
+        if self.calls > 2:
+            raise TTSError("模擬合成失敗（跑到一半才炸）")
+        return TtsResult(text=text, audio=b"fake-m4a", duration_ms=1200)
+
+
 class _FakePublisher:
     def __init__(self) -> None:
         self.calls = 0
@@ -444,6 +463,33 @@ def test_chunk_synthesis_failure_still_sends_terminator():
 
     terminator = frames[-1]
     assert terminator["type"] == "chunk"
+    assert terminator["is_last"] is True, "無論如何都要有終止訊號"
+    assert terminator["text"] == "", "終止訊框不帶文字"
+    assert terminator["audio"] == b"", "終止訊框不帶音檔"
+
+
+def test_chunk_synthesis_failure_after_a_successful_chunk_still_sends_terminator():
+    """續段先成功推出一段、下一段才失敗——仍要補送終止訊框，不能因為「已經送過一段」就當作結束。
+
+    ⚠️ 這是 `sent_terminator` 唯一測得出「把『送過一段』誤當成『已經送過終止訊框』」
+    這種寫錯方式的情境：`test_chunk_synthesis_failure_still_sends_terminator` 用的
+    `_FailAfterFirstTts` 在續段迴圈第一次疊代就失敗，永遠不會走到「成功送出一段」
+    那一行，測不出這條路（已用 mutation 驗證：把 `sent_terminator = is_last` 改成
+    `sent_terminator = True`，那條測試仍然通過，只有這條會變紅——見 task-3-report.md）。
+    """
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    client = _client(svc, llm=_MultiSentenceLLM(), tts=_FailAfterSecondTts())
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_bytes(b"elder-audio")
+        frames = _frames(ws, 3)  # reply ＋ 成功的續段（index 1）＋ 終止訊框
+
+    chunks = [f for f in frames if f["type"] == "chunk"]
+    assert len(chunks) == 2, "應收到一段成功的續段，加上一個終止訊框"
+    successful, terminator = chunks
+    assert successful["index"] == 1
+    assert successful["audio"] == b"fake-m4a", "成功的那一段必須帶音檔"
+    assert successful["is_last"] is False, "它不是回覆的最後一段，不該自己帶 is_last"
     assert terminator["is_last"] is True, "無論如何都要有終止訊號"
     assert terminator["text"] == "", "終止訊框不帶文字"
     assert terminator["audio"] == b"", "終止訊框不帶音檔"
