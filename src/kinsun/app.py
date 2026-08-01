@@ -479,6 +479,8 @@ def build_app() -> FastAPI:
             traces=core.traces,
             inbound_audio=inbound_audio,
             ack_audio=ack_audio,
+            # 續段直送（2026-08-01）：第一段之後的句子由本 router 自己逐段合成推出。
+            tts=tts_client,
             locations=core.locations,
             new_id=lambda: uuid.uuid4().hex,
             clock=clock,

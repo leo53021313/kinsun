@@ -33,6 +33,9 @@
 - **binary frame**——答案算完且有音檔（2026-07-30 延遲優化 C1）。格式：
   `[4 bytes 大端序 header 長度][UTF-8 JSON header][m4a bytes]`，header 欄位與 `reply`
   完全相同（`type` 亦為 `"reply"`）。
+- **binary frame（type="chunk"）**——續段語音（2026-08-01）。header 欄位：
+  `turn_id`、`index`（從 1 起）、`text`、`duration_ms`、`is_last`。
+  ⚠️ `turn_id` 是必要的：併發之下同時可能有多輪在推段，前端靠它歸屬。
 
 ⚠️ **為什麼 header 要嵌在 binary frame 裡，而不是「先送 JSON 再送 binary」**：同一條
 連線最多三輪併發（`_MAX_CONCURRENT_TURNS`），兩輪幾乎同時算完時，「JSON(A)、JSON(B)、
@@ -70,6 +73,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from kinsun import tracing
 from kinsun.accounts.models import Channel, PrincipalType
 from kinsun.accounts.service import AccountService
 from kinsun.agent import SYSTEM_TROUBLE_REPLY
@@ -77,6 +81,8 @@ from kinsun.channels.app.admission import AdmissionTimeout, TurnAdmission
 from kinsun.channels.app.inbound_audio import start_inbound_upload
 from kinsun.channels.inbound import InboundMessage, dispatch
 from kinsun.locations.store import ElderLocation, is_valid_coordinate, is_valid_place
+from kinsun.speech.chunking import split_for_speech
+from kinsun.speech.tts import TTSError, TtsPriority, tts_priority
 from kinsun.turn_context import (
     pending_utterances,
     tool_announcer,
@@ -265,6 +271,21 @@ class _Sender:
         )
         future.result(timeout=5)
 
+    def send_chunk_audio(self, header: dict, audio: bytes) -> None:
+        """送出續段音檔訊框（2026-08-01）。
+
+        ⚠️ 失敗只記 warning、**不往外拋**（與 `send_reply_audio` 相反）：第一段推不出去
+        代表長輩這一輪什麼都收不到，必須讓投遞層退回文字泡泡；續段推不出去時他已經
+        聽到開頭了，為此把整輪打回文字反而更糟。
+        """
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                self._websocket.send_bytes(encode_reply_frame(header, audio)), self._loop
+            )
+            future.result(timeout=5)
+        except Exception:  # noqa: BLE001 - 續段送不出去不可中斷那一輪的其餘工作
+            logger.warning("續段音檔送出失敗 index=%s", header.get("index"))
+
 
 def create_app_ws_router(
     *,
@@ -275,6 +296,7 @@ def create_app_ws_router(
     traces=None,
     inbound_audio=None,
     ack_audio=None,
+    tts=None,
     locations=None,
     new_id: Callable[[], str] | None = None,
     clock: Callable[[], datetime] | None = None,
@@ -345,6 +367,49 @@ def create_app_ws_router(
             )
 
         return announce
+
+    @tracing.track(
+        name="tts_chunks",
+        type="general",
+        capture_input=False,  # reply_text 已在 care_turn_voice 的 I/O 裡
+        capture_output=False,  # 回傳 None
+    )
+    def _push_continuation_chunks(sender: _Sender, reply_text: str, turn_id: str) -> None:
+        """把第一段之後的句子逐段合成並推出去（spec 2026-08-01）。
+
+        ⚠️ 自己呼叫 `split_for_speech` 而不是從 `TtsResult` 拿：它是純函式，同樣輸入
+        必得同樣輸出；改 `TtsResult` 協定會波及所有測試替身，換不到任何東西。
+        既有的 `turns.py::get_turn_chunk` 也是這樣做的。
+
+        優先權 `CHUNK`：長輩正在聽第一段、續段有餘裕，別位長輩的第一段（`REPLY`）
+        應該先做。
+        """
+        if tts is None:
+            return
+        chunks = split_for_speech(reply_text)
+        for index, text in enumerate(chunks[1:], start=1):
+            is_last = index == len(chunks) - 1
+            try:
+                with tts_priority(TtsPriority.CHUNK):
+                    result = tts.synthesize(text)
+            except TTSError:
+                logger.warning("續段合成失敗 turn=%s index=%s", turn_id, index)
+                return
+            if result.audio is None:
+                logger.warning("續段無音檔 turn=%s index=%s", turn_id, index)
+                return
+            sender.send_chunk_audio(
+                {
+                    "type": "chunk",
+                    "turn_id": turn_id,
+                    "index": index,
+                    "text": text,
+                    "duration_ms": result.duration_ms,
+                    "is_last": is_last,
+                },
+                result.audio,
+            )
+            logger.info("續段推出 turn=%s index=%s 字數=%s", turn_id, index, len(text))
 
     def _run_turn(
         *,
@@ -420,6 +485,12 @@ def create_app_ws_router(
                             traces=traces,
                             elder_id=elder_id,  # 入口已解析並複核同意（✅ 庚-12）
                         )
+                    if collector.audio_sent:
+                        # 續段直送（2026-08-01）：第一段已經在播了，剩下的逐段合成、逐段推出去。
+                        # ⚠️ 迴圈在 `turn_gate.admit()` 的 with 區塊**之內**（見上方 try 的縮排）：
+                        # 續段一樣打 GPU，閘門要擋的就是這個。放外面會讓 `active()` 低估實際負載。
+                        _push_continuation_chunks(sender, collector.text, turn_id)
+                        return
             except AdmissionTimeout:
                 logger.warning("排隊逾時，婉拒這一輪 elder=%s turn=%s", elder_id, turn_id)
                 sender.send({"type": "error", "turn_id": turn_id, "text": _BUSY_REPLY})
@@ -433,10 +504,9 @@ def create_app_ws_router(
             # 的名額會一直被佔著，長輩問滿三次之後就再也得不到回應。閘門本身的名額
             # 由 `turn_gate.admit()` 自己的 finally 釋放，不必在這裡重複處理。
             in_flight.finish(turn_id)
-        if collector.audio_sent:
-            # 音檔 frame 已經在投遞當下推出去了（含完整 header），不可再補一則 JSON
-            # reply——長輩會收到同一輪的兩份回覆，播放佇列把同一句話唸兩次。
-            return
+        # ⚠️ 走到這裡代表 `collector.audio_sent` 必為 False：音檔 frame（與續段）已在
+        # `with turn_gate.admit()` 之內就近推送並 return，不會落到這裡；此處只剩
+        # 純文字回覆（TTS 失敗退純文字）需要補送 JSON reply。
         chunk_count = outcome.chunk_count if outcome else 0
         sender.send(
             {

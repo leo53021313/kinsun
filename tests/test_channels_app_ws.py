@@ -43,6 +43,13 @@ class _EchoLLM:
         return f"你說的是：{messages[-1].content}"
 
 
+class _MultiSentenceLLM:
+    """回一段切得出三句的回覆，供續段測試用。每句皆 ≥ MIN_CHUNK_CHARS（8 字）。"""
+
+    def generate(self, *, system_prompt, messages, response_schema=None):
+        return "第一句話夠長可以自成一段。第二句話也夠長可以自成一段。第三句話同樣夠長。"
+
+
 class _ToolThenReplyLLM:
     """第一輪要工具、第二輪講人話——用來走到安撫話的觸發點。"""
 
@@ -188,6 +195,7 @@ def _client(
             clock=lambda: NOW,
             admission=admission,
             rate_limiter=rate_limiter,
+            tts=tts or _VoiceTts(),
         ),
         prefix="/api/v1",
     )
@@ -368,6 +376,40 @@ def test_the_elder_never_gets_two_replies_for_one_turn():
     assert first["type"] == "reply"
     assert second["type"] == "reply"
     assert second["audio"] == b"fake-m4a"
+
+
+# ── 續段語音直送（2026-08-01）────────────────────────────────────────────
+
+
+def test_continuation_chunks_are_pushed_in_order():
+    """第一段之後，剩餘段落逐一以 binary frame 推出，index 遞增、最後一段 is_last。"""
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    client = _client(svc, llm=_MultiSentenceLLM())
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_bytes(b"elder-audio")
+        frames = _frames(ws, 3)  # reply ＋ chunk1 ＋ chunk2
+
+    chunks = [f for f in frames if f["type"] == "chunk"]
+    assert [c["index"] for c in chunks] == [1, 2]
+    assert [c["is_last"] for c in chunks] == [False, True]
+    # ⚠️ 併發之下前端靠 turn_id 歸屬，錯了會把 A 的段接到 B 後面（同 459051f 那類錯亂）
+    assert {c["turn_id"] for c in chunks} == {"turn-1"}  # _client 的 new_id 固定回 turn-1
+    assert chunks[0]["text"] == "第二句話也夠長可以自成一段。"
+    assert chunks[0]["audio"] == b"fake-m4a"  # _VoiceTts 的固定音檔
+
+
+def test_single_segment_reply_pushes_no_audio_chunk():
+    """短回覆切不出第二段——不推任何**帶音檔**的續段訊框。"""
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    client = _client(svc)  # _EchoLLM 回短句
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_bytes(b"elder-audio")
+        frames = _frames(ws, 1)  # 只有 reply
+
+    audio_chunks = [f for f in frames if f["type"] == "chunk" and f["audio"]]
+    assert audio_chunks == []
 
 
 def test_ack_arrives_before_the_reply_when_a_tool_is_called():
