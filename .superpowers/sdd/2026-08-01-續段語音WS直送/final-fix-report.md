@@ -270,3 +270,51 @@ REST 續拉一棵」（審查員實測 n=57），新的是「**每一輪一棵**
    `rag/ingestion.py` 等十餘檔，其中數檔在本次工作期間才出現變更）。我**完全沒有碰**它們，
    四顆 commit 皆以明確路徑 `git add`，未使用 `git add -A`。全庫 pytest 的 2719 條包含那些
    改動帶進來的測試，故與帳本記載的 2690 不可直接相比；本批自身淨增 4 條（後端 2、前端 2）。
+
+---
+
+## 7. 追記：交付前的獨立覆核（2026-08-01 20:10）
+
+本節由**同一批任務的另一個並行 session** 在交付前重跑一次驗證後補上。兩個 session
+共用同一個工作區，收斂到同一組修法（`DeliveryOutcome.reply_text`、`frame.text` 守門、
+`in_flight` 前移、續段迴圈自帶 try、終止訊框恆送），上表四顆 commit 即最終結果。
+以下三點與上文所載略有出入，以本節為準：
+
+### 7.1 追加一顆 commit：`ff3c0d4 style(ws)`
+
+`037123d`（在途清單註解的措辭修正）留下一行 101 字元的註解，`uv run ruff check src tests`
+在 HEAD 上因此是紅的。已把該行句尾的 `` `pending_utterances` `` 改寫成同義的「在途清單」
+把行長壓回上限內。**零行為改變**，註解陳述的事實一字未變。
+
+### 7.2 全庫 pytest 的實際數字
+
+| 指令 | 本次覆核結果 |
+|---|---|
+| `uv run pytest -q`（全庫、單行程） | **2698 passed / 6 failed** |
+| `uv run pytest tests/test_channels_app_ws.py -q` | 47 passed |
+| `uv run pytest tests/test_channels_inbound.py -q` | 37 passed |
+| `npm test`（`web/`，41 檔） | 587 passed |
+| `npm run typecheck`／`npm run lint` | 乾淨 |
+| `uv run ruff check src tests` | 本批檔案無錯誤（餘 4 筆 F821 見 7.3） |
+
+⚠️ 6 條紅燈全部落在 `tests/test_pg_rag_releases.py`，**與本批無關**，證據：
+該檔在工作區是**未提交**狀態，其未提交版本第 55／155 行改成
+`SourceRegistry().get("hpa_health_education")`，而 `source_registry.py`（同樣未提交、
+同一位組員的在途工作）目前還沒有這個 source id，故拋 `KeyError`；HEAD 版該檔用的是
+`hpa_elder_health`。同理，`ruff` 剩下的 4 筆 `F821` 全在 `src/kinsun/rag/refresh.py`
+（亦為未提交的在途工作）。上文 §4 記的「2719 passed」是更早一個時點的快照，該組員
+其後又改動了 RAG 檔案，故數字對不上——**本批範圍內的測試兩次都是全綠**。
+
+### 7.3 分支上出現他人的 commit
+
+覆核期間 `Leo` 分支多了 `fe66862`／`6fbe293` 兩顆 RAG commit（另一位組員）。本批的
+六顆（`20b81f5`／`fad52c3`／`2c178d5`／`03f3db4`／`037123d`／`ff3c0d4`）與它們互不重疊，
+每一顆都只以明確路徑 `git add`。⚠️ 交由整合負責人開 PR 時請注意：這條分支上同時躺著
+兩批不同主題的工作，且 RAG 那批仍有大量未提交檔案。
+
+### 7.4 仍然成立的最大疑慮
+
+§6 的六項照舊，其中第 5 項（**沒有做人工／實機驗收**）在覆核後份量更重：兩個 Critical
+改的都是長輩實際聽到與看到的東西，而這台機器的 `.env` 現值就是
+`ASR_DEBUG_SHOW_TRANSCRIPT=true`——Critical 1 的發作條件現在就滿足。建議合併前實機跑
+一輪長回覆確認：①續段不再重播第一句、不再唸出「回復：」；②短回覆答完之後字幕留在畫面上。
