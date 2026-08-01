@@ -418,9 +418,11 @@ class Settings(_BaseEnvSettings):
     # TTS 共用一顆 GPU，同時湧入只會排隊、讓每個人都慢。⚠️ 進程內計數，是「每個
     # worker 各自」的上限，不是全域上限——正式模式跑 `WEB_WORKERS`（預設 2）個
     # worker，實際全域上限＝本值×WEB_WORKERS（見 `channels/app/admission.py`
-    # 模組 docstring）。預設 6 為**暫定值、未經核定**，須於彩排時實測「N 人同時
-    # 講話，往返延遲何時開始難看」後定案。
-    turn_concurrency_limit: int = 6
+    # 模組 docstring）。
+    # ✅ 2026-08-01 專案負責人核定：全場同時最多 3 人講話。⚠️ 3 除以 WEB_WORKERS(2)
+    # 除不盡，取 2（全域 4）而非 1（全域 2）——設 1 的話第三個人一定排隊，而核定的
+    # 情境就是「3 人同時」，現場會卡住。若 GPU 吃緊改成 1 即可。
+    turn_concurrency_limit: int = 2
     turn_queue_timeout_seconds: float = 30.0
     # 每位長輩每分鐘的輪數上限。純粹防前端 bug（重連迴圈狂送），對真人操作等同無限。
     turn_rate_limit_per_minute: int = 30
