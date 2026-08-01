@@ -329,7 +329,7 @@ def inline_audio_delivery(enabled: bool) -> Iterator[None]:
 
     ⚠️ 為什麼 `pipeline` 需要知道（2026-08-01）：分段只在**投遞端接得住**時才有意義。
     WS 通道能逐段推，`POST /turns` 只能回一則——後者若照樣分段，長輩就只拿得到第一句，
-    其餘永遠取不回來（續拉端點已隨本次改動移除）。而兩條路徑的 `channel` 同為 `app`，
+    其餘永遠取不回來（續拉端點將於後續任務移除）。而兩條路徑的 `channel` 同為 `app`，
     `_chunked_channels` 分不出來。
 
     走 contextvars 而非改 `pipeline.process` 簽章，理由與本模組其餘六個機制相同：
