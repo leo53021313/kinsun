@@ -564,11 +564,30 @@ export function useTalk(options: {
           }
           return;
         }
-        // 走到這裡只剩 `ack`／`reply`，兩者都有 `audio_url` 欄位（型別收窄後才讀）。
+        // 走到這裡只剩 `ack`／`reply`／`chunk`，三者都有 `audio_url` 欄位（型別
+        // 收窄後才讀）。
         const canTakeOverSubtitle =
           canTakeOverScreen && !(Boolean(frame.audio_url) && isSpeakingAnotherTurn);
         if (canTakeOverSubtitle) {
           setReplyText(frame.text);
+        }
+        if (frame.type === "chunk") {
+          // 續段直送（2026-08-01）：後端主動從同一條連線推續段，前端不再靠
+          // `getTurnChunk` 去拉（那條舊路徑本任務刻意不動，見 `prefetchNext`）。
+          // ⚠️ 空音檔＝終止訊框（合成失敗、或本來就切不出第二段時後端補送），
+          // 只用來標示「這輪講完了」，不可以進播放佇列——播一段 0 位元組的
+          // 音檔沒有意義。
+          // ⚠️ 這裡的 `return` 不能省：少了它會落到下面既有的通用推播區塊，
+          // 對同一個訊框重複 `queue.push()` 兩次，長輩會聽到同一句話連播兩遍。
+          if (frame.audio_url) {
+            queue.push({
+              turnId: frame.turn_id,
+              audioUrl: frame.audio_url,
+              text: frame.text,
+              durationMs: frame.duration_ms,
+            });
+          }
+          return;
         }
         if (frame.type === "reply") {
           // 上一輪的續拉就此作廢（advanceQueue 以物件識別比對，舊佇列自行退場）。

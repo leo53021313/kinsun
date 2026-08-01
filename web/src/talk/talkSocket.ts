@@ -39,6 +39,17 @@ export type TalkFrame =
       type: "queued";
       turn_id: string;
       position: number;
+    }
+  | {
+      /** 續段語音（2026-08-01）。第 0 段隨 `reply` 送出，之後由後端主動推。 */
+      type: "chunk";
+      turn_id: string;
+      index: number;
+      text: string;
+      audio_url: string;
+      duration_ms: number;
+      /** 這一輪的語音到此結束。合成失敗時後端補送空音檔的終止訊框。 */
+      is_last: boolean;
     };
 
 /**

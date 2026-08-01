@@ -1084,6 +1084,96 @@ describe("分段續播", () => {
   });
 });
 
+describe("續段直送（2026-08-01）", () => {
+  // ⚠️ 後端已改為主動從同一條連線推續段（新的 `type: "chunk"` 訊框），前端不再
+  // 靠 REST 去拉。第一段用 `chunk_count: 1` 起手，避開舊的 `prefetchNext`
+  // 路徑——那條路徑本任務刻意不動（見 `useTalk.ts` 該處註解），與這裡要驗的
+  // 「WS 直送」邏輯無關，混在一起跑會讓斷言分不清是哪條路徑推的音檔。
+  it("收到 chunk 訊框就進播放佇列，依 index 順序播", async () => {
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    h.socket.emit({
+      ...REPLY,
+      type: "reply",
+      turn_id: "t1",
+      audio_url: "https://cdn.example/a.m4a",
+      chunk_count: 1,
+    });
+    await waitFor(() => expect(h.player.played).toContain("https://cdn.example/a.m4a"));
+    h.socket.emit({
+      type: "chunk",
+      turn_id: "t1",
+      index: 1,
+      text: "第二句。",
+      audio_url: "https://cdn.example/b.m4a",
+      duration_ms: 100,
+      is_last: false,
+    });
+    h.socket.emit({
+      type: "chunk",
+      turn_id: "t1",
+      index: 2,
+      text: "第三句。",
+      audio_url: "https://cdn.example/c.m4a",
+      duration_ms: 100,
+      is_last: true,
+    });
+    // 第一段播完 → 接第二段
+    await act(async () => {
+      h.player.finish();
+    });
+    // 第二段播完 → 接第三段
+    await act(async () => {
+      h.player.finish();
+    });
+    await waitFor(() => expect(h.player.played).toContain("https://cdn.example/c.m4a"));
+    expect(h.player.played).toEqual([
+      "https://cdn.example/a.m4a",
+      "https://cdn.example/b.m4a",
+      "https://cdn.example/c.m4a",
+    ]);
+  });
+
+  it("空音檔的終止訊框不進播放佇列", async () => {
+    // ⚠️ 續段合成失敗、或本來就切不出第二段時，後端會補送一則 `index=0`、
+    // `text=""`、音檔位元組長度為 0、`is_last=true` 的終止訊框，只用來標示
+    // 「這輪講完了」，不可以進播放佇列——播出一段 0 位元組的音檔沒有意義。
+    // ⚠️ `chunk_count: 1` 起手，理由同上一條：避開舊的 REST 續拉路徑。
+    // ⚠️ 光是「emit 之後 played 只有一個元素」不夠——終止訊框若被誤推進佇列，
+    // 它會排在第一段**後面**，drain 要等第一段播完才輪得到它，emit 完當下
+    // 播放佇列還沒走到那裡，斷言測不出來（實測過這個假陰性）。這裡讓第一段
+    // 播完、逼佇列真的往下走一步，才驗得到「終止訊框沒有被排進去」。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    h.socket.emit({
+      ...REPLY,
+      type: "reply",
+      turn_id: "t1",
+      audio_url: "https://cdn.example/a.m4a",
+      chunk_count: 1,
+    });
+    await waitFor(() => expect(h.player.played).toContain("https://cdn.example/a.m4a"));
+    h.socket.emit({
+      type: "chunk",
+      turn_id: "t1",
+      index: 0,
+      text: "",
+      audio_url: "",
+      duration_ms: 0,
+      is_last: true,
+    });
+    // 第一段播完：若終止訊框被誤推進佇列，drain 這時就會去接它。
+    await act(async () => {
+      h.player.finish();
+    });
+    expect(h.player.played).toEqual(["https://cdn.example/a.m4a"]);
+    // 畫面要回到待機——沒有下一段可播，不可以停在「說話中」。
+    await waitFor(() => expect(h.view.result.current.avatar).toBe("idle"));
+  });
+});
+
 describe("下行訊框", () => {
   it("排隊時告訴長輩排第幾位，而不是沉默", async () => {
     // ⚠️ 靜默排隊與當機對長輩來說長得一模一樣，他只會再講一次——而那會讓已經
