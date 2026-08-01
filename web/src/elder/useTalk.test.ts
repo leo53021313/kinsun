@@ -799,6 +799,134 @@ describe("時序", () => {
     expect(h.player.played).toContain("blob:two");
   });
 
+  it("收音期間同一輪的四則全部收進同一個補播單位（Task 7，2026-08-01）", async () => {
+    // ⚠️ 續段改由後端主動推之後，一輪會產生 ack＋reply＋chunk1＋chunk2 四則以上。
+    // 若補播暫存仍以「則」計數、上限 2，這四則會在**單一輪之內**就把最早的兩則
+    // （ack、第一句）擠掉——長輩插嘴後補播，只聽到「第二句。第三句。」，答案的
+    // 開頭沒了。這裡驗證：不論一輪產生幾則，全部要歸進同一個補播單位，講完之後
+    // 依抵達順序全數播出。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    act(() => h.view.result.current.pressIn());
+    act(() => h.recorder.finishStart());
+    await waitFor(() => expect(h.view.result.current.avatar).toBe("listening"));
+    // pressIn 這一下順手解鎖了播放器（見「iOS 音訊解鎖」那組），與本條驗的補播
+    // 順序無關，清掉才能對 `played` 做精確的陣列比對。
+    h.player.played.length = 0;
+
+    h.socket.emit({
+      type: "ack",
+      turn_id: "t1",
+      text: "好，我幫您查",
+      audio_url: "blob:ack",
+      duration_ms: 100,
+    });
+    h.socket.emit({
+      ...REPLY,
+      type: "reply",
+      turn_id: "t1",
+      text: "第一句。",
+      audio_url: "blob:a",
+      duration_ms: 100,
+      chunk_count: 3,
+      reply_digest: "d",
+    });
+    h.socket.emit({
+      type: "chunk",
+      turn_id: "t1",
+      index: 1,
+      text: "第二句。",
+      audio_url: "blob:b",
+      duration_ms: 100,
+      is_last: false,
+    });
+    h.socket.emit({
+      type: "chunk",
+      turn_id: "t1",
+      index: 2,
+      text: "第三句。",
+      audio_url: "blob:c",
+      duration_ms: 100,
+      is_last: true,
+    });
+    await act(async () => {});
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    await act(async () => {
+      h.view.result.current.pressOut();
+    });
+    await act(async () => {});
+
+    // 第一則（ack）補播時就地開播；其餘三則要靠佇列依序播完才輪得到。
+    await act(async () => {
+      h.player.finish();
+    });
+    await act(async () => {
+      h.player.finish();
+    });
+    await act(async () => {
+      h.player.finish();
+    });
+
+    expect(h.player.played).toEqual(["blob:ack", "blob:a", "blob:b", "blob:c"]);
+    // 同一輪的四則沒有超過上限，不該有任何一則被擠掉回收。
+    expect(h.revokeReplyAudio).not.toHaveBeenCalled();
+  });
+
+  it("補播佇列滿時擠掉最舊那一輪，不是最舊那一則（Task 7，2026-08-01）", async () => {
+    // ⚠️ 上限改成「輪」之後，第三**輪**抵達才會擠掉最舊那一輪——即使每輪目前
+    // 都只有一則，擠掉的單位仍然是輪（此處三輪各一則，行為上與擠掉「最舊一則」
+    // 剛好等價，藉此確認以輪為單位時最單純的情形沒有壞掉）。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    act(() => h.view.result.current.pressIn());
+    act(() => h.recorder.finishStart());
+    await waitFor(() => expect(h.view.result.current.avatar).toBe("listening"));
+    // pressIn 這一下順手解鎖了播放器（見「iOS 音訊解鎖」那組），與本條驗的補播
+    // 順序無關，清掉才能對 `played` 做精確的陣列比對。
+    h.player.played.length = 0;
+
+    for (const t of ["t1", "t2", "t3"]) {
+      h.socket.emit({
+        ...REPLY,
+        type: "reply",
+        turn_id: t,
+        reply_digest: t,
+        text: `${t} 的答案。`,
+        audio_url: `blob:${t}`,
+        duration_ms: 100,
+        chunk_count: 0,
+      });
+    }
+    await act(async () => {});
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    await act(async () => {
+      h.view.result.current.pressOut();
+    });
+    await act(async () => {});
+
+    // 最舊那一輪（t1）被整輪擠掉：不播，音檔回收。
+    expect(h.player.played).not.toContain("blob:t1");
+    expect(h.revokeReplyAudio).toHaveBeenCalledWith("blob:t1");
+    expect(h.revokeReplyAudio).not.toHaveBeenCalledWith("blob:t2");
+    expect(h.revokeReplyAudio).not.toHaveBeenCalledWith("blob:t3");
+    // 留下來的兩輪照樣依序補播。
+    expect(h.player.played).toContain("blob:t2");
+
+    await act(async () => {
+      h.player.finish();
+    });
+    await waitFor(() => expect(h.player.played).toContain("blob:t3"));
+    expect(h.player.played).toEqual(["blob:t2", "blob:t3"]);
+  });
+
   it("開錄失敗時，排隊中那幾則也不可以趁機播出來", async () => {
     // ✅ 裁決 2026-08-01 改回補播之後，**開錄失敗是唯一還會丟棄的路徑**：長輩根本
     // 沒問出新問題，畫面上唯一該講的是「麥克風打不開，請再按一次試試看」，補播的話
