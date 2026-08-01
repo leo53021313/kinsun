@@ -234,14 +234,18 @@ class Settings(_BaseEnvSettings):
     memory_max_turns: int = 200
     timezone: str = "Asia/Taipei"
     longterm_embedding_model: str = "gemini-embedding-001"
-    longterm_consolidation_hour: int = 0
+    longterm_consolidation_hour: Annotated[
+        int, BeforeValidator(_hour("LONGTERM_CONSOLIDATION_HOUR"))
+    ] = 0
     scheduler_tick_seconds: int = 60
     # 排程器心跳檔（2026-07-26 假死事件）：每輪 tick 寫入 epoch 秒，讓 kinsun.sh status
     # 分得出「行程活著」與「迴圈凍住」——PID 還在不代表它在做事。設空字串＝關閉。
     scheduler_heartbeat_path: str = ".run/scheduler.heartbeat"
     # 基準問候時間：真的鐘點，且須落在自適應上下限內（見 _validate_greeting_guardrails）。
     proactive_greeting_hour: Annotated[int, BeforeValidator(_hour("PROACTIVE_GREETING_HOUR"))] = 8
-    proactive_inactivity_hour: int = 10
+    proactive_inactivity_hour: Annotated[
+        int, BeforeValidator(_hour("PROACTIVE_INACTIVITY_HOUR"))
+    ] = 10
     proactive_inactivity_days: int = 2
     # 自適應問候（spec 2026-07-16）：預設開；關閉則全體回退 PROACTIVE_GREETING_HOUR。
     proactive_greeting_adaptive_enabled: Bool = True
@@ -273,10 +277,10 @@ class Settings(_BaseEnvSettings):
     # 記憶檢索重排（✅ D-40 丁-4）：LLM reranker，決議預設開；額度吃緊時可關。
     longterm_rerank_enabled: Bool = True
     binding_session_ttl_minutes: int = 10
-    medication_morning_hour: int = 8
-    medication_noon_hour: int = 12
-    medication_evening_hour: int = 18
-    medication_bedtime_hour: int = 21
+    medication_morning_hour: Annotated[int, BeforeValidator(_hour("MEDICATION_MORNING_HOUR"))] = 8
+    medication_noon_hour: Annotated[int, BeforeValidator(_hour("MEDICATION_NOON_HOUR"))] = 12
+    medication_evening_hour: Annotated[int, BeforeValidator(_hour("MEDICATION_EVENING_HOUR"))] = 18
+    medication_bedtime_hour: Annotated[int, BeforeValidator(_hour("MEDICATION_BEDTIME_HOUR"))] = 21
     # ⚠ 必須是真的鐘點：`schedules/timeparse.py` 拿它去 `datetime(..., hour, 0, ...)`，
     # 誤設成 24 會擲 `ValueError: hour must be in 0..23`，而 REST 那條路徑只攔
     # `TimeParseError`（是 `ValueError` 的子類，反向不成立），於是家屬每建一筆回診都
