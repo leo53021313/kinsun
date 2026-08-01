@@ -173,6 +173,68 @@ def test_get_trace_missing_returns_none(store, ns):
     assert store.get_trace(f"{ns}nope") is None
 
 
+# ── 進站音檔網址的事後補寫（2026-07-30 延遲優化 B1）───────────────────
+#
+# 這是全表唯一的非 append-only 方法：進站上傳背景化之後，`record_asr_call` 當下多半
+# 還沒有網址，等上傳完成才補上那一列。兩個 adapter 對「有沒有打中」必須給出同一個答案
+# ——呼叫端靠這個回傳值決定要不要重試（見 `channels/app/inbound_audio.py`）。
+
+
+def test_update_source_audio_url_attaches_to_the_recorded_call(store, ns):
+    trace_id = f"{ns}late"
+    store.record_asr_call(
+        trace_id=trace_id,
+        external_id=f"{ns}user",
+        channel="app",
+        status="ok",
+        latency_ms=120,
+        transcript="阿公早安",
+        source_audio_url="",  # 背景上傳還沒回來
+        error_message="",
+    )
+
+    assert store.update_asr_source_audio_url(
+        trace_id=trace_id, source_audio_url="https://x/late.m4a"
+    )
+
+    trace = store.get_trace(trace_id)
+    assert trace is not None
+    assert trace.asr_call is not None
+    assert trace.asr_call.source_audio_url == "https://x/late.m4a"
+    assert trace.asr_call.transcript == "阿公早安"  # 其餘欄位不可被動到
+
+
+def test_update_source_audio_url_reports_a_miss_when_the_row_is_not_there_yet(store, ns):
+    """上傳比 ASR 快時那一列還不存在——**必須**回 False，呼叫端據此重試。
+
+    這個回傳值就是「網址永久遺失」與「正常補寫」的唯一分辨依據：兩者的耗時分布大幅
+    重疊（ASR 中位 1.84 秒、上傳 1–4 秒），所以這條路是常態而非邊緣情形。
+    """
+    assert not store.update_asr_source_audio_url(
+        trace_id=f"{ns}notyet", source_audio_url="https://x/orphan.m4a"
+    )
+
+
+def test_update_source_audio_url_never_touches_rows_with_a_blank_trace_id(store, ns):
+    """空 trace_id 不可當成查詢條件——否則一次 UPDATE 會改掉所有歷史空 trace_id 的列。
+
+    `pipeline.process` 的 `trace_id` 預設就是空字串，這個護欄擋的是「哪天有別的入口
+    接上這條路」。
+    """
+    store.record_asr_call(
+        trace_id="",
+        external_id=f"{ns}user",
+        channel="app",
+        status="ok",
+        latency_ms=10,
+        transcript="無 trace 的舊資料",
+        source_audio_url="",
+        error_message="",
+    )
+
+    assert not store.update_asr_source_audio_url(trace_id="", source_audio_url="https://x/bad.m4a")
+
+
 def test_get_trace_with_only_reply_still_bundles(store, ns):
     # 部分鏈路：只落一筆 reply，get_trace 仍應回一個含該 reply 的 Trace，
     # 其餘子紀錄為 None／空清單。

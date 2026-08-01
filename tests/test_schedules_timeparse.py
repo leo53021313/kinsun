@@ -8,7 +8,12 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from kinsun.schedules.models import RepeatKind
-from kinsun.schedules.timeparse import TimeParseError, build_occurrence, parse_epoch
+from kinsun.schedules.timeparse import (
+    TimeParseError,
+    build_appointment_reminders,
+    build_occurrence,
+    parse_epoch,
+)
 
 TZ = ZoneInfo("Asia/Taipei")
 NOW = datetime(2026, 7, 25, 20, 0, tzinfo=TZ)
@@ -27,6 +32,17 @@ def test_parse_epoch_treats_blank_time_as_midnight():
     assert (
         parse_epoch("2026-07-30", "", now=NOW) == datetime(2026, 7, 30, 0, 0, tzinfo=TZ).timestamp()
     )
+
+
+def test_the_date_format_example_is_not_a_stale_hardcoded_day():
+    """錯誤訊息是講給模型看的，範例日期寫死就會過期。
+
+    2026-08-01 實測：`create_schedule` 漏填 date 收到「日期要寫成 2026-07-30 這種
+    格式」——當天是 8/1，範例已經是昨日的昨日。這是一句 LLM 會照抄的示範，範例
+    日期必須跟著 `now` 走，否則模型有機會抄回一個過去的日子。
+    """
+    with pytest.raises(TimeParseError, match="2026-07-25"):
+        parse_epoch("", "10:30", now=NOW)
 
 
 @pytest.mark.parametrize("bad", ["2026/07/30", "26-07-30", "2026-7-30", "明天", ""])
@@ -73,3 +89,98 @@ def test_weekly_rejects_out_of_range_weekday(weekday):
 def test_unknown_repeat_is_rejected():
     with pytest.raises(TimeParseError, match="一次"):
         build_occurrence(repeat="yearly", time_text="15:00", now=NOW)
+
+
+# ── 回診的兩顆鬧鐘（12 §9 F-16 的修法） ──
+#
+# ⚠️ 下面每一條都把 `Asia/Taipei` 釘進 `now` 與斷言，不讀執行機器的環境時區：
+# 「前一天」算錯只發生在 UTC 以東，靠環境時區的測試在 UTC 的 CI 上會全綠。
+
+
+def _at(year: int, month: int, day: int, hour: int) -> float:
+    return datetime(year, month, day, hour, 0, tzinfo=TZ).timestamp()
+
+
+def test_appointment_reminders_are_the_day_before_and_the_day_itself():
+    reminders = build_appointment_reminders(
+        event_at=parse_epoch("2026-08-05", "10:30", now=NOW), hour=8, now=NOW
+    )
+    assert [o.repeat_kind for o in reminders.occurrences] == [RepeatKind.ONCE, RepeatKind.ONCE]
+    # 前一天＝2026-08-04。在 UTC+8 用 `toISOString()` 換算會得到 08-03（提早兩天響）。
+    assert [o.scheduled_at for o in reminders.occurrences] == [
+        _at(2026, 8, 4, 8),
+        _at(2026, 8, 5, 8),
+    ]
+    assert reminders.is_day_before_skipped is False
+
+
+def test_appointment_reminders_cross_the_month_boundary_correctly():
+    """月初的回診，「前一天」要落在上個月的最後一天。"""
+    reminders = build_appointment_reminders(
+        event_at=parse_epoch("2026-09-01", "", now=NOW), hour=8, now=NOW
+    )
+    assert [o.scheduled_at for o in reminders.occurrences] == [
+        _at(2026, 8, 31, 8),
+        _at(2026, 9, 1, 8),
+    ]
+
+
+def test_appointment_reminders_use_the_configured_hour():
+    reminders = build_appointment_reminders(
+        event_at=parse_epoch("2026-08-05", "", now=NOW), hour=9, now=NOW
+    )
+    assert [o.scheduled_at for o in reminders.occurrences] == [
+        _at(2026, 8, 4, 9),
+        _at(2026, 8, 5, 9),
+    ]
+
+
+def test_day_before_that_has_already_passed_is_skipped_and_reported():
+    """下午設明天的回診：前一天那顆＝今天早上，略過它並回報——你沒辦法提醒一個人昨天。"""
+    afternoon = datetime(2026, 7, 25, 15, 0, tzinfo=TZ)
+    reminders = build_appointment_reminders(
+        event_at=parse_epoch("2026-07-26", "", now=afternoon), hour=8, now=afternoon
+    )
+    assert [o.scheduled_at for o in reminders.occurrences] == [_at(2026, 7, 26, 8)]
+    assert reminders.is_day_before_skipped is True
+
+
+def test_a_reminder_landing_exactly_on_now_counts_as_passed():
+    """門檻與 `ScheduleService._validate` 同為 `<=`。
+
+    留下一顆剛好等於此刻的鬧鐘，服務層下一瞬間仍會判它過期、整筆建不起來——那正是
+    這裡要防的症狀，所以邊界必須同向。
+    """
+    eight_sharp = datetime(2026, 7, 25, 8, 0, tzinfo=TZ)
+    reminders = build_appointment_reminders(
+        event_at=parse_epoch("2026-07-26", "", now=eight_sharp), hour=8, now=eight_sharp
+    )
+    assert reminders.is_day_before_skipped is True
+    assert [o.scheduled_at for o in reminders.occurrences] == [_at(2026, 7, 26, 8)]
+
+
+def test_appointment_whose_reminders_have_all_passed_is_rejected():
+    """今天下午設今天的回診：兩顆都過去了，訊息要講真正的原因（提醒固定在那個鐘點）。
+
+    ⚠️ 這個情境下**回診日期完全正確**，錯的是這個系統只在 08:00 提醒。訊息若只叫家屬
+    去確認日期，他會檢查一個沒錯的欄位、什麼也找不到，然後重試、再失敗。
+    """
+    afternoon = datetime(2026, 7, 25, 15, 0, tzinfo=TZ)
+    with pytest.raises(TimeParseError) as exc:
+        build_appointment_reminders(
+            event_at=parse_epoch("2026-07-25", "", now=afternoon), hour=8, now=afternoon
+        )
+    message = str(exc.value)
+    assert "08:00" in message
+    assert "直接跟長輩說" in message
+
+
+def test_the_all_passed_message_names_the_configured_hour():
+    """鐘點可調，訊息寫死 08:00 就會對著改過設定的家屬說謊。"""
+    afternoon = datetime(2026, 7, 25, 23, 0, tzinfo=TZ)
+    with pytest.raises(TimeParseError) as exc:
+        build_appointment_reminders(
+            event_at=parse_epoch("2026-07-25", "", now=afternoon), hour=21, now=afternoon
+        )
+    assert "21:00" in str(exc.value)
+    assert "08:00" not in str(exc.value)

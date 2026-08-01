@@ -92,6 +92,42 @@ def test_build_app_wires_show_transcript_to_every_voice_delivery(monkeypatch):
     assert all(captured), f"有 VoiceReplyDelivery 漏傳 show_transcript：{captured}"
 
 
+def test_build_app_shares_one_turn_admission_between_turns_and_ws(monkeypatch):
+    """對講機兩條路徑必須共用**同一個** `TurnAdmission`（P3 Task 2）。
+
+    這是本工項最承重的不變量：若日後有人把 `app.py` 的 `turn_admission` 拆成
+    兩個各自的 `TurnAdmission(...)`（或合併衝突時各留一份），實際全域上限會
+    悄悄變成 `2 × TURN_CONCURRENCY_LIMIT × WEB_WORKERS`，且兩條路徑可以互相
+    繞過對方的容量上限——`turns.py`／`ws.py` 各自的既有測試完全測不到這件事
+    （它們各自建構自己的路由器，本來就只會看到自己拿到的那個閘門物件）。
+    比照 `test_build_app_wires_show_transcript_to_every_voice_delivery` 的
+    monkeypatch 手法：攔兩個路由器工廠、記下它們各自收到的 kwargs，斷言
+    `admission`／`rate_limiter` 兩者皆為同一個物件（`is`，不是 `==`）。
+    """
+    captured: dict = {}
+    original_turns = app_module.create_app_turns_router
+    original_ws = app_module.create_app_ws_router
+
+    def _spy_turns(**kwargs):
+        captured["turns"] = kwargs
+        return original_turns(**kwargs)
+
+    def _spy_ws(**kwargs):
+        captured["ws"] = kwargs
+        return original_ws(**kwargs)
+
+    monkeypatch.setattr(app_module, "create_app_turns_router", _spy_turns)
+    monkeypatch.setattr(app_module, "create_app_ws_router", _spy_ws)
+
+    _build_app(monkeypatch)
+
+    assert captured["turns"]["admission"] is not None, "容量閘門必須真的被注入，不能是 None"
+    assert captured["turns"]["admission"] is captured["ws"]["admission"], (
+        "兩條路徑拿到的必須是同一個 TurnAdmission 物件，否則可以互相繞過對方的上限"
+    )
+    assert captured["turns"]["rate_limiter"] is captured["ws"]["rate_limiter"]
+
+
 def test_build_app_installs_security_headers_and_envelope(monkeypatch):
     app = _build_app(monkeypatch)
     with TestClient(app) as client:
@@ -101,3 +137,91 @@ def test_build_app_installs_security_headers_and_envelope(monkeypatch):
     assert body["success"] is False
     assert body["error"]["code"]
     assert "content-security-policy" in res.headers
+
+
+def test_網頁版前端在_dist_存在時掛在_demo(tmp_path, monkeypatch):
+    """比照既有的 /liff 與 /admin：dist 不存在就不掛，不讓部署因為沒 build 而起不來。"""
+    from kinsun.app import _static_mounts
+
+    root = tmp_path
+    (root / "web" / "dist").mkdir(parents=True)
+    (root / "web" / "dist" / "index.html").write_text("<html></html>", encoding="utf-8")
+    mounts = dict(_static_mounts(root))
+    assert "/demo" in mounts
+    assert mounts["/demo"] == root / "web" / "dist"
+
+
+def test_網頁版前端未_build_時不掛載():
+    from pathlib import Path
+
+    from kinsun.app import _static_mounts
+
+    mounts = dict(_static_mounts(Path("/nonexistent-root")))
+    assert mounts == {}
+
+
+def _spa_client(root):
+    """把假的 web/dist 掛上去，走的是 build_app 用的同一段接線。"""
+    from fastapi import FastAPI
+
+    dist = root / "web" / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<html>金孫</html>", encoding="utf-8")
+    (dist / "assets" / "app.js").write_text("console.log(1)", encoding="utf-8")
+    app = FastAPI()
+    app_module._mount_static(app, root)
+    return TestClient(app)
+
+
+def test_前端路由的網址由靜態檔回退到_index_html(tmp_path):
+    """`/demo/stage` 是 spec §5.4 與 docs/dev/17 列在路由表上的網址，而且
+    `navigate(..., {replace: true})` 會讓網址真的變成它——進到舞台後按重整、
+    或把網址複製給別人，都會直接向伺服器要這條路徑。單頁應用沒有回退的話，
+    使用者拿到的是 404，而他做的事情看起來完全正常。
+    """
+    client = _spa_client(tmp_path)
+    assert client.get("/demo/").status_code == 200
+    res = client.get("/demo/stage")
+    assert res.status_code == 200
+    assert "金孫" in res.text
+
+
+def test_回退不吞掉資產的_404(tmp_path):
+    """⚠️ 全部回退的話，一個打錯的資產路徑會拿到 200 ＋ 一頁 HTML，瀏覽器
+    會安靜地渲染失敗——那比 404 難查得多。只有「最後一段沒有副檔名」的路徑
+    才回退。
+    """
+    client = _spa_client(tmp_path)
+    assert client.get("/demo/assets/app.js").status_code == 200
+    assert client.get("/demo/assets/does-not-exist.js").status_code == 404
+
+
+def test_recent_elder_utterances_takes_only_what_the_elder_said():
+    """金孫的安撫話術帶著危急詞彙，混進分級脈絡會讓分級器對著自己的回覆升級。"""
+    from kinsun.llm import Message
+
+    class _Memory:
+        def recent(self, elder_id):
+            return [
+                Message(role="user", content="我好難過"),
+                Message(role="assistant", content="聽了真讓人好擔心，快去找家人"),
+                Message(role="user", content="我要去西方極樂世界"),
+            ]
+
+    fetch = app_module._recent_elder_utterances(_Memory())
+    assert fetch("e1") == ["我好難過", "我要去西方極樂世界"]
+
+
+def test_recent_elder_utterances_keeps_only_the_last_few_and_in_order():
+    """窗要有上限（半天前的閒聊不該影響這一句的判定），且必須是舊到新。"""
+    from kinsun.llm import Message
+
+    class _Memory:
+        def recent(self, elder_id):
+            return [Message(role="user", content=f"第{i}句") for i in range(20)]
+
+    fetch = app_module._recent_elder_utterances(_Memory())
+    got = fetch("e1")
+    assert len(got) == app_module._RISK_CONTEXT_TURNS
+    assert got[-1] == "第19句"
+    assert got[0] == f"第{20 - app_module._RISK_CONTEXT_TURNS}句"

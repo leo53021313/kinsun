@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Protocol
 
@@ -199,6 +200,153 @@ def _is_retryable_embedding_error(exc: Exception) -> bool:
     有回歸測試守住的重試設定，收益為零。判準本身只有一份。
     """
     return is_retryable_llm_error(exc)
+
+
+class LocalEmbeddingModel:
+    """地端嵌入服務（services/embedding，BGE-M3）的呼叫端。
+
+    2026-08-01 A/B 換掉 Gemini 的理由：一般長輩口語 R@1 82.0%／MRR 0.900（Gemini
+    78.7%／0.885）、全站 5,667 篇建置約 2 分鐘（Gemini 約 2.9 小時且每日配額只夠
+    三分之一）。台語詞彙 Gemini 較強（95.2% vs 85.7%，21 題差 2 題），由
+    `retriever._SYNONYMS` 的同義詞展開補回（實測 R@3 90.5% → 95.2%）。
+    """
+
+    def __init__(
+        self,
+        *,
+        endpoint: str,
+        model: str,
+        dimensions: int = RAG_EMBEDDING_DIMENSIONS,
+        api_key: str = "",
+        request_timeout_seconds: float = 60.0,
+        batch_size: int = _DEFAULT_EMBEDDING_BATCH_SIZE,
+        transport=None,
+    ) -> None:
+        if not endpoint:
+            raise EmbeddingError("缺少 RAG_EMBEDDING_ENDPOINT")
+        if dimensions <= 0:
+            raise EmbeddingError("embedding dimensions 必須大於 0")
+        if request_timeout_seconds <= 0:
+            raise EmbeddingError("embedding request timeout 必須大於 0")
+        if batch_size <= 0:
+            raise EmbeddingError("embedding batch size 必須大於 0")
+        self._endpoint = endpoint
+        self._model = model
+        self._dimensions = dimensions
+        self._api_key = api_key
+        self._timeout = request_timeout_seconds
+        self._batch_size = batch_size
+        if transport is None:
+            from kinsun.transport import HttpxTransport
+
+            transport = HttpxTransport()
+        self._transport = transport
+
+    @property
+    def model_name(self) -> str:
+        return self._model
+
+    @property
+    def dimensions(self) -> int:
+        return self._dimensions
+
+    def embed(self, text: str) -> tuple[float, ...]:
+        return self.embed_document(text)
+
+    def embed_query(self, text: str) -> tuple[float, ...]:
+        return self._embed_batch((text,))[0]
+
+    def embed_document(self, text: str, *, title: str | None = None) -> tuple[float, ...]:
+        return self.embed_documents((text,), title=title)[0]
+
+    def embed_documents(
+        self,
+        texts: tuple[str, ...],
+        *,
+        title: str | None = None,
+    ) -> tuple[tuple[float, ...], ...]:
+        # 文件一律帶標題：2026-08-01 A/B 實測含標題 R@1 98.4%、純內文 85.2%。
+        prefix = f"{title}\n" if title else ""
+        vectors: list[tuple[float, ...]] = []
+        for start in range(0, len(texts), self._batch_size):
+            batch = tuple(prefix + text for text in texts[start : start + self._batch_size])
+            vectors.extend(self._embed_batch(batch))
+        return tuple(vectors)
+
+    def _embed_batch(self, texts: tuple[str, ...]) -> tuple[tuple[float, ...], ...]:
+        for text in texts:
+            if not text.strip():
+                raise EmbeddingError("embedding 輸入不可為空字串")
+        headers = {"Content-Type": "application/json"}
+        if self._api_key:  # 共用金鑰；未設＝內網開發模式（比照 ASR／TTS）
+            headers["X-Api-Key"] = self._api_key
+        from kinsun.transport import TransportError, read_json
+
+        try:
+            response = self._transport.request(
+                "POST",
+                self._endpoint,
+                data=json.dumps({"texts": list(texts)}).encode("utf-8"),
+                headers=headers,
+                timeout=self._timeout,
+            )
+            payload = read_json(response)
+        except TransportError as exc:
+            raise EmbeddingError(f"地端嵌入服務呼叫失敗：{exc}") from exc
+        vectors = payload.get("vectors")
+        if not isinstance(vectors, list) or len(vectors) != len(texts):
+            raise EmbeddingError("地端嵌入服務回應的向量數與請求段數不符")
+        for vector in vectors:
+            # 維度不符若放行，會炸在 pgvector 的 SQL 層，錯誤訊息離根因很遠；
+            # 在這裡擋下來才看得出是「換了模型但 schema 沒跟著改」。
+            if len(vector) != self._dimensions:
+                raise EmbeddingError(
+                    f"地端嵌入服務的 embedding 維度不符："
+                    f"預期 {self._dimensions}，實際 {len(vector)}"
+                )
+        return tuple(tuple(float(value) for value in vector) for vector in vectors)
+
+
+def build_embedding_model(
+    *,
+    backend: str,
+    model: str,
+    dimensions: int = RAG_EMBEDDING_DIMENSIONS,
+    request_timeout_seconds: float = 60.0,
+    batch_size: int = _DEFAULT_EMBEDDING_BATCH_SIZE,
+    endpoint: str = "",
+    local_api_key: str = "",
+    transport=None,
+    gemini_api_key: str = "",
+    gemini_client=None,
+    **gemini_options,
+) -> QueryEmbeddingModel:
+    """依 `RAG_EMBEDDING_BACKEND` 決定用地端服務或雲端 Gemini。
+
+    命名比照 ASR／TTS 的 `*_BACKEND` 慣例；地端只需 endpoint，配額相關的重試與
+    節流參數（`gemini_options`）僅對雲端有意義。
+    """
+    if backend == "local":
+        return LocalEmbeddingModel(
+            endpoint=endpoint,
+            model=model,
+            dimensions=dimensions,
+            api_key=local_api_key,
+            request_timeout_seconds=request_timeout_seconds,
+            batch_size=batch_size,
+            transport=transport,
+        )
+    if backend != "gemini":
+        raise EmbeddingError(f"RAG_EMBEDDING_BACKEND 只支援 gemini 或 local，收到：{backend}")
+    return GeminiEmbeddingModel(
+        api_key=gemini_api_key,
+        model=model,
+        dimensions=dimensions,
+        request_timeout_seconds=request_timeout_seconds,
+        batch_size=batch_size,
+        client=gemini_client,
+        **gemini_options,
+    )
 
 
 class CharacterHashEmbedding:

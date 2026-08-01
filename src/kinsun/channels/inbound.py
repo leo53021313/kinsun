@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 
-from kinsun import tracing
+from kinsun import tracing, turn_context
 from kinsun.accounts.models import Channel
 from kinsun.agent import SYSTEM_TROUBLE_REPLY
 from kinsun.llm import LLMError
@@ -37,7 +37,13 @@ class InboundMessage:
     channel＋external_id 為來源通道與其帳號識別（如 LINE userId），分派時解析成本人。
     trace_id／audio_url 供觀測鏈路與音檔回放（無觀測時為空字串）。
     received_at 為通道收件時刻的單調時鐘值（與 dispatch 的 timer 同源，✅ D-05 戊-2
-    往返延遲起點）；0＝未知，該輪 round_trip_ms 記 NULL。"""
+    往返延遲起點）；0＝未知，該輪 round_trip_ms 記 NULL。
+
+    reply_audio（2026-07-30 延遲優化 C1）＝**把音檔本體直接交回通道**的 handle
+    （audio bytes、duration_ms、text、chunk_count、reply_digest）。有它的通道
+    （App 的 WebSocket）不必等「上傳 Supabase→簽章→App 再下載」那兩趟網路；
+    None＝照舊走 `reply_voice`（LINE 只收得到訊息裡的音檔 URL，`POST /turns` 是
+    單次請求／回應、沒有推播通道）。"""
 
     channel: Channel
     external_id: str
@@ -49,6 +55,7 @@ class InboundMessage:
     trace_id: str = ""
     audio_url: str = ""
     received_at: float = 0.0
+    reply_audio: Callable[[bytes, int, str | None, int, str], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -63,6 +70,34 @@ class DeliveryOutcome:
     # 這一輪回覆的短雜湊，前端取後續段落時帶上。⚠️ 由**真正的回覆文字**算出，不是
     # 投遞層的顯示字串——後者在 debug 模式會多「辨識：…」前綴，與 turns 的內容不同。
     reply_digest: str = ""
+    # 這一輪**真正的回覆文字**（`TtsResult.text`），給「投遞之後還要拿它做事」的呼叫端
+    # 用——目前只有 `ws.py::_push_continuation_chunks`（續段逐段合成）。
+    #
+    # ⚠️ **不是投遞層的顯示字串**（與 `reply_digest` 同一條紀律，理由也同一個）：
+    # `show_transcript` 為真時顯示字串是「辨識：…\n\n回復：…」，拿它去
+    # `split_for_speech` 切出來的段落與 `pipeline._synthesize` 切的**不是同一組**
+    # ——第一段變成「辨識：…」、原本的第一句於是被當成續段再唸一次（2026-08-01
+    # 全分支審查 Critical 1，`speech/chunking.py::reply_digest` 早在 2026-07-26
+    # 就把同一個坑寫成明文警告）。
+    #
+    # 與 `chunk_count` 住同一個物件是刻意的：一個說「我宣告了幾段」，一個說
+    # 「那幾段是從哪串文字切出來的」，兩者必須同源，分開放遲早會分岔。
+    reply_text: str = ""
+
+
+def chunk_info(result) -> tuple[int, str]:
+    """本輪的分段資訊：(段數, 回覆短雜湊)；未分段回 (0, "")。
+
+    ⚠️ 單一出處（2026-07-30 C1）：`_run_pipeline` 與 `VoiceReplyDelivery._deliver_inline`
+    都要這兩個值，各算一次遲早會分岔成「送出的段數」與「宣告的段數」不一致，App 就會
+    多播或漏播一段。`getattr` 預設 0 的理由見 `_run_pipeline`（produce 是通道中立的
+    seam，測試替身只保證有 text／audio）。
+
+    雜湊由**真正的回覆文字**算出，不是投遞層的顯示字串——後者在 debug 模式會多
+    「辨識：…」前綴，與 `turns` 表裡的內容不同，續拉就會對不上而永遠 409。
+    """
+    count = getattr(result, "chunk_count", 0)
+    return (count, reply_digest(result.text) if count > 1 else "")
 
 
 class VoiceReplyDelivery:
@@ -96,7 +131,12 @@ class VoiceReplyDelivery:
 
     @tracing.track(name="deliver", type="general", capture_input=False, capture_output=False)
     def deliver(self, msg: InboundMessage, result: TtsResult) -> DeliveryOutcome:
-        if result.audio is None or self._publisher is None or msg.reply_voice is None:
+        if result.audio is None:
+            msg.reply(self._compose_text(result, include_reply=True) or result.text)
+            return DeliveryOutcome(kind="text")
+        if msg.reply_audio is not None:
+            return self._deliver_inline(msg, result)
+        if self._publisher is None or msg.reply_voice is None:
             msg.reply(self._compose_text(result, include_reply=True) or result.text)
             return DeliveryOutcome(kind="text")
         try:
@@ -108,6 +148,36 @@ class VoiceReplyDelivery:
             logger.warning("語音回覆失敗，退回文字泡泡")
             msg.reply(self._compose_text(result, include_reply=True) or result.text)
             return DeliveryOutcome(kind="text")
+
+    def _deliver_inline(self, msg: InboundMessage, result: TtsResult) -> DeliveryOutcome:
+        """音檔本體直接交回通道，之後才上傳存證（2026-07-30 延遲優化 C1）。
+
+        ⚠️ **順序就是這一刀的全部價值**：原本的路是「上傳 Supabase→取簽章→App 拿到
+        URL→App 再向 Supabase 下載」，音檔在網路上走兩趟、長輩要等完第一趟才聽得到。
+        先把 bytes 推下去，長輩立刻有聲音；上傳留在後面純為存證（`replies.audio_url`
+        是後台回放的依據），此時已經沒有人在等它。
+
+        上傳失敗只留 warning、**不退回文字**：音檔已經送到長輩耳朵裡了，這一輪對他來說
+        完全成功，只是後台少一筆可回放的錄音。這與 `deliver` 那條路的「上傳失敗退文字」
+        是不同情境——那裡上傳失敗等於長輩什麼都拿不到。
+
+        推送失敗（連線斷了）才退回文字：與 `deliver` 同一條紀律，回覆絕不消失。
+        """
+        chunk_count, digest = chunk_info(result)
+        text = self._compose_text(result, include_reply=self._include_text)
+        try:
+            msg.reply_audio(result.audio, result.duration_ms, text, chunk_count, digest)
+        except Exception:  # noqa: BLE001 - 推不出去就退回文字，回覆不可消失
+            logger.warning("語音回覆（內嵌音檔）失敗，退回文字泡泡")
+            msg.reply(self._compose_text(result, include_reply=True) or result.text)
+            return DeliveryOutcome(kind="text")
+        url = ""
+        if self._publisher is not None:
+            try:
+                url = self._publisher.publish(result.audio, content_type="audio/mp4")
+            except Exception:  # noqa: BLE001 - 存證失敗不影響長輩（他已經聽到了）
+                logger.warning("回覆音檔存證上傳失敗（長輩已收到音檔，後台將無回放）")
+        return DeliveryOutcome(kind="voice", audio_url=url)
 
     def deliver_standby(self, msg: InboundMessage, text: str) -> DeliveryOutcome:
         """回退話術的投遞（V-02，2026-07-29）：用**啟動時預錄好**的音檔送語音。
@@ -165,19 +235,20 @@ def dispatch(
         if elder_id is None:
             msg.reply(BIND_FIRST_PROMPT)
             return None
-        return _run_pipeline(
-            msg,
-            lambda: pipeline.process_text(
-                msg.text,
-                elder_id=elder_id,
-                external_id=msg.external_id,
-                channel=msg.channel.value,
-                trace_id=msg.trace_id,
-            ),
-            voice=voice,
-            traces=traces,
-            timer=timer,
-        )
+        with turn_context.inline_audio_delivery(msg.reply_audio is not None):
+            return _run_pipeline(
+                msg,
+                lambda: pipeline.process_text(
+                    msg.text,
+                    elder_id=elder_id,
+                    external_id=msg.external_id,
+                    channel=msg.channel.value,
+                    trace_id=msg.trace_id,
+                ),
+                voice=voice,
+                traces=traces,
+                timer=timer,
+            )
     if msg.kind != "audio":
         msg.reply(NON_AUDIO_PROMPT)
         return None
@@ -185,20 +256,21 @@ def dispatch(
     if elder_id is None:
         msg.reply(BIND_FIRST_PROMPT)
         return None
-    return _run_pipeline(
-        msg,
-        lambda: pipeline.process(
-            msg.audio,
-            elder_id=elder_id,
-            external_id=msg.external_id,
-            channel=msg.channel.value,
-            trace_id=msg.trace_id,
-            audio_url=msg.audio_url,
-        ),
-        voice=voice,
-        traces=traces,
-        timer=timer,
-    )
+    with turn_context.inline_audio_delivery(msg.reply_audio is not None):
+        return _run_pipeline(
+            msg,
+            lambda: pipeline.process(
+                msg.audio,
+                elder_id=elder_id,
+                external_id=msg.external_id,
+                channel=msg.channel.value,
+                trace_id=msg.trace_id,
+                audio_url=msg.audio_url,
+            ),
+            voice=voice,
+            traces=traces,
+            timer=timer,
+        )
 
 
 @tracing.track(name="care_conversation", type="general", capture_input=False, capture_output=False)
@@ -235,16 +307,12 @@ def _run_pipeline(
     else:
         msg.reply(result.text)
         outcome = DeliveryOutcome(kind="text")
-    # 段數來自管線（只有啟用分段的通道會 >1）；投遞層不自行判斷，兩邊各判一次
-    # 遲早會分岔成「送出的段數」與「宣告的段數」不一致，App 就會多播或漏播一段。
-    # getattr 預設 0：produce 是通道中立的 seam，回傳物件只保證有 text／audio
-    # （測試替身就用 SimpleNamespace），沒有 chunk_count 即視為未分段。
-    chunk_count = getattr(result, "chunk_count", 0)
-    outcome = replace(
-        outcome,
-        chunk_count=chunk_count,
-        reply_digest=reply_digest(result.text) if chunk_count > 1 else "",
-    )
+    # 段數與雜湊走 `chunk_info` 單一出處（見其 docstring）：投遞層的內嵌音檔路徑
+    # 也要同一組值，兩邊各算一次遲早會分岔。
+    # `reply_text` 一併在這裡填：它與段數必須來自**同一個** `result.text`，呼叫端
+    # 才不會拿到「宣告 3 段、但那 3 段是從另一串文字切出來的」（見 DeliveryOutcome）。
+    chunk_count, digest = chunk_info(result)
+    outcome = replace(outcome, chunk_count=chunk_count, reply_digest=digest, reply_text=result.text)
     _record_reply(traces, msg, outcome, started, timer)
     return outcome
 

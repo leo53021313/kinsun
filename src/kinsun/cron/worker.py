@@ -206,6 +206,10 @@ def _build_proactive(core: Core, *, clock: Callable[[], datetime]) -> _Proactive
         return Recall(content=row.content, days_ago=(clock().date() - spoke_on).days)
 
     def _push_to_elder(elder_id: str, intent: str, kind: str, *, ledger: bool = False) -> None:
+        # ⚠️ 本函式兩處 send_text 都不帶 severity ＝ 沿用預設 `notice`，這是**決定
+        # 不是疏漏**（2026-08-01）：主動問候與關懷是金孫自己找話講，本質上比用藥
+        # 提醒更不緊急，用打斷式宣告會很擾人。全庫送 `alert` 的只有 safety/notifier.py。
+        #
         # 先確認可達再生成內容（避免白花一次 LLM 呼叫）；出站由 router 依綁定通道投遞。
         if not router.has_route(PrincipalType.ELDER, elder_id):
             logger.warning("主動推播略過（長輩無任何綁定通道）elder=%s kind=%s", elder_id, kind)

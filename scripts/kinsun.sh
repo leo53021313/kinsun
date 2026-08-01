@@ -26,10 +26,10 @@ RUN_DIR="$ROOT/.run"
 # 啟動順序（GPU 服務先起、載模型較慢）；停止則反序。
 # opik＝Opik 公開隧道（Cloudflare Quick Tunnel）；隨堆疊一起起停。啟動需本機 Opik（:5273）
 # 已在跑，否則 launch_opik 會警告並略過。⚠️ 公開且無認證，見 launch_opik 與 docs/dev/14。
-START_ORDER=(asr tts webhook scheduler rag_worker frontend app ngrok opik)
-STOP_ORDER=(opik ngrok app frontend rag_worker scheduler webhook tts asr)
+START_ORDER=(asr tts webhook scheduler rag_worker frontend web app ngrok opik)
+STOP_ORDER=(opik ngrok app web frontend rag_worker scheduler webhook tts asr)
 
-declare -A PORT=([asr]=8001 [tts]=8002 [webhook]=8000 [frontend]=5173 [app]=8081)
+declare -A PORT=([asr]=8001 [tts]=8002 [webhook]=8000 [frontend]=5173 [web]=5174 [app]=8081)
 
 # Opik 後端（docker）自架位置；隧道與後端啟停都在此執行 ./opik.sh（見「Opik 複合服務」段）。
 OPIK_DIR="${OPIK_DIR:-/home/leo29/opik}"
@@ -276,6 +276,22 @@ launch_frontend() {
   _bg frontend npm --prefix "$ROOT/frontend" run dev
 }
 
+# 網頁版全功能前端（spec 2026-07-30）：App 與 LIFF 凍結後，前端展示由它承擔。
+# 開發用 dev server；對外展示走 `npm --prefix web run build` 之後由後端掛在 /demo。
+launch_web() {
+  _precheck web "${PORT[web]}" || return 0
+  if ! command -v npm >/dev/null 2>&1; then
+    warn "網頁版：找不到 npm，跳過"
+    return 0
+  fi
+  if [ ! -d "$ROOT/web/node_modules" ]; then
+    warn "網頁版：web/node_modules 不存在，請先 npm --prefix web install，跳過"
+    return 0
+  fi
+  info "啟動 網頁版前端 dev (port ${PORT[web]})…"
+  _bg web npm --prefix "$ROOT/web" run dev
+}
+
 # App（Expo dev server）：手機裝 Expo Go 掃 status 顯示的 exp:// 位址即可開發，免簽章。
 #
 # 預設走 tunnel（✅ 團隊測試手機與 DGX 從不在同一個 Wi-Fi）：Expo 經 exp.direct 反向
@@ -421,6 +437,43 @@ _opik_backend_stop() {
   [ -x "$OPIK_DIR/opik.sh" ] || return 0
   info "停止 Opik 後端（docker）…"
   ( cd "$OPIK_DIR" && ./opik.sh --stop ) >> "$LOG_DIR/opik-backend.log" 2>&1
+}
+
+# ── Opik 更新（目前唯一支援 update 的服務）────────────────────────────────
+# 設計原則（2026-07-30）：「更新」與「啟動」徹底分離。opik.sh 已有本地 patch
+# `up -d --pull missing`（該 repo commit 52eb68a）讓啟動零 registry 依賴——代價是
+# 映像不再自動更新，由本指令補上：只抓新東西（repo＋映像），絕不碰運行中的服務，
+# 新映像等下次 restart opik 才生效。pull 失敗（registry 瞬斷）也只是這次沒更新到，
+# 運行中的 Opik 毫髮無傷，稍後重跑即可。
+_opik_update() {
+  if [ ! -d "$OPIK_DIR/.git" ]; then
+    err "opik：$OPIK_DIR 不是 git repo（自架位置見 docs/dev/14）"
+    return 1
+  fi
+  # 1) repo 更新（opik.sh 與 compose 檔）。本地 patch 以 rebase 重放；工作樹不乾淨
+  #    或 rebase 撞衝突都當場停下並還原，絕不留半套狀態給下一個人。
+  if [ -n "$(cd "$OPIK_DIR" && git status --porcelain)" ]; then
+    err "opik：$OPIK_DIR 工作樹不乾淨，先處理未提交變更再更新"
+    return 1
+  fi
+  info "更新 Opik repo（git pull --rebase；本地 patch --pull missing 會自動重放）…"
+  if ! (cd "$OPIK_DIR" && git pull --rebase); then
+    (cd "$OPIK_DIR" && git rebase --abort 2>/dev/null)
+    err "opik：上游與本地 patch 撞衝突，已還原原狀。請手動處理：cd $OPIK_DIR &&"
+    err "  git pull --rebase，解掉 opik.sh 的 'up -d --pull missing' 那行後重跑本指令"
+    return 1
+  fi
+  # 2) 映像更新：與 opik.sh 預設模式同一份 compose 檔＋profile。pull 只下載不動容器；
+  #    進度直接印在終端（可能數分鐘），同時留一份進 log。
+  info "拉取 Opik 映像（不影響運行中的服務，可能需要幾分鐘）…"
+  if ! (cd "$OPIK_DIR" && NGINX_PORT=5273 SERVER_ADMIN_PORT=8091 PYTHON_BACKEND_PORT=8010 \
+      docker compose -f deployment/docker-compose/docker-compose.yaml --profile opik pull) \
+      2>&1 | tee -a "$LOG_DIR/opik-backend.log"; then
+    err "opik：映像拉取失敗（多半是 registry 瞬斷）；運行中的服務不受影響，稍後重跑"
+    err "  scripts/kinsun.sh update opik 即可（詳見 logs/opik-backend.log）"
+    return 1
+  fi
+  ok "Opik 已更新。新映像於下次重啟才生效：scripts/kinsun.sh restart opik"
 }
 
 # 隧道是否在跑（is_running(opik) 已被特化為「後端是否在」，隧道另用 pidfile 判斷）。
@@ -629,7 +682,7 @@ _health_note() {
       if _http_ok "http://127.0.0.1:${port}/healthz"; then echo "healthz OK :${port}"
       elif _port_open "$port"; then echo "埠開啟、模型載入中 :${port}"
       else echo "—"; fi ;;
-    webhook|frontend)
+    webhook|frontend|web)
       if _port_open "$port"; then echo "listening :${port}"; else echo "—"; fi ;;
     app)
       if _port_open "$port"; then
@@ -717,8 +770,10 @@ usage() {
   restart [服務]   先 stop 再 start
   status           檢視各服務狀態（PID／埠／健康）＋ Opik 觀測後台連結
   dump [服務]      把執行中服務的全執行緒堆疊倒進它的 log（目前只支援 scheduler）
+  update [opik]    更新 Opik（repo＋映像）；只下載、不碰運行中的服務，
+                   新映像等下次 restart opik 才生效（啟動本身永遠走本機映像）
 
-服務名：asr　tts　webhook　scheduler　rag_worker　frontend　app　ngrok　opik
+服務名：asr　tts　webhook　scheduler　rag_worker　frontend　web　app　ngrok　opik
 
 Opik 工程觀測：status／start 結尾會印出本機後台連結（預設 http://localhost:5273）與服務狀態。
   服務本身由 /home/leo29/opik 的 ./opik.sh 獨立管理；app 要送 trace 需設 OPIK_ENABLED=true。
@@ -809,12 +864,21 @@ cmd_dump() {
 }
 
 # ── 進入點 ────────────────────────────────────────────────────────────
+cmd_update() {
+  local name="${1:-opik}"
+  case "$name" in
+    opik) _opik_update ;;
+    *) err "update 目前只支援 opik"; exit 2 ;;
+  esac
+}
+
 case "${1:-}" in
   start)   cmd_start "${2:-}" ;;
   stop)    cmd_stop "${2:-}" ;;
   status)  cmd_status ;;
   restart) cmd_restart "${2:-}" ;;
   dump)    cmd_dump "${2:-}" ;;
+  update)  cmd_update "${2:-}" ;;
   ""|-h|--help|help) usage ;;
   *) err "未知指令：$1"; echo; usage; exit 2 ;;
 esac

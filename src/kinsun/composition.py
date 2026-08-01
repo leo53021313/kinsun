@@ -44,8 +44,9 @@ from kinsun.notifications.store import PgAppNotificationStore
 from kinsun.observability.store import PgTraceStore
 from kinsun.places.store import PgPlaceStore, PlaceStore
 from kinsun.proactive.preferences import PgGreetingPreferenceStore
-from kinsun.rag.embeddings import GeminiEmbeddingModel
+from kinsun.rag.embeddings import build_embedding_model
 from kinsun.rag.retriever import HealthEducationRetriever
+from kinsun.rag.schemas import RAG_EMBEDDING_DIMENSIONS
 from kinsun.rag.service import HealthEducationRagService
 from kinsun.rag.vector_store import PgVectorStore
 from kinsun.reports.reminders import PgReminderLogStore
@@ -357,10 +358,14 @@ def assemble_core(
     rag_service = HealthEducationRagService(
         HealthEducationRetriever(
             vector_store=PgVectorStore(db),
-            embedding_model=GeminiEmbeddingModel(
-                api_key=settings.gemini_api_key,
+            embedding_model=build_embedding_model(
+                backend=settings.rag_embedding_backend,
                 model=settings.rag_embedding_model,
+                dimensions=RAG_EMBEDDING_DIMENSIONS,
                 request_timeout_seconds=settings.gemini_timeout_seconds,
+                endpoint=settings.rag_embedding_endpoint,
+                local_api_key=settings.rag_embedding_api_key,
+                gemini_api_key=settings.gemini_api_key,
             ),
         ),
         llm=externals.gemini,

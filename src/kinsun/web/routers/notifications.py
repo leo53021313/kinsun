@@ -30,7 +30,20 @@ def create_notifications_router(
         if notifications is None or not external_ids:
             return ok([])
         items = notifications.list_for_external_ids(external_ids)
-        return ok([{"content": n.content, "created_at": n.created_at} for n in items])
+        # severity（2026-08-01）：讓前端分得出「跌倒了」與「該吃藥了」。鍵名與
+        # kinsun-shared/types.ts::AppNotification 完全一致（snake_case，前後端同名）。
+        # 值一律是 `notice`／`alert` 的字面值——`severity_from_db` 已在 store 層
+        # 把認不得的舊值收斂掉，這裡不會漏出 enum 物件或非預期字串。
+        return ok(
+            [
+                {
+                    "content": n.content,
+                    "created_at": n.created_at,
+                    "severity": n.severity.value,
+                }
+                for n in items
+            ]
+        )
 
     @router.get("/notifications")
     def list_app_notifications(guardian_id: str = Depends(current_app_guardian)) -> dict:

@@ -17,6 +17,15 @@ CLI（量測用，不進正式服務）：
   `GEMINI_MODEL_SAFETY` 自 D-16 設好就沒被驗證過，而危急分級**漏報是會出人命的**，
   選型該有數字支撐而不是沿用預設值。看數字時以**召回率（漏報）優先**於精確率——
   誤報只是多吵家屬一次，漏報是沒人去救。注意每跑一次都會消耗完整標注集的 API 額度。
+- 合併分類器驗證（2026-07-30 C2，開 `SAFETY_COMBINED_CLASSIFIER_ENABLED` 的前置）：
+  同一份標注集跑兩次對比，看合併有沒有稀釋分級判準；`--combined` 另附交叉指標
+  （應通報句被審核誤攔，期望 0）——
+
+      PYTHONPATH=src uv run python -m kinsun.safety.evaluation             # 分開呼叫
+      PYTHONPATH=src uv run python -m kinsun.safety.evaluation --combined  # 合併呼叫
+
+  ⚠️ 這裡量的是**分級面**與交叉點；審核面本身的攔截率／誤攔率在 `evals/`
+  （`careline-prompt-injection` 實驗，`evals/subject.py` 依同一支旗標分流）。兩邊都要看。
 """
 
 from __future__ import annotations
@@ -235,33 +244,87 @@ def format_report(report: EvaluationReport) -> str:
     return "\n".join(lines)
 
 
-def _build_detector_assess(model: str = "") -> Callable[[str], RiskAssessment]:
+def format_moderation_crosscheck(examples: Iterable[LabeledUtterance], moderations) -> str:
+    """合併分類器的交叉指標：**應通報的句子有沒有被審核誤攔**。
+
+    ⚠️ 為什麼非量不可（2026-07-30 審查 H-1）：合併之前這件事量不到也不必量——兩份判斷
+    來自兩次獨立呼叫、兩份獨立提示詞，互不干涉。合併之後同一次呼叫要同時吐 tier 與
+    category，於是出現一種全新的失效模式：模型把「這句話很危急」誤解成「這句話有問題、
+    要攔下來」。攔下來的那一輪會整段跳過 agent，長輩聽到的是一句莫名的回絕話術——
+    家屬那條路仍會通報（審核排在通報之後），但長輩被打斷了。
+
+    這個數字沒有任何既有 harness 在量：`evaluation.py` 只量分級、`evals/subject.py`
+    只量審核，交叉點是合併才生出來的。
+
+    判準：標注為 L2（應通報）的句子，`category` 必須是 `none`。一筆都不該有。
+    """
+    from kinsun.safety.moderation import AbuseCategory
+
+    should_alert = [e for e in examples if e.expected >= ALERT_TIER]
+    blocked = [
+        (e, moderations[e.text])
+        for e in should_alert
+        if e.text in moderations
+        and getattr(moderations[e.text], "category", AbuseCategory.NONE) is not AbuseCategory.NONE
+    ]
+    lines = [
+        "— 交叉指標：應通報句被審核誤攔 —",
+        f"應通報 {len(should_alert)} 句，被判違規 {len(blocked)} 句"
+        f"（門檻前的原始判定；**期望為 0**）",
+    ]
+    if blocked:
+        lines.append("")
+        lines.append("⚠️ 危急句被審核判違規（合併提示詞把兩個判斷混在一起了）：")
+        lines += [
+            f"  [{m.category.value} 信心 {m.confidence:.2f}] {e.text}"
+            + (f"（{m.reason}）" if m.reason else "")
+            for e, m in blocked
+        ]
+    return "\n".join(lines)
+
+
+def _build_detector_assess(model: str = "", *, combined: bool = False):
     """完整偵測器（LLM＋詞表＋門檻）：與 app.py 同一組裝，需 GEMINI_API_KEY。
 
     model 留空＝用 `GEMINI_MODEL_SAFETY`（正式設定）。傳入模型名可跑同一份標注集比較
     不同模型的 P/R——`GEMINI_MODEL_SAFETY` 自 D-16 設好就沒被驗證過，而危急分級漏報
     是會出人命的，選型該有數字支撐而不是沿用預設值。
+
+    combined=True＝走**分級＋審核合併成一次呼叫**的分類器（2026-07-30 C2），套用與正式
+    路徑完全相同的關鍵詞地板（`combine_with_llm`）。這是開啟
+    `SAFETY_COMBINED_CLASSIFIER_ENABLED` 的前置條件：合併提示詞把兩份獨立調校過的
+    提示詞抄在一起，有沒有稀釋任一邊的判準只有這份數字答得出來。回傳
+    `(assess, moderate_of)`——後者供交叉指標用（見 `main` 的 `--combined`）。
     """
     import os
 
     from kinsun.config import load_dotenv, load_settings
     from kinsun.llm import GeminiClient
     from kinsun.safety.classifier import LlmRiskClassifier
+    from kinsun.safety.combined_classifier import LlmCombinedSafetyClassifier
     from kinsun.safety.detector import RiskDetector
 
     load_dotenv()
     settings = load_settings(os.environ)
-    detector = RiskDetector(
-        LlmRiskClassifier(
-            GeminiClient(
-                api_key=settings.gemini_api_key,
-                model=model or settings.gemini_model_safety,
-                timeout=settings.gemini_timeout_seconds,
-            )
-        ),
-        mid=settings.safety_confidence_mid,
+    llm = GeminiClient(
+        api_key=settings.gemini_api_key,
+        model=model or settings.gemini_model_safety,
+        timeout=settings.gemini_timeout_seconds,
     )
-    return detector.assess
+    if not combined:
+        detector = RiskDetector(LlmRiskClassifier(llm), mid=settings.safety_confidence_mid)
+        return detector.assess, None
+    detector = RiskDetector(LlmRiskClassifier(llm), mid=settings.safety_confidence_mid)
+    classifier = LlmCombinedSafetyClassifier(llm)
+    # 一次呼叫兩用：分級面餵給 P/R 量測，審核面留給交叉指標（同一次呼叫、零額外配額）。
+    seen: dict[str, object] = {}
+
+    def assess(text: str) -> RiskAssessment:
+        result = classifier.classify(text)
+        seen[text] = result.moderation
+        return detector.combine_with_llm(text, result.risk)
+
+    return assess, seen
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -279,14 +342,32 @@ def main(argv: list[str] | None = None) -> int:
         default="",
         help="覆寫分級模型（留空＝用 GEMINI_MODEL_SAFETY）。同一份標注集換模型跑，即可比較 P/R",
     )
+    parser.add_argument(
+        "--combined",
+        action="store_true",
+        help=(
+            "走分級＋審核合併成一次呼叫的分類器（SAFETY_COMBINED_CLASSIFIER_ENABLED 的驗證路徑）。"
+            "與不加此旗標的同一份標注集對跑，即可看出合併有沒有稀釋分級判準；"
+            "另附交叉指標：應通報的句子有沒有被審核誤攔"
+        ),
+    )
     args = parser.parse_args(argv)
     examples = load_labeled_utterances(args.dataset)
-    assess = keyword_only_assess if args.keyword_only else _build_detector_assess(args.model)
+    moderations = None
+    if args.keyword_only:
+        assess = keyword_only_assess
+    else:
+        assess, moderations = _build_detector_assess(args.model, combined=args.combined)
     mode = "詞表模式" if args.keyword_only else "完整偵測器（LLM＋詞表）"
+    if args.combined and not args.keyword_only:
+        mode += "　合併分類器（分級＋審核一次呼叫）"
     if args.model and not args.keyword_only:
         mode += f"　模型：{args.model}"
     print(f"模式：{mode}　標注集：{args.dataset}")
     print(format_report(evaluate(assess, examples)))
+    if moderations is not None:
+        print()
+        print(format_moderation_crosscheck(examples, moderations))
     return 0
 
 

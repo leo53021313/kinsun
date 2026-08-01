@@ -12,6 +12,7 @@ from itertools import count
 
 import pytest
 
+from kinsun.notifications.models import NotificationSeverity
 from kinsun.notifications.store import FakeAppNotificationStore, PgAppNotificationStore
 
 TPE = timezone(timedelta(hours=8))
@@ -59,3 +60,36 @@ def test_list_recent_first_with_limit(store, ns):
 
 def test_list_empty_ids_returns_empty(store, ns):
     assert store.list_for_external_ids([]) == []
+
+
+# ── 呈現分級（2026-08-01 Leo 裁決）──────────────────────────────
+
+
+def test_severity_defaults_to_notice(store, ns):
+    """不指定＝一般通知。用藥提醒、主動關懷全部走這條，不可預設成 alert。"""
+    ext = f"{ns}extSevDefault"
+    store.record(ext, "阿嬤，早上該吃藥囉")
+    assert store.list_for_external_ids([ext])[0].severity == NotificationSeverity.NOTICE
+
+
+def test_severity_alert_round_trips(store, ns):
+    """危急警報存進去、讀出來仍是 alert——這是整條線的存在理由。"""
+    ext = f"{ns}extSevAlert"
+    store.record(ext, "王阿嬤剛剛說：「我跌倒了」", severity=NotificationSeverity.ALERT)
+    assert store.list_for_external_ids([ext])[0].severity == NotificationSeverity.ALERT
+
+
+def test_severity_is_per_row_not_per_external_id(store, ns):
+    """同一個人的兩則通知各有各的分級——不可被最後一則覆寫或整批同化。
+
+    ⚠️ 這正是展示現場的形狀：家屬同一支手機上，早上的用藥提醒與剛剛的危急警報
+    並排躺著，一則白、一則紅。
+    """
+    ext = f"{ns}extSevMixed"
+    store.record(ext, "早上該吃藥囉")
+    store.record(ext, "王阿嬤剛剛說：「我跌倒了」", severity=NotificationSeverity.ALERT)
+    by_content = {n.content: n.severity for n in store.list_for_external_ids([ext])}
+    assert by_content == {
+        "早上該吃藥囉": NotificationSeverity.NOTICE,
+        "王阿嬤剛剛說：「我跌倒了」": NotificationSeverity.ALERT,
+    }

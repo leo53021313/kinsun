@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 
 from kinsun.schedules.wording import (
+    appointment_day_before_gone_text,
+    appointment_day_before_skipped_text,
     appointment_texts,
     custom_text,
     medication_text,
@@ -56,6 +58,37 @@ def test_appointment_texts_omit_the_time_when_unknown():
     elder, guardian = appointment_texts("阿公", "牙科", "今天", "")
     assert elder == "阿公，今天要回診囉：牙科。記得準時，需要的話請家人陪您去。"
     assert guardian == "【金孫提醒】阿公 今天要回診——牙科。"
+
+
+def test_day_before_skipped_text_tells_the_guardian_what_is_left_and_what_to_do():
+    text = appointment_day_before_skipped_text(8)
+    assert "前一天" in text  # 少掉的是哪一顆
+    assert text.count("08:00") == 2  # 沒建成的與還在的，兩個時刻都講明
+    assert "自己跟長輩提一聲" in text  # 家屬唯一還能做的補救
+
+
+def test_day_before_skipped_text_follows_the_configured_hour():
+    # `APPOINTMENT_REMINDER_HOUR` 可調；訊息若寫死 08:00 就會對著改過設定的家屬說謊。
+    assert "21:00" in appointment_day_before_skipped_text(21)
+    assert "08:00" not in appointment_day_before_skipped_text(21)
+
+
+def test_gone_text_states_the_fact_without_claiming_the_elder_was_never_reminded():
+    """編輯路徑的那句話只陳述事實，不對「長輩有沒有被提醒過」下任何斷言。
+
+    ⚠️ 失效情境：回診 8/5、7/25 建立時兩顆都建好了 → 8/4 08:00 真的響過 → 8/4 下午
+    家屬改個標題 → 前一天那顆判定為已過期。沿用新增那句「請您自己跟長輩提一聲」，
+    就是叫他去做系統今天早上已經做過的事。
+    """
+    text = appointment_day_before_gone_text(8)
+    assert "更新後只留下" in text  # 事實：現在只剩當天那顆
+    assert text.count("08:00") == 2
+    assert "自己跟長輩提一聲" not in text
+
+
+def test_gone_text_follows_the_configured_hour():
+    assert "21:00" in appointment_day_before_gone_text(21)
+    assert "08:00" not in appointment_day_before_gone_text(21)
 
 
 def test_custom_text_without_lead_time():

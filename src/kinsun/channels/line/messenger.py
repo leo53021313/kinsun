@@ -15,6 +15,8 @@ from tenacity import (
     wait_exponential,
 )
 
+from kinsun.notifications.models import NotificationSeverity
+
 logger = logging.getLogger("kinsun.channels.line")
 
 # 出站重試（2026-07-27）：次數與總時長雙上限。
@@ -189,8 +191,22 @@ class LineOutboundChannel:
         # 注入點供測試斷言退避而不真的睡（沿用 rag/embeddings.py 的既有寫法）。
         self._sleep = sleep if sleep is not None else time.sleep
 
-    def send_text(self, line_user_id: str, text: str) -> None:
+    def send_text(
+        self,
+        line_user_id: str,
+        text: str,
+        *,
+        severity: NotificationSeverity = NotificationSeverity.NOTICE,
+    ) -> None:
         """送出並在「確定沒送出去」時重試；重試用盡仍把例外往上拋。
+
+        ⚠️ **`severity` 在 LINE 這條路上刻意不做任何事**（2026-08-01）：LINE 的
+        push message 是純文字，收訊端的通知樣式由 LINE App 決定，我們給不了
+        「紅色」或「打斷式宣告」。參數存在只是為了滿足 `OutboundChannel` 這個
+        共用 Protocol——`ChannelRouter` 對每個通道都用同一組引數呼叫，少了它
+        LINE 綁定的長輩會在送出時直接炸 TypeError。**不要**改成把等級字樣塞進
+        文案：文案由 `safety/notifier.py::_format_alert` 統一產生，2026-07-29
+        Leo 已定案不放家屬看不懂的「風險等級」字樣。
 
         ⚠️ 例外必須往上拋、不可吞掉：`ChannelRouter` 靠它把這個通道記成投遞失敗，
         吞掉會讓「送出去了」與「三次都失敗」在留痕上長得一模一樣。

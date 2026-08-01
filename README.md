@@ -233,3 +233,43 @@ $env:PYTHONPATH="src"; uv run python -m kinsun.rag.ingest --reset --source hpa_e
    會印出 `rich_menu_id`。
 3. 把它設為後端環境變數 `RICH_MENU_ID`。之後家屬一綁定（建立長輩或兌換家屬邀請碼）即自動獲得選單。
    `RICH_MENU_ID` 未設則此功能停用、綁定照常。
+
+## 網頁版全功能前端（開發 / 部署）
+
+網頁版全功能前端（家屬端六畫面＋長輩端四畫面＋雙欄舞台展示）採 React + Vite + TypeScript + Tailwind CSS，置於 [`web/`](web/)，由後端 FastAPI 同源供應於 `/demo`。是 `app/`（Expo App）與 `frontend/`（LIFF 家屬頁）凍結後**唯一還在演進的前端**，供內部測試與畢業典禮展示使用。
+
+### 開發
+
+1. 後端：`uv run uvicorn --app-dir src "kinsun.app:build_app" --factory --reload --port 8000`
+2. 前端：
+
+   ```bash
+   npm --prefix web install
+   npm --prefix web run dev
+   ```
+
+3. 開啟 `http://localhost:5174/demo/`（開場運營狀態頁）或 `http://localhost:5174/demo/stage`（雙欄舞台，可直接分享網址、重整仍留在舞台）。
+
+   > ⚠️ 埠是 **5174** 不是 5173：`web/vite.config.ts` 刻意避開 `frontend/` 的 5173 與 Opik 的 5273。
+
+### 部署
+
+```bash
+npm --prefix web install
+npm --prefix web run build
+```
+
+產出 `web/dist`，後端才會供應 `/demo`（未 build 時該路徑不掛載）。
+
+### 其他常用指令
+
+| 指令 | 作用 |
+|------|------|
+| `npm --prefix web run typecheck` | 型別檢查（`tsc --noEmit`） |
+| `npm --prefix web run lint` | ESLint |
+| `npm --prefix web run test` | 單元測試（Vitest） |
+| `npm --prefix web run e2e` | 端到端測試（Playwright）——⚠️ 預設 `baseURL` 指向 `kinsun.sh start` 常駐、`DATABASE_URL` 為正式 Supabase 的後端，對著它跑會寫入刪不掉的測試資料；跑之前請先確認目標後端連的是哪一顆資料庫，建議改起本機隔離後端（拋棄式測試庫），起法見 `web/e2e/journey.spec.ts` 檔頭 |
+
+麥克風／相機（對講機、QR 掃碼）僅在 HTTPS 或 `localhost` 下可用；`localhost` 有安全例外會給出假的安全感，跨瀏覽器／裝置驗收請務必在真的 HTTPS 網址（如 ngrok）上進行。
+
+詳細架構、模組規格與人工驗收清單見 [docs/dev/12_前端架構規範.md](docs/dev/12_前端架構規範.md)、[docs/dev/17_前端資訊架構.md](docs/dev/17_前端資訊架構.md)。

@@ -13,6 +13,7 @@ from typing import Protocol
 from kinsun import tracing
 from kinsun.accounts.models import Channel, ChannelBinding, PrincipalType
 from kinsun.channels.outbound import OutboundChannel
+from kinsun.notifications.models import NotificationSeverity
 
 logger = logging.getLogger("kinsun.channels.router")
 
@@ -40,20 +41,39 @@ class ChannelRouter:
     def has_route(self, principal_type: PrincipalType, principal_id: str) -> bool:
         return bool(self._routes(principal_type, principal_id))
 
-    def send_text(self, principal_type: PrincipalType, principal_id: str, text: str) -> int:
+    def send_text(
+        self,
+        principal_type: PrincipalType,
+        principal_id: str,
+        text: str,
+        *,
+        severity: NotificationSeverity = NotificationSeverity.NOTICE,
+    ) -> int:
         """對本人的每個可達通道各送一次文字；回傳成功送出的通道數。"""
-        return len(self.send_text_channels(principal_type, principal_id, text))
+        return len(self.send_text_channels(principal_type, principal_id, text, severity=severity))
 
     @tracing.track(name="outbound_send", type="general", capture_input=True, capture_output=True)
     def send_text_channels(
-        self, principal_type: PrincipalType, principal_id: str, text: str
+        self,
+        principal_type: PrincipalType,
+        principal_id: str,
+        text: str,
+        *,
+        severity: NotificationSeverity = NotificationSeverity.NOTICE,
     ) -> list[str]:
         """同 send_text，但回傳實際成功的通道名（✅ 庚-16）——供送達留痕標註語意
-        （如 App 僅為落庫待拉取、非真送達）。"""
+        （如 App 僅為落庫待拉取、非真送達）。
+
+        ⚠️ `severity` 原樣轉交各通道 adapter，本層不解讀也不改寫：路由只管「送給
+        誰、走哪些通道」，「這則該長什麼樣」是呼叫端（危急通報／提醒 job）才知道
+        的事。預設 `NOTICE` 的理由見 `channels/outbound.py::OutboundChannel`。
+        """
         succeeded: list[str] = []
         for binding in self._routes(principal_type, principal_id):
             try:
-                self._channels[binding.channel].send_text(binding.external_id, text)
+                self._channels[binding.channel].send_text(
+                    binding.external_id, text, severity=severity
+                )
                 succeeded.append(binding.channel.value)
             except Exception:  # noqa: BLE001 - 單一通道失敗不可中斷其他通道
                 logger.exception(

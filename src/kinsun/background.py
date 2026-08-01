@@ -90,18 +90,53 @@ def configure(*, max_workers: int = 2, max_pending: int = _DEFAULT_MAX_PENDING) 
     logger.info("背景落庫已啟用：%d 個 worker、佇列上限 %d", max_workers, max_pending)
 
 
-def run(action: Callable[[], None]) -> None:
-    """把 action 丟到背景執行；未 configure 時就地執行（預設）。
+class Handle:
+    """一筆背景工作的完成訊號。
+
+    大多數呼叫端不理它（觀測稽核沒有人在等）。少數呼叫端有一條**後續步驟真的會讀
+    這筆寫入**的路徑，需要在交出回應前收斂——見 `agent._record_turn_background`
+    與 `pipeline._process_transcribed`（2026-07-30 審查 H2）。
+
+    `wait` 回傳「這筆到底做完了沒有」，而不是無條件放行：呼叫端據此決定要不要留
+    warning，讓「背景寫入落後」變成看得見的事實。
+    """
+
+    def __init__(self, *, done: bool = False) -> None:
+        self._event = threading.Event()
+        if done:  # 同步模式（未 configure）：呼叫 run() 回來時就已經做完了
+            self._event.set()
+
+    def _mark_done(self) -> None:
+        self._event.set()
+
+    def wait(self, timeout: float) -> bool:
+        return self._event.wait(timeout)
+
+
+def run(action: Callable[[], None]) -> Handle:
+    """把 action 丟到背景執行；未 configure 時就地執行（預設）。回傳完成訊號。
 
     以 `contextvars.copy_context()` 帶入呼叫端的 context，Opik 的 span 巢狀與
     `turn_context.elder_utterance` 在背景執行緒裡才不會憑空消失。
+
+    ⚠️ 佇列滿時整筆被丟棄（見 `_Writer.submit`），此時 handle **永遠不會**變成
+    done——這正是呼叫端該看到的事實，故刻意不在丟棄時把它標記完成。
     """
     writer = _writer
     if writer is None:
         action()
-        return
+        return Handle(done=True)
+    handle = Handle()
     context = contextvars.copy_context()
-    writer.submit(lambda: context.run(action))
+
+    def guarded() -> None:
+        try:
+            context.run(action)
+        finally:
+            handle._mark_done()
+
+    writer.submit(guarded)
+    return handle
 
 
 def shutdown() -> None:

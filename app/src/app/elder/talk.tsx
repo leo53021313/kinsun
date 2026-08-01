@@ -26,6 +26,7 @@ import {
 import type { TurnChunk } from "@/lib/api";
 import { type ElderPlace, currentPlace } from "@/lib/location";
 import { loadSeenAt } from "@/lib/notificationsSeen";
+import { purgeReplyAudio, writeReplyAudio } from "@/lib/replyAudio";
 import { useSession } from "@/lib/SessionProvider";
 import { strings } from "@/lib/strings";
 import { createTalkGesture } from "@/lib/talkGesture";
@@ -133,6 +134,9 @@ export default function ElderTalk() {
       router.replace("/role");
       return;
     }
+    // 上一次 session 的回覆音檔殘留一次清光（C1）：cache 目錄只在裝置儲存吃緊時才被
+    // 系統回收，不會每輪幫我們清。
+    purgeReplyAudio();
     let alive = true;
     (async () => {
       const micPermission = await AudioModule.requestRecordingPermissionsAsync();
@@ -178,6 +182,10 @@ export default function ElderTalk() {
       onStatus: (status) => {
         socketOpenRef.current = status === "open";
       },
+      // 內嵌音檔落地（C1）：後端把 m4a 隨 binary 訊框直接推下來，省掉「後端上傳
+      // Supabase→取簽章→App 再下載」兩趟網路。socket 只負責協定，寫檔由這裡注入
+      // ——見 replyAudio.ts 說明為什麼不讓 talkSocket 自己 import 檔案系統。
+      writeAudio: writeReplyAudio,
       onFrame: (frame: TalkFrame) => {
         if (frame.type === "error") {
           setReplyText(frame.text);

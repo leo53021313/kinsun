@@ -12,6 +12,7 @@ import re
 import time
 import urllib.parse
 import urllib.request
+import urllib.robotparser
 import xml.etree.ElementTree as ET
 from collections import deque
 from dataclasses import dataclass
@@ -86,9 +87,10 @@ class CrawlResult:
 
 
 class HtmlTextExtractor(HTMLParser):
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, content_pattern: re.Pattern[str] | None = None) -> None:
         super().__init__(convert_charrefs=True)
         self._base_url = base_url
+        self._content_pattern = content_pattern
         self._skip_depth = 0
         self._title_depth = 0
         self._title_parts: list[str] = []
@@ -105,7 +107,13 @@ class HtmlTextExtractor(HTMLParser):
             self._title_depth += 1
         if tag in _PRIMARY_TAGS:
             self._primary_depth += 1
-        if tag == "a":
+        # 導覽／頁尾的連結一律不收，符合內容樣式者也不例外。
+        # ⚠️ 2026-08-01 實測推翻了先前的判讀：hpa 列表頁 37 個 Detail 連結有 29 個
+        # 位於 nav／header／footer，當時誤判為「文章住在導覽區」而網開一面，結果
+        # 兩個不同主題的來源抓回一模一樣的 19 篇——本署簡介、組織架構圖、各業務
+        # 服務窗口、本署位置……那 29 個是每頁都有的機關樣板頁，只是網址型態剛好
+        # 也像文章。真正的主題文章是內容區那幾個。
+        if tag == "a" and self._skip_depth == 0:
             href = dict(attrs).get("href")
             if href:
                 self._links.append(urllib.parse.urljoin(self._base_url, href))
@@ -175,7 +183,7 @@ class DomainParserRegistry:
 
     def _parse_html(self, page: FetchedPage, source: Source) -> ParsedPage:
         html = page.body.decode(_guess_charset(page.content_type), errors="ignore")
-        parser = HtmlTextExtractor(page.url)
+        parser = HtmlTextExtractor(page.url, _content_pattern(source))
         parser.feed(html)
         title = parser.title or source.title
         text = parser.text
@@ -255,33 +263,87 @@ class HealthEducationCrawler:
         self._opener = urllib.request.build_opener(
             urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())
         )
+        # 每個 origin 一份 robots 規則，取不到時存 None 代表放行，避免每頁重抓。
+        self._robots: dict[str, urllib.robotparser.RobotFileParser | None] = {}
+
+    def _is_allowed_by_robots(self, url: str) -> bool:
+        parsed = urllib.parse.urlsplit(url)
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        if origin not in self._robots:
+            self._robots[origin] = self._load_robots(origin)
+        rules = self._robots[origin]
+        return True if rules is None else rules.can_fetch(self._config.user_agent, url)
+
+    def _load_robots(self, origin: str) -> urllib.robotparser.RobotFileParser | None:
+        try:
+            fetched = self._fetcher(f"{origin}/robots.txt")
+        except Exception as exc:  # noqa: BLE001 - 取不到 robots.txt 時放行（業界慣例）
+            logger.info("RAG 取不到 %s/robots.txt，本次不套用限制：%s", origin, exc)
+            return None
+        body = fetched.body.decode("utf-8", errors="replace")
+        parser = urllib.robotparser.RobotFileParser()
+        # 先濾掉空行再交給 stdlib：RFC 9309 的群組由 user-agent 行分隔，空行不終止群組，
+        # 但 Python 的 RobotFileParser 一遇空行就重置狀態，會把後續 Disallow 整組丟掉。
+        # hpa.gov.tw 的 robots.txt 正是「User-agent: *」後空一行才寫 Disallow
+        # （2026-08-01 實測：不濾空行時 can_fetch(GetFile.ashx) 回 True，等於形同無限制）。
+        parser.parse([line for line in body.splitlines() if line.strip()])
+        return parser
 
     def crawl(self, source: Source) -> CrawlResult:
+        # 兩條佇列：文章頁優先於其他頁。max_pages 有限時，先把預算花在內容上
+        # （2026-07-30 實測純 BFS 爬 885 頁只換到 58 篇文章，其餘是導覽與列表頁）。
+        pattern = _content_pattern(source)
+        content_queue: deque[str] = deque()
         queue = deque([source.url])
         seen: set[str] = set()
         pages: list[ParsedPage] = []
         skipped: list[str] = []
         failed: list[tuple[str, str]] = []
 
-        while queue and len(seen) < self._config.max_pages_per_source:
-            url = _upgrade_to_https(_strip_fragment(queue.popleft()))
+        while (content_queue or queue) and len(seen) < self._config.max_pages_per_source:
+            pending = content_queue or queue
+            url = _upgrade_to_https(_strip_fragment(pending.popleft()))
             if url in seen:
                 continue
             seen.add(url)
             if not _is_allowed_url(url, source.allowed_domains):
                 skipped.append(url)
                 continue
+            if not self._is_allowed_by_robots(url):
+                skipped.append(url)
+                continue
             try:
                 fetched = self._fetcher(url)
+                if not self._is_allowed_by_robots(fetched.url):
+                    skipped.append(fetched.url)
+                    continue
                 parsed = self._parser.parse(fetched, source)
                 if parsed.text.strip():
                     pages.append(parsed)
                 else:
                     skipped.append(url)
-                for link in parsed.links:
-                    if len(seen) + len(queue) >= self._config.max_pages_per_source:
-                        break
-                    if _is_allowed_url(link, source.allowed_domains) and link not in seen:
+                budget = self._config.max_pages_per_source
+                # 宣告了內容樣式的來源：文章是葉節點，不從文章再往外爬。
+                # 2026-08-01 實測——只做「文章優先」時，爬蟲會從文章跳到文章，
+                # 一路漂到菸害防制英文新聞稿與業務服務窗口（前 14 篇有 10 篇是英文），
+                # 主題完全不是長輩衛教。列表頁本身就是機關做好的策展，守住它即可。
+                is_leaf = pattern is not None and pattern.search(url)
+                for link in () if is_leaf else parsed.links:
+                    if not _is_allowed_url(link, source.allowed_domains) or link in seen:
+                        continue
+                    if pattern is not None and pattern.search(link):
+                        # 文章連結一律收（只受總量上限節制）：預算檢查若一視同仁，
+                        # 排在其他連結後面的文章會永遠擠不進待爬清單。
+                        if len(content_queue) < budget:
+                            content_queue.append(link)
+                    elif len(seen) + len(queue) + len(content_queue) < budget:
+                        # 列表頁照跟：文章多半掛在子分類底下（2026-08-01 實測：
+                        # 慢性病防治列表頁的內容區有 43 個子分類、只有 7 篇文章
+                        # 直掛，只收直掛的話每個來源僅剩 6 篇）。
+                        # ⚠️ 主題會飄——hpa 的左側全站分類選單是普通 <div> 而非
+                        # <nav>，擋不掉，故子分類會通往兄弟分類。深度限制試過，
+                        # 對結果毫無影響（飄題從種子頁就開始），已移除。
+                        # Leo 2026-08-01 核定：全部收進來、不過濾行政公告。
                         queue.append(link)
                 self._sleep(self._config.delay_seconds)
             except Exception as exc:  # noqa: BLE001 - 單頁失敗不可中斷整批
@@ -294,6 +356,17 @@ class HealthEducationCrawler:
             failed_urls=tuple(failed),
         )
 
+    def crawl_sitemap(self, source: Source) -> CrawlResult:
+        """讀 sitemap 取得文章清單後只抓清單上的網址，完全不跟隨頁內連結。
+
+        取代 `crawl()` 的爬樹路徑。爬樹在每頁都渲染全站選單的網站上必然漂移，
+        sitemap 則是站方自己宣告的內容清單，沒有猜測空間。
+        """
+        fetched = self._fetcher(source.sitemap_url)
+        urls = load_sitemap_urls(fetched.body, source)
+        logger.info("RAG 來源 %s 的 sitemap 取得 %d 個文章網址", source.source_id, len(urls))
+        return self.crawl_urls(source, urls)
+
     def crawl_urls(self, source: Source, urls: tuple[str, ...]) -> CrawlResult:
         """只更新已知 URL，不跟隨連結；新連結留給 discovery 稽核。"""
         pages: list[ParsedPage] = []
@@ -304,8 +377,17 @@ class HealthEducationCrawler:
             if not _is_allowed_url(url, source.allowed_domains):
                 skipped.append(url)
                 continue
+            if not self._is_allowed_by_robots(url):
+                skipped.append(url)
+                continue
             try:
-                parsed = self._parser.parse(self._fetcher(url), source)
+                fetched = self._fetcher(url)
+                # 轉址後的落點要重驗：hpa 的 Detail.aspx 附件項目會 302 到
+                # robots.txt 禁止的 GetFile.ashx，只在送出前檢查會整批漏掉。
+                if not self._is_allowed_by_robots(fetched.url):
+                    skipped.append(fetched.url)
+                    continue
+                parsed = self._parser.parse(fetched, source)
                 if parsed.text.strip():
                     pages.append(parsed)
                 else:
@@ -345,6 +427,42 @@ class HealthEducationCrawler:
             )(_once)
         except RetryError as exc:
             raise RuntimeError(exc.last_attempt.exception() or "fetch failed") from exc
+
+
+def load_sitemap_urls(body: bytes, source: Source) -> tuple[str, ...]:
+    """從 sitemap.xml 取出屬於本來源的文章網址。
+
+    只留下 `content_url_pattern` 命中的網址（留空則全收）與 allowlist 內的網域，
+    並套用與爬取路徑相同的正規化（http→https、去 fragment），確保去重一致。
+    """
+    try:
+        root = ET.fromstring(body)
+    except ET.ParseError as exc:
+        logger.warning("RAG 來源 %s 的 sitemap 解析失敗：%s", source.source_id, exc)
+        return ()
+
+    pattern = _content_pattern(source)
+    urls: list[str] = []
+    for node in root.iter():
+        if node.tag.rsplit("}", 1)[-1].lower() != "loc" or not node.text:
+            continue
+        url = _upgrade_to_https(_strip_fragment(unescape(node.text.strip())))
+        if not _is_allowed_url(url, source.allowed_domains):
+            continue
+        if pattern is not None and not pattern.search(url):
+            continue
+        urls.append(url)
+    return tuple(dict.fromkeys(urls))
+
+
+def _content_pattern(source: Source) -> re.Pattern[str] | None:
+    if not source.content_url_pattern:
+        return None
+    try:
+        return re.compile(source.content_url_pattern)
+    except re.error as exc:
+        logger.warning("RAG 來源 %s 的 content_url_pattern 無效：%s", source.source_id, exc)
+        return None
 
 
 def _clean_inline(text: str) -> str:
