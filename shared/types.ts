@@ -41,7 +41,26 @@ export type RiskEventItem = { tier: number; reason: string; created_at: number }
 export type ReminderItem = { kind: string; content: string; created_at: number };
 export type HealthReport = { risk_events: RiskEventItem[]; reminders: ReminderItem[] };
 export type DailySummary = { date: string; content: string; created_at: number };
-export type AppNotification = { content: string; created_at: number };
+/**
+ * 通知的呈現分級（2026-08-01 Leo 裁決）：`notice`＝一般提醒／主動關懷，
+ * `alert`＝危急警報。字面值與後端 `NotificationSeverity`、資料庫欄位三處完全一致。
+ */
+export type NotificationSeverity = "notice" | "alert";
+/**
+ * ⚠️ `severity` 宣告為**選填**是刻意的，不是「還沒補齊」：後端 2026-08-01 起一定
+ * 會送，但這個型別同時要描述兩種讀得到舊資料的情形——①後端還沒部署到新版；
+ * ②`app/`（已凍結）打的是同一組端點。少了 `?`，前端會以為這個欄位保證存在而
+ * 直接拿去比對，實際拿到 `undefined` 時靜默走進錯誤分支。
+ *
+ * ⚠️ **不要直接把這個值當成兩種樣式的判斷依據**——它可能是 `undefined`，也可能
+ * 是未來後端新增、而這一版前端還不認得的值。一律先過
+ * `web/src/notify/severity.ts::toBannerSeverity` 收斂。
+ */
+export type AppNotification = {
+  content: string;
+  created_at: number;
+  severity?: NotificationSeverity;
+};
 
 // --- App 認證 ---
 export type GuardianSession = { guardian_id: string; name: string; token: string };

@@ -275,11 +275,6 @@ function StageBody() {
               // size="big"：這張橫幅一旦被塞進長輩欄，恰好是長輩該讀的那句話
               // （如「提醒您：降血壓藥」），字級要守長輩端 22px 下限（見
               // `notify/NotificationBanner.tsx` 該 prop 的說明）。
-              //
-              // ⚠️ 不傳 `item.severity`：兩支 `useNotificationFeed` 產生的
-              // `BannerItem` 恆為預設 `"notice"`——後端 `app_notifications` 沒有
-              // 任何欄位可以分辨危急警報與一般提醒，接了也只能靠猜 `content`
-              // 字串，詳細理由與待裁決事項見 `BannerItem.severity` 的型別註解。
               <NotificationBanner
                 item={elderFeed.banner}
                 os={os}
@@ -287,6 +282,11 @@ function StageBody() {
                 size="big"
               />
             }
+            // ⚠️ 必須與上面那則橫幅來自同一個 `banner`（2026-08-01）：視覺（紅色，
+            // 由 `NotificationBanner` 讀 `item.severity`）與宣告強度（`role="alert"`／
+            // `aria-live="assertive"`，由 `PhoneFrame` 讀這個 prop）是兩條各自
+            // 獨立的路徑，缺一就只有一半的人分得出危急警報。
+            notificationSeverity={elderFeed.banner?.severity}
           >
             <ElderApp
               visible={elderVisible}
@@ -303,6 +303,9 @@ function StageBody() {
             notificationSlot={
               <NotificationBanner item={guardianFeed.banner} os={os} onDismiss={guardianFeed.dismiss} />
             }
+            // 家屬欄同理（見長輩欄的說明）——而且展示最有感染力的那一刻，紅色
+            // 警報正是滑進**這一欄**。
+            notificationSeverity={guardianFeed.banner?.severity}
           >
             <GuardianApp onSendCodeToElder={sendCodeToElder} unread={guardianFeed.unread} />
           </PhoneFrame>

@@ -320,6 +320,97 @@ describe("通知橫幅", () => {
   });
 
   /**
+   * ⚠️ **接線的兩半各自獨立，缺一就只有一半的人分得出危急警報**（2026-08-01）：
+   * 視覺（紅色）由 `NotificationBanner` 讀 `item.severity`，宣告強度
+   * （`role="alert"`／`aria-live="assertive"`）由 `PhoneFrame` 讀
+   * `notificationSeverity`——`StagePage` 必須把同一則 banner 的分級同時餵給
+   * 兩者。元件各自的測試證明不了「呼叫端真的接上了」這件事，本條是唯一一條
+   * 從真實 API 回應一路走到 DOM 的測試。
+   */
+  it("後端送來危急警報時，家屬欄同時變紅並改用打斷式宣告", async () => {
+    localStorage.setItem(
+      "kinsun_web_session_guardian",
+      JSON.stringify({ role: "guardian", token: "tok", display_name: "兒子" }),
+    );
+    let pollCount = 0;
+    const older = { content: "舊提醒", created_at: 1754000050, severity: "notice" };
+    const alert = {
+      content: "王阿嬤剛剛說：「我跌倒了」",
+      created_at: 1754000100,
+      severity: "alert",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((path: string) => {
+        // ⚠️ 先排除長輩面：`includes("notifications")` 會同時命中
+        // `/elder-notifications`，計數就不再只屬於家屬欄那一支輪詢。
+        const url = String(path);
+        if (url.includes("/notifications") && !url.includes("elder-notifications")) {
+          pollCount += 1;
+          const data = pollCount === 1 ? [older] : [older, alert];
+          return Promise.resolve({ status: 200, json: async () => envelope(data) });
+        }
+        return Promise.resolve({ status: 200, json: async () => envelope([]) });
+      }),
+    );
+    // 寬螢幕：兩欄同時可見，家屬欄的輪詢才會啟動（窄螢幕預設停在長輩端頁籤，
+    // `guardianVisible` 為 false、整段輪詢 effect 早退——見下方可見性接線那組）。
+    stubMatchMedia(true);
+    render(<StagePage />);
+    await waitFor(() => expect(pollCount).toBe(1)); // 第一輪：建立基準，不播
+
+    // ⚠️ 家屬欄的輪詢**沒有** `reloadSignal`（跨欄連動只接長輩欄，見
+    // `notify/bus.ts`），只能等它自己的兩秒計時器——故推進真實時間，不用
+    // `emitStageEvent`（那對這一欄不會有任何作用，會等成逾時）。
+    await waitFor(() => expect(pollCount).toBeGreaterThanOrEqual(2), { timeout: 4000 });
+    const content = await screen.findByText("王阿嬤剛剛說：「我跌倒了」");
+
+    // ① 看得見的人：整張卡片是紅的。
+    const card = screen.getByTestId("notification-banner");
+    expect(card.className).toContain("bg-danger");
+    expect(content.className).toContain("text-white");
+    // ② 讀螢幕的人：容身處改成打斷式宣告，且警報真的在裡面。
+    const region = screen.getByRole("alert");
+    expect(region).toHaveAttribute("aria-live", "assertive");
+    expect(region).toContainElement(card);
+    // ③ 標題也換掉——顏色對讀螢幕的人不存在，標題是他們的線索。
+    expect(screen.getByText("緊急通知")).toBeInTheDocument();
+  });
+
+  it("一般提醒不會變紅，也不會用打斷式宣告", async () => {
+    // 對照組：少了它，上一條測試在「所有通知都變紅」的實作下一樣會通過。
+    localStorage.setItem(
+      "kinsun_web_session_guardian",
+      JSON.stringify({ role: "guardian", token: "tok", display_name: "兒子" }),
+    );
+    let pollCount = 0;
+    const older = { content: "舊提醒", created_at: 1754000050, severity: "notice" };
+    const notice = { content: "阿嬤該吃藥了", created_at: 1754000100, severity: "notice" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((path: string) => {
+        const url = String(path);
+        if (url.includes("/notifications") && !url.includes("elder-notifications")) {
+          pollCount += 1;
+          const data = pollCount === 1 ? [older] : [older, notice];
+          return Promise.resolve({ status: 200, json: async () => envelope(data) });
+        }
+        return Promise.resolve({ status: 200, json: async () => envelope([]) });
+      }),
+    );
+    stubMatchMedia(true);
+    render(<StagePage />);
+    await waitFor(() => expect(pollCount).toBe(1));
+
+    await waitFor(() => expect(pollCount).toBeGreaterThanOrEqual(2), { timeout: 4000 });
+    await screen.findByText("阿嬤該吃藥了");
+
+    expect(screen.getByTestId("notification-banner").className).not.toContain("bg-danger");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText("緊急通知")).not.toBeInTheDocument();
+  });
+
+  /**
    * ⚠️ brief 原始版本只斷言「按鈕存在、點了不會炸」，沒有斷言點下去真的
    * 改變了什麼——這正是這份 spec 反覆抓到的「恰好通過的假測試」形狀（實測：
    * 把 `onClick` 換成空函式，brief 原始寫法仍然全綠）。改用 `PhoneFrame` 的

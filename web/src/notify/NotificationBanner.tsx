@@ -14,10 +14,14 @@
  * 的形狀（`docs/dev/*` 三處文件已從「已解決」改寫為「已採用正確形狀，實際播報
  * 待真機驗收」，不宣稱沒有實測過的事）。
  *
- * ⚠️ 刻意用 `aria-live="polite"`（不是「打斷你」）：`ui/Feedback.tsx` 已把這個
- * 分工寫清楚——`polite` 是「禮貌宣告、等目前朗讀結束才播報」，`assertive`／
- * `role="alert"` 才是打斷。用藥提醒等一般通知走 polite 是對的；`BannerItem`
- * 新增的 `severity` 欄位是為了未來的危急警報鋪路，不是本元件現在會自產 alert。
+ * ⚠️ live region 的 `polite`／`assertive` 分工（`ui/Feedback.tsx` 已寫清楚）：
+ * `polite` 是「禮貌宣告、等目前朗讀結束才播報」，`assertive`／`role="alert"`
+ * 才是打斷。用藥提醒等一般通知走 polite；危急警報走 assertive。
+ * **切換的動作不在本元件身上**——live region 掛在 `stage/PhoneFrame.tsx` 那個
+ * 永遠掛載的容身處（見上一段），呼叫端要把 `banner.severity` 一併傳給
+ * `PhoneFrame` 的 `notificationSeverity`，本元件只負責視覺樣式（紅色）。
+ * 兩者缺一：只有紅色＝看得見的人分得出來、讀螢幕的人分不出來；只有 assertive
+ * ＝反過來。`stage/StagePage.tsx` 同時傳了兩個，`StagePage.test.tsx` 釘住這件事。
  *
  * ⚠️ 尊重 prefers-reduced-motion（W-11）：判斷式抽到 `stage/reducedMotion.ts`，
  * 與 `stage/TearTransition.tsx` 共用同一份、用法也對齊——皆在掛載當下用
@@ -37,6 +41,7 @@ import { strings } from "@/strings";
 
 import { prefersReducedMotion } from "../stage/reducedMotion";
 import type { PhoneOs } from "./osStyle";
+import type { BannerSeverity } from "./severity";
 
 export type BannerItem = {
   id: string;
@@ -44,33 +49,41 @@ export type BannerItem = {
   content: string;
   at: number;
   /**
-   * 通知的嚴重度：`"notice"`（預設，一般提醒／關懷，禮貌宣告）或 `"alert"`
-   * （危急警報）。
+   * 通知的呈現分級：`"notice"`（預設，一般提醒／關懷）或 `"alert"`（危急警報）。
    *
-   * ⚠️ **目前仍只是型別預留，`stage/StagePage.tsx`（P4 Task 4）接上真實資料
-   * 來源之後也一律不傳這個欄位、恆為預設值 `"notice"`——這不是「還沒接」，
-   * 是刻意不接，且短期內不會有人接：後端 `app_notifications` 資料表（見
-   * `src/kinsun/notifications/store.py::AppNotification`）與
-   * `kinsun-shared/types.ts::AppNotification` 型別都只有 `content`／
-   * `created_at` 兩個欄位，沒有任何分類欄位可以分辨「這是危急警報」還是
-   * 「這是一般提醒」。危急事件與一般提醒目前寫進同一張表，寫入時就沒有
-   * 留下分類線索。
+   * ⚠️ **2026-08-01 起這是真實資料，不再是型別預留**：後端 `app_notifications`
+   * 已有 `severity` 欄（Leo 裁決），由 `src/kinsun/safety/notifier.py` 在危急
+   * 通報時寫入 `alert`——那是分級器與審核鏈給出的**權威**判定。
+   * `notify/useNotificationFeed.ts` 從 API 讀出來、經 `notify/severity.ts`
+   * 收斂後放進這個欄位。
    *
-   * ⚠️ **看到這裡想「用 `content` 字串比對關鍵字（如『跌倒』『危急』）湊一個
-   * `severity` 出來」之前，請先讀這句**：那是臆測而非真實訊號，會讓「什麼算
-   * 危急」這個判斷散落在展示用的前端字串比對邏輯裡，而不是後端 `safety/`
-   * 模組已有的權威分級結果——這正是本檔（見上方）「不追加沒有真實呼叫端的
-   * 推測性 wiring」要擋住的事，也是 AGENTS.md「資訊不足時不要自行猜測」的
-   * 具體案例。是否要在後端加分類欄位，待 Leo 裁決（見 `docs/dev/12` §4／
-   * `07` §7 的完整討論）。
+   * ⚠️ **不要用 `content` 字串比對關鍵字（如「跌倒」「危急」）自己湊一個出來**：
+   * 那是臆測而非真實訊號，會讓「什麼算危急」的判斷散落在前端字串比對裡，而不是
+   * 後端 `safety/` 模組已有的權威分級。這個欄位存在的全部意義就是不必那樣做。
    *
-   * `stage/PhoneFrame.tsx` 的通知容身處目前固定宣告 `role="status"`／
-   * `aria-live="polite"`，也還沒有依這個欄位動態切換 `role="alert"`／
-   * `aria-live="assertive"` 的邏輯——真的決定要接的話，那邊需要一併補上
-   * （換同一個節點的屬性值，不是整個重新掛載，AT 仍追得到）。
+   * ⚠️ 欄位缺席（舊資料、後端尚未部署）時的處置**不在這裡**，在
+   * `notify/severity.ts::toBannerSeverity`——收斂只做一次、只有一個地方，
+   * 免得各處各自決定「沒有值算什麼」。
    */
-  severity?: "notice" | "alert";
+  severity?: BannerSeverity;
 };
+
+/**
+ * 危急警報的視覺樣式：紅底白字（`--color-danger`，theme.css 既有 token）。
+ *
+ * ⚠️ **為什麼整張卡片換色，而不是只加一條紅邊或一個紅色圖示**：這張橫幅在
+ * 展示現場是**滑進來、3.5 秒後就消失**的，觀眾與家屬都是用餘光瞄到它。細部
+ * 裝飾在那個時間尺度上等於不存在——要讓「危急」在半秒內傳達出去，只有整片
+ * 色塊做得到。這也是本次裁決要解決的症狀本身（「在畫面上與『該吃藥了』毫無
+ * 區別」）。
+ *
+ * ⚠️ 兩種 OS 共用同一組警報樣式：iOS 的毛玻璃與 Android 的實色卡片是「一般
+ * 通知在該平台長什麼樣」的模擬，而危急警報要的是「一眼認出來」，跨平台一致
+ * 反而正確——真實世界的 iOS 緊急警報（Emergency Alert）也不走一般通知樣式。
+ *
+ * 白字對 `#B91C1C` 底的對比約 7.4:1，過 WCAG AA（4.5:1）與 AAA（7:1）。
+ */
+const ALERT_STYLE = "rounded-2xl bg-danger text-white shadow-xl ring-1 ring-black/10";
 
 const STYLE: Record<PhoneOs, string> = {
   // iOS：毛玻璃、大圓角、置中偏上。
@@ -123,29 +136,40 @@ export function NotificationBanner(props: {
     return null;
   }
   const text = TEXT_SIZE[size];
+  const isAlert = item.severity === "alert";
+  // ⚠️ 文字顏色必須跟著卡片一起換：`text-ink`（近黑）壓在 `bg-danger`（深紅）上
+  // 對比只有約 1.5:1，遠低於 WCAG AA 的 4.5:1——換了底色卻沒換字色，等於把
+  // 最該讀得清楚的那一則變成最讀不清楚的。關閉鍵的 `text-ink-soft` 同理。
+  const bodyColor = isAlert ? "text-white" : "text-ink";
   return (
     <div
       // ⚠️ key 用 item.id：沒有它的話 React 會沿用同一個 DOM 節點，第二則會靜靜地
       // 換掉字、完全沒有「又來一則」的感覺——而那正是展示要的效果。
       key={item.id}
       data-testid="notification-banner"
+      data-severity={isAlert ? "alert" : "notice"}
       // ⚠️ 卡片本體維持 pointer-events-none（審查發現的 Minor）：橫幅從
       // PhoneFrame 的 y=40px 起、高約 62px，恰好整條蓋住長輩欄的鈴鐺列（56px）
       // 與登出鍵——只讓下面的關閉鍵自己 pointer-events-auto，卡片其餘範圍的
       // 點擊會穿透到底下真正的按鈕。
+      //
+      // ⚠️ 危急警報**不**套 OS 樣式（見 ALERT_STYLE 說明）：兩者都是背景色類名，
+      // 疊在一起後誰贏取決於 Tailwind 產出的 CSS 順序，是一個看不出來的坑。
       className={`pointer-events-none flex items-start gap-2 p-3 ${
         reduced ? "" : "animate-[slideDown_240ms_ease-out]"
-      } ${STYLE[os]}`}
+      } ${isAlert ? ALERT_STYLE : STYLE[os]}`}
     >
       <div className="min-w-0 flex-1">
-        <p className={`font-bold text-ink ${text.title}`}>{item.title}</p>
-        <p className={`mt-0.5 break-words text-ink ${text.content}`}>{item.content}</p>
+        <p className={`font-bold ${bodyColor} ${text.title}`}>{item.title}</p>
+        <p className={`mt-0.5 break-words ${bodyColor} ${text.content}`}>{item.content}</p>
       </div>
       <button
         type="button"
         aria-label={strings.common.close}
         onClick={onDismiss}
-        className={`pointer-events-auto flex shrink-0 items-center justify-center rounded-full leading-none text-ink-soft ${DISMISS_SIZE[size]}`}
+        className={`pointer-events-auto flex shrink-0 items-center justify-center rounded-full leading-none ${
+          isAlert ? "text-white" : "text-ink-soft"
+        } ${DISMISS_SIZE[size]}`}
       >
         ×
       </button>

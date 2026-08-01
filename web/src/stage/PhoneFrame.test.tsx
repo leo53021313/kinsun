@@ -69,6 +69,62 @@ describe("PhoneFrame", () => {
     expect(screen.getByRole("status")).toContainElement(screen.getByText("提醒您吃藥"));
   });
 
+  // ── 危急警報用打斷式宣告（2026-08-01 Leo 裁決）──────────────────
+  //
+  // ⚠️ 讀螢幕的人分不出顏色：`role="alert"`／`aria-live="assertive"` 是他們**唯一**
+  // 收得到的「這則不一樣」的訊號。日後有人把這顆容器抽成共用元件時，很容易只
+  // 保留 `role="status"` 那條路徑而靜默弄丟這件事。
+
+  it('危急警報時容身處改宣告 role="alert"／aria-live="assertive"', () => {
+    render(
+      <PhoneFrame title="A" os="ios" notificationSeverity="alert" notificationSlot={<p>跌倒了</p>}>
+        <p>x</p>
+      </PhoneFrame>,
+    );
+    const region = screen.getByRole("alert");
+    expect(region).toHaveAttribute("aria-live", "assertive");
+    expect(region).toContainElement(screen.getByText("跌倒了"));
+    // 同時不可還留著 status：兩個都在的話 AT 會收到兩個互相矛盾的宣告強度。
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it('一般通知維持 role="status"／aria-live="polite"（預設與明寫皆然）', () => {
+    const { rerender } = render(
+      <PhoneFrame title="A" os="ios" notificationSlot={<p>該吃藥了</p>}>
+        <p>x</p>
+      </PhoneFrame>,
+    );
+    expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    rerender(
+      <PhoneFrame title="A" os="ios" notificationSeverity="notice" notificationSlot={<p>該吃藥了</p>}>
+        <p>x</p>
+      </PhoneFrame>,
+    );
+    expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("切換分級時是同一個 DOM 節點換屬性，不是換一顆新容器", () => {
+    // ⚠️ 這條釘住的是 live region 的既有結論（2026-07-31 審查修正）：AT 必須先
+    // 「看見」容器存在才會追蹤它之後的變化。若切換 severity 時整顆容器被卸載
+    // 重掛（例如改成「渲染兩顆、依 severity 擇一」），就回到那次修掉的失效形狀。
+    const { rerender } = render(
+      <PhoneFrame title="A" os="ios" notificationSlot={<p>該吃藥了</p>}>
+        <p>x</p>
+      </PhoneFrame>,
+    );
+    const before = screen.getByRole("status");
+
+    rerender(
+      <PhoneFrame title="A" os="ios" notificationSeverity="alert" notificationSlot={<p>跌倒了</p>}>
+        <p>x</p>
+      </PhoneFrame>,
+    );
+    // 同一個節點物件（不是內容相同的另一顆）。
+    expect(screen.getByRole("alert")).toBe(before);
+  });
+
   it("狀態列不是真的時間_是固定的展示用文字", () => {
     // 展示畫面上跳動的時鐘會把觀眾的注意力吸走，而且截圖會因此每張都不一樣。
     render(

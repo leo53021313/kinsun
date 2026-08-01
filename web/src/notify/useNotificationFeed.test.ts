@@ -38,6 +38,13 @@ function item(at: number, content = "x"): AppNotification {
   return { content, created_at: at };
 }
 
+/** 帶呈現分級的一則（2026-08-01）。`severity` 省略＝後端沒送（舊資料／舊版後端）。 */
+function itemWith(at: number, content: string, severity: unknown): AppNotification {
+  // `as` 是刻意的：執行期真正跑的是 fetch 回來的任意 JSON，型別宣告保證不了
+  // 後端送什麼，而「後端送了認不得的值」正是這裡要測的情形之一。
+  return { content, created_at: at, severity } as AppNotification;
+}
+
 describe("pickNewItems", () => {
   it("只挑比水位新的", () => {
     expect(pickNewItems([item(300), item(200), item(100)], 150)).toEqual([item(300), item(200)]);
@@ -804,6 +811,105 @@ describe("useNotificationFeed", () => {
         result.current.reload();
       });
       expect(result.current.banner?.content).toBe("切回來之後的新提醒");
+    });
+  });
+
+  // ── 呈現分級從 API 帶到橫幅（2026-08-01 Leo 裁決）────────────────
+
+  describe("severity", () => {
+    it("後端送 alert 時，橫幅拿到 alert 並換成緊急通知標題", async () => {
+      api.guardian.mockResolvedValueOnce([item(100)]); // 第一輪建立基準
+      const { result } = renderHook(() =>
+        useNotificationFeed({ audience: "guardian", token: "tok", intervalMs: 60_000 }),
+      );
+      await act(async () => {});
+
+      api.guardian.mockResolvedValueOnce([
+        item(100),
+        itemWith(200, "王阿嬤剛剛說：「我跌倒了」", "alert"),
+      ]);
+      await act(async () => {
+        result.current.reload();
+      });
+
+      expect(result.current.banner?.severity).toBe("alert");
+      // ⚠️ 標題是讀螢幕的人唯一分得出來的線索（顏色對他們不存在）。
+      expect(result.current.banner?.title).toBe("緊急通知");
+    });
+
+    it("後端送 notice 時維持一般通知樣式與品牌標題", async () => {
+      api.guardian.mockResolvedValueOnce([item(100)]);
+      const { result } = renderHook(() =>
+        useNotificationFeed({ audience: "guardian", token: "tok", intervalMs: 60_000 }),
+      );
+      await act(async () => {});
+
+      api.guardian.mockResolvedValueOnce([item(100), itemWith(200, "該吃藥了", "notice")]);
+      await act(async () => {
+        result.current.reload();
+      });
+
+      expect(result.current.banner?.severity).toBe("notice");
+      expect(result.current.banner?.title).toBe("金孫");
+    });
+
+    it("後端沒送這個欄位時當成一般通知，不炸也不留 undefined", async () => {
+      // 舊資料，或後端還沒部署到 2026-08-01 之後的版本。
+      api.guardian.mockResolvedValueOnce([item(100)]);
+      const { result } = renderHook(() =>
+        useNotificationFeed({ audience: "guardian", token: "tok", intervalMs: 60_000 }),
+      );
+      await act(async () => {});
+
+      api.guardian.mockResolvedValueOnce([item(100), item(200, "該吃藥了")]);
+      await act(async () => {
+        result.current.reload();
+      });
+
+      // 明確是 "notice" 而非 undefined：下游 `PhoneFrame` 直接讀這個值。
+      expect(result.current.banner?.severity).toBe("notice");
+    });
+
+    it("認不得的值降級成一般通知（不是升級成警報）", async () => {
+      api.guardian.mockResolvedValueOnce([item(100)]);
+      const { result } = renderHook(() =>
+        useNotificationFeed({ audience: "guardian", token: "tok", intervalMs: 60_000 }),
+      );
+      await act(async () => {});
+
+      api.guardian.mockResolvedValueOnce([item(100), itemWith(200, "某種新通知", "spam")]);
+      await act(async () => {
+        result.current.reload();
+      });
+
+      expect(result.current.banner?.severity).toBe("notice");
+    });
+
+    it("同一批裡混著警報與提醒時，各自保有自己的分級", async () => {
+      // ⚠️ 一次輪詢拿到兩則（排程提醒剛好與危急警報同時）是真實會發生的：
+      // 佇列若把分級弄丟或整批同化，紅色會出現在錯的那一則上。
+      api.guardian.mockResolvedValueOnce([item(100)]);
+      const { result } = renderHook(() =>
+        useNotificationFeed({ audience: "guardian", token: "tok", intervalMs: 60_000 }),
+      );
+      await act(async () => {});
+
+      api.guardian.mockResolvedValueOnce([
+        item(100),
+        itemWith(200, "該吃藥了", "notice"),
+        itemWith(300, "跌倒了", "alert"),
+      ]);
+      await act(async () => {
+        result.current.reload();
+      });
+
+      // 最舊的先播。
+      expect(result.current.banner?.content).toBe("該吃藥了");
+      expect(result.current.banner?.severity).toBe("notice");
+
+      act(() => result.current.dismiss());
+      expect(result.current.banner?.content).toBe("跌倒了");
+      expect(result.current.banner?.severity).toBe("alert");
     });
   });
 });

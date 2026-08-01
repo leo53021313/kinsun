@@ -90,6 +90,20 @@ export const strings = {
     // 匯入、編譯期抹除，非執行期依賴）。
     notificationStyle: (os: PhoneOs) => (os === "ios" ? "通知樣式：iOS" : "通知樣式：Android"),
   },
+  notify: {
+    /**
+     * 危急警報橫幅的標題（2026-08-01）：一般通知的標題是品牌名「金孫」，
+     * 警報則換成這一句。
+     *
+     * ⚠️ 這不只是裝飾——**它是讀螢幕的人唯一分得出來的線索**：顏色對他們不存在，
+     * 而 `content` 是後端產生的同一段文案（`safety/notifier.py::_format_alert`）。
+     * 少了它，視障家屬聽到的危急警報與用藥提醒完全一樣。
+     *
+     * 用詞刻意不含「風險等級」「L2」這類系統詞彙：2026-07-29 Leo 定案，
+     * 家屬看到的文案不放他們看不懂的分級字樣。
+     */
+    alertTitle: "緊急通知",
+  },
   guardianLogin: {
     title: "家屬登入",
     wrongCredentials: "帳號或密碼不對，請再試一次。",

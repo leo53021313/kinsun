@@ -154,6 +154,115 @@ describe("NotificationBanner", () => {
     expect(screen.getByText(ITEM.content).className).toContain("text-elder-min");
   });
 
+  // ── 危急警報看起來要像危急警報（2026-08-01 Leo 裁決）─────────────
+  //
+  // ⚠️ 這一組是**防退化**測試：後端加了 severity 欄之後，「危急警報與用藥提醒
+  // 在畫面上長得一模一樣」這個症狀才算修好；日後有人抽共用元件、統一樣式時，
+  // 很容易靜默把它弄丟（本專案已有兩次前例）。顏色、role、aria-live 三者各自
+  // 獨立承重，故分開斷言。
+
+  it("危急警報的樣式與一般通知不同——不是同一張卡片換句話", () => {
+    const { rerender } = render(
+      <NotificationBanner item={ITEM} os="ios" onDismiss={vi.fn()} />,
+    );
+    const noticeClass = banner().className;
+
+    rerender(
+      <NotificationBanner
+        item={{ ...ITEM, severity: "alert" }}
+        os="ios"
+        onDismiss={vi.fn()}
+      />,
+    );
+    expect(banner().className).not.toBe(noticeClass);
+  });
+
+  it("危急警報用 danger 底色，一般通知不用", () => {
+    // 整片色塊是唯一能在 3.5 秒的餘光裡傳達「危急」的手段（見 ALERT_STYLE 說明）。
+    render(
+      <NotificationBanner
+        item={{ ...ITEM, severity: "alert" }}
+        os="ios"
+        onDismiss={vi.fn()}
+      />,
+    );
+    expect(banner().className).toContain("bg-danger");
+  });
+
+  it("一般通知不套 danger 底色（預設與明寫 notice 皆然）", () => {
+    const { rerender } = render(
+      <NotificationBanner item={ITEM} os="ios" onDismiss={vi.fn()} />,
+    );
+    expect(banner().className).not.toContain("bg-danger");
+
+    rerender(
+      <NotificationBanner
+        item={{ ...ITEM, severity: "notice" }}
+        os="ios"
+        onDismiss={vi.fn()}
+      />,
+    );
+    expect(banner().className).not.toContain("bg-danger");
+  });
+
+  it("危急警報的文字換成白色——否則近黑字壓深紅底只有約 1.5:1 對比", () => {
+    // ⚠️ 換了底色卻沒換字色，等於把最該讀得清楚的那一則變成最讀不清楚的。
+    // WCAG AA 要求 4.5:1；白字對 #B91C1C 約 7.4:1。
+    render(
+      <NotificationBanner
+        item={{ ...ITEM, severity: "alert" }}
+        os="ios"
+        onDismiss={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(ITEM.title).className).toContain("text-white");
+    expect(screen.getByText(ITEM.content).className).toContain("text-white");
+    expect(screen.getByText(ITEM.title).className).not.toContain("text-ink");
+  });
+
+  it("危急警報兩種 OS 共用同一組樣式——不疊 OS 的背景色類名", () => {
+    // ⚠️ OS 樣式與警報樣式都含背景色類名，疊在一起後誰贏取決於 Tailwind 產出的
+    // CSS 順序，是一個在畫面上看不出來、在測試裡也很容易漏掉的坑。
+    const alertItem = { ...ITEM, severity: "alert" } as const;
+    const { rerender } = render(
+      <NotificationBanner item={alertItem} os="ios" onDismiss={vi.fn()} />,
+    );
+    const iosAlert = banner().className;
+    expect(iosAlert).not.toContain("bg-white/80");
+
+    rerender(<NotificationBanner item={alertItem} os="android" onDismiss={vi.fn()} />);
+    expect(banner().className).not.toContain("bg-surface");
+    // 兩種 OS 的警報長得一樣（真實世界的緊急警報也不走一般通知樣式）。
+    expect(banner().className).toBe(iosAlert);
+  });
+
+  it("危急警報時字級仍守 size 契約——警報不可因為換了樣式就縮小字", () => {
+    // 長輩欄的 22px 下限與警報樣式是兩個獨立的維度，不可互相犧牲。
+    render(
+      <NotificationBanner
+        item={{ ...ITEM, severity: "alert" }}
+        os="ios"
+        onDismiss={vi.fn()}
+        size="big"
+      />,
+    );
+    expect(screen.getByText(ITEM.content).className).toContain("text-elder-min");
+  });
+
+  it("危急警報仍關得掉，關閉鍵仍吃得到點擊", async () => {
+    // 樣式分支不可把互動行為一起換掉——擋住畫面的紅色橫幅更需要關得掉。
+    const onDismiss = vi.fn();
+    render(
+      <NotificationBanner
+        item={{ ...ITEM, severity: "alert" }}
+        os="ios"
+        onDismiss={onDismiss}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "關閉" }));
+    expect(onDismiss).toHaveBeenCalledOnce();
+  });
+
   it('關閉鍵可點擊目標依 size 放大：normal 48px，big 56px', () => {
     // ⚠️ 審查發現的 Important：brief 原始版本沒有任何 min-h／size，實際高度
     // 只有約 18px、寬度約 28px——連 WCAG 2.5.5 的 44px 都差得遠。

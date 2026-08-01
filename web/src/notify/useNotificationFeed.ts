@@ -90,6 +90,7 @@ import { strings } from "@/strings";
 
 import type { BannerItem } from "./NotificationBanner";
 import { loadSeenAt, unreadCount, type Audience } from "./seen";
+import { toBannerSeverity } from "./severity";
 
 const DEFAULT_INTERVAL_MS = 2000;
 /** 橫幅顯示時間：3.5 秒足夠看完一句話，又不會擋住底下的操作太久。 */
@@ -227,12 +228,21 @@ export function useNotificationFeed(options: {
       const incoming = fresh
         .slice()
         .reverse()
-        .map((item) => ({
-          id: `${item.created_at}-${item.content}`,
-          title: strings.gate.brand,
-          content: item.content,
-          at: item.created_at,
-        }));
+        .map((item) => {
+          // ⚠️ 一律過 `toBannerSeverity`，不直接用 `item.severity`：欄位可能缺席
+          // （舊資料／後端未部署）或是這一版前端不認得的值，收斂規則只有那一個
+          // 地方（見 `notify/severity.ts`，含「未知一律降級」的理由與代價）。
+          const severity = toBannerSeverity(item.severity);
+          return {
+            id: `${item.created_at}-${item.content}`,
+            // 危急警報換一個標題（「金孫」→「緊急通知」）：讀螢幕的人第一個
+            // 聽到的就是它。只換顏色的話，看不見畫面的人完全分不出來。
+            title: severity === "alert" ? strings.notify.alertTitle : strings.gate.brand,
+            content: item.content,
+            at: item.created_at,
+            severity,
+          };
+        });
       // 滿了丟最舊的：slice(-QUEUE_MAX) 保留陣列尾端（較新的那些）。積壓愈久
       // 愈舊的通知，時效性愈低，寧可讓使用者看到「最近發生的事」。
       queue.current = [...queue.current, ...incoming].slice(-QUEUE_MAX);
