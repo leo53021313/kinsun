@@ -194,9 +194,11 @@ describe("revokeReplyAudio", () => {
   it("只回收指定的那一則，其餘還要補播的一則都不能動", () => {
     // ⚠️ 這正是它存在的理由（2026-08-01「改回補播」）：`revokeQueuedReplyAudio`
     // 是「除了這一則以外全部回收」，只留得住一個例外；而長輩插嘴之後等補播的
-    // 是**複數**（`elder/useTalk.ts` 的 `deferredRepliesRef`，上限兩則）。用那一支
-    // 去擠掉最舊的一則，會把還要播的那幾則一起毀掉——症狀是補播時播放器拿到失效
-    // 的 blob URL、靜靜地沒有聲音。
+    // 不只是複數則，還是複數**輪**（`elder/useTalk.ts` 的 `deferredTurnsRef`，
+    // 上限兩輪——同一天稍後續段直送引入之後，輪內常態就有 ack＋reply＋多個續段
+    // 共四則以上，不再是原本「一輪最多兩則」的假設，這個理由因此比原本更強）。
+    // 用那一支去擠掉最舊的一輪，會把還要補播的那幾輪、每輪好幾則一起毀掉——
+    // 症狀是補播時播放器拿到失效的 blob URL、靜靜地沒有聲音。
     const createObjectURL = vi
       .fn()
       .mockReturnValueOnce("blob:fake-1")
