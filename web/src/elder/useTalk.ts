@@ -358,6 +358,44 @@ export function useTalk(options: {
       }
     });
 
+    // ⚠️ **iOS 音訊解鎖提早到「這顆播放器誕生後的第一個觸碰」**（✅ 專案裁決
+    // 2026-08-01，選項 B）。`docs/dev/17` 記載 2026-07-18 的真實故障：App 端在
+    // 開錄的同一個手勢裡先播提示音，WebKit 的音訊工作階段被播放搶走，iPhone
+    // 錄到的音檔**全數 ≤0.72 秒且近無聲**；修法是「開錄的那一刻不要播任何東西」。
+    // 解鎖若只掛在麥克風鍵上（`pressIn`），形狀與那次故障相同。
+    //
+    // ⚠️ **為什麼掛在這裡、而不是配對／登入畫面的按鈕上**：iOS 的解鎖綁在單一
+    // `HTMLMediaElement` 上（見 `audioUnlock.ts` 的 `WeakSet` 說明），而播放器是
+    // 這條 effect 造出來的——長輩按下「開始使用」的那一刻 `playerRef.current` 還是
+    // `null`，在那個手勢裡解鎖只會解鎖一顆不存在（或下一顆會被丟掉）的播放器，
+    // 等於沒解鎖。所以「更早」的上界就是**這顆播放器誕生之後的第一個手勢**。
+    //
+    // ⚠️ 兩道守門：
+    // ①佇列正在播時不解鎖——`unlockAudio` 會 `replace()` 播放器的來源，等於把金孫
+    //   講到一半的那句話**當場切斷**並回收它的 blob URL。長輩按一下鈴鐺就把回覆
+    //   打斷，會是這條監聽器自己製造出來的新故障。
+    // ②`micActiveRef` 為真時不解鎖——長輩正按著麥克風講話，這時放任何聲音都會被
+    //   錄進去（P3 Task 8 Critical 2 守的就是這件事）。
+    //   ⚠️ **誠實記載這一道的份量**：以目前的形狀它獨自承重不起來，也測不出來
+    //   ——`pressIn` 的補漏呼叫一定跑在 `micActiveRef` 轉真之前，收音中的播放器
+    //   必然已經解鎖過，`unlockAudio` 自己就會早退。留著是因為它守的是一個很可能
+    //   被改動的形狀：只要有人以「解鎖已經提早了」為由刪掉 `pressIn` 那一行，
+    //   「播放中插嘴」這條路徑（守門①擋掉解鎖）就會留下一顆未解鎖的播放器，而
+    //   長輩按住麥克風期間的任何一次觸碰都會把無聲檔放進他的錄音裡。
+    // 兩種情形下都不移除監聽器：下一次觸碰再試。
+    const unlockOnFirstGesture = () => {
+      if (micActiveRef.current || queue.isPlaying()) {
+        return;
+      }
+      unlockAudio(player);
+      window.removeEventListener("pointerdown", unlockOnFirstGesture, true);
+    };
+    // capture：比 React 掛在根節點上的 `onPointerDown` 更早跑到。若長輩進畫面後
+    // 第一個動作就是按麥克風，這一下仍與開錄同一個手勢（形狀與改動前相同，麥克風
+    // 鍵那裡的呼叫是補漏）——真正被這條救到的是「先按過鈴鐺／登出／碰過畫面任何
+    // 一處／碰過另一欄」的路徑，以及畢典展示時操作者在電腦上先點過東西的路徑。
+    window.addEventListener("pointerdown", unlockOnFirstGesture, true);
+
     // ⚠️ 這一輪 effect 是否已經收掉。舊連線的 `onclose`／`onerror` 可能在新連線的
     // `onopen` **之後**才抵達（快速切走再切回來），沒有這道守門的話它會把
     // `socketOpenRef` 洗回 false——那一輪於是退回 POST 降級，講得了話但沒有安撫話、
@@ -450,6 +488,8 @@ export function useTalk(options: {
       clearThinkingWatchdog();
       gesture.reset();
       disposed = true;
+      // 解鎖監聽器綁的是**這一顆**播放器；下一輪 effect 會為新播放器再掛一條。
+      window.removeEventListener("pointerdown", unlockOnFirstGesture, true);
       // 收音狀態與「有東西被跳過」的紀錄一併歸零：這一輪的播放器與長連線都要
       // 丟掉了，留著只會讓下一輪莫名其妙看到一句「上一個問題就先跳過了」。
       micActiveRef.current = false;
@@ -652,26 +692,21 @@ export function useTalk(options: {
   ]);
 
   const pressIn = useCallback(() => {
-    // 第一次互動時解鎖音訊（iOS Safari）。必須在使用者手勢之內，之後才播得動
-    // WebSocket 送下來的回覆。
+    // 解鎖音訊（iOS Safari）的**補漏**呼叫。主要時機已移到「這顆播放器誕生後的
+    // 第一個觸碰」（見上方 effect 內的 `unlockOnFirstGesture`）；長輩若在那之前
+    // 碰過畫面上任何東西，這裡的呼叫就會早退（`audioUnlock` 的 `WeakSet` 記著
+    // 這顆播放器解過了）。
     //
-    // ⚠️ **這個時機是有風險的取捨**：`docs/dev/17` 記載 2026-07-18 的故障——
-    // App 端當初在同一個手勢裡先播提示音再開錄，WebKit 的音訊工作階段被播放
-    // 搶走，iPhone 錄到的音檔**全數 ≤0.72 秒且近無聲**（不是品質差一點，是整句
-    // 話沒了；而那一句往往是展示的開場白）。這裡的形狀看起來相同：按下去 → 播
-    // 50ms 無聲檔 → 立刻開錄。
+    // ⚠️ **不可以刪掉這一行**：若長輩進畫面後第一個動作就是按麥克風，`window` 上
+    // 那條監聽器是在同一個手勢裡跑的（capture 階段，比這裡更早一點點），此處確實
+    // 是 no-op；但若那一下剛好被監聽器的兩道守門擋掉（正在播回覆時插嘴），解鎖
+    // 就只剩這裡。沒有這一行，那顆播放器可能**從未在使用者手勢內被 `play()`
+    // 過**，之後 WebSocket 送下來的回覆一律被 iOS 擋下、rejection 被
+    // `playback.ts` 吞掉——長輩只看得到字、聽不到任何聲音（P3 Task 8 Critical 1）。
     //
-    // 真正讓兩者不同的，不是「無聲檔很短」，而是**`startRecording` 在
-    // `recorder.start()` 之前就先 `player.pause()` 了**（見下方）——`pressIn` 這
-    // 一整段是同步的，無聲檔在 `getUserMedia` 被呼叫**之前**就已經停止，音訊
-    // 工作階段的佔用不會與錄音重疊。App 那次是提示音與開錄真的並行。
-    //
-    // 即使如此，這仍然**無法在無頭環境判定**（jsdom 沒有音訊工作階段），已列入
-    // 人工驗收清單：真 iPhone 上把**第一次按下麥克風**講的那句送出去，確認 ASR
-    // 轉出完整句子。⚠️ 影響面不只「頁面載入後的第一句」——解鎖粒度是每顆播放器
-    // 一次（見 `audioUnlock.ts`），而切頁籤／重新掛載都會換一顆，所以是「每次
-    // 換播放器之後的第一句」。若真的重演，修法是把 `unlockAudio` 移到更早、與
-    // 開錄不同的手勢（例如進舞台的那一下），而不是動麥克風鍵本身。
+    // ⚠️ 這一路仍然**無法在無頭環境判定**（jsdom 沒有音訊工作階段），人工驗收
+    // 清單照列：真 iPhone 上把**第一次按下麥克風**講的那句送出去，確認 ASR 轉出
+    // 完整句子而不是空字串（2026-07-18 的 ≤0.72 秒近無聲）。
     if (playerRef.current) {
       unlockAudio(playerRef.current);
     }

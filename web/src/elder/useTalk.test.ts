@@ -259,6 +259,18 @@ function setup(
   return { ...harness, view };
 }
 
+/**
+ * 模擬「長輩碰了畫面上某個東西」（鈴鐺、登出、另一欄、空白處都算）。
+ *
+ * ⚠️ 事件直接派到 `window`：`useTalk` 的解鎖監聽器掛在 `window` 的 capture 階段，
+ * 而事件的 target 就是 window 時，capture 與 bubble 兩種監聽器都會在 at-target
+ * 階段被呼叫。刻意不用 `PointerEvent`——jsdom 對它的支援視版本而定，而這條監聽器
+ * 一個欄位都沒讀。
+ */
+function tapAnywhere() {
+  window.dispatchEvent(new Event("pointerdown"));
+}
+
 /** 走完一次「按住說話」：按下 → 開錄完成 → 達長按門檻 → 放開。 */
 async function holdAndRelease(h: ReturnType<typeof setup>) {
   act(() => h.view.result.current.pressIn());
@@ -303,17 +315,69 @@ describe("按住說話", () => {
     expect(h.postTurn).not.toHaveBeenCalled();
   });
 
-  it("第一次按下麥克風時解鎖音訊，之後 WebSocket 送下來的回覆才播得動", async () => {
+  it("沒有更早的觸碰時，按下麥克風仍然要補上解鎖", async () => {
     // ⚠️ iOS Safari 不允許在沒有使用者手勢的情況下播放音訊，而金孫的回覆是在
     // 訊框抵達時才播——那已經脫離手勢鏈。不做的話症狀是「iPhone 上只看得到字、
     // 聽不到聲音，桌機一切正常」。
-    // ⚠️ 這個時機（與開錄同一個手勢）是有風險的取捨，見任務報告的人工驗收清單。
+    // ⚠️ 解鎖的主要時機已提早（見「iOS 音訊解鎖」那一組），這裡守的是補漏那一
+    // 條：`pressIn` 的呼叫刪掉之後，「播放中插嘴」那條路徑會留下一顆從未解鎖的
+    // 播放器。
     const h = setup();
     await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
     act(() => h.view.result.current.pressIn());
     // 寫死字面值而非讀常數：這是與後端靜態檔位置（`web/public/silent.wav` →
     // `/demo/silent.wav`）之間的契約，兩邊各自改到才算改對。
     expect(h.player.played[0]).toBe("/demo/silent.wav");
+  });
+});
+
+describe("iOS 音訊解鎖", () => {
+  it("進畫面後第一次碰到畫面就先解鎖，不等長輩按麥克風", async () => {
+    // ✅ **專案裁決 2026-08-01（選項 B）**：`docs/dev/17` 記載 2026-07-18 的真實
+    // 故障——App 端在開錄的同一個手勢裡先播提示音，WebKit 的音訊工作階段被播放
+    // 搶走，iPhone 錄到的音檔**全數 ≤0.72 秒且近無聲**。解鎖若只掛在麥克風鍵上，
+    // 形狀與那次故障相同，故提早到「這顆播放器誕生之後的第一個觸碰」。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    act(() => tapAnywhere());
+    expect(h.player.played).toContain("/demo/silent.wav");
+    // ⚠️ 這一條的重點是「**不是**麥克風那一下解的鎖」：錄音器一次都沒被開過。
+    expect(h.recorder.started).toBe(0);
+  });
+
+  it("金孫講到一半時碰畫面，不可以把他的話切斷去解鎖", async () => {
+    // ⚠️ 這是把解鎖搬到 `window` 上之後**新出現**的風險：`unlockAudio` 會
+    // `replace()` 播放器的來源，正在播的那一則會當場斷掉、blob URL 被回收。
+    // 長輩播放中按一下鈴鐺想看提醒，金孫的話就沒了——這條監聽器自己製造的故障。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    h.socket.emit({ ...REPLY, type: "reply", turn_id: "t1" });
+    await waitFor(() => expect(h.player.played).toContain("https://cdn.example/a.m4a"));
+
+    act(() => tapAnywhere());
+    expect(h.player.played).not.toContain("/demo/silent.wav");
+
+    // ⚠️ 而且不可以就此放棄：播完之後的下一次觸碰仍然要解鎖，否則「一進畫面就
+    // 先聽到一則提醒回覆」的長輩，這顆播放器一輩子解不了鎖。
+    await act(async () => {
+      h.player.finish();
+    });
+    act(() => tapAnywhere());
+    expect(h.player.played).toContain("/demo/silent.wav");
+  });
+
+  it("這一欄被切走之後，晚到的觸碰不可以碰已經丟掉的播放器", async () => {
+    // 監聽器綁的是**這一顆**播放器。cleanup 不移除的話，切走之後（播放器已
+    // `dispose()`）的任何一次觸碰都還會對它 `replace()`／`play()`，而且每切一次
+    // 就多留一條——一場展示下來累積十幾條監聽器對著十幾顆死掉的播放器。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.view.rerender({ visible: false });
+    await waitFor(() => expect(h.player.disposed).toBe(1));
+
+    act(() => tapAnywhere());
+    expect(h.player.played).not.toContain("/demo/silent.wav");
   });
 });
 
