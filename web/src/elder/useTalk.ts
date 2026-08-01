@@ -571,24 +571,6 @@ export function useTalk(options: {
         if (canTakeOverSubtitle) {
           setReplyText(frame.text);
         }
-        if (frame.type === "chunk") {
-          // 續段直送（2026-08-01）：後端主動從同一條連線推續段，前端不再靠
-          // `getTurnChunk` 去拉（那條舊路徑本任務刻意不動，見 `prefetchNext`）。
-          // ⚠️ 空音檔＝終止訊框（合成失敗、或本來就切不出第二段時後端補送），
-          // 只用來標示「這輪講完了」，不可以進播放佇列——播一段 0 位元組的
-          // 音檔沒有意義。
-          // ⚠️ 這裡的 `return` 不能省：少了它會落到下面既有的通用推播區塊，
-          // 對同一個訊框重複 `queue.push()` 兩次，長輩會聽到同一句話連播兩遍。
-          if (frame.audio_url) {
-            queue.push({
-              turnId: frame.turn_id,
-              audioUrl: frame.audio_url,
-              text: frame.text,
-              durationMs: frame.duration_ms,
-            });
-          }
-          return;
-        }
         if (frame.type === "reply") {
           // 上一輪的續拉就此作廢（advanceQueue 以物件識別比對，舊佇列自行退場）。
           chunkQueueRef.current = null;
@@ -604,6 +586,20 @@ export function useTalk(options: {
             prefetchNext(chunks);
           }
         }
+        // ⚠️ 續段直送（2026-08-01）的 `chunk` 訊框刻意**不**另開分支：它與
+        // `ack`／`reply` 共用同一組欄位（`turn_id`／`audio_url`／`text`／
+        // `duration_ms`），這段既有的通用推播邏輯結構上就完整涵蓋了它——
+        // `audio_url` 非空就推進佇列，空音檔（後端合成失敗、或本來就切不出
+        // 第二段時補送的終止訊框）因為這裡的判斷式為假而自然不進佇列，不需要
+        // 額外判斷 `is_last`（全檔沒有任何地方讀這個欄位，終止與否單純看
+        // `audio_url` 是否為空）。加一個功能重複的 `chunk` 專屬分支只會製造
+        // 「兩段程式碼做同一件事、忘記讓其中一段先 return 就重複推播」的風險
+        // ——2026-08-01 審查已實際驗證過這個風險（見 `useTalk.test.ts`「續段
+        // 直送」該段測試的變異紀錄）。
+        // ⚠️ **這裡是唯一還在守住續段行為的地方**：日後若有人把這段收窄成
+        // 只認 `frame.type === "ack" || frame.type === "reply"`，續段會在這裡
+        // 被悄悄濾掉、靜默失效（不會噴錯，只是長輩再也聽不到第二段以後的話）
+        // ——改動這段判斷式前請先確認 `chunk` 訊框仍然吃得到。
         if (frame.audio_url) {
           queue.push({
             turnId: frame.turn_id,
