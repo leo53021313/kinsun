@@ -54,7 +54,10 @@ def test_crawler_extracts_text_links_and_stays_in_allowlist():
 
 
 def test_crawler_records_page_failure_without_stopping_batch():
-    source = SourceRegistry().get("hpa_elder_health")
+    from dataclasses import replace
+
+    # 明確測「無內容樣式」的一般爬取路徑（有樣式者只跟隨文章連結，另有專屬測試）
+    source = replace(SourceRegistry().get("hpa_elder_health"), content_url_pattern="")
 
     def fetcher(url):
         if url == source.url:
@@ -146,7 +149,9 @@ def test_html_parser_drops_links_with_escaped_quotes():
 
 def test_crawler_upgrades_followed_http_links_to_https():
     """站內 http:// 舊連結一律升級 https 再抓（hpa 對 http 直接回 403）。"""
-    source = SourceRegistry().get("hpa_elder_health")
+    from dataclasses import replace
+
+    source = replace(SourceRegistry().get("hpa_elder_health"), content_url_pattern="")
     pages = {
         source.url: _page(
             source.url,
@@ -322,13 +327,14 @@ def test_fetch_raises_runtime_error_after_exhausting_retries(monkeypatch):
     assert sleeps == [0.5, 0.5]
 
 
-def test_navigation_links_are_dropped_but_article_links_survive():
-    """導覽區的一般連結不收，但符合內容樣式的文章連結必須保留。
+def test_navigation_links_are_dropped_even_when_they_look_like_articles():
+    """導覽／頁尾的連結一律不收，網址型態像文章也不例外。
 
-    2026-07-30 實測 hpa 列表頁：站內連結 234 個、只有 55 個在內容區塊內，
-    跟著爬會把預算耗在整站共用的選單上；但**文章連結恰恰多半也在導覽區**
-    （37 個 Detail 連結有 29 個位於 nav／header／footer），一律不收會連文章
-    一起砍掉——這是差點犯下的錯，故留此測試同時釘住兩邊。
+    ⚠️ 這條測試曾寫成相反的斷言（「導覽區的文章連結必須保留」），依據是
+    「hpa 列表頁 37 個 Detail 連結有 29 個在 nav／header／footer」。2026-08-01
+    真實網站實測推翻它：放行之後，兩個不同主題的來源抓回一模一樣的 19 篇——
+    本署簡介、組織架構圖、各業務服務窗口、本署位置、LINE@頻道……那 29 個是
+    每頁都有的機關樣板頁，只是網址剛好也長得像文章。真正的主題文章在內容區。
     """
     from dataclasses import replace
 
@@ -338,19 +344,17 @@ def test_navigation_links_are_dropped_but_article_links_survive():
     page = _page(
         source.url,
         "<html><body>"
-        '<nav><a href="/Pages/List.aspx?nodeid=9">選單</a>'
-        '<a href="/Pages/Detail.aspx?nodeid=1&pid=2">導覽區的文章</a></nav>'
-        '<div><p>內文</p><a href="/Pages/Detail.aspx?nodeid=1&pid=3">內容區的文章</a></div>'
-        '<footer><a href="/Pages/privacy.aspx">隱私權</a></footer>'
+        '<nav><a href="/Pages/Detail.aspx?nodeid=10&pid=18">本署簡介</a></nav>'
+        '<footer><a href="/Pages/Detail.aspx?nodeid=11&pid=20">各業務服務窗口</a></footer>'
+        '<div><p>內文</p><a href="/Pages/Detail.aspx?nodeid=39&pid=99">長者高血壓照護</a></div>'
         "</body></html>",
     )
 
     parsed = DomainParserRegistry().parse(page, source)
 
-    assert any("pid=2" in link for link in parsed.links), "導覽區的文章連結不可丟"
-    assert any("pid=3" in link for link in parsed.links)
-    assert not any("List.aspx" in link for link in parsed.links), "導覽選單不收"
-    assert not any("privacy" in link for link in parsed.links), "頁尾不收"
+    assert any("pid=99" in link for link in parsed.links), "內容區的文章要收"
+    assert not any("pid=18" in link for link in parsed.links), "導覽區的樣板頁不可收"
+    assert not any("pid=20" in link for link in parsed.links), "頁尾的樣板頁不可收"
 
 
 def test_crawler_visits_content_pages_before_navigation_pages():
@@ -383,3 +387,78 @@ def test_crawler_visits_content_pages_before_navigation_pages():
     result = crawler.crawl(source)
 
     assert any("Detail.aspx" in p.url for p in result.pages), "文章頁必須排在列表頁之前被抓到"
+
+
+def test_content_sources_only_follow_articles_and_treat_them_as_leaves():
+    """宣告內容樣式的來源：只跟隨文章連結，且文章不再往外擴。
+
+    2026-08-01 實測：只做「文章優先」還不夠——爬蟲從文章又跳到文章，
+    一路漂到菸害防制英文新聞稿、業務服務窗口、統計報告（前 14 篇有 10 篇
+    是英文），主題完全不是長輩衛教。列表頁本身就是國健署做好的策展，
+    所以只收種子頁列出的文章、文章當葉節點，範圍才守得住。
+    """
+    from dataclasses import replace
+
+    source = replace(
+        SourceRegistry().get("hpa_elder_health"), content_url_pattern=r"Detail\.aspx"
+    )
+    article = "https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=39&pid=1"
+    pages = {
+        source.url: _page(
+            source.url,
+            "<html><body><div>"
+            f'<a href="{article}">主題文章</a>'
+            '<a href="/Pages/List.aspx?nodeid=999">別的列表頁</a>'
+            "</div></body></html>",
+        ),
+        article: _page(
+            article,
+            "<html><body><p>長者高血壓照護。</p>"
+            '<a href="/Pages/Detail.aspx?nodeid=888&pid=9">菸害防制英文新聞稿</a>'
+            "</body></html>",
+        ),
+        # 這兩頁都抓得到——若爬蟲真的跟過去就會出現在結果裡，
+        # 不給頁面會讓測試因「抓失敗」而假通過。
+        "https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=888&pid=9": _page(
+            "https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=888&pid=9",
+            "<html><body><p>Quit smoking for your family.</p></body></html>",
+        ),
+        "https://www.hpa.gov.tw/Pages/List.aspx?nodeid=999": _page(
+            "https://www.hpa.gov.tw/Pages/List.aspx?nodeid=999",
+            "<html><body><p>別的主題列表。</p></body></html>",
+        ),
+    }
+
+    crawler = HealthEducationCrawler(
+        config=CrawlerConfig(max_pages_per_source=10, delay_seconds=0),
+        fetcher=lambda url: pages[url],
+        sleeper=lambda seconds: None,
+    )
+
+    result = crawler.crawl(source)
+
+    visited = {page.url for page in result.pages}
+    assert article in visited, "種子頁列出的文章要收"
+    assert not any("nodeid=888" in url for url in visited), "文章是葉節點，不可再往外爬"
+    assert any("nodeid=999" in url for url in visited), (
+        "內容區的子分類列表要跟隨——文章多半掛在子分類底下，不跟就只剩零星幾篇"
+    )
+
+
+def test_sources_without_content_pattern_keep_following_all_links():
+    """未宣告內容樣式的來源行為完全不變（既有 discovery 來源仰賴這個）。"""
+    source = SourceRegistry().get("mohw_health_window")
+    assert source.content_url_pattern == ""
+    second = "https://www.mohw.gov.tw/cp-88-1-1.html"
+    pages = {
+        source.url: _page(source.url, f'<html><body><a href="{second}">下一頁</a></body></html>'),
+        second: _page(second, "<html><body><p>衛教內容。</p></body></html>"),
+    }
+
+    crawler = HealthEducationCrawler(
+        config=CrawlerConfig(max_pages_per_source=5, delay_seconds=0),
+        fetcher=lambda url: pages[url],
+        sleeper=lambda seconds: None,
+    )
+
+    assert len(crawler.crawl(source).pages) == 2

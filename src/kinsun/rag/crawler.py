@@ -106,19 +106,16 @@ class HtmlTextExtractor(HTMLParser):
             self._title_depth += 1
         if tag in _PRIMARY_TAGS:
             self._primary_depth += 1
-        # 導覽／頁尾的連結原則上不收（整站共用的選單，跟著爬等於把預算花在同一批
-        # 頁面上；2026-07-30 實測 hpa 列表頁 234 個站內連結只有 55 個在內容區內），
-        # 但符合內容樣式者例外——hpa 恰恰把文章連結放在 nav／header／footer
-        # （37 個 Detail 連結有 29 個在那），一律不收會把文章一起砍掉。
-        if tag == "a":
+        # 導覽／頁尾的連結一律不收，符合內容樣式者也不例外。
+        # ⚠️ 2026-08-01 實測推翻了先前的判讀：hpa 列表頁 37 個 Detail 連結有 29 個
+        # 位於 nav／header／footer，當時誤判為「文章住在導覽區」而網開一面，結果
+        # 兩個不同主題的來源抓回一模一樣的 19 篇——本署簡介、組織架構圖、各業務
+        # 服務窗口、本署位置……那 29 個是每頁都有的機關樣板頁，只是網址型態剛好
+        # 也像文章。真正的主題文章是內容區那幾個。
+        if tag == "a" and self._skip_depth == 0:
             href = dict(attrs).get("href")
             if href:
-                absolute = urllib.parse.urljoin(self._base_url, href)
-                is_content = self._content_pattern is not None and self._content_pattern.search(
-                    absolute
-                )
-                if self._skip_depth == 0 or is_content:
-                    self._links.append(absolute)
+                self._links.append(urllib.parse.urljoin(self._base_url, href))
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
@@ -294,15 +291,27 @@ class HealthEducationCrawler:
                 else:
                     skipped.append(url)
                 budget = self._config.max_pages_per_source
-                for link in parsed.links:
+                # 宣告了內容樣式的來源：文章是葉節點，不從文章再往外爬。
+                # 2026-08-01 實測——只做「文章優先」時，爬蟲會從文章跳到文章，
+                # 一路漂到菸害防制英文新聞稿與業務服務窗口（前 14 篇有 10 篇是英文），
+                # 主題完全不是長輩衛教。列表頁本身就是機關做好的策展，守住它即可。
+                is_leaf = pattern is not None and pattern.search(url)
+                for link in () if is_leaf else parsed.links:
                     if not _is_allowed_url(link, source.allowed_domains) or link in seen:
                         continue
                     if pattern is not None and pattern.search(link):
                         # 文章連結一律收（只受總量上限節制）：預算檢查若一視同仁，
-                        # 排在導覽連結後面的文章會永遠擠不進待爬清單。
+                        # 排在其他連結後面的文章會永遠擠不進待爬清單。
                         if len(content_queue) < budget:
                             content_queue.append(link)
                     elif len(seen) + len(queue) + len(content_queue) < budget:
+                        # 列表頁照跟：文章多半掛在子分類底下（2026-08-01 實測：
+                        # 慢性病防治列表頁的內容區有 43 個子分類、只有 7 篇文章
+                        # 直掛，只收直掛的話每個來源僅剩 6 篇）。
+                        # ⚠️ 主題會飄——hpa 的左側全站分類選單是普通 <div> 而非
+                        # <nav>，擋不掉，故子分類會通往兄弟分類。深度限制試過，
+                        # 對結果毫無影響（飄題從種子頁就開始），已移除。
+                        # Leo 2026-08-01 核定：全部收進來、不過濾行政公告。
                         queue.append(link)
                 self._sleep(self._config.delay_seconds)
             except Exception as exc:  # noqa: BLE001 - 單頁失敗不可中斷整批
