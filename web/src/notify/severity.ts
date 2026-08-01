@@ -31,8 +31,20 @@ import type { NotificationSeverity } from "kinsun-shared/types";
 /** 該畫成紅色警報＋打斷式宣告的值。後端新增更嚴重的等級時，這裡要一起加。 */
 const ALERT_SEVERITIES: readonly string[] = ["alert"];
 
+/** 這一版前端認得的全部值。認得的不留痕，認不得的才留痕（見下）。 */
+const KNOWN_SEVERITIES: readonly string[] = ["notice", "alert"];
+
 /** 橫幅實際畫得出來的兩種樣式。 */
 export type BannerSeverity = "notice" | "alert";
+
+/**
+ * 「這個值我不認得」的三種合法表示法：欄位不存在（後端未部署到 2026-08-01 之後
+ * 的版本）、JSON `null`、空字串。這三種**不留痕**——它們是可預期的常態（舊資料
+ * 一律如此），留痕只會製造沒有人會讀的雜訊，反而蓋掉下面那種真的該看的。
+ */
+function isAbsent(raw: unknown): boolean {
+  return raw === undefined || raw === null || raw === "";
+}
 
 /**
  * 把後端送來的任意值收斂成橫幅畫得出來的兩種之一。
@@ -40,9 +52,33 @@ export type BannerSeverity = "notice" | "alert";
  * 刻意收 `unknown`（不是 `NotificationSeverity | undefined`）：呼叫端拿到的是
  * `fetch` 回來的 JSON，型別宣告在執行期不成立，收窄的參數型別只會逼呼叫端寫
  * 一個把問題藏起來的斷言。
+ *
+ * ⚠️ **認不得的值會留痕（T3 審查 Important 2，2026-08-01 補）**：先前這裡是純
+ * 三元式、一個字都不寫。**降級本身是對的，靜默降級不是**——上面那段「代價」寫得
+ * 很清楚：後端新增 `emergency`（比 alert 更嚴重）、後端先部署（常態）、使用者
+ * 瀏覽器仍快取舊 SPA，於是每一則 `emergency` 都被畫成白色禮貌橫幅，而
+ * `logs/` 沒有一行、Opik 沒有一個 span、console 沒有一個字，**只能靠有人現場
+ * 肉眼發現**。而唯一的防護是「兩邊檔頭互指、新增值時記得同步更新」這種人為
+ * 紀律——這個專案歷史上失敗過兩次的正是那一種。
+ *
+ * 只對「有值但認不得」warn，不對 `isAbsent` 那三種 warn：後者是可預期的常態。
+ * 呼叫端是 `useNotificationFeed` 的 `fresh.map(...)`，**每則新通知只會過一次**
+ * （`pickNewItems` 只回比游標新的那些，游標每輪推進），不會隨輪詢重複洗版。
  */
 export function toBannerSeverity(raw: unknown): BannerSeverity {
-  return typeof raw === "string" && ALERT_SEVERITIES.includes(raw) ? "alert" : "notice";
+  if (typeof raw === "string" && ALERT_SEVERITIES.includes(raw)) {
+    return "alert";
+  }
+  if (!isAbsent(raw) && !(typeof raw === "string" && KNOWN_SEVERITIES.includes(raw))) {
+    // 同 `elder/useTalk.ts`／`talk/qrScanner.ts` 既有的 `[前綴] 中文` 慣例。
+    // 印出原值（不是只說「有問題」）——排查的人第一個要問的就是「那到底是什麼」。
+    console.warn(
+      "[notify] 認不得的通知分級，已保守降級為一般通知；" +
+        "若後端新增了更嚴重的等級，需同步更新 notify/severity.ts 的對照表",
+      raw,
+    );
+  }
+  return "notice";
 }
 
 /** 型別出口：讓 `NotificationSeverity` 在 web 內部也取用得到，不必每處都從 shared 匯入。 */

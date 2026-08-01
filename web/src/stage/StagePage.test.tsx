@@ -324,8 +324,14 @@ describe("通知橫幅", () => {
    * 視覺（紅色）由 `NotificationBanner` 讀 `item.severity`，宣告強度
    * （`role="alert"`／`aria-live="assertive"`）由 `PhoneFrame` 讀
    * `notificationSeverity`——`StagePage` 必須把同一則 banner 的分級同時餵給
-   * 兩者。元件各自的測試證明不了「呼叫端真的接上了」這件事，本條是唯一一條
-   * 從真實 API 回應一路走到 DOM 的測試。
+   * 兩者。元件各自的測試證明不了「呼叫端真的接上了」這件事，只有從真實 API
+   * 回應一路走到 DOM 的測試看得見它。
+   *
+   * ⚠️ **兩欄各要一條，不可只驗一欄**（T3 審查發現的 Important 1，2026-08-01）：
+   * 本條初版只鋪了家屬欄的 fetch mock，於是 `StagePage.tsx` 長輩欄那行
+   * `notificationSeverity={elderFeed.banner?.severity}` **整行刪掉，540 條全部
+   * 通過、零失敗**（審查實測，本輪已重現確認）。兩欄是兩段各自獨立的 JSX，
+   * 家屬欄的測試對長輩欄一個字都證明不了。下面「長輩欄」那條即為對稱補齊。
    */
   it("後端送來危急警報時，家屬欄同時變紅並改用打斷式宣告", async () => {
     localStorage.setItem(
@@ -375,6 +381,59 @@ describe("通知橫幅", () => {
     expect(region).toContainElement(card);
     // ③ 標題也換掉——顏色對讀螢幕的人不存在，標題是他們的線索。
     expect(screen.getByText("緊急通知")).toBeInTheDocument();
+  });
+
+  it("後端送來危急警報時，長輩欄同時變紅並改用打斷式宣告", async () => {
+    // ⚠️ **這條是 T3 審查 Important 1 的補齊**：家屬欄那條對長輩欄一個字都證明
+    // 不了（兩段各自獨立的 JSX）。今天 `safety/notifier.py` 只送 GUARDIAN，所以
+    // 沒有立即的使用者可見故障；但一旦日後有任何 alert 流向長輩（帳號事件、
+    // 家屬呼叫長輩），**讀螢幕的長輩會用禮貌語氣聽到危急警報**，而紅色仍然正常
+    // ——正是本檔上一條 docstring 說的「缺一就只有一半的人分得出來」。
+    localStorage.setItem(
+      "kinsun_web_session_elder",
+      JSON.stringify({ role: "elder", token: "tok", display_name: "王阿嬤" }),
+    );
+    let pollCount = 0;
+    const older = { content: "舊提醒", created_at: 1754000050, severity: "notice" };
+    const alert = {
+      content: "家人請您立刻回電",
+      created_at: 1754000100,
+      severity: "alert",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((path: string) => {
+        if (String(path).includes("elder-notifications")) {
+          pollCount += 1;
+          const data = pollCount === 1 ? [older] : [older, alert];
+          return Promise.resolve({ status: 200, json: async () => envelope(data) });
+        }
+        return Promise.resolve({ status: 200, json: async () => envelope([]) });
+      }),
+    );
+    render(<StagePage />);
+    await waitFor(() => expect(pollCount).toBe(1)); // 第一輪：建立基準，不播
+
+    // 長輩欄的輪詢有 `reloadSignal`（接 `notify/bus.ts` 的 `guardian-wrote`），
+    // 可以直接觸發第二輪，不必等兩秒計時器——與家屬欄那條的作法不同，因為
+    // 家屬欄沒接這條線（見該處說明）。
+    await act(async () => {
+      emitStageEvent("guardian-wrote");
+    });
+    const content = await screen.findByText("家人請您立刻回電");
+
+    // ① 看得見的人：整張卡片是紅的。
+    const card = screen.getByTestId("notification-banner");
+    expect(card.className).toContain("bg-danger");
+    expect(content.className).toContain("text-white");
+    // ② 讀螢幕的人：容身處改成打斷式宣告，且警報真的在裡面。
+    const region = screen.getByRole("alert");
+    expect(region).toHaveAttribute("aria-live", "assertive");
+    expect(region).toContainElement(card);
+    // ③ 標題也換掉。
+    expect(screen.getByText("緊急通知")).toBeInTheDocument();
+    // ④ 長輩欄的字級契約不因為換了警報樣式就失守（22px 下限）。
+    expect(content.className).toContain("text-elder-min");
   });
 
   it("一般提醒不會變紅，也不會用打斷式宣告", async () => {
