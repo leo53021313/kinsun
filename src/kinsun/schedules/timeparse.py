@@ -31,7 +31,9 @@ def parse_epoch(date_text: str, time_text: str, *, now: datetime) -> float:
     """
     date_match = _DATE.match(date_text.strip())
     if not date_match:
-        raise TimeParseError("日期要寫成 2026-07-30 這種格式。")
+        # 範例日期跟著 now 走，不寫死：這句是回給模型的工具錯誤，它會照抄示範。
+        # 2026-08-01 實測收到「要寫成 2026-07-30 這種格式」——一個已經過去的日子。
+        raise TimeParseError(f"日期要寫成 {now:%Y-%m-%d} 這種格式。")
     hour, minute = 0, 0
     cleaned_time = time_text.strip()
     if cleaned_time:

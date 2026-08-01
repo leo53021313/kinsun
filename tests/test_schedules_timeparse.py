@@ -34,6 +34,17 @@ def test_parse_epoch_treats_blank_time_as_midnight():
     )
 
 
+def test_the_date_format_example_is_not_a_stale_hardcoded_day():
+    """錯誤訊息是講給模型看的，範例日期寫死就會過期。
+
+    2026-08-01 實測：`create_schedule` 漏填 date 收到「日期要寫成 2026-07-30 這種
+    格式」——當天是 8/1，範例已經是昨日的昨日。這是一句 LLM 會照抄的示範，範例
+    日期必須跟著 `now` 走，否則模型有機會抄回一個過去的日子。
+    """
+    with pytest.raises(TimeParseError, match="2026-07-25"):
+        parse_epoch("", "10:30", now=NOW)
+
+
 @pytest.mark.parametrize("bad", ["2026/07/30", "26-07-30", "2026-7-30", "明天", ""])
 def test_parse_epoch_rejects_malformed_dates(bad):
     with pytest.raises(TimeParseError, match="日期"):
