@@ -41,7 +41,26 @@ export type RiskEventItem = { tier: number; reason: string; created_at: number }
 export type ReminderItem = { kind: string; content: string; created_at: number };
 export type HealthReport = { risk_events: RiskEventItem[]; reminders: ReminderItem[] };
 export type DailySummary = { date: string; content: string; created_at: number };
-export type AppNotification = { content: string; created_at: number };
+/**
+ * 通知的呈現分級（2026-08-01 Leo 裁決）：`notice`＝一般提醒／主動關懷，
+ * `alert`＝危急警報。字面值與後端 `NotificationSeverity`、資料庫欄位三處完全一致。
+ */
+export type NotificationSeverity = "notice" | "alert";
+/**
+ * ⚠️ `severity` 宣告為**選填**是刻意的，不是「還沒補齊」：後端 2026-08-01 起一定
+ * 會送，但這個型別同時要描述兩種讀得到舊資料的情形——①後端還沒部署到新版；
+ * ②`app/`（已凍結）打的是同一組端點。少了 `?`，前端會以為這個欄位保證存在而
+ * 直接拿去比對，實際拿到 `undefined` 時靜默走進錯誤分支。
+ *
+ * ⚠️ **不要直接把這個值當成兩種樣式的判斷依據**——它可能是 `undefined`，也可能
+ * 是未來後端新增、而這一版前端還不認得的值。一律先過
+ * `web/src/notify/severity.ts::toBannerSeverity` 收斂。
+ */
+export type AppNotification = {
+  content: string;
+  created_at: number;
+  severity?: NotificationSeverity;
+};
 
 // --- App 認證 ---
 export type GuardianSession = { guardian_id: string; name: string; token: string };
@@ -53,16 +72,27 @@ export type TurnReply = {
   duration_ms: number | null;
   /**
    * 分段串流（2026-07-26 延遲優化）：整段回覆被切成幾段。
-   * >1 代表 `audio_url` 只是**第一段**，其餘要用 `getTurnChunk` 依序取來接著播；
-   * 0／1 代表就這一段。TTS 是 0.9 秒固定成本＋每字 0.10 秒，整段合成完才送出
-   * 會讓長輩等 5～8 秒，先送第一句可提早約 2～4 秒聽到聲音。
+   * ⚠️ 2026-08-01 續段語音 WS 直送之後，這個欄位純粹是**資訊性**的——續段不再
+   * 靠前端拿它去請求（`getTurnChunk`／`GET /turns/chunks/{index}` 已移除），
+   * 而是由後端在第一段送出後主動用 WS `chunk` binary frame 逐段推送。
+   * 0／1 代表就這一段（POST 降級路徑恆為 0，見 D-3：只有 WS 通道會分段）。
+   * TTS 是 0.9 秒固定成本＋每字 0.10 秒，整段合成完才送出會讓長輩等 5～8 秒，
+   * 先送第一句可提早約 2～4 秒聽到聲音。
    */
   chunk_count: number;
   /** 這一輪回覆的短雜湊；取後續段落時帶上，伺服器據此確認不是上一輪的回覆。 */
   reply_digest: string;
 };
 
-/** 分段串流的後續段落（第 0 段已隨 `TurnReply` 回過）。 */
+/**
+ * 分段串流的後續段落（第 0 段已隨 `TurnReply` 回過）。
+ *
+ * ⚠️ **已於 2026-08-01 隨 WS 續段直送退場**：`web/` 不再使用（改被動接收
+ * `chunk` frame），對應的 `GET /api/v1/turns/chunks/{index}` 端點已移除。
+ * 仍保留在此僅因**已凍結**（2026-07-30）的 `app/`（`app/src/lib/api.ts::getTurnChunk`
+ * ／`app/src/app/elder/talk.tsx`）還在編譯期引用這個型別；App 目前不會被執行，
+ * 故這是死引用而非執行期錯誤，但日後若解凍，那兩處呼叫會打到一個已經 404 的端點。
+ */
 export type TurnChunk = {
   audio_url: string;
   duration_ms: number | null;

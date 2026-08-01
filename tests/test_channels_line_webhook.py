@@ -18,7 +18,7 @@ from tests.fakes import FakeRiskEventStore
 
 
 class _NullDetector:
-    def assess(self, text: str) -> RiskAssessment:
+    def assess(self, text: str, *, recent: list[str] | None = None) -> RiskAssessment:
         return RiskAssessment(RiskTier.L0, 0.0, "", [])
 
 

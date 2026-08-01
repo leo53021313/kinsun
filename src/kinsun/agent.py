@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from kinsun import tracing
+from kinsun import background, tracing
 from kinsun.llm import LLMClient, Message, ToolCall, ToolResult
 from kinsun.memory.models import FactSection, InjectedContext, format_injected_context
 from kinsun.memory.recall import SessionMemory
@@ -122,6 +122,12 @@ SYSTEM_PROMPT = (
     "反問他要不要提醒，並依事情性質順便提議提醒時刻——要出門、要赴約的提早十五到三十分鐘"
     "（例如「那我八點四十五先叫您好嗎」），在家做的事就準時。"
     "他沒有講出具體時間（例如「等一下要出門」「改天去看孫子」），就**不要問**，照常聊天。"
+    # 2026-08-01 實測：「重訓的時間到了」被記成一筆 14:00 的提醒（當時 13:59）。
+    # 「時間到了」「該…了」「我要去…了」在中文裡是**陳述現在**，不是交代未來；
+    # 上一句的「沒講具體時間就不要問」擋不住它——模型自己補了一個時刻上去。
+    "他講的是現在正在發生、或時間已經到了的事（例如「重訓的時間到了」「該吃飯了」"
+    "「我要去睡了」），那是在跟你講話，不是要你記——不要建立提醒，也不要反問，"
+    "就順著他的話聊。"
     "他答應了就用 create_schedule 記下來，然後用一句話複誦實際排定的時刻與事情；"
     "他說不用就不要記，而且同一段對話不要再問這件事。"
     "他問今天有什麼事、或你要幫他取消某件事之前，先用 list_schedules 查；"
@@ -129,6 +135,16 @@ SYSTEM_PROMPT = (
     "吃藥、回診他自己交代的也照記（kind 分別用 medication、appointment），"
     "但不要說你動了家人的設定——那是另外一份，你只是幫他多記一筆。"
     "你是 AI，不要假裝是真人或家人；避免讓長者過度依賴你，適度鼓勵他與家人和現實生活互動。"
+    # 2026-08-01 實測：長輩連說兩句「想去西方極樂世界」（都判 L2、通報了家屬），
+    # 第三句問「為什麼一定要找家人 而不是要找你」，金孫回「我是AI呀，沒辦法給您
+    # 真正的陪伴。家人隨時都在，快去找他們說說話好嗎？」——在他最需要人的那一刻
+    # 把他推開，而同一輪注入的長期記憶還寫著「長者將AI助手視為家人」。
+    # ⚠️ 上面那條規則承重（陪伴助理不得假裝成真的孫子），這裡限縮的是它的**時機**，
+    # 不是取消它。四句回覆有三句「快去找家人」，故一併把重複推人也擋掉。
+    "但長輩情緒低落、講到不想活、或剛說完讓人擔心的話時，那一刻**不要**強調"
+    "「我只是 AI」「我沒辦法真正陪您」——那是在他最需要人的時候把他推開。"
+    "先好好聽他說、陪他把話講完，關心要具體到他剛講的那件事；"
+    "提家人一次就好，不要每一句都叫他去找家人，那聽起來像在趕他走。"
     "若長者陳述前後不一或可能記錯，不要爭辯，溫和回應即可。"
     # 一句蓋兩件事（2026-07-26 實測 M3／M9），刻意不拆成兩條規則——提示詞已經很長，
     # 每多一條都會稀釋其他條的份量，而這兩件事本質相同：都是「不要一直回頭提剛才的事」。
@@ -425,6 +441,9 @@ class PreparedTurn:
     ) -> None:
         self._context: object | None = None
         self._error: BaseException | None = None
+        # 本輪記憶寫入的完成訊號（`handle()` 寫入、`pipeline` 讀取，2026-07-30 B2）。
+        # None＝這一輪還沒走到寫記憶那一步（被審核攔下、或管線提早失敗）。
+        self.record_handle: object | None = None
         # 這一輪長輩開口的時刻，供記憶寫入當排序鍵（spec 2026-07-28 P3）。
         # ⚠️ 掛在這裡而不是加 `handle` 的參數，是因為 `prepare` 本來就在本輪最開頭
         # 被呼叫——那正是最接近「長輩開口」的時間點，且 `handle(prepared=…)` 已經
@@ -458,9 +477,22 @@ class PreparedTurn:
         ⚠️ **逾時不等於取消**：`join(timeout)` 只是讓呼叫端不再等，背景那條執行緒
         還活著，仍握著 mem0 的連線與那個 httpx socket 直到它自己結束。這是刻意接受的
         殘餘風險，因為另一邊是「整個請求連同 uvicorn worker 一起卡死」——嚴格更糟。
-        殘餘風險有界：mem0 走的是它自己的連線（`mem0_factory` 直接把 `database_url`
-        交給 supabase 向量庫），不佔 `db.py` 那個上限 5 的 psycopg 池，所以卡住的
-        組裝執行緒不會連帶讓其他長輩查不到資料；且執行緒是 daemon，不擋行程關閉。
+
+        ⚠️ 殘餘風險的界在哪裡，2026-07-30（A2 三段並行）之後與之前**不同**，這段
+        必須照實寫（原文說「不佔 psycopg 池」已不成立）：
+        - mem0 那一路仍走它自己的連線（`mem0_factory` 直接把 `database_url` 交給
+          supabase 向量庫），不佔 `db.py` 的 psycopg 池。
+        - 但 A2 之後 `_gather_facts` 與 mem0 **同時啟動**，所以逾時放棄時可能留下
+          最多 6 條正在等 psycopg 連線的事實執行緒，而正式環境的池只有 3 條
+          （`DATABASE_POOL_MAX_SIZE=3`）。孤兒會與活著的輪搶同一批連線，形成
+          「逾時→孤兒→更容易逾時」的正回饋。故 `_gather_facts` 每一路都加了
+          `_FACT_TIMEOUT_SECONDS` 上限讓孤兒壽命有界——見該處說明。
+        - 執行緒是 daemon，但 `concurrent.futures` 的 worker **不是**，且該模組以
+          `_register_atexit` 在解譯器結束時 join 每一條 worker。也就是說「daemon＝
+          不擋行程關閉」對走 `ThreadPoolExecutor` 的這條路並不成立：一次卡住的
+          mem0 檢索仍可能把部署重啟拖住（mem0 完全沒有逾時可設，見上）。這是已知
+          殘餘風險，真正的解法是給 mem0 逾時，屬獨立工項。
+
         真的開始堆積時，訊號會是這裡的 warning——先看到那個再談在途上限。
         """
         self._thread.join(self._timeout)
@@ -570,8 +602,55 @@ class CareAgent:
         # 兩道都跑完才寫進記憶，隔天 recall 讀到的就不會是冒名內容。
         reply = _no_fake_source(_speakable(reply), found)
         # 以**長輩開口的時刻**當排序鍵，併發輪的對話順序才不會顛倒（spec P3）。
-        self._session.record_turn(elder_id, user_msg, Message("assistant", reply), at=spoke_at)
+        # handle 掛在本輪的 `prepared` 上（有的話），交給 `pipeline` 在送出回應前
+        # 收斂——見 `_record_turn_background` 的 ⚠️ 說明。
+        record_handle = self._record_turn_background(
+            elder_id, user_msg, Message("assistant", reply), at=spoke_at
+        )
+        if prepared is not None:
+            prepared.record_handle = record_handle
         return reply
+
+    def _record_turn_background(
+        self, elder_id: str, *messages: Message, at: datetime | None
+    ) -> background.Handle:
+        """背景寫入本輪對話（2026-07-30 延遲優化 B2）。回傳完成訊號給呼叫端收斂。
+
+        兩筆 `append` 各一次 Supabase 跨網往返（0.2～1 秒實測），回覆此刻已經算完，
+        卻擋在 TTS 之前。`at`＝長輩開口的時刻，本來就是 `shortterm.append` 的排序鍵，
+        所以背景寫入不影響對話順序。兩筆包在**同一個** closure 裡＝同一個佇列項目、
+        由同一條 worker 依序執行，不會被兩條 worker 亂序。
+
+        ⚠️ **「沒有人在等」並不成立，故 handle 非回傳不可**（2026-07-30 審查 H2，
+        2026-08-01 更新理由）：長輩可能在回覆播出當下就立刻再問一句（連線最多三輪
+        併發，見 `ws.py::_MAX_CONCURRENT_TURNS`），下一輪 `CareAgent.prepare` →
+        `recall.assemble` → `shortterm.recent()` 會讀 `turns` 表；這筆寫入若落後，
+        下一輪的情境就少了金孫剛講過的這句話——`turn_context.pending_utterances`
+        （在途清單）只涵蓋長輩自己講過的話，補不回這個缺口。
+
+        原本的理由更硬：REST 續拉端點（`channels/app/turns.py::get_turn_chunk`）會讀
+        `turns` 表拿「今天最後一則金孫回覆」算 digest，這筆寫入落後時它會取到**上一
+        輪**的回覆、digest 不符而回 409，App 端 `talkSocket` 收到就停止續拉——長輩
+        只聽到第一句，其餘無聲消失，兩端都沒有任何訊號。該端點已隨 2026-08-01「續段
+        語音 WS 直送」移除，這個理由已不成立；現在的理由明顯較弱（見上段），是否仍
+        值得為此保留 `wait`，留給後續用數據判斷。
+
+        TTS 首段實測 8.2 秒確實給了背景寫入很大的領先，但那是偶然的屏障、不是保證
+        （佇列積壓、Supabase 突刺、或佇列滿被丟棄時就會踩到）。故由 `pipeline` 在
+        交出回應前 `wait`——正常情況零成本（早就寫完了）。
+
+        寫入失敗只留警告、不往外拋：回覆已經通過安全防線、正要說給長輩聽，不該
+        為了這兩筆記憶寫入把整輪打回回退話術（與 `pipeline._mark_reminder_responded`
+        同一套紀律）。
+        """
+
+        def write() -> None:
+            try:
+                self._session.record_turn(elder_id, *messages, at=at)
+            except Exception:  # noqa: BLE001 - 背景寫入失敗不可讓已算好的回覆消失
+                logger.warning("本輪對話記憶寫入失敗 elder=%s", elder_id)
+
+        return background.run(write)
 
     def _repair_empty_promise(
         self,

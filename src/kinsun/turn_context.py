@@ -286,7 +286,8 @@ def turn_budget(seconds: float) -> Iterator[None]:
     """在範圍內給這一輪一個總時間預算。由 `pipeline` 在收到長輩這句話時設定。
 
     ⚠️ 為什麼需要它（2026-07-28 實錄逼出來的）：一輪對話會依序打三次 Gemini
-    （危急分級→濫用審核→生成回覆），每一次各有自己的 30 秒逾時。Gemini 3.5 過載
+    （危急分級→濫用審核→生成回覆；`SAFETY_COMBINED_CLASSIFIER_ENABLED` 開啟時前兩次
+    併成一次、變兩次），每一次各有自己的 30 秒逾時。Gemini 3.5 過載
     那晚，三次**各自**卡滿 30 秒才放棄，長輩按完對講機盯著螢幕 **96.6 秒**才聽到
     「我現在有點狀況」——逐次逾時管得住單一次呼叫，管不住它們相加。
 
@@ -315,3 +316,34 @@ def remaining_budget() -> float | None:
     if deadline is None:
         return None
     return deadline - time.monotonic()
+
+
+_inline_audio: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "kinsun_inline_audio_delivery", default=False
+)
+
+
+@contextmanager
+def inline_audio_delivery(enabled: bool) -> Iterator[None]:
+    """這一輪的音檔會不會直接走長連線交回通道（C1 內嵌投遞）。由 `dispatch` 設定。
+
+    ⚠️ 為什麼 `pipeline` 需要知道（2026-08-01）：分段只在**投遞端接得住**時才有意義。
+    WS 通道能逐段推，`POST /turns` 只能回一則——後者若照樣分段，長輩就只拿得到第一句，
+    其餘永遠取不回來（REST 續拉端點已隨 2026-08-01 續段語音 WS 直送移除）。而兩條路徑
+    的 `channel` 同為 `app`，`_chunked_channels` 分不出來。
+
+    走 contextvars 而非改 `pipeline.process` 簽章，理由與本模組其餘六個機制相同：
+    改簽章會波及所有測試替身與呼叫端，而真正需要這個資訊的只有 `_synthesize` 一處。
+
+    `default=False`＝沒有人宣告時**不分段**。這是安全側：漏標的呼叫端會拿到完整音檔
+    （慢一點但完整），而不是只拿到第一句、其餘無聲消失。
+    """
+    token = _inline_audio.set(enabled)
+    try:
+        yield
+    finally:
+        _inline_audio.reset(token)
+
+
+def is_inline_audio_delivery() -> bool:
+    return _inline_audio.get()

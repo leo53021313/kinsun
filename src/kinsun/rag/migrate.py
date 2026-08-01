@@ -16,12 +16,13 @@ from psycopg.conninfo import conninfo_to_dict
 
 from kinsun.config import load_dotenv
 from kinsun.db import Database, ensure_schema
-from kinsun.rag.embeddings import GeminiEmbeddingModel
+from kinsun.rag.embeddings import build_embedding_model
 from kinsun.rag.evaluation import evaluate_golden_set, load_golden_set
 from kinsun.rag.ingestion import IngestionPipeline, deduplicate_documents, normalize_url
 from kinsun.rag.releases import PgRagReleaseStore, QualityGateInput
 from kinsun.rag.retriever import HealthEducationRetriever
 from kinsun.rag.schemas import (
+    RAG_EMBEDDING_DIMENSIONS,
     Audience,
     ContentPolicy,
     CopyrightStatus,
@@ -97,15 +98,20 @@ def _build_release(
         embedding_model=model_name,
         content_policy=content_policy,
     )
-    embedder = GeminiEmbeddingModel(
-        api_key=api_key,
+    # 走同一個工廠：維度必須與 rag_chunks.embedding 一致，寫入端各自建構會漏改。
+    embedder = build_embedding_model(
+        backend=os.environ.get("RAG_EMBEDDING_BACKEND", "gemini"),
         model=model_name,
+        dimensions=RAG_EMBEDDING_DIMENSIONS,
+        request_timeout_seconds=args.embedding_timeout,
+        batch_size=args.embedding_batch_size,
+        endpoint=os.environ.get("RAG_EMBEDDING_ENDPOINT", ""),
+        local_api_key=os.environ.get("RAG_EMBEDDING_API_KEY", ""),
+        gemini_api_key=api_key,
         request_delay_seconds=args.embedding_delay,
         max_retries=args.embedding_retries,
         retry_initial_delay_seconds=args.embedding_retry_initial_delay,
         retry_max_delay_seconds=args.embedding_retry_max_delay,
-        request_timeout_seconds=args.embedding_timeout,
-        batch_size=args.embedding_batch_size,
     )
     store = PgVectorStore(db)
     pipeline = IngestionPipeline(store=store, embedding_model=embedder, max_chunk_chars=700)

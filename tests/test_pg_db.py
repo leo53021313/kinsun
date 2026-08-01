@@ -356,3 +356,92 @@ def test_ensure_schema_adds_coords_to_legacy_elder_locations(pg_url):
         ).fetchone()
         # 既有列必須留著，且座標為 NULL——語意正確（我們確實不知道它在哪）。
         assert row == ("台南市", 1000.0, None, None)
+
+
+# app_notifications 加 severity 之前的 schema（取自 commit 9702796）：只有四個欄位，
+# 沒有任何欄位分得出「危急警報」與「用藥提醒」。正式庫自 D-12 上線至今就是長這樣。
+_LEGACY_APP_NOTIFICATIONS_DDL = (
+    "CREATE TABLE app_notifications ("
+    "app_notification_id TEXT PRIMARY KEY, external_id TEXT NOT NULL, "
+    "content TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL);"
+)
+
+
+def test_ensure_schema_adds_severity_to_legacy_app_notifications(pg_url):
+    """既有庫升級（2026-08-01 通知分級）：app_notifications 須就地補上 severity。
+
+    空庫路徑測不到這條——新庫的 CREATE TABLE 一開始就帶 severity，ALTER 自動略過。
+    只有帶著舊表與舊資料的既有庫（正式庫就是）才會走到 ALTER 那條路；漏了它，
+    線上第一次寫通知就炸 UndefinedColumn，而所有的離線測試都會是綠的。
+
+    舊列一律是 `notice`：寫入當時沒留下任何分類線索，無從回溯分辨哪幾則其實是
+    危急警報。這是**刻意接受的失真**（見 db.py 該段說明）——猜錯的方向與現況相同，
+    而全部標成 alert 會讓每一則舊的用藥提醒都變成紅色警報。
+    """
+    from kinsun.db import connect, ensure_schema
+
+    with connect(pg_url) as conn:
+        conn.execute("DROP TABLE IF EXISTS app_notifications CASCADE;")
+        conn.execute(_LEGACY_APP_NOTIFICATIONS_DDL)
+        conn.execute(
+            "INSERT INTO app_notifications "
+            "(app_notification_id, external_id, content, created_at) VALUES (%s, %s, %s, %s)",
+            ("legacy-n1", "dev-legacy", "⚠️【金孫關懷提醒】您關心的長輩剛剛說：…", 1000.0),
+        )
+        conn.commit()
+
+    # 舊庫升級不得拋 UndefinedColumn。
+    ensure_schema(pg_url)
+
+    with connect(pg_url) as conn:
+        assert "severity" in _columns_of(conn, "app_notifications"), "未補上 severity"
+        row = conn.execute(
+            "SELECT content, created_at, severity FROM app_notifications "
+            "WHERE app_notification_id = %s",
+            ("legacy-n1",),
+        ).fetchone()
+        # 既有列必須留著（不得以重建表的方式加欄），且一律降級為一般通知。
+        assert row == ("⚠️【金孫關懷提醒】您關心的長輩剛剛說：…", 1000.0, "notice")
+
+    ensure_schema(pg_url)  # 冪等：升級後再跑一次仍須成功
+
+
+def test_legacy_app_notifications_upgrade_then_accepts_alert_writes(pg_url):
+    """升級後的既有庫必須真的寫得進 alert——只驗「欄位長出來了」還不夠。
+
+    ⚠️ 這條與上一條刻意分開：上一條驗的是 DDL，這條驗的是**升級後的表接得住
+    正式寫入路徑**（PgAppNotificationStore.record）。「欄位在」與「寫得進去」是
+    兩件事——NOT NULL＋DEFAULT 若沒設對，前者會過、後者會炸。
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from kinsun.db import Database, connect, ensure_schema
+    from kinsun.notifications.models import NotificationSeverity
+    from kinsun.notifications.store import PgAppNotificationStore
+
+    with connect(pg_url) as conn:
+        conn.execute("DROP TABLE IF EXISTS app_notifications CASCADE;")
+        conn.execute(_LEGACY_APP_NOTIFICATIONS_DDL)
+        conn.execute(
+            "INSERT INTO app_notifications "
+            "(app_notification_id, external_id, content, created_at) VALUES (%s, %s, %s, %s)",
+            ("legacy-n2", "dev-legacy2", "早安，記得吃藥", 1000.0),
+        )
+        conn.commit()
+
+    ensure_schema(pg_url)
+
+    clock = datetime(2026, 8, 1, 9, 0, tzinfo=timezone(timedelta(hours=8)))
+    database = Database.open(pg_url)
+    try:
+        store = PgAppNotificationStore(database, clock=lambda: clock, new_id=lambda: "upgraded-n1")
+        store.record("dev-legacy2", "跌倒了", severity=NotificationSeverity.ALERT)
+        got = store.list_for_external_ids(["dev-legacy2"])
+    finally:
+        database.close()
+
+    # 新寫入的是 alert，升級前就存在的那列仍是 notice——兩者在同一張表上並存。
+    assert [(n.content, n.severity) for n in got] == [
+        ("跌倒了", NotificationSeverity.ALERT),
+        ("早安，記得吃藥", NotificationSeverity.NOTICE),
+    ]

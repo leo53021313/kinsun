@@ -3,18 +3,24 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 
 from kinsun.db import Database
 from kinsun.rag.crawler import CrawlerConfig, HealthEducationCrawler
-from kinsun.rag.embeddings import GeminiEmbeddingModel
+from kinsun.rag.embeddings import build_embedding_model
 from kinsun.rag.evaluation import evaluate_golden_set, load_golden_set
 from kinsun.rag.ingestion import IngestionPipeline
 from kinsun.rag.releases import PgRagReleaseStore, QualityGateInput
 from kinsun.rag.retriever import HealthEducationRetriever
-from kinsun.rag.schemas import ContentPolicy, CrawlStatus, SourceRole
+from kinsun.rag.schemas import (
+    RAG_EMBEDDING_DIMENSIONS,
+    ContentPolicy,
+    CrawlStatus,
+    SourceRole,
+)
 from kinsun.rag.source_registry import SourceRegistry, order_answer_first
 from kinsun.rag.source_validator import SourceValidator
 from kinsun.rag.vector_store import PgVectorStore
@@ -54,15 +60,19 @@ def refresh_known_urls(
     for source_id, url in store.list_active_document_urls():
         known_urls[source_id].append(url)
     attempted = sum(len(urls) for urls in known_urls.values())
-    embedder = GeminiEmbeddingModel(
-        api_key=api_key,
+    embedder = build_embedding_model(
+        backend=os.environ.get("RAG_EMBEDDING_BACKEND", "gemini"),
         model=embedding_model_name,
+        dimensions=RAG_EMBEDDING_DIMENSIONS,
+        request_timeout_seconds=embedding_timeout_seconds,
+        batch_size=embedding_batch_size,
+        endpoint=os.environ.get("RAG_EMBEDDING_ENDPOINT", ""),
+        local_api_key=os.environ.get("RAG_EMBEDDING_API_KEY", ""),
+        gemini_api_key=api_key,
         request_delay_seconds=embedding_delay_seconds,
         max_retries=embedding_retries,
         retry_initial_delay_seconds=embedding_retry_initial_delay_seconds,
         retry_max_delay_seconds=embedding_retry_max_delay_seconds,
-        request_timeout_seconds=embedding_timeout_seconds,
-        batch_size=embedding_batch_size,
     )
     pipeline = IngestionPipeline(store=store, embedding_model=embedder, max_chunk_chars=700)
     registry = SourceRegistry()

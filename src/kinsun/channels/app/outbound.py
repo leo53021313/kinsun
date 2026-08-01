@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 
+from kinsun.notifications.models import NotificationSeverity
 from kinsun.notifications.push_delivery import PushDelivery
 from kinsun.notifications.store import AppNotificationStore
 
@@ -26,8 +27,22 @@ class AppOutboundChannel:
         self._notifications = notifications
         self._push = push
 
-    def send_text(self, external_id: str, text: str) -> None:
-        self._notifications.record(external_id, text)
+    def send_text(
+        self,
+        external_id: str,
+        text: str,
+        *,
+        severity: NotificationSeverity = NotificationSeverity.NOTICE,
+    ) -> None:
+        """落庫（帶呈現分級）→ 再推播。
+
+        ⚠️ `severity` **只落庫、不影響推播**（2026-08-01 的刻意範圍限制）：Expo
+        推播另有自己的 priority／channelId 概念，要接是另一包工作（含 Android
+        通知頻道註冊），且推播本身是加分項。這一輪要修的是「畫面上分不出來」，
+        落庫這一段就足夠——`GET /notifications` 與 `/elder-notifications` 是
+        保證留存的那條路徑，前端橫幅讀的正是它。
+        """
+        self._notifications.record(external_id, text, severity=severity)
         if self._push is None:
             return
         try:

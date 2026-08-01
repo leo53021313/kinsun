@@ -18,6 +18,7 @@ from kinsun.reports.reminders import REMINDER_KIND_MEDICATION, FakeReminderLogSt
 from kinsun.strategies.models import (
     STRATEGY_CATEGORY_ADDRESS,
     STRATEGY_CATEGORY_ROUTINE,
+    STRATEGY_CATEGORY_TOPIC,
     STRATEGY_STATUS_ADOPTED,
     STRATEGY_STATUS_REVOKED,
     STRATEGY_STATUS_SUPERSEDED,
@@ -406,6 +407,73 @@ def test_observed_days_equal_to_the_lookback_window_is_still_accepted():
     strategies, _ = _run(_one_candidate(observed_days=7))
     rows = strategies.list_for_elder("e1", status=STRATEGY_STATUS_ADOPTED)
     assert [r.observed_days for r in rows] == [7]
+
+
+def _memory_where_only_kinsun_said_grandpa() -> FakeMemoryStore:
+    """金孫自己一路叫「阿公」，長輩從沒說過這兩個字——2026-08-01 正式環境的實況。"""
+    memory = FakeMemoryStore(now=NOW)
+    memory.append("e1", Message(role="user", content="你還記得我喜歡吃什麼嗎"), at=YESTERDAY)
+    memory.append("e1", Message(role="assistant", content="阿公，您愛吃排骨便當呀"), at=YESTERDAY)
+    memory.append("e1", Message(role="user", content="對啊"), at=SIX_DAYS_AGO)
+    memory.append("e1", Message(role="assistant", content="阿公真好記性"), at=SIX_DAYS_AGO)
+    return memory
+
+
+def test_an_address_rule_is_rejected_when_only_kinsun_ever_used_that_title(caplog):
+    """稱謂只有金孫自己講過時，這條守則是把自己的猜測學回來，必須擋下。
+
+    2026-08-01 正式環境實況：長輩的 name 是「阿嬤」、沒設 nickname，系統設定那段
+    明寫「不要自行猜測用『阿公』或『阿嬤』這類稱謂，除非她／他自己說過」；反思卻
+    產出「稱呼長輩為阿公」並注入 system prompt，兩段在同一份 prompt 裡直接打架。
+
+    根因是文字稿含金孫自己的回覆（`_ROLE_LABELS` 把 assistant 標成「金孫」），模型
+    把自己猜的稱謂當成「她自己說過」的觀察——猜測經過一晚就洗成了永久守則。
+    """
+    with caplog.at_level(logging.WARNING, logger="kinsun.strategies.reflection"):
+        strategies, _ = _run(
+            _one_candidate(content="稱呼長輩為阿公", category=STRATEGY_CATEGORY_ADDRESS),
+            short_term=_memory_where_only_kinsun_said_grandpa(),
+        )
+    assert strategies.list_for_elder("e1") == []
+    assert any("稱謂未經長輩自述" in r.getMessage() for r in caplog.records)
+
+
+def test_an_address_rule_is_adopted_when_the_elder_used_that_title_themselves():
+    """長輩自己說過「叫我阿公」，這條守則就是有根據的——不可連它一起擋掉。"""
+    memory = FakeMemoryStore(now=NOW)
+    memory.append("e1", Message(role="user", content="你叫我阿公就好"), at=YESTERDAY)
+    memory.append("e1", Message(role="assistant", content="好的"), at=YESTERDAY)
+    strategies, _ = _run(
+        _one_candidate(content="稱呼長輩為阿公", category=STRATEGY_CATEGORY_ADDRESS),
+        short_term=memory,
+    )
+    rows = strategies.list_for_elder("e1", status=STRATEGY_STATUS_ADOPTED)
+    assert [r.content for r in rows] == ["稱呼長輩為阿公"]
+
+
+def test_an_address_rule_without_any_kinship_title_is_untouched():
+    """不指定稱謂的稱呼守則（先叫名字再說事情）沒有猜性別的問題，照舊採納。"""
+    strategies, _ = _run(
+        _one_candidate(content="說事情之前先叫一次名字", category=STRATEGY_CATEGORY_ADDRESS),
+        short_term=_memory_where_only_kinsun_said_grandpa(),
+    )
+    rows = strategies.list_for_elder("e1", status=STRATEGY_STATUS_ADOPTED)
+    assert [r.content for r in rows] == ["說事情之前先叫一次名字"]
+
+
+def test_a_non_address_rule_mentioning_a_title_is_untouched():
+    """這道濾網只管 address 類：話題類提到稱謂不是在指定稱呼，不可誤殺。"""
+    strategies, _ = _run(
+        _one_candidate(content="他愛聊以前當阿公帶孫的事", category=STRATEGY_CATEGORY_TOPIC),
+        short_term=_memory_where_only_kinsun_said_grandpa(),
+    )
+    rows = strategies.list_for_elder("e1", status=STRATEGY_STATUS_ADOPTED)
+    assert [r.content for r in rows] == ["他愛聊以前當阿公帶孫的事"]
+
+
+def test_the_prompt_tells_the_model_kinsuns_own_words_are_not_evidence():
+    """程式防線擋得住，但先在 prompt 講清楚可以少掉一堆無謂的候選。"""
+    assert "金孫自己用過的稱呼不算" in REFLECTION_PROMPT
 
 
 def _sent_turns(reflector: FakeReflector) -> list[str]:

@@ -21,7 +21,7 @@ from kinsun.rag.schemas import (
 
 def _metadata(
     *,
-    source_id: str = "hpa_elder_health",
+    source_id: str = "hpa_health_education",
     chunk_id: str = "doc-1#chunk-1",
     title: str = "高血壓衛教",
     topic: str = "高血壓",
@@ -55,7 +55,7 @@ def _metadata(
 def _chunk(
     text: str,
     *,
-    source_id: str = "hpa_elder_health",
+    source_id: str = "hpa_health_education",
     chunk_id: str = "doc-1#chunk-1",
     topic: str = "高血壓",
     approved_for_rag: bool = True,
@@ -209,7 +209,7 @@ def test_answer_policy_builds_grounded_answer_with_citation():
 
     assert answer.safety_level == SafetyLevel.NORMAL
     assert answer.requires_safety_attention is False
-    assert answer.citations[0].source_id == "hpa_elder_health"
+    assert answer.citations[0].source_id == "hpa_health_education"
     assert "規律量血壓" in answer.answer
 
 
