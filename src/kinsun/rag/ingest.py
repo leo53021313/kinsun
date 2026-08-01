@@ -162,8 +162,10 @@ def _crawl_and_ingest(
         if not validation.can_ingest:
             print(f"[skip] {source_id}: {'; '.join(validation.issues)}")
             continue
-        result = crawler.crawl(source)
-        pipeline.ingest_pages(
+        # 有 sitemap 就讀清單，沒有才退回爬連結。爬連結在每頁都渲染全站選單的
+        # 網站上必然主題漂移（2026-08-01 實測，見 Source.sitemap_url 的註解）。
+        result = crawler.crawl_sitemap(source) if source.sitemap_url else crawler.crawl(source)
+        admitted = pipeline.ingest_pages(
             source,
             result.pages,
             operator_or_job_id=index_version,
@@ -182,7 +184,8 @@ def _crawl_and_ingest(
                 operator_or_job_id=index_version,
             )
         print(
-            f"[crawl] {source_id}: pages={len(result.pages)} "
+            f"[crawl] {source_id}: pages={len(result.pages)} 收錄={len(admitted)} "
+            f"未收錄={len(result.pages) - len(admitted)} "
             f"failed={len(result.failed_urls)} skipped={len(result.skipped_urls)}"
         )
 

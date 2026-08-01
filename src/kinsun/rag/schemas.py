@@ -105,10 +105,15 @@ class Source:
     role: SourceRole = SourceRole.ANSWER
     # 內容頁（文章）的網址樣式（regex），留空＝一視同仁。兩個用途：
     # ①待爬清單優先抓文章，不把預算耗在導覽與列表頁（2026-07-30 實測：爬 885 頁
-    #   只換到 58 篇文章）；②導覽區塊的連結原則上不收，但符合本樣式者例外——
-    #   hpa 把文章連結放在 nav／header／footer（列表頁 37 個文章連結有 29 個在那），
-    #   一律不收會把文章一起砍掉。
+    #   只換到 58 篇文章）；②從 sitemap 取清單時，用來濾掉列表頁只留文章頁。
+    # 註：曾經還有第三個用途「導覽區的連結若符合本樣式就破例收錄」，2026-08-01
+    #     實測推翻並移除，理由見 crawler.HtmlTextExtractor.handle_starttag 的註解。
     content_url_pattern: str = ""
+    # 站台 sitemap.xml 的網址，有值就改用「讀清單」取代「爬連結」。
+    # 爬連結對 hpa 這種每頁都渲染全站選單（225 個分類連結）的網站必然主題漂移：
+    # 2026-08-01 實測，三個不同主題的來源收回來的文章落在同一批 nodeid，全是頁尾
+    # 共用連結。sitemap 一次給出 5,667 篇文章且每篇都標好分類，沒有猜測空間。
+    sitemap_url: str = ""
 
 
 @dataclass(frozen=True)

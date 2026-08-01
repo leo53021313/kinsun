@@ -456,3 +456,217 @@ def test_sources_without_content_pattern_keep_following_all_links():
     )
 
     assert len(crawler.crawl(source).pages) == 2
+
+
+def _robots(body: str) -> FetchedPage:
+    return FetchedPage(
+        url="https://www.hpa.gov.tw/robots.txt",
+        content_type="text/plain",
+        body=body.encode("utf-8"),
+        fetched_at=datetime(2026, 8, 1),
+    )
+
+
+def test_crawler_skips_urls_disallowed_by_robots_txt():
+    """國健署 robots.txt 明文禁止 /Pages/ashx/GetFile.ashx，爬蟲不得抓取。
+
+    2026-08-01 盤點正式庫時發現 25 筆文件正是從被禁止的路徑抓來的——
+    當時 crawler 完全沒有讀 robots.txt。這裡刻意用國健署的原始格式
+    （User-agent 後空一行才寫 Disallow），因為 Python 的 RobotFileParser
+    遇空行會重置狀態、把規則整組丟掉。
+    """
+    source = SourceRegistry().get("hpa_health_education")
+    blocked = "https://www.hpa.gov.tw/Pages/ashx/GetFile.ashx?nodeid=39&pid=9"
+    allowed = "https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=39&pid=1"
+    pages = {
+        "https://www.hpa.gov.tw/robots.txt": _robots(
+            "User-agent: *\n\nDisallow: /File\nDisallow: /Pages/ashx/GetFile.ashx\n"
+        ),
+        allowed: _page(allowed, "<html><body>飲食與運動衛教內容</body></html>"),
+        blocked: _page(blocked, "<html><body>不該被抓到的附件</body></html>"),
+    }
+    fetched: list[str] = []
+
+    def fetcher(url: str) -> FetchedPage:
+        fetched.append(url)
+        return pages[url]
+
+    crawler = HealthEducationCrawler(
+        config=CrawlerConfig(max_pages_per_source=10, delay_seconds=0),
+        fetcher=fetcher,
+        sleeper=lambda seconds: None,
+    )
+
+    result = crawler.crawl_urls(source, (allowed, blocked))
+
+    assert blocked not in fetched
+    assert blocked in result.skipped_urls
+    assert allowed in fetched
+
+
+def test_crawler_proceeds_when_robots_txt_is_unavailable():
+    """robots.txt 取不到時放行——這是慣例，也避免站方暫時故障就整批停擺。"""
+    source = SourceRegistry().get("hpa_health_education")
+    article = "https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=39&pid=1"
+    pages = {article: _page(article, "<html><body>飲食與運動衛教內容</body></html>")}
+
+    def fetcher(url: str) -> FetchedPage:
+        if url.endswith("/robots.txt"):
+            raise RuntimeError("robots.txt 取不到")
+        return pages[url]
+
+    crawler = HealthEducationCrawler(
+        config=CrawlerConfig(max_pages_per_source=10, delay_seconds=0),
+        fetcher=fetcher,
+        sleeper=lambda seconds: None,
+    )
+
+    result = crawler.crawl_urls(source, (article,))
+
+    assert len(result.pages) == 1
+    assert result.failed_urls == ()
+
+
+def test_robots_txt_is_fetched_once_per_host():
+    """robots.txt 每個網域只取一次，不隨每頁重抓。"""
+    source = SourceRegistry().get("hpa_health_education")
+    first = "https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=39&pid=1"
+    second = "https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=39&pid=2"
+    pages = {
+        "https://www.hpa.gov.tw/robots.txt": _robots("User-agent: *\nDisallow: /File\n"),
+        first: _page(first, "<html><body>衛教內容一</body></html>"),
+        second: _page(second, "<html><body>衛教內容二</body></html>"),
+    }
+    fetched: list[str] = []
+
+    def fetcher(url: str) -> FetchedPage:
+        fetched.append(url)
+        return pages[url]
+
+    crawler = HealthEducationCrawler(
+        config=CrawlerConfig(max_pages_per_source=10, delay_seconds=0),
+        fetcher=fetcher,
+        sleeper=lambda seconds: None,
+    )
+    crawler.crawl_urls(source, (first, second))
+
+    assert fetched.count("https://www.hpa.gov.tw/robots.txt") == 1
+
+
+def test_redirect_into_disallowed_path_is_dropped():
+    """轉址落到 robots.txt 禁止的路徑也要擋。
+
+    2026-08-01 對真實網站實測發現的漏洞：hpa 的 Detail.aspx 附件項目會 302 轉到
+    GetFile.ashx，而 robots.txt 明文禁止該路徑。只在送出請求前檢查是不夠的——
+    正式庫裡那 25 筆違規文件正是這樣進來的，不是從連結爬到的。
+    """
+    source = SourceRegistry().get("hpa_health_education")
+    requested = "https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=39&pid=1"
+    landed = "https://www.hpa.gov.tw/Pages/ashx/GetFile.ashx?sid=abc"
+    pages = {
+        "https://www.hpa.gov.tw/robots.txt": _robots(
+            "User-agent: *\n\nDisallow: /Pages/ashx/GetFile.ashx\n"
+        ),
+        requested: FetchedPage(
+            url=landed,
+            content_type="text/html; charset=utf-8",
+            body="<html><body>附件內容不該被收錄</body></html>".encode(),
+            fetched_at=datetime(2026, 8, 1),
+        ),
+    }
+
+    crawler = HealthEducationCrawler(
+        config=CrawlerConfig(max_pages_per_source=10, delay_seconds=0),
+        fetcher=lambda url: pages[url],
+        sleeper=lambda seconds: None,
+    )
+
+    result = crawler.crawl_urls(source, (requested,))
+
+    assert result.pages == ()
+    assert landed in result.skipped_urls
+
+
+_SITEMAP_XML = """<?xml version="1.0" encoding="utf-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>http://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=127&amp;pid=3748</loc></url>
+  <url><loc>http://www.hpa.gov.tw/Pages/List.aspx?nodeid=39</loc></url>
+  <url><loc>https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=46&amp;pid=99#top</loc></url>
+  <url><loc>https://evil.example/Pages/Detail.aspx?pid=1</loc></url>
+  <url><loc>http://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=127&amp;pid=3748</loc></url>
+</urlset>
+"""
+
+
+def test_load_sitemap_urls_keeps_only_article_pages_of_allowed_domains():
+    from kinsun.rag.crawler import load_sitemap_urls
+
+    source = SourceRegistry().get("hpa_health_education")
+
+    urls = load_sitemap_urls(_SITEMAP_XML.encode("utf-8"), source)
+
+    assert urls == (
+        # &amp; 還原、http 升級 https、#fragment 去除、跨網域與列表頁剔除、重複去除
+        "https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=127&pid=3748",
+        "https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=46&pid=99",
+    )
+
+
+def test_load_sitemap_urls_without_content_pattern_keeps_every_page():
+    from dataclasses import replace
+
+    from kinsun.rag.crawler import load_sitemap_urls
+
+    source = replace(SourceRegistry().get("hpa_health_education"), content_url_pattern="")
+
+    urls = load_sitemap_urls(_SITEMAP_XML.encode("utf-8"), source)
+
+    assert "https://www.hpa.gov.tw/Pages/List.aspx?nodeid=39" in urls
+    assert all("evil.example" not in url for url in urls)
+
+
+def test_load_sitemap_urls_returns_empty_on_malformed_xml():
+    from kinsun.rag.crawler import load_sitemap_urls
+
+    source = SourceRegistry().get("hpa_health_education")
+
+    assert load_sitemap_urls(b"<urlset><url><loc>x", source) == ()
+
+
+def test_crawl_sitemap_fetches_only_listed_articles():
+    """sitemap 取代爬樹：清單上有什麼就抓什麼，不跟隨頁內連結。"""
+    source = SourceRegistry().get("hpa_health_education")
+    article_a = "https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=127&pid=3748"
+    article_b = "https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=46&pid=99"
+    pages = {
+        source.sitemap_url: FetchedPage(
+            url=source.sitemap_url,
+            content_type="text/xml",
+            body=_SITEMAP_XML.encode("utf-8"),
+            fetched_at=datetime(2026, 8, 1),
+        ),
+        article_a: _page(
+            article_a,
+            "<html><body>不運動就瘦不下來嗎的衛教內容"
+            '<a href="https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=99&pid=1">別的文章</a>'
+            "</body></html>",
+        ),
+        article_b: _page(article_b, "<html><body>慢性病防治衛教內容</body></html>"),
+    }
+    fetched: list[str] = []
+
+    def fetcher(url: str) -> FetchedPage:
+        fetched.append(url)
+        return pages[url]
+
+    crawler = HealthEducationCrawler(
+        config=CrawlerConfig(max_pages_per_source=100, delay_seconds=0),
+        fetcher=fetcher,
+        sleeper=lambda seconds: None,
+    )
+
+    result = crawler.crawl_sitemap(source)
+
+    assert len(result.pages) == 2
+    # 頁內連結完全不跟隨，主題不會漂移
+    assert "https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=99&pid=1" not in fetched

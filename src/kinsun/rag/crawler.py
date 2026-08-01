@@ -12,6 +12,7 @@ import re
 import time
 import urllib.parse
 import urllib.request
+import urllib.robotparser
 import xml.etree.ElementTree as ET
 from collections import deque
 from dataclasses import dataclass
@@ -262,6 +263,31 @@ class HealthEducationCrawler:
         self._opener = urllib.request.build_opener(
             urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())
         )
+        # 每個 origin 一份 robots 規則，取不到時存 None 代表放行，避免每頁重抓。
+        self._robots: dict[str, urllib.robotparser.RobotFileParser | None] = {}
+
+    def _is_allowed_by_robots(self, url: str) -> bool:
+        parsed = urllib.parse.urlsplit(url)
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        if origin not in self._robots:
+            self._robots[origin] = self._load_robots(origin)
+        rules = self._robots[origin]
+        return True if rules is None else rules.can_fetch(self._config.user_agent, url)
+
+    def _load_robots(self, origin: str) -> urllib.robotparser.RobotFileParser | None:
+        try:
+            fetched = self._fetcher(f"{origin}/robots.txt")
+        except Exception as exc:  # noqa: BLE001 - 取不到 robots.txt 時放行（業界慣例）
+            logger.info("RAG 取不到 %s/robots.txt，本次不套用限制：%s", origin, exc)
+            return None
+        body = fetched.body.decode("utf-8", errors="replace")
+        parser = urllib.robotparser.RobotFileParser()
+        # 先濾掉空行再交給 stdlib：RFC 9309 的群組由 user-agent 行分隔，空行不終止群組，
+        # 但 Python 的 RobotFileParser 一遇空行就重置狀態，會把後續 Disallow 整組丟掉。
+        # hpa.gov.tw 的 robots.txt 正是「User-agent: *」後空一行才寫 Disallow
+        # （2026-08-01 實測：不濾空行時 can_fetch(GetFile.ashx) 回 True，等於形同無限制）。
+        parser.parse([line for line in body.splitlines() if line.strip()])
+        return parser
 
     def crawl(self, source: Source) -> CrawlResult:
         # 兩條佇列：文章頁優先於其他頁。max_pages 有限時，先把預算花在內容上
@@ -283,8 +309,14 @@ class HealthEducationCrawler:
             if not _is_allowed_url(url, source.allowed_domains):
                 skipped.append(url)
                 continue
+            if not self._is_allowed_by_robots(url):
+                skipped.append(url)
+                continue
             try:
                 fetched = self._fetcher(url)
+                if not self._is_allowed_by_robots(fetched.url):
+                    skipped.append(fetched.url)
+                    continue
                 parsed = self._parser.parse(fetched, source)
                 if parsed.text.strip():
                     pages.append(parsed)
@@ -324,6 +356,17 @@ class HealthEducationCrawler:
             failed_urls=tuple(failed),
         )
 
+    def crawl_sitemap(self, source: Source) -> CrawlResult:
+        """讀 sitemap 取得文章清單後只抓清單上的網址，完全不跟隨頁內連結。
+
+        取代 `crawl()` 的爬樹路徑。爬樹在每頁都渲染全站選單的網站上必然漂移，
+        sitemap 則是站方自己宣告的內容清單，沒有猜測空間。
+        """
+        fetched = self._fetcher(source.sitemap_url)
+        urls = load_sitemap_urls(fetched.body, source)
+        logger.info("RAG 來源 %s 的 sitemap 取得 %d 個文章網址", source.source_id, len(urls))
+        return self.crawl_urls(source, urls)
+
     def crawl_urls(self, source: Source, urls: tuple[str, ...]) -> CrawlResult:
         """只更新已知 URL，不跟隨連結；新連結留給 discovery 稽核。"""
         pages: list[ParsedPage] = []
@@ -334,8 +377,17 @@ class HealthEducationCrawler:
             if not _is_allowed_url(url, source.allowed_domains):
                 skipped.append(url)
                 continue
+            if not self._is_allowed_by_robots(url):
+                skipped.append(url)
+                continue
             try:
-                parsed = self._parser.parse(self._fetcher(url), source)
+                fetched = self._fetcher(url)
+                # 轉址後的落點要重驗：hpa 的 Detail.aspx 附件項目會 302 到
+                # robots.txt 禁止的 GetFile.ashx，只在送出前檢查會整批漏掉。
+                if not self._is_allowed_by_robots(fetched.url):
+                    skipped.append(fetched.url)
+                    continue
+                parsed = self._parser.parse(fetched, source)
                 if parsed.text.strip():
                     pages.append(parsed)
                 else:
@@ -375,6 +427,32 @@ class HealthEducationCrawler:
             )(_once)
         except RetryError as exc:
             raise RuntimeError(exc.last_attempt.exception() or "fetch failed") from exc
+
+
+def load_sitemap_urls(body: bytes, source: Source) -> tuple[str, ...]:
+    """從 sitemap.xml 取出屬於本來源的文章網址。
+
+    只留下 `content_url_pattern` 命中的網址（留空則全收）與 allowlist 內的網域，
+    並套用與爬取路徑相同的正規化（http→https、去 fragment），確保去重一致。
+    """
+    try:
+        root = ET.fromstring(body)
+    except ET.ParseError as exc:
+        logger.warning("RAG 來源 %s 的 sitemap 解析失敗：%s", source.source_id, exc)
+        return ()
+
+    pattern = _content_pattern(source)
+    urls: list[str] = []
+    for node in root.iter():
+        if node.tag.rsplit("}", 1)[-1].lower() != "loc" or not node.text:
+            continue
+        url = _upgrade_to_https(_strip_fragment(unescape(node.text.strip())))
+        if not _is_allowed_url(url, source.allowed_domains):
+            continue
+        if pattern is not None and not pattern.search(url):
+            continue
+        urls.append(url)
+    return tuple(dict.fromkeys(urls))
 
 
 def _content_pattern(source: Source) -> re.Pattern[str] | None:

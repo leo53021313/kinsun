@@ -52,7 +52,7 @@ def _build_document(
     text: str = "高血壓要規律量血壓。",
     model_name: str = "character-hash-test",
 ) -> str:
-    source = SourceRegistry().get("hpa_elder_health")
+    source = SourceRegistry().get("hpa_health_education")
     pipeline = IngestionPipeline(
         store=PgVectorStore(pg_database),
         embedding_model=_NamedCharacterHashEmbedding(model_name),
@@ -152,7 +152,7 @@ def test_unchanged_document_reuses_compatible_chunks(pg_database, ns):
     releases.publish(first)
     _begin(releases, second)
 
-    source = SourceRegistry().get("hpa_elder_health")
+    source = SourceRegistry().get("hpa_health_education")
     row = pg_database.query_one(
         "SELECT source_id, url, title, publisher, text, content_hash, source_type, language, "
         "topic, audience, medical_scope, trust_level, copyright_status, published_at, "
@@ -272,7 +272,7 @@ def test_failed_release_atomic_document_can_be_reused(pg_database, ns):
     releases.mark_failed(failed, error_message="外部服務逾時")
     _begin(releases, resumed)
 
-    source = SourceRegistry().get("hpa_elder_health")
+    source = SourceRegistry().get("hpa_health_education")
     row = pg_database.query_one(
         "SELECT source_id, url, title, publisher, text, content_hash, source_type, language, "
         "topic, audience, medical_scope, trust_level, copyright_status, published_at, "
