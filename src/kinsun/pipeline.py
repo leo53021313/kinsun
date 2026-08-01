@@ -72,6 +72,7 @@ class VoicePipeline:
         combined_classifier: CombinedSafetyClassifier | None = None,
         chunked_channels: frozenset[str] = frozenset(),
         turn_budget_seconds: float = 0.0,
+        recent_utterances: Callable[[str], list[str]] | None = None,
     ) -> None:
         self._asr = asr
         self._agent = agent
@@ -93,6 +94,12 @@ class VoicePipeline:
         # （見 `_process_transcribed`）——單獨設定沒有意義，合併呼叫本來就是為了
         # 同時省下審核那次網路往返，沒有審核就沒有第二次呼叫可省。
         self._combined_classifier = combined_classifier
+        # 選填（預設 None＝分級器只看這一句，原行為）。2026-08-01：分級器一次只
+        # 收到一句話，長輩連說兩句想去西方極樂世界都判 L2 通報了家屬，第三句
+        # 「為什麼一定要找家人 而不是要找你」卻判 tier=0（理由：對AI的定位好奇）。
+        # ⚠️ 代價是本輪多一次短期記憶讀取：`prepare` 內部的組裝也會讀一次，兩者
+        # 併行（prepare 在背景執行緒），故關鍵路徑只多一趟往返，不是多一整段。
+        self._recent_utterances = recent_utterances
         # 啟用 TTS 分段串流的通道（2026-07-26 延遲優化）。預設空集合＝所有通道維持
         # 原行為（整段合成）。逐通道而非全域開關，是因為分段需要**投遞端配合**：
         # App 拿得到段數、會逐段拉並接著播；LINE 只能收一則語音訊息，給它第一句
@@ -199,13 +206,30 @@ class VoicePipeline:
         # 家屬通報／提醒標記才會被查看，與分開呼叫時的安全屬性等價（見
         # `combined_classifier` 模組頂端說明）。
         moderation: ModerationResult | None = None
+        # 同一段對話裡長輩稍早說過的話（舊到新），只給分級器當脈絡——見
+        # `safety/classifier._with_context` 的來由。取不到就當沒有脈絡，
+        # 絕不可讓它中斷對話：這一段是為了讓分級更準，不是分級的前提。
+        recent: list[str] = []
+        if self._recent_utterances is not None:
+            try:
+                recent = self._recent_utterances(elder_id)
+            except Exception:  # noqa: BLE001 - 脈絡拿不到只是少了脈絡
+                logger.warning("分級脈絡讀取失敗，本輪只看這一句")
         if self._combined_classifier is not None and self._moderator is not None:
             assessment, moderation = self._assess_and_moderate(
-                user_text, external_id=external_id, channel=channel, trace_id=trace_id
+                user_text,
+                external_id=external_id,
+                channel=channel,
+                trace_id=trace_id,
+                recent=recent,
             )
         else:
             assessment = self._assess(
-                user_text, external_id=external_id, channel=channel, trace_id=trace_id
+                user_text,
+                external_id=external_id,
+                channel=channel,
+                trace_id=trace_id,
+                recent=recent,
             )
         tracing.update_trace_metadata(risk_tier=assessment.tier.name)
         # 危急通知須獨立於回覆生成：先落庫＋通知家屬，才產生回覆。
@@ -329,7 +353,13 @@ class VoicePipeline:
 
     @tracing.track(name="risk_assess", type="general", capture_input=True, capture_output=True)
     def _assess(
-        self, user_text: str, *, external_id: str, channel: str, trace_id: str
+        self,
+        user_text: str,
+        *,
+        external_id: str,
+        channel: str,
+        trace_id: str,
+        recent: list[str] | None = None,
     ) -> RiskAssessment:
         """危急分級也納入觀測（✅ 庚-10／A-9）：token 進收集器、每輪補一筆 llm_call。
 
@@ -339,7 +369,7 @@ class VoicePipeline:
         usage = LLMUsage()
         started = self._timer()
         with collect_llm_usage(usage):
-            assessment = self._detector.assess(user_text)
+            assessment = self._detector.assess(user_text, recent=recent)
         if self._traces is not None:
             traces = self._traces
             latency_ms = self._latency_ms(started)
@@ -401,7 +431,13 @@ class VoicePipeline:
 
     @tracing.track(name="safety_combined", type="general", capture_input=True, capture_output=True)
     def _assess_and_moderate(
-        self, user_text: str, *, external_id: str, channel: str, trace_id: str
+        self,
+        user_text: str,
+        *,
+        external_id: str,
+        channel: str,
+        trace_id: str,
+        recent: list[str] | None = None,
     ) -> tuple[RiskAssessment, ModerationResult]:
         """危急分級＋濫用審核合併成一次 Gemini 呼叫（2026-07-30 延遲優化 C2）。
 
@@ -425,7 +461,7 @@ class VoicePipeline:
         started = self._timer()
         try:
             with collect_llm_usage(usage):
-                combined = self._combined_classifier.classify(user_text)
+                combined = self._combined_classifier.classify(user_text, recent=recent)
         except Exception:  # noqa: BLE001 - 分級與審核都絕不可中斷對話
             combined = failsafe_result()
         assessment = self._detector.combine_with_llm(user_text, combined.risk)

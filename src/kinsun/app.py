@@ -9,6 +9,7 @@ import logging
 import os
 import time
 import uuid
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -120,6 +121,25 @@ def _mount_static(app: FastAPI, root: Path) -> None:
         )
 
 
+# 危急分級脈絡窗的長度，理由見 `build_app` 裡接線處的說明。
+_RISK_CONTEXT_TURNS = 6
+
+
+def _recent_elder_utterances(memory) -> Callable[[str], list[str]]:
+    """回傳「取這位長輩本輪之前說過的最後幾句」的函式，供危急分級當脈絡。
+
+    抽成具名函式而非行內 lambda：它有兩個容易寫錯又測不出來的細節——只取
+    `role="user"`、只取最後 `_RISK_CONTEXT_TURNS` 句——寫成 lambda 就沒有地方
+    掛這段說明，也沒有地方掛測試。
+    """
+
+    def fetch(elder_id: str) -> list[str]:
+        turns = memory.recent(elder_id)
+        return [m.content for m in turns if m.role == "user"][-_RISK_CONTEXT_TURNS:]
+
+    return fetch
+
+
 def build_app() -> FastAPI:
     # ⚠️ 必須是第一行：在此之前發生的任何事（設定載入失敗、建表卡住）都印不出來。
     # 這個行程原本完全沒有日誌設定，39 個 kinsun.* logger 的 INFO 全數丟棄——見
@@ -188,6 +208,13 @@ def build_app() -> FastAPI:
             "SAFETY_COMBINED_CLASSIFIER_ENABLED=true 但 SAFETY_MODERATION_ENABLED=false，"
             "合併分類器不會生效（合併的目的是同時省下審核那次呼叫）"
         )
+    # 危急分級的脈絡窗（2026-08-01）：本輪之前、長輩自己說過的最後幾句。
+    # ⚠️ 不做成環境變數：這不是維運要調的旋鈕，是安全行為的一部分——能被關掉的
+    # 安全防線遲早會在某台機器上是關著的。六句夠一段完整的情緒鋪陳，又不至於把
+    # 半天前不相干的話拖進來影響判定。
+    # ⚠️ 只取 role="user"：金孫的安撫話術（「聽了真讓人好擔心」）帶著危急詞彙，
+    # 混進去會讓分級器對著自己的回覆升級。
+    # 本輪原話此刻還沒進庫（記憶由 `agent.handle` 在分級之後才寫），故不會重複。
     # TTS 分段串流（2026-07-26 延遲優化）：只對 App 通道啟用。
     # ⚠️ LINE 不可加入——它一輪只能回一則語音訊息，給它第一句等於把後面的話吞掉；
     # 分段需要投遞端「逐段拉、接著播」的配合，目前只有 App 對講機做得到。
@@ -217,6 +244,7 @@ def build_app() -> FastAPI:
         turn_budget_seconds=settings.turn_budget_seconds,
         moderator=moderator,
         combined_classifier=combined_classifier,
+        recent_utterances=_recent_elder_utterances(core.memory),
     )
     binding_sessions = PgBindingSessionStore(db)
     schedule_menu = ScheduleMenu(

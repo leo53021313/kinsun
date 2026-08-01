@@ -194,3 +194,34 @@ def test_回退不吞掉資產的_404(tmp_path):
     client = _spa_client(tmp_path)
     assert client.get("/demo/assets/app.js").status_code == 200
     assert client.get("/demo/assets/does-not-exist.js").status_code == 404
+
+
+def test_recent_elder_utterances_takes_only_what_the_elder_said():
+    """金孫的安撫話術帶著危急詞彙，混進分級脈絡會讓分級器對著自己的回覆升級。"""
+    from kinsun.llm import Message
+
+    class _Memory:
+        def recent(self, elder_id):
+            return [
+                Message(role="user", content="我好難過"),
+                Message(role="assistant", content="聽了真讓人好擔心，快去找家人"),
+                Message(role="user", content="我要去西方極樂世界"),
+            ]
+
+    fetch = app_module._recent_elder_utterances(_Memory())
+    assert fetch("e1") == ["我好難過", "我要去西方極樂世界"]
+
+
+def test_recent_elder_utterances_keeps_only_the_last_few_and_in_order():
+    """窗要有上限（半天前的閒聊不該影響這一句的判定），且必須是舊到新。"""
+    from kinsun.llm import Message
+
+    class _Memory:
+        def recent(self, elder_id):
+            return [Message(role="user", content=f"第{i}句") for i in range(20)]
+
+    fetch = app_module._recent_elder_utterances(_Memory())
+    got = fetch("e1")
+    assert len(got) == app_module._RISK_CONTEXT_TURNS
+    assert got[-1] == "第19句"
+    assert got[0] == f"第{20 - app_module._RISK_CONTEXT_TURNS}句"

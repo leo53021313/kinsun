@@ -59,9 +59,15 @@ class RiskDetector:
         self._classifier = classifier
         self._mid = mid
 
-    def assess(self, text: str) -> RiskAssessment:
+    def assess(self, text: str, *, recent: list[str] | None = None) -> RiskAssessment:
+        """`recent`＝同一段對話裡長輩稍早說過的話（舊到新），只交給分級器當脈絡。
+
+        ⚠️ 不傳給 `classify_keywords`：關鍵詞層是**逐句**的地板，把前幾句一起餵進去
+        會讓一句早已通報過的「我要跳下去」在後面每一輪重新命中，家屬收到一串重複
+        警報。地板看這一句，分級器看整段——兩層的視野不同是刻意的。
+        """
         try:
-            llm = self._classifier.classify(text)
+            llm = self._classifier.classify(text, recent=recent)
         except Exception:  # noqa: BLE001 - 偵測絕不可中斷對話
             llm = RiskAssessment(RiskTier.L0, 0.0, "分級器例外", ["llm:error"])
         return self.combine_with_llm(text, llm)

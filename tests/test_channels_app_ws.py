@@ -70,7 +70,7 @@ class _NullSession:
 
 
 class _NullClassifier:
-    def classify(self, text):
+    def classify(self, text, *, recent=None):
         from kinsun.safety.tiers import RiskAssessment, RiskTier
 
         return RiskAssessment(RiskTier.L0, 0.0, "", [])

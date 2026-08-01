@@ -43,7 +43,7 @@ class StubDetector:
     def __init__(self, tier: RiskTier) -> None:
         self._tier = tier
 
-    def assess(self, text: str) -> RiskAssessment:
+    def assess(self, text: str, *, recent: list[str] | None = None) -> RiskAssessment:
         return RiskAssessment(self._tier, 0.9, "stub", ["llm"])
 
 
@@ -116,7 +116,7 @@ class _BoomAgent:
 
 
 class _BoomDetector:
-    def assess(self, text: str) -> RiskAssessment:
+    def assess(self, text: str, *, recent: list[str] | None = None) -> RiskAssessment:
         raise AssertionError("空辨識不得進風險分級")
 
 
@@ -282,7 +282,7 @@ def test_pipeline_records_safety_classification_as_llm_call():
 class _UsageReportingDetector:
     """分級時申報 token（模擬真 LlmRiskClassifier 經 GeminiClient 透出 usage）。"""
 
-    def assess(self, text: str) -> RiskAssessment:
+    def assess(self, text: str, *, recent: list[str] | None = None) -> RiskAssessment:
         report_llm_usage(30, 5)
         return RiskAssessment(RiskTier.L0, 0.9, "stub", ["llm"])
 
@@ -413,7 +413,7 @@ def test_process_text_notifies_and_records_on_l3():
 class StubFailsafeDetector:
     """模擬分級器故障的保守留痕輸出（✅ D-31）。"""
 
-    def assess(self, text: str) -> RiskAssessment:
+    def assess(self, text: str, *, recent: list[str] | None = None) -> RiskAssessment:
         return RiskAssessment(RiskTier.L1, 0.0, FAILSAFE_EVENT_REASON, ["llm:error"])
 
 
@@ -722,7 +722,7 @@ class _SlowDetector:
     def __init__(self, delay: float) -> None:
         self.delay = delay
 
-    def assess(self, text: str) -> RiskAssessment:
+    def assess(self, text: str, *, recent: list[str] | None = None) -> RiskAssessment:
         time.sleep(self.delay)
         return RiskAssessment(RiskTier.L0, 0.0, "測試", [])
 
@@ -1007,7 +1007,7 @@ class _FakeCombinedClassifier:
         self._result = result
         self.calls: list[str] = []
 
-    def classify(self, text: str) -> CombinedSafetyResult:
+    def classify(self, text: str, *, recent: list[str] | None = None) -> CombinedSafetyResult:
         self.calls.append(text)
         return self._result
 
@@ -1015,7 +1015,7 @@ class _FakeCombinedClassifier:
 class _BoomRiskClassifier:
     """走錯路徑的探針：合併模式下不該有人呼叫分級器本體。"""
 
-    def classify(self, text: str) -> RiskAssessment:
+    def classify(self, text: str, *, recent: list[str] | None = None) -> RiskAssessment:
         raise AssertionError("走錯路徑：合併模式應呼叫 combine_with_llm，不是分級器本體")
 
 
@@ -1123,7 +1123,7 @@ def test_combined_path_applies_keyword_floor_and_confidence_threshold():
 
 
 class _BoomCombinedClassifier:
-    def classify(self, text: str) -> CombinedSafetyResult:
+    def classify(self, text: str, *, recent: list[str] | None = None) -> CombinedSafetyResult:
         raise RuntimeError("boom")
 
 
@@ -1284,7 +1284,7 @@ def test_combined_path_records_two_llm_calls_sharing_latency_without_double_coun
     """
 
     class _UsageReportingCombinedClassifier:
-        def classify(self, text: str) -> CombinedSafetyResult:
+        def classify(self, text: str, *, recent: list[str] | None = None) -> CombinedSafetyResult:
             report_llm_usage(40, 8)
             return CombinedSafetyResult(
                 risk=RiskAssessment(RiskTier.L0, 0.9, "一般", ["llm"]),
@@ -1400,3 +1400,41 @@ def test_a_lagging_memory_write_warns_but_still_returns_the_reply(caplog):
         assert "尚未落地" in caplog.text
     finally:
         background.reset_for_test()
+
+
+class _ContextSpyDetector:
+    """記下分級器收到的脈絡，讓「近幾輪有沒有真的送進去」測得出來。"""
+
+    def __init__(self) -> None:
+        self.recent: list[str] | None = None
+
+    def assess(self, text: str, *, recent: list[str] | None = None) -> RiskAssessment:
+        self.recent = recent
+        return RiskAssessment(RiskTier.L0, 0.9, "stub", ["llm"])
+
+
+def test_pipeline_feeds_earlier_elder_utterances_into_risk_assessment():
+    """危急分級要看得到同一段對話稍早的話（2026-08-01 正式環境實況，見 classifier）。
+
+    只送長輩自己說的話：金孫的安撫話術帶著危急詞彙，混進去會讓分級器對著自己的
+    回覆升級。
+    """
+    detector = _ContextSpyDetector()
+    pipeline = VoicePipeline(
+        asr=MockAsrClient("為什麼一定要找家人"),
+        agent=CareAgent(EchoLLM(), NullSession()),
+        tts=TextBubbleTts(),
+        detector=detector,
+        notifier=SpyNotifier(),
+        risk_events=FakeRiskEventStore(),
+        recent_utterances=lambda elder_id: ["我要去西方極樂世界囉"],
+    )
+    pipeline.process(b"\x00", elder_id="u1")
+    assert detector.recent == ["我要去西方極樂世界囉"]
+
+
+def test_pipeline_without_the_dependency_passes_no_context():
+    """未接線時逐字維持原行為——既有呼叫端與測試不受影響。"""
+    detector = _ContextSpyDetector()
+    _pipeline(detector, SpyNotifier()).process(b"\x00", elder_id="u1")
+    assert detector.recent == []
