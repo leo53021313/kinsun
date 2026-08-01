@@ -1357,9 +1357,12 @@ class _TimedWriteSession:
 def test_memory_is_settled_before_the_reply_is_handed_back():
     """回應交出前，本輪記憶必須已經落地（審查 H2）。
 
-    ⚠️ 這條不變式是 `channels/app/turns.py::get_turn_chunk` 明文依賴的：它讀 `turns`
-    表拿「今天最後一則金孫回覆」算 digest，落後時 App 續拉會收到 409 而停止——
-    **長輩只聽到第一句，其餘無聲消失，兩端都沒有任何訊號**。
+    ⚠️ 這條不變式原本被 REST 續拉端點（`channels/app/turns.py::get_turn_chunk`）明文
+    依賴：它讀 `turns` 表拿「今天最後一則金孫回覆」算 digest，落後時 App 續拉會收到
+    409 而停止——長輩只聽到第一句，其餘無聲消失，兩端都沒有任何訊號。該端點已隨
+    2026-08-01「續段語音 WS 直送」移除，這個理由不再成立；現在較弱的理由是併發輪
+    （見 `pipeline.py::_settle_memory_write` docstring）：下一輪讀 `turns` 表組情境
+    時，若這筆寫入還沒落地，就會少了金孫剛講過的那句話。
     `record_turn` 背景化（B2）省的是 TTS 前的 0.4–1 秒，不是放棄這條不變式。
     """
     background.configure(max_workers=1)

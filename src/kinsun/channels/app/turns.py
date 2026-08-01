@@ -242,8 +242,11 @@ def create_app_turns_router(
             "text": collector.text,
             "audio_url": collector.audio_url,
             "duration_ms": collector.duration_ms,
-            # 分段串流（2026-07-26 延遲優化）：>1 代表 audio_url 只是第一段，
-            # App 應依序取 1..chunk_count-1 接著播；0／1 代表就這一段、不必再拉。
+            # 這條 REST 路徑恆為 0：分段只在 `turn_context.is_inline_audio_delivery()`
+            # 為 True 時才成立（見 `pipeline._synthesize`），而這裡建的 `InboundMessage`
+            # 沒有帶 `reply_audio`，該旗標恆 False。多段語音改由 WS 通道逐段推播
+            # （`ws.py::_push_continuation_chunks`，2026-08-01），這個欄位留著只是
+            # 讓回應形狀與 WS 路徑一致，不代表這條 POST 路徑會分段。
             "chunk_count": chunk_count,
             "reply_digest": outcome.reply_digest if outcome else "",
         }

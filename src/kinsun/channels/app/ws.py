@@ -383,8 +383,9 @@ def create_app_ws_router(
         """把第一段之後的句子逐段合成並推出去（spec 2026-08-01）。
 
         ⚠️ 自己呼叫 `split_for_speech` 而不是從 `TtsResult` 拿：它是純函式，同樣輸入
-        必得同樣輸出；改 `TtsResult` 協定會波及所有測試替身，換不到任何東西。
-        既有的 `turns.py::get_turn_chunk` 也是這樣做的。
+        必得同樣輸出；改 `TtsResult` 協定會波及所有測試替身，換不到任何東西。已隨
+        2026-08-01 續段語音 WS 直送移除的 REST 續拉端點（`turns.py::get_turn_chunk`）
+        原本也是這樣做的。
 
         優先權 `CHUNK`：長輩正在聽第一段、續段有餘裕，別位長輩的第一段（`REPLY`）
         應該先做。

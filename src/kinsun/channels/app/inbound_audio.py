@@ -76,8 +76,9 @@ def start_inbound_upload(inbound_audio, traces, audio: bytes, trace_id: str) -> 
     ⚠️ 刻意**不**帶 `contextvars.copy_context()` 的 Opik 理由（2026-07-30 審查 L1）：
     本函式的呼叫點在 `dispatch` 之前，而本輪的 root span `care_conversation` 是在
     `channels.inbound._run_pipeline` 才建立——此刻 context 裡沒有任何 span 可繼承，
-    `audio_upload` 在 Opik 上本來就是孤兒 root trace（與 `turns.py::get_turn_chunk`
-    修掉的那個既有缺陷同源，非本次造成）。仍複製 context 是為了帶走 `log_trace`
+    `audio_upload` 在 Opik 上本來就是孤兒 root trace（與已移除的 REST 續拉端點
+    `turns.py::get_turn_chunk` 過去修掉的那個既有缺陷同源，非本次造成；該端點已隨
+    2026-08-01 續段語音 WS 直送移除）。仍複製 context 是為了帶走 `log_trace`
     之類**未來**可能掛上的橫切狀態，成本為零；但不要在註解裡宣稱它修好了 span 巢狀。
     """
     if inbound_audio is None:

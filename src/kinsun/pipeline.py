@@ -316,7 +316,7 @@ class VoicePipeline:
             return
         if not handle.wait(_MEMORY_WRITE_SETTLE_SECONDS):
             logger.warning(
-                "本輪記憶尚未落地（等 %.1f 秒），續拉分段可能取到上一輪",
+                "本輪記憶尚未落地（等 %.1f 秒），下一輪的情境可能少了這句回覆",
                 _MEMORY_WRITE_SETTLE_SECONDS,
             )
 
