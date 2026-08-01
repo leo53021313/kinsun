@@ -19,6 +19,7 @@ import { unlockAudio } from "@/talk/audioUnlock";
 import {
   createWebPlayer,
   revokeQueuedReplyAudio as revokeQueuedReplyAudioImpl,
+  revokeReplyAudio as revokeReplyAudioImpl,
   writeReplyAudio,
   type WebPlayer,
 } from "@/talk/playback";
@@ -69,6 +70,18 @@ const LONG_PRESS_MS = 500;
  */
 const THINKING_TIMEOUT_MS = 75_000;
 
+/**
+ * 長輩插嘴時最多留幾則回覆等補播（✅ 專案裁決 2026-08-01「改回補播」）。
+ *
+ * 取 2 ＝**一輪最多兩則語音**（後端 `ws.py` 的 ack→reply 兩段式：安撫話一則、
+ * 答案一則）。留這麼多剛好接得住「一整輪的答案」，而不會在他連續插嘴好幾次之後
+ * 累積成一串舊語音——那時最後補播的是幾分鐘前的問題，對長輩來說就是金孫在自言
+ * 自語（那正是 2026-07-31 選擇丟棄時的顧慮，用上限把它壓在可接受的範圍）。
+ *
+ * 滿了就擠掉**最舊**的那一則並回收它的音檔：越晚抵達的越接近他現在關心的事。
+ */
+const MAX_DEFERRED_REPLIES = 2;
+
 /** 分段播放的進度。`digest` 綁定這是哪一輪的回覆——換一輪就整個作廢。 */
 type ChunkQueue = {
   digest: string;
@@ -89,6 +102,8 @@ export type TalkDeps = {
   probeMicrophone: typeof probeMicrophone;
   /** 回收「造出來了卻還沒播到」的 blob URL（見 `talk/playback.ts`）。 */
   revokeQueuedReplyAudio: typeof revokeQueuedReplyAudioImpl;
+  /** 回收**單獨一則**確定不會再播的回覆音檔（補播佇列滿了、擠掉最舊那一則時用）。 */
+  revokeReplyAudio: typeof revokeReplyAudioImpl;
 };
 
 /**
@@ -150,6 +165,7 @@ export function useTalk(options: {
     currentPlace: currentPlaceApi,
     probeMicrophone,
     revokeQueuedReplyAudio: revokeQueuedReplyAudioImpl,
+    revokeReplyAudio: revokeReplyAudioImpl,
     ...options.deps,
   }));
 
@@ -190,16 +206,21 @@ export function useTalk(options: {
    */
   const micActiveRef = useRef(false);
   /**
-   * 收音期間有沒有丟掉過回覆（用來在收音結束後告訴長輩「上一個問題跳過了」）。
+   * 收音期間收下來、等他講完再補播的那幾則回覆。
    *
-   * ⚠️ **丟棄而不是收下來補播**（✅ 專案裁決 2026-07-31）：按下麥克風的語意就是
-   * 「我現在要講話，你先別說」，抵達時機是實作細節，長輩感受不到也不該感受到。
-   * 而對他更糟的是「突然冒出來的聲音」——他問了 A、等不及改問 B，十秒後金孫開始
-   * 回答 A，他不會記得自己問過 A，只會覺得金孫在自言自語。這與「打斷就是打斷、
-   * 不要留半條尾巴在後面追上來」是同一個方向（見播放回呼裡的中止賽跑）。
-   * ⚠️ 但**不可以靜默丟棄**：收音結束時要讓長輩知道那一句被跳過了。
+   * ✅ **補播而不是丟棄**（專案裁決 2026-08-01，推翻 2026-07-31 的「一律丟棄」）：
+   * **插嘴照樣要能打斷，但前一題的答案不要丟掉。**長輩問了 A、等不及改問 B，
+   * A 的答案在他講 B 的時候才回來——丟掉的話那一題就永遠沒有答案了，而他問的
+   * 是「我的藥要吃幾顆」這種真的需要答案的事。
+   *
+   * ⚠️ **補播的語意是「等他講完、送出之後才播」，不是「錄音期間照樣播」**：
+   * 收音中放音的話金孫自己的聲音會被錄進 ASR（P3 Task 8 Critical 2）。這個
+   * 保護一行都沒有鬆動——播放回呼看到 `micActiveRef` 為真就把那一則收進這裡，
+   * 由 `stopAndSend` 的 `finally` 在收音真的結束之後才放回播放佇列。
+   *
+   * ⚠️ **正在播的那一則不收進來**：他已經聽到一部分了，從頭再放一次比較像故障。
    */
-  const skippedWhileRecordingRef = useRef(false);
+  const deferredRepliesRef = useRef<PlaybackItem[]>([]);
   /** 中止「正在播的那一則」的等待（見播放回呼裡的 Promise.race）。 */
   const abortPlaybackRef = useRef<(() => void) | null>(null);
 
@@ -251,6 +272,27 @@ export function useTalk(options: {
       alive = false;
     };
   }, [deps]);
+
+  /**
+   * 把收音期間收下來的那幾則放回播放佇列（收音真的結束之後才可以呼叫）。
+   *
+   * ⚠️ **順序：舊的先播、新問題的答案後播**（FIFO，就是丟回同一條佇列的自然結果）。
+   * 理由有二：①舊答案**現在就在手上**，而新問題的答案還要等後端跑五到十秒——先播舊
+   * 的正好把那段空白填掉，反過來排的話長輩會先面對一段沉默、再聽到一句更久以前的
+   * 答案；②字幕跟著真的播出來的那一則走（見播放回呼），舊答案播出來時畫面上就是
+   * 它自己的字，長輩看得到這句話在回答什麼。
+   */
+  const flushDeferredReplies = useCallback(() => {
+    const queue = playQueueRef.current;
+    if (queue === null || deferredRepliesRef.current.length === 0) {
+      return;
+    }
+    const pending = deferredRepliesRef.current;
+    deferredRepliesRef.current = [];
+    for (const item of pending) {
+      queue.push(item);
+    }
+  }, []);
 
   /** 背景取下一段；取不到（409／網路／合成失敗）就記成 null，播完這段即收工。 */
   const prefetchNext = useCallback(
@@ -310,15 +352,20 @@ export function useTalk(options: {
     const gesture = gestureRef.current;
 
     const queue = createPlaybackQueue(async (item: PlaybackItem) => {
-      // ⚠️ 長輩正按著麥克風：這一則丟掉，不播也不留（✅ 專案裁決 2026-07-31，
-      // 見 skippedWhileRecordingRef 的說明）。放出去的話金孫自己的聲音會被錄進去
-      // ——後端是明文設計的 ack→reply 兩段式，「安撫話播完、長輩不耐煩開口問下一
-      // 句、第一輪的真正答案這時才回來」是常態而不是邊角。
+      // ⚠️ 長輩正按著麥克風：這一則**先收下來、等他講完再補播**（✅ 專案裁決
+      // 2026-08-01，見 `deferredRepliesRef` 的說明）。放出去的話金孫自己的聲音會被
+      // 錄進去——後端是明文設計的 ack→reply 兩段式，「安撫話播完、長輩不耐煩開口問
+      // 下一句、第一輪的真正答案這時才回來」是常態而不是邊角。
+      // ⚠️ 這裡**不可以**回收它的 blob URL：那個音檔待會兒還要播。
       if (micActiveRef.current) {
-        skippedWhileRecordingRef.current = true;
-        // 丟掉的那一則若是 WS 直送落地的 blob URL，沒有人會再去 replace() 它，
-        // 這裡不回收就沒有人回收了。正在播（已暫停）的那一則要留著。
-        deps.revokeQueuedReplyAudio(playingUriRef.current ?? undefined);
+        const pending = deferredRepliesRef.current;
+        pending.push(item);
+        while (pending.length > MAX_DEFERRED_REPLIES) {
+          // 擠掉最舊的那一則。它從此不會再被 replace()，這裡不回收就沒有人回收了
+          //（⚠️ 用只收一則的 `revokeReplyAudio`，不可用「除了這一則以外全部回收」
+          //  的 `revokeQueuedReplyAudio`——後者會把還要補播的那幾則一起回收掉）。
+          deps.revokeReplyAudio(pending.shift()!.audioUrl);
+        }
         return;
       }
       setAvatarBoth("speaking");
@@ -490,10 +537,11 @@ export function useTalk(options: {
       disposed = true;
       // 解鎖監聽器綁的是**這一顆**播放器；下一輪 effect 會為新播放器再掛一條。
       window.removeEventListener("pointerdown", unlockOnFirstGesture, true);
-      // 收音狀態與「有東西被跳過」的紀錄一併歸零：這一輪的播放器與長連線都要
-      // 丟掉了，留著只會讓下一輪莫名其妙看到一句「上一個問題就先跳過了」。
+      // 收音狀態與等補播的那幾則一併歸零：這一輪的播放器與長連線都要丟掉了，
+      // 留著只會讓切回來（或換人登入）之後的第一件事變成播一段上一輪的舊回覆。
+      // 它們的 blob URL 由下面那一支不帶例外的 `revokeQueuedReplyAudio()` 全掃回收。
       micActiveRef.current = false;
-      skippedWhileRecordingRef.current = false;
+      deferredRepliesRef.current = [];
       abortPlaybackRef.current?.();
       abortPlaybackRef.current = null;
       // ⚠️ 麥克風軌道：等開錄流程跑完再停。開錄還卡在權限對話框時
@@ -546,32 +594,28 @@ export function useTalk(options: {
     // ⚠️ 從這一刻起就算「收音中」，而不是等 `recorder.start()` 解出之後——中間那段
     // 等權限／等裝置的窗口裡若有訊框抵達，照播的話一樣會被錄進去。
     micActiveRef.current = true;
-    // ⚠️ 按下去就是要講話：不清掉還沒播的、不停掉正在播的，金孫自己的聲音會被
-    // 錄進去。
-    const droppedCount = playQueueRef.current?.size() ?? 0;
-    playQueueRef.current?.clear();
-    if (droppedCount > 0) {
-      // 排隊中、還沒開始播的那幾則同樣是「被跳過的回覆」，與收音期間才抵達的那些
-      // 一視同仁（✅ 裁決 2026-07-31：抵達時機是實作細節，長輩感受不到也不該感受
-      // 到）。⚠️ 正在播的那一則不算——他已經聽到一部分了，再跟他說「跳過了」只是
-      // 噪音。
-      skippedWhileRecordingRef.current = true;
-    }
+    // ⚠️ 按下去就是要講話：不停掉正在播的，金孫自己的聲音會被錄進去。
     // ⚠️ 中止「正在播的那一則」的等待。只 `pause()` 的話 `didJustFinish` 永遠不會
     // 來，播放佇列會被卡住整整「時長＋3 秒」，下一輪的語音得排在後面（見播放回呼）。
     abortPlaybackRef.current?.();
     abortPlaybackRef.current = null;
     playerRef.current?.pause();
-    // ⚠️ `clear()` 只把項目從佇列丟掉，那些已經造出來的 blob URL 一個都不會被
-    // 回收（Task 4 刻意把回收能力放在 playback 模組、由呼叫端一起呼叫）。正在播
-    // 的那一則要留著——它的 src 還掛在播放器上。
-    deps.revokeQueuedReplyAudio(playingUriRef.current ?? undefined);
+    // ⚠️ **佇列刻意不 `clear()`、blob URL 也刻意不回收**（✅ 裁決 2026-08-01 改回
+    // 補播，推翻 2026-07-31 的「一律丟棄」）：`micActiveRef` 上面已經轉真，drain
+    // 會把排隊中那幾則一則一則交給播放回呼，回呼看到收音中就收進
+    // `deferredRepliesRef` 等他講完再播。這裡若照舊清掉並回收，那些音檔就沒了。
     const started = (await recorderRef.current?.start()) ?? false;
     if (!started) {
       micActiveRef.current = false;
-      // 這一輪根本沒錄到東西，畫面要講的是麥克風打不開這件事——比「上一個問題
-      // 跳過了」更要緊，故把跳過的紀錄清掉不再提。
-      skippedWhileRecordingRef.current = false;
+      // ⚠️ **這是本輪唯一仍然丟棄的路徑**：長輩根本沒問出新問題，畫面上唯一該講
+      // 的是「麥克風打不開，請再按一次試試看」——那是他自救的唯一線索。補播的話
+      // 字幕會被那一則自己的字**當場蓋掉**（字幕跟著真的播出來的那一則走），他就
+      // 只知道金孫在講一段聽過的話、不知道麥克風沒開成。故連同還排在佇列裡的一起
+      // 丟掉並回收（`clear()` 只丟項目、不回收 blob URL，兩件事要一起做）。
+      playQueueRef.current?.clear();
+      deferredRepliesRef.current = [];
+      // 正在播（已暫停）的那一則要留著——它的 src 還掛在播放器上。
+      deps.revokeQueuedReplyAudio(playingUriRef.current ?? undefined);
       // ⚠️ 不講「金孫沒聽清楚」：錄音根本沒開始，那句話會讓長輩以為是自己講得
       // 不夠大聲，於是一次比一次更用力喊。
       setReplyText(strings.talk.micStartFailed);
@@ -607,13 +651,6 @@ export function useTalk(options: {
       const audio = await recorderRef.current?.stop();
       // 收音結束（無論後面送不送得出去）：畫面與播放權還給金孫。
       micActiveRef.current = false;
-      // ⚠️ 不可以靜默丟棄：收音期間若有回覆被跳過，這裡要讓長輩知道那一句不會有
-      // 答案了、不必再等。刻意在 `stop()` **之後**才判斷——收音一直持續到這一刻，
-      // 放開按鈕到錄音真的停下來之間抵達的那一則同樣算被跳過。
-      if (skippedWhileRecordingRef.current) {
-        skippedWhileRecordingRef.current = false;
-        setReplyText(strings.talk.thinkingAfterSkipped);
-      }
       // ⚠️ 也擋 0 位元組：手指一碰就放、或系統把軌道搶走時，`MediaRecorder` 一
       // 個位元組都沒收到。照送的話後端只會回一句聽不懂，白白吃掉一輪 GPU。
       if (!audio || audio.byteLength === 0) {
@@ -678,8 +715,12 @@ export function useTalk(options: {
     } finally {
       // ⚠️ 放在 finally：長連線那條路徑是 `return` 出去的，而 `recorder.stop()`
       // 本身理論上不擲例外但不該把這件事賭在上面。收音狀態若沒放開，之後每一則
-      // 回覆都會被當成「錄音中抵達」而丟掉——長輩從此聽不到任何回答。
+      // 回覆都會被當成「錄音中抵達」而收進補播佇列——長輩從此聽不到任何回答。
       micActiveRef.current = false;
+      // ⚠️ **補播就在這一刻**，而且只能在這一刻：收音已經真的結束（`stop()` 回來
+      // 了），放音不會再被錄進去。刻意也在失敗路徑上補播——上一題的答案不會因為
+      // 這一題送不出去就變得不值得聽。
+      flushDeferredReplies();
     }
   }, [
     deps,
@@ -689,6 +730,7 @@ export function useTalk(options: {
     prefetchNext,
     setAvatarBoth,
     armThinkingWatchdog,
+    flushDeferredReplies,
   ]);
 
   const pressIn = useCallback(() => {

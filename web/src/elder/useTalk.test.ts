@@ -65,9 +65,19 @@ function makeRecorder(options: { granted?: boolean; emptyRecording?: boolean } =
   const api = {
     started: 0,
     stopped: 0,
+    /**
+     * 讓**下一次**開錄解出 false（裝置忙、系統把軌道收走），之後恢復正常。
+     *
+     * ⚠️ 與 `setup({ startFails: true })` 的差別是「這一次」而不是「每一次」：
+     * 「開錄失敗那一輪留下來的東西，會不會在**下一輪成功的對話**裡冒出來」這種
+     * 跨輪的殘留，在永遠開不起來的錄音器上根本走不到。
+     */
+    failNextStart: false,
     /** 讓最近一次還沒完成的 `start()` 收工。 */
     finishStart() {
-      resolveStart?.(granted);
+      const ok = api.failNextStart ? false : granted;
+      api.failNextStart = false;
+      resolveStart?.(ok);
       resolveStart = null;
     },
     create() {
@@ -231,6 +241,7 @@ function setup(
       .mockResolvedValue({ audio_url: "https://cdn.example/c1.m4a", duration_ms: 900, text: "" }),
     currentPlace: vi.fn().mockResolvedValue(null),
     revokeQueuedReplyAudio: vi.fn(),
+    revokeReplyAudio: vi.fn(),
     onBindingLost: vi.fn(),
     onTokenRevoked: vi.fn(),
   };
@@ -249,6 +260,7 @@ function setup(
           getTurnChunk: harness.getTurnChunk,
           currentPlace: harness.currentPlace,
           revokeQueuedReplyAudio: harness.revokeQueuedReplyAudio,
+          revokeReplyAudio: harness.revokeReplyAudio,
           probeMicrophone: vi
             .fn()
             .mockResolvedValue(overrides.micProbe ?? (granted ? "granted" : "denied")),
@@ -451,14 +463,16 @@ describe("時序", () => {
     await waitFor(() => expect(h.recorder.stopped).toBe(1));
   });
 
-  it("開錄之前先清掉還沒播的、並暫停正在播的", async () => {
-    // ⚠️ 不清的話金孫自己的聲音會被錄進去。
+  it("開錄時暫停正在播的，排隊中那幾則等他講完再補播", async () => {
+    // ⚠️ 不暫停的話金孫自己的聲音會被錄進去。
     //
-    // ⚠️ **審查抓到的第十八個假測試**：brief 這條原本只 emit 一則訊框，而它立刻
-    // 被播掉——`clear()` 被呼叫時佇列本來就是空的，這條測試在結構上不可能觀察到
-    // 「清掉」那一半。實測：把 `playQueueRef.current?.clear()` 整行刪掉，30 條全綠。
-    // 要有鑑別力就得讓佇列裡**真的有東西在排隊**：後端的 ack→reply 兩段式正好會
-    // 連續送兩則，第一則播著、第二則在等。
+    // ✅ **裁決 2026-08-01 改回補播**（推翻 2026-07-31 的「一律丟棄」）：排隊中還沒
+    // 播到的那幾則**不再丟掉**，收音期間先收下來，`stopAndSend` 收音真的結束之後
+    // 才放回佇列。本條同時守住兩件事：收音期間不可以放音（那是 P3 Task 8 Critical 2，
+    // 金孫的聲音會被錄進 ASR），以及講完之後那一則要真的播得出來。
+    //
+    // ⚠️ 讓佇列裡**真的有東西在排隊**才有鑑別力（原版只 emit 一則、立刻被播掉，
+    // 是審查抓到的第十八個假測試）：後端的 ack→reply 兩段式正好會連續送兩則。
     const h = setup();
     await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
     h.socket.open();
@@ -480,17 +494,14 @@ describe("時序", () => {
     await act(async () => {
       vi.advanceTimersByTime(600);
     });
+    // 收音期間從頭到尾都不可以播出來。
+    expect(h.player.played).not.toContain("https://cdn.example/second.m4a");
     await act(async () => {
       h.view.result.current.pressOut();
     });
-    // 排隊中被丟掉的那一則同樣是「被跳過的回覆」，要跟收音期間才抵達的那些一視同仁
-    //（✅ 裁決：抵達時機是實作細節）——不可以靜默丟棄。
-    expect(h.view.result.current.replyText).toBe("上一個問題就先跳過了，金孫想一下…");
-    // ⚠️ 走完整輪都不可以聽到排隊中的那一則——它在長輩按下去的那一刻就該被丟掉。
-    await act(async () => {
-      vi.advanceTimersByTime(40_000);
-    });
-    expect(h.player.played).not.toContain("https://cdn.example/second.m4a");
+    await act(async () => {});
+    // 講完了：排隊中那一則補播出來，長輩不會因為插嘴就永遠聽不到那個答案。
+    expect(h.player.played).toContain("https://cdn.example/second.m4a");
   });
 
   it("長輩正按著麥克風時，晚到的回覆不可以放音——金孫的聲音會被錄進去", async () => {
@@ -529,14 +540,11 @@ describe("時序", () => {
     expect(h.view.result.current.replyText).toBe("金孫在聽…");
   });
 
-  it("收音期間抵達的回覆一律丟棄，收音結束也不補播——但要告訴長輩上一個問題跳過了", async () => {
-    // ✅ **專案裁決 2026-07-31**：同一類東西（一個已被跳過的回合、還沒被聽到的
-    // 回覆）不該因為抵達時機不同而有不同待遇——按下麥克風的語意就是「我現在要
-    // 講話，你先別說」，抵達時機是實作細節。而對長輩更糟的是「突然冒出來的
-    // 聲音」：他問了 A、等不及改問 B，十秒後金孫開始回答 A——他不會記得自己問過
-    // A，只會覺得金孫在自言自語。這與「打斷就是打斷、不要留半條尾巴在後面追上
-    // 來」（Critical 3）是同一個方向。
-    // ⚠️ 但**不可以靜默丟棄**：長輩要知道那一句不會有答案了、不必再等。
+  it("收音期間抵達的回覆等他講完之後補播，音檔不可以被回收掉", async () => {
+    // ✅ **專案裁決 2026-08-01**（推翻 2026-07-31 的「一律丟棄」）：**插嘴照樣要能
+    // 打斷，但前一題的答案不要丟掉**——長輩問「我的藥要吃幾顆」，等不及又問了別的，
+    // 丟掉的話那一題就永遠沒有答案。補播的語意是「等他講完、送出之後才播」，收音
+    // 期間仍然一個音都不可以放（P3 Task 8 Critical 2：金孫的聲音會被錄進 ASR）。
     const h = setup();
     await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
     h.socket.open();
@@ -544,7 +552,6 @@ describe("時序", () => {
     act(() => h.recorder.finishStart());
     await waitFor(() => expect(h.view.result.current.avatar).toBe("listening"));
 
-    const revokedBefore = h.revokeQueuedReplyAudio.mock.calls.length;
     h.socket.emit({
       ...REPLY,
       type: "reply",
@@ -554,9 +561,11 @@ describe("時序", () => {
     });
     await act(async () => {});
     expect(h.player.played).not.toContain("https://cdn.example/answer.m4a");
-    // 丟掉的那一則若是 WS 直送落地的 blob URL，沒有人會再去 replace() 它——這裡
-    // 不回收就沒有人回收了。
-    expect(h.revokeQueuedReplyAudio.mock.calls.length).toBeGreaterThan(revokedBefore);
+    // ⚠️ **這一則的音檔不可以被回收**：等一下還要播。`revokeQueuedReplyAudio` 是
+    // 「除了這一則以外全部回收」，在補播的世界裡呼叫它就是把要補播的那幾則毀掉，
+    // 而症狀是「補播時播放器拿到失效的 blob URL、靜靜地沒有聲音」——查起來很久。
+    expect(h.revokeQueuedReplyAudio).not.toHaveBeenCalled();
+    expect(h.revokeReplyAudio).not.toHaveBeenCalled();
 
     await act(async () => {
       vi.advanceTimersByTime(600);
@@ -565,22 +574,114 @@ describe("時序", () => {
       h.view.result.current.pressOut();
     });
     await act(async () => {});
-    // 收音結束也不補播。
-    expect(h.player.played).not.toContain("https://cdn.example/answer.m4a");
-    // 但要講出來，不可以靜默丟棄。
-    expect(h.view.result.current.replyText).toBe("上一個問題就先跳過了，金孫想一下…");
+    // 講完了才播——這一刻錄音已經真的停下來（`recorder.stop()` 回來了）。
+    expect(h.player.played).toContain("https://cdn.example/answer.m4a");
+    // 字幕跟著真的播出來的那一則走，長輩看得到這句話在回答什麼。
+    expect(h.view.result.current.replyText).toBe("附近有 205 跟 622");
+  });
 
-    // 下一輪沒有東西被跳過，就不可以再講一次——那句話會變成謎語。
-    h.socket.emit({ type: "error", turn_id: "t1", text: "金孫有點忙，等一下再說好嗎" });
-    await holdAndRelease(h);
-    expect(h.view.result.current.replyText).toBe("金孫想一下…");
+  it("補播照抵達順序來，而且排在新問題的答案前面", async () => {
+    // ⚠️ 順序是刻意的（FIFO）：舊答案**現在就在手上**，新問題的答案還要等後端跑
+    // 五到十秒——先播舊的正好把那段空白填掉。反過來排的話長輩會先面對一段沉默、
+    // 再聽到一句更久以前的答案，那才真的像金孫在自言自語。
+    // ⚠️ 收下來的那幾則彼此之間也要照抵達順序（安撫話在答案前面，倒過來播是
+    // 「附近有 205 跟 622……好，我幫您查一下喔」）。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    act(() => h.view.result.current.pressIn());
+    act(() => h.recorder.finishStart());
+    await waitFor(() => expect(h.view.result.current.avatar).toBe("listening"));
+    // 上一輪的安撫話與答案都在他講第二句的時候才回來
+    h.socket.emit({
+      type: "ack",
+      turn_id: "t1",
+      text: "好，我幫您查一下喔",
+      audio_url: "https://cdn.example/old-ack.m4a",
+      duration_ms: 900,
+    });
+    h.socket.emit({
+      ...REPLY,
+      type: "reply",
+      turn_id: "t1",
+      audio_url: "https://cdn.example/old-answer.m4a",
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    await act(async () => {
+      h.view.result.current.pressOut();
+    });
+    await act(async () => {});
+    // 這一輪的答案這時才回來
+    h.socket.emit({
+      ...REPLY,
+      type: "reply",
+      turn_id: "t2",
+      reply_digest: "d2",
+      audio_url: "https://cdn.example/fresh.m4a",
+    });
+    // 讓補播的兩則依序播完，新那則才輪得到
+    await act(async () => {
+      h.player.finish();
+    });
+    await act(async () => {
+      h.player.finish();
+    });
+    await waitFor(() => expect(h.player.played).toContain("https://cdn.example/fresh.m4a"));
+    const order = ["old-ack", "old-answer", "fresh"].map((name) =>
+      h.player.played.indexOf(`https://cdn.example/${name}.m4a`),
+    );
+    expect(order[0]).toBeLessThan(order[1]);
+    expect(order[1]).toBeLessThan(order[2]);
+  });
+
+  it("連續插嘴時最多留兩則等補播，被擠掉的那一則要回收音檔", async () => {
+    // ⚠️ 沒有上限的話，長輩連按好幾次之後會累積一串舊語音，最後補播的是幾分鐘前
+    // 的問題——那正是 2026-07-31 選擇丟棄時的顧慮。上限取 2 ＝一輪最多兩則語音
+    //（後端 ack→reply 兩段式），接得住一整輪的答案而不會變成一串。
+    // ⚠️ 被擠掉的那一則從此不會再被 `replace()`，這裡不回收就沒有人回收了（一則
+    // 語音數十到數百 KB，展示現場長輩插嘴是常態）。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    act(() => h.view.result.current.pressIn());
+    act(() => h.recorder.finishStart());
+    await waitFor(() => expect(h.view.result.current.avatar).toBe("listening"));
+
+    for (const [index, url] of ["blob:one", "blob:two", "blob:three"].entries()) {
+      h.socket.emit({
+        ...REPLY,
+        type: "reply",
+        turn_id: `t${index}`,
+        reply_digest: `d${index}`,
+        audio_url: url,
+      });
+    }
+    await act(async () => {});
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    await act(async () => {
+      h.view.result.current.pressOut();
+    });
+    await act(async () => {});
+
+    // 最舊的那一則被擠掉：不播，而且音檔要回收。
+    expect(h.player.played).not.toContain("blob:one");
+    expect(h.revokeReplyAudio).toHaveBeenCalledWith("blob:one");
+    // 留下來的兩則照樣補播。
+    expect(h.player.played).toContain("blob:two");
   });
 
   it("開錄失敗時，排隊中那幾則也不可以趁機播出來", async () => {
-    // `clear()` 在多數路徑上與「收音中抵達就丟掉」那道守門重疊（兩者都讓排隊中的
-    // 那一則播不出來），唯獨這條路徑只有它守得住：開錄失敗時收音狀態立刻放開，
-    // 若佇列沒被清空，drain 會接著把排隊中的那幾則播出來——長輩剛被告知「麥克風
-    // 打不開」，緊接著卻聽到一段舊回覆。
+    // ✅ 裁決 2026-08-01 改回補播之後，**開錄失敗是唯一還會丟棄的路徑**：長輩根本
+    // 沒問出新問題，畫面上唯一該講的是「麥克風打不開，請再按一次試試看」，補播的話
+    // 那句話會被舊回覆自己的字當場蓋掉——他就失去自救的唯一線索。
+    // ⚠️ 這一條守的是「**還在佇列裡**就撞上開錄失敗」那半邊（`clear()`）：開錄失敗
+    // 得夠快時，drain 還沒把排隊中那幾則交給播放回呼，它們一則都還沒進暫存。另外
+    // 半邊（已經進了暫存）由下一條測試守——兩條缺一不可，實測拿掉 `clear()` 只有
+    // 這一條變紅、拿掉清暫存只有下一條變紅。
     const h = setup({ startFails: true });
     await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
     h.socket.open();
@@ -610,6 +711,44 @@ describe("時序", () => {
     // 麥克風。
     h.socket.emit({ ...REPLY, type: "reply", turn_id: "t2", audio_url: "https://cdn.example/after.m4a" });
     await waitFor(() => expect(h.player.played).toContain("https://cdn.example/after.m4a"));
+  });
+
+  it("開錄失敗那一輪收下來的回覆，不可以在下一輪成功的對話結尾冒出來", async () => {
+    // ⚠️ 補播是「暫存起來、稍後再放」，所以每一條沒有走到補播的出口都必須把暫存
+    // 清乾淨，否則它會安靜地躺著、等下一次有人講完話時才冒出來——長輩問了一句
+    // 完全不相干的事，聽到的卻是幾分鐘前那一輪的答案。
+    // ⚠️ 而且開錄失敗時那幾則的音檔**已經被回收**（見上一條），留著它們補播等於
+    // 讓播放器拿到一個失效的 blob URL：畫面上有字、完全沒有聲音，查起來很久。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    h.socket.emit({
+      type: "ack",
+      turn_id: "t1",
+      text: "好，我幫您查一下喔",
+      audio_url: "https://cdn.example/ack.m4a",
+      duration_ms: 30_000,
+    });
+    h.socket.emit({ ...REPLY, type: "reply", turn_id: "t1", audio_url: "https://cdn.example/stale.m4a" });
+    await waitFor(() => expect(h.player.played).toContain("https://cdn.example/ack.m4a"));
+
+    // 這一次插嘴，麥克風就是打不開。
+    // ⚠️ 刻意先把微任務跑完再讓開錄失敗：那一步會讓 drain 把排隊中的那一則真的
+    // 交給播放回呼、收進暫存。少了它，那一則還躺在佇列裡，這條測試守到的就變成
+    // 上一條已經守著的 `clear()`（實測過：不先跑微任務的話，拿掉清暫存仍然全綠）。
+    act(() => h.view.result.current.pressIn());
+    await act(async () => {});
+    h.recorder.failNextStart = true;
+    await act(async () => {
+      h.recorder.finishStart();
+    });
+    expect(h.view.result.current.replyText).toBe("麥克風打不開，請再按一次試試看。");
+
+    // 下一次按下去麥克風正常，走完整整一輪
+    await holdAndRelease(h);
+    await act(async () => {});
+    expect(h.recorder.stopped).toBe(1);
+    expect(h.player.played).not.toContain("https://cdn.example/stale.m4a");
   });
 
   it("打斷一則長回覆之後，下一句的語音要立刻播，不必等舊那則的保險逾時", async () => {
@@ -655,17 +794,22 @@ describe("時序", () => {
     expect(h.view.result.current.avatar).toBe("speaking");
   });
 
-  it("長輩插嘴時，還沒播到那幾則的音檔記憶體要回收，正在播的那一則不可回收", async () => {
+  it("開錄失敗時把等補播的那幾則一起丟掉並回收，正在播的那一則不可回收", async () => {
     // ⚠️ Task 4 留下的缺口（Important 5 的剩下一半）：`queue.clear()` 只把項目
     // 從佇列丟掉，那些 blob URL 一個都不會被回收——瀏覽器不會替你清，它不知道
     // 你不再需要它了。展示現場長輩插嘴是常態，一則語音數十到數百 KB。
-    const h = setup();
+    // ✅ **裁決 2026-08-01 之後，開錄失敗是唯一還會丟棄的路徑**（其餘一律補播）：
+    // 長輩根本沒問出新問題，畫面上唯一該講的是「麥克風打不開，請再按一次試試看」，
+    // 補播的話那句話會被舊回覆自己的字當場蓋掉，他就失去自救的唯一線索。
+    const h = setup({ startFails: true });
     await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
     h.socket.open();
     h.socket.emit({ ...REPLY, type: "reply", turn_id: "t1" });
     await waitFor(() => expect(h.player.played.length).toBe(1));
     act(() => h.view.result.current.pressIn());
-    act(() => h.recorder.finishStart());
+    await act(async () => {
+      h.recorder.finishStart();
+    });
     // 傳的是「要留著的那一則」＝正在播的（src 還掛在播放器上）；其餘一律回收。
     await waitFor(() =>
       expect(h.revokeQueuedReplyAudio).toHaveBeenCalledWith("https://cdn.example/a.m4a"),
@@ -981,6 +1125,29 @@ describe("這一欄被切到背景", () => {
     expect(h.player.disposed).toBe(1);
     expect(h.revokeQueuedReplyAudio).toHaveBeenCalled();
     expect(h.view.result.current.avatar).toBe("idle");
+  });
+
+  it("切走時等補播的那幾則要一起丟掉，不可以在切回來之後才冒出來", async () => {
+    // ⚠️ 切走時 `revokeQueuedReplyAudio()` 會**不帶例外地全掃回收**，等補播的那幾則
+    // 音檔在那一刻就死了。暫存若沒跟著清空，切回來之後長輩講完的第一句話，結尾會
+    // 接上一段上一輪的舊回覆——而且是**有字沒有聲音**的那種（blob URL 已失效），
+    // 看起來就像對講機壞了。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    act(() => h.view.result.current.pressIn());
+    act(() => h.recorder.finishStart());
+    await waitFor(() => expect(h.view.result.current.avatar).toBe("listening"));
+    h.socket.emit({ ...REPLY, type: "reply", turn_id: "t1", audio_url: "https://cdn.example/stale.m4a" });
+    await act(async () => {});
+    expect(h.player.played).not.toContain("https://cdn.example/stale.m4a");
+
+    h.view.rerender({ visible: false });
+    h.view.rerender({ visible: true });
+    h.socket.open();
+    await holdAndRelease(h);
+    await act(async () => {});
+    expect(h.player.played).not.toContain("https://cdn.example/stale.m4a");
   });
 
   it("切走再切回來之後，新的播放器要在使用者手勢內重新解鎖", async () => {

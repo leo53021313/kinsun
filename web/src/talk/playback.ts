@@ -71,6 +71,26 @@ export function revokeQueuedReplyAudio(exceptUri?: string): void {
   }
 }
 
+/**
+ * 回收**單獨一則**已落地、確定不會再播的回覆音檔。
+ *
+ * ⚠️ 為什麼不能用 `revokeQueuedReplyAudio` 代替：那一支是「除了這一則以外全部
+ * 回收」，只留得住一個例外。長輩插嘴之後暫存下來等補播的那幾則（見
+ * `elder/useTalk.ts` 的 `deferredRepliesRef`）是**複數**，用那一支會把還要播的
+ * 那幾則一起回收掉——症狀是補播時播放器拿到一個已經失效的 blob URL，靜靜地沒有
+ * 聲音。這裡只針對指定的那一則。
+ *
+ * ⚠️ **以「在不在集合裡」為唯一判準**，不另外檢查 `blob:` 前綴：集合只裝
+ * `writeReplyAudio` 造出來的 blob URL，分段續拉來的 https 簽章網址本來就不在裡面
+ * ——多寫一道前綴守門是恆真的判斷（實測變異：拿掉它 65 條全綠）。同一則被回收兩次
+ * （補播佇列擠掉一則、之後 cleanup 又全掃一次）也因此自然是 no-op。
+ */
+export function revokeReplyAudio(uri: string): void {
+  if (pendingBlobUrls.delete(uri)) {
+    URL.revokeObjectURL(uri);
+  }
+}
+
 /** 測試用：清空 `writeReplyAudio` 的內部追蹤狀態，避免測試之間互相汙染。 */
 export function resetPendingReplyAudioForTest(): void {
   pendingBlobUrls.clear();

@@ -6,6 +6,7 @@ import {
   createWebPlayer,
   resetPendingReplyAudioForTest,
   revokeQueuedReplyAudio,
+  revokeReplyAudio,
   UNLOCK_AUDIO_URI,
   writeReplyAudio,
 } from "./playback";
@@ -186,5 +187,54 @@ describe("revokeQueuedReplyAudio", () => {
 
     expect(revokeObjectURL).not.toHaveBeenCalledWith(first.uri);
     expect(revokeObjectURL).toHaveBeenCalledWith(second.uri);
+  });
+});
+
+describe("revokeReplyAudio", () => {
+  it("只回收指定的那一則，其餘還要補播的一則都不能動", () => {
+    // ⚠️ 這正是它存在的理由（2026-08-01「改回補播」）：`revokeQueuedReplyAudio`
+    // 是「除了這一則以外全部回收」，只留得住一個例外；而長輩插嘴之後等補播的
+    // 是**複數**（`elder/useTalk.ts` 的 `deferredRepliesRef`，上限兩則）。用那一支
+    // 去擠掉最舊的一則，會把還要播的那幾則一起毀掉——症狀是補播時播放器拿到失效
+    // 的 blob URL、靜靜地沒有聲音。
+    const createObjectURL = vi
+      .fn()
+      .mockReturnValueOnce("blob:fake-1")
+      .mockReturnValueOnce("blob:fake-2");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+
+    const dropped = writeReplyAudio(new Uint8Array([1]));
+    const keep = writeReplyAudio(new Uint8Array([2]));
+
+    revokeReplyAudio(dropped.uri);
+
+    expect(revokeObjectURL).toHaveBeenCalledWith(dropped.uri);
+    expect(revokeObjectURL).not.toHaveBeenCalledWith(keep.uri);
+  });
+
+  it("同一則回收兩次只會真的回收一次", () => {
+    // 補播佇列擠掉一則、之後 cleanup 又全掃一次是正常路徑。重複呼叫
+    // `URL.revokeObjectURL` 本身無害，但集合裡留著死掉的 uri 會讓「還沒回收的
+    // 有哪些」這個問題答錯。
+    const createObjectURL = vi.fn().mockReturnValueOnce("blob:fake-1");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+
+    const dropped = writeReplyAudio(new Uint8Array([1]));
+    revokeReplyAudio(dropped.uri);
+    revokeObjectURL.mockClear();
+    revokeReplyAudio(dropped.uri);
+
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("分段續拉來的 https 簽章網址不在集合裡，不會被誤收", () => {
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { createObjectURL: vi.fn(), revokeObjectURL });
+
+    revokeReplyAudio("https://cdn.example/c1.m4a");
+
+    expect(revokeObjectURL).not.toHaveBeenCalled();
   });
 });
