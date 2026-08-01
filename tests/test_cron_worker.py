@@ -21,6 +21,7 @@ from kinsun.accounts.models import PrincipalType
 from kinsun.agent import Recall
 from kinsun.config import load_settings
 from kinsun.news.store import FakeNewsStore
+from kinsun.notifications.models import NotificationSeverity
 from kinsun.proactive.greeting_time import update_greeting_time as _real_update_greeting_time
 from kinsun.proactive.preferences import FakeGreetingPreferenceStore, GreetingPreference
 from kinsun.reports.reminders import (
@@ -90,12 +91,17 @@ class _SpyRouter:
         self.reachable = reachable
         self.delivered = delivered
         self.sent: list[tuple[PrincipalType, str, str]] = []
+        # 每次送出的呈現分級（2026-08-01）：sent 維持三元組不動。
+        self.severities: list = []
 
     def has_route(self, principal_type, principal_id) -> bool:
         return self.reachable
 
-    def send_text(self, principal_type, principal_id, text) -> int:
+    def send_text(
+        self, principal_type, principal_id, text, *, severity=NotificationSeverity.NOTICE
+    ) -> int:
         self.sent.append((principal_type, principal_id, text))
+        self.severities.append(severity)
         return self.delivered
 
 
@@ -531,6 +537,20 @@ def test_greeting_pushes_and_records_reminder_log(monkeypatch):
     assert GREETING_INTENT in router.sent[0][2]
     assert "星期" in router.sent[0][2]  # intent 織入日期素材（2026-07-17 問候多樣性）
     assert reminder_logs.recorded == [("e1", "proactive-greeting", router.sent[0][2])]
+
+
+def test_proactive_greeting_goes_out_as_notice_never_alert(monkeypatch):
+    """主動問候一律是一般通知，不可用打斷式宣告（2026-08-01）。
+
+    ⚠️ 主動關懷是金孫自己找話講，本質上比用藥提醒更不緊急；若它也送 `alert`，
+    長輩每天早上會被螢幕報讀軟體打斷一次，而真正的危急警報就此失去辨識度。
+    全庫送 `alert` 的只有 safety/notifier.py 那一處。
+    """
+    router = _SpyRouter()
+    scheduler, _core = _build(monkeypatch, _settings(), elders=["e1"], router=router)
+    _job(scheduler, "daily-greeting").run()
+    assert len(router.severities) == 1  # 確定真的送了，斷言不是在空清單上空轉
+    assert router.severities == [NotificationSeverity.NOTICE]
 
 
 def test_greeting_intent_guides_get_news_instead_of_weaving(monkeypatch):

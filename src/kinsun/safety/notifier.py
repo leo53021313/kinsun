@@ -7,6 +7,7 @@ from typing import Protocol
 
 from kinsun import tracing
 from kinsun.accounts.models import ElderGuardian, PrincipalType
+from kinsun.notifications.models import NotificationSeverity
 from kinsun.safety.tiers import RiskAssessment, RiskTier
 
 logger = logging.getLogger("kinsun.safety")
@@ -26,7 +27,12 @@ class TextSender(Protocol):
 
     def has_route(self, principal_type: PrincipalType, principal_id: str) -> bool: ...
     def send_text_channels(
-        self, principal_type: PrincipalType, principal_id: str, text: str
+        self,
+        principal_type: PrincipalType,
+        principal_id: str,
+        text: str,
+        *,
+        severity: NotificationSeverity = NotificationSeverity.NOTICE,
     ) -> list[str]: ...
 
 
@@ -152,8 +158,15 @@ class GuardianNotifier:
                         outcome=_OUTCOME_NO_ROUTE,
                     )
                     continue
+                # ⚠️ 全庫唯一送出 ALERT 的地方（2026-08-01）：這裡的 tier 已經
+                # ≥L2（達 L2 才會走到 notify，見 pipeline），是分級器與審核鏈給出的
+                # **權威**判定。前端因此不必、也不可以去猜 content 字串裡有沒有
+                # 「跌倒」「危急」——那正是 NotificationBanner.tsx 明文擋下的事。
                 channels = self._router.send_text_channels(
-                    PrincipalType.GUARDIAN, guardian_id, text
+                    PrincipalType.GUARDIAN,
+                    guardian_id,
+                    text,
+                    severity=NotificationSeverity.ALERT,
                 )
                 delivered = bool(channels)
                 if delivered:

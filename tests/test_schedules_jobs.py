@@ -6,6 +6,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from kinsun.accounts.models import PrincipalType
+from kinsun.notifications.models import NotificationSeverity
 from kinsun.schedules.jobs import build_schedule_dispatch_job
 from kinsun.schedules.models import (
     Audience,
@@ -33,10 +34,15 @@ class _Router:
 
     def __init__(self, *, sent: int = 1) -> None:
         self.messages: list[tuple] = []
+        # 每次送出的呈現分級（2026-08-01）：messages 維持三元組不動，既有斷言不受影響。
+        self.severities: list = []
         self._sent = sent
 
-    def send_text(self, principal_type, principal_id, text) -> int:
+    def send_text(
+        self, principal_type, principal_id, text, *, severity=NotificationSeverity.NOTICE
+    ) -> int:
         self.messages.append((principal_type, principal_id, text))
+        self.severities.append(severity)
         return self._sent
 
 
@@ -345,3 +351,33 @@ def test_one_failing_item_does_not_stop_the_others():
         known_elders=("e1", "boom"),
     ).run()
     assert [m[1] for m in router.messages] == ["e1"]
+
+
+def test_reminders_go_out_as_notice_never_alert():
+    """用藥／回診提醒一律是一般通知，不可染成紅色危急警報（2026-08-01）。
+
+    ⚠️ 這條守的是「警報的稀有性」：全庫只有 `safety/notifier.py` 送得出 `alert`。
+    提醒若也變成警報，家屬每天會看到好幾則紅色橫幅，真正的危急警報就被淹掉——
+    2026-07-26 全流程實測報告記下的「狼來了」效應，正是這個機制的失效方式。
+    長輩端與家屬端兩則都要驗：只驗其中一則的話，另一條路徑改壞了不會被發現。
+    """
+    store, router = FakeScheduleStore(), _Router()
+    now = datetime(2026, 7, 29, 9, 0, tzinfo=TZ)
+    event = datetime(2026, 7, 30, 10, 30, tzinfo=TZ)
+    # 回診＋ELDER_AND_GUARDIAN：一次同時走到長輩端與家屬端兩條出站路徑。
+    store.save(
+        _once(
+            "s1",
+            "e1",
+            at=now.timestamp(),
+            title="心臟科回診",
+            kind=ScheduleKind.APPOINTMENT,
+            event_at=event.timestamp(),
+            audience=Audience.ELDER_AND_GUARDIAN,
+        )
+    )
+    _job(store, router, now=now, guardians=(_Guardian("g1"),), elder_name="阿公").run()
+
+    # 兩條路徑都真的送出了（否則下面的 set 斷言會在空集合上空轉通過）。
+    assert {m[0] for m in router.messages} == {PrincipalType.ELDER, PrincipalType.GUARDIAN}
+    assert set(router.severities) == {NotificationSeverity.NOTICE}

@@ -70,6 +70,7 @@ def _client(line_user_id, *, risks, reminders, bind_elder=True, summaries=None):
             risk_events=_RiskEvents(risks),
             reminder_logs=_Reminders(reminders),
             summaries=summaries or FakeConversationSummaryStore(),
+            appointment_hour=8,
         ),
         prefix="/api/v1",
     )

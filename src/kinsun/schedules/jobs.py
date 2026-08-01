@@ -176,6 +176,11 @@ def build_schedule_dispatch_job(
                 store.mark_settled(schedule.schedule_id, now=now.timestamp())
 
         elder_text, guardian_text = _text_for(batch, elder.name, now)
+        # ⚠️ 兩處 send_text 都不帶 severity ＝ 沿用預設 `notice`，這是**決定不是
+        # 疏漏**（2026-08-01）：用藥、回診、自訂提醒都是預期中會發生的日常事件，
+        # 該用禮貌宣告、不該打斷長輩手邊的事，更不該染成紅色警報——警報染多了
+        # 就沒人看（2026-07-26 報告記下的「狼來了」效應）。全庫送 `alert` 的只有
+        # safety/notifier.py 那一處。
         sent = router.send_text(PrincipalType.ELDER, batch.elder_id, elder_text)
         if guardian_text and batch.schedules[0].audience == Audience.ELDER_AND_GUARDIAN:
             # 家屬通知不受長輩可達性影響——收到可口頭轉告（appointments/jobs.py 舊行為）。

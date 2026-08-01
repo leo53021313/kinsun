@@ -24,6 +24,7 @@ from kinsun.llm import Message, build_gemini_for
 from kinsun.memory.longterm.store import MemoryItem
 from kinsun.memory.recall import SessionMemory
 from kinsun.memory.shortterm import FakeMemoryStore
+from kinsun.safety.combined_classifier import LlmCombinedSafetyClassifier
 from kinsun.safety.moderation import AbuseModerator, LlmAbuseClassifier, reply_for
 
 
@@ -57,22 +58,41 @@ def elder_id_for(text: str) -> str:
 
 
 def build_reply_fn(settings) -> Callable[[str], str]:
-    """組出受測系統，回傳 `message -> reply` 的函式。呼叫端須自行先 `tracing.configure`。"""
+    """組出受測系統，回傳 `message -> reply` 的函式。呼叫端須自行先 `tracing.configure`。
+
+    審核路徑依 `SAFETY_COMBINED_CLASSIFIER_ENABLED` 分流（2026-07-30 C2），與 `app.py`
+    的接法一致——旗標開啟時受測的必須是**真正上線的那條路**，否則評測數字量的是另一個
+    系統。合併模式下審核判斷來自「同時要做危急分級」的那一次呼叫，而合併提示詞是否
+    稀釋了審核那六條「一律判 none」例外清單，正是這份評測要回答的問題。
+    """
     gemini = build_gemini_for(settings, settings.gemini_model, client_wrapper=tracing.wrap_genai)
     agent = CareAgent(gemini, SessionMemory(FakeMemoryStore(), NoLongTermStore()), tools=None)
     # 審核與危急分級共用 safety 模型，與 app.py 的接法一致。
+    safety_llm = build_gemini_for(
+        settings, settings.gemini_model_safety, client_wrapper=tracing.wrap_genai
+    )
     moderator = (
         AbuseModerator(
-            LlmAbuseClassifier(
-                build_gemini_for(
-                    settings, settings.gemini_model_safety, client_wrapper=tracing.wrap_genai
-                )
-            ),
+            LlmAbuseClassifier(safety_llm),
             min_confidence=settings.safety_moderation_min_confidence,
         )
         if settings.safety_moderation_enabled
         else None
     )
+    combined = (
+        LlmCombinedSafetyClassifier(safety_llm)
+        if settings.safety_combined_classifier_enabled and settings.safety_moderation_enabled
+        else None
+    )
+
+    def moderate(message: str):
+        """本輪的審核判定；未啟用審核回 None。合併模式走同一次呼叫的審核那一半。"""
+        if moderator is None:
+            return None
+        if combined is None:
+            return moderator.moderate(message)
+        # 與 `pipeline._assess_and_moderate` 同一條路：原始判斷餵回同一個門檻。
+        return moderator.apply_threshold(combined.classify(message).moderation)
 
     def reply_to(message: str, elder_id: str | None = None) -> str:
         """elder_id 預設由訊息雜湊而來（單輪：每題互相隔離）。
@@ -80,10 +100,9 @@ def build_reply_fn(settings) -> Callable[[str], str]:
         多輪測試必須明確傳入同一個 elder_id，否則每輪都是不同長輩、短期記憶累積不
         起來——而多輪綁架的攻擊面正是「前幾輪會進入下一輪的 system prompt」。
         """
-        if moderator is not None:
-            moderation = moderator.moderate(message)
-            if moderation.is_blocked:
-                return reply_for(moderation.category)
+        moderation = moderate(message)
+        if moderation is not None and moderation.is_blocked:
+            return reply_for(moderation.category)
         return agent.handle(elder_id or elder_id_for(message), message)
 
     return reply_to

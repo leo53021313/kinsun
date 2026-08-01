@@ -234,14 +234,18 @@ class Settings(_BaseEnvSettings):
     memory_max_turns: int = 200
     timezone: str = "Asia/Taipei"
     longterm_embedding_model: str = "gemini-embedding-001"
-    longterm_consolidation_hour: int = 0
+    longterm_consolidation_hour: Annotated[
+        int, BeforeValidator(_hour("LONGTERM_CONSOLIDATION_HOUR"))
+    ] = 0
     scheduler_tick_seconds: int = 60
     # 排程器心跳檔（2026-07-26 假死事件）：每輪 tick 寫入 epoch 秒，讓 kinsun.sh status
     # 分得出「行程活著」與「迴圈凍住」——PID 還在不代表它在做事。設空字串＝關閉。
     scheduler_heartbeat_path: str = ".run/scheduler.heartbeat"
     # 基準問候時間：真的鐘點，且須落在自適應上下限內（見 _validate_greeting_guardrails）。
     proactive_greeting_hour: Annotated[int, BeforeValidator(_hour("PROACTIVE_GREETING_HOUR"))] = 8
-    proactive_inactivity_hour: int = 10
+    proactive_inactivity_hour: Annotated[
+        int, BeforeValidator(_hour("PROACTIVE_INACTIVITY_HOUR"))
+    ] = 10
     proactive_inactivity_days: int = 2
     # 自適應問候（spec 2026-07-16）：預設開；關閉則全體回退 PROACTIVE_GREETING_HOUR。
     proactive_greeting_adaptive_enabled: Bool = True
@@ -273,11 +277,17 @@ class Settings(_BaseEnvSettings):
     # 記憶檢索重排（✅ D-40 丁-4）：LLM reranker，決議預設開；額度吃緊時可關。
     longterm_rerank_enabled: Bool = True
     binding_session_ttl_minutes: int = 10
-    medication_morning_hour: int = 8
-    medication_noon_hour: int = 12
-    medication_evening_hour: int = 18
-    medication_bedtime_hour: int = 21
-    appointment_reminder_hour: int = 8
+    medication_morning_hour: Annotated[int, BeforeValidator(_hour("MEDICATION_MORNING_HOUR"))] = 8
+    medication_noon_hour: Annotated[int, BeforeValidator(_hour("MEDICATION_NOON_HOUR"))] = 12
+    medication_evening_hour: Annotated[int, BeforeValidator(_hour("MEDICATION_EVENING_HOUR"))] = 18
+    medication_bedtime_hour: Annotated[int, BeforeValidator(_hour("MEDICATION_BEDTIME_HOUR"))] = 21
+    # ⚠ 必須是真的鐘點：`schedules/timeparse.py` 拿它去 `datetime(..., hour, 0, ...)`，
+    # 誤設成 24 會擲 `ValueError: hour must be in 0..23`，而 REST 那條路徑只攔
+    # `TimeParseError`（是 `ValueError` 的子類，反向不成立），於是家屬每建一筆回診都
+    # 收到 HTTP 500。啟動時就擋掉，比讓它在家屬按下送出時才炸開好得多。
+    appointment_reminder_hour: Annotated[
+        int, BeforeValidator(_hour("APPOINTMENT_REMINDER_HOUR"))
+    ] = 8
     # 統一排程（spec 2026-07-25）：每位長輩的有效排程上限，防模型連續誤判灌爆行程表。
     schedule_max_active_per_elder: Annotated[
         int, BeforeValidator(_positive("SCHEDULE_MAX_ACTIVE_PER_ELDER"))
@@ -327,6 +337,10 @@ class Settings(_BaseEnvSettings):
     news_blocked_keywords: str = "兇殺,命案,殺人,分屍,性侵,虐童,自殺,輕生"
     rag_content_policy: Annotated[str, BeforeValidator(_content_policy)] = "allowed_only"
     rag_embedding_model: Annotated[str, BeforeValidator(_embedding_model)] = "gemini-embedding-001"
+    # 嵌入後端：gemini＝雲端 API、local＝DGX 上的 services/embedding（比照 ASR_BACKEND）
+    rag_embedding_backend: str = "gemini"
+    rag_embedding_endpoint: str = ""
+    rag_embedding_api_key: str = ""
     rag_refresh_enabled: Bool = False
     rag_refresh_cron: Annotated[str, BeforeValidator(_refresh_cron)] = "0 3 * * 0"
     rag_audit_retention_days: Annotated[
@@ -365,6 +379,11 @@ class Settings(_BaseEnvSettings):
     # 攔截門檻：判違規且信心達此值才攔，低於則放行（見 moderation.AbuseModerator）。
     # 刻意高於 safety_confidence_mid——誤攔長輩的代價遠大於放過一次綁架。
     safety_moderation_min_confidence: float = 0.7
+    # 危急分級＋濫用審核合併成一次 Gemini 呼叫（2026-07-30 延遲優化 C2）：省一次
+    # Gemini 網路往返（~0.8 秒）與一次 RPM 配額。⚠️ 預設關——兩個 prompt 各自獨立
+    # 調校過，合併後互相牽動，須先跑 evals 比對兩種模式的判準品質再決定要不要開
+    # （與 LONGTERM_RERANK_ENABLED 同一套「先關、evals 驗證再開」紀律）。
+    safety_combined_classifier_enabled: Bool = False
     auth_rate_limit_window_seconds: float = 300.0
     asr_debug_show_transcript: Bool = False
     # ✅ D-11（甲-4）：文字輸入為正式功能（與語音同等對待），預設開；關閉為維運逃生口。
@@ -409,6 +428,18 @@ class Settings(_BaseEnvSettings):
     # 你的 push token 後冒名發送；值在 Expo 後台的 Access Tokens 產生。
     push_expo_access_token: str = ""
     push_timeout_seconds: float = 10.0
+    # 對講機容量閘門（spec 2026-07-30 §10 B2）。⚠️ 這不是節流是容量管理：ASR 與
+    # TTS 共用一顆 GPU，同時湧入只會排隊、讓每個人都慢。⚠️ 進程內計數，是「每個
+    # worker 各自」的上限，不是全域上限——正式模式跑 `WEB_WORKERS`（預設 2）個
+    # worker，實際全域上限＝本值×WEB_WORKERS（見 `channels/app/admission.py`
+    # 模組 docstring）。
+    # ✅ 2026-08-01 專案負責人核定：全場同時最多 3 人講話。⚠️ 3 除以 WEB_WORKERS(2)
+    # 除不盡，取 2（全域 4）而非 1（全域 2）——設 1 的話第三個人一定排隊，而核定的
+    # 情境就是「3 人同時」，現場會卡住。若 GPU 吃緊改成 1 即可。
+    turn_concurrency_limit: int = 2
+    turn_queue_timeout_seconds: float = 30.0
+    # 每位長輩每分鐘的輪數上限。純粹防前端 bug（重連迴圈狂送），對真人操作等同無限。
+    turn_rate_limit_per_minute: int = 30
 
     @model_validator(mode="before")
     @classmethod
@@ -513,6 +544,10 @@ class RagWorkerSettings(_BaseEnvSettings):
     )
     rag_content_policy: Annotated[str, BeforeValidator(_content_policy)] = "allowed_only"
     rag_embedding_model: Annotated[str, BeforeValidator(_embedding_model)] = "gemini-embedding-001"
+    # 嵌入後端：gemini＝雲端 API、local＝DGX 上的 services/embedding（比照 ASR_BACKEND）
+    rag_embedding_backend: str = "gemini"
+    rag_embedding_endpoint: str = ""
+    rag_embedding_api_key: str = ""
     rag_refresh_enabled: Bool = False
     rag_refresh_cron: Annotated[str, BeforeValidator(_refresh_cron)] = "0 3 * * 0"
     rag_audit_retention_days: Annotated[

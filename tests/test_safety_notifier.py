@@ -1,6 +1,7 @@
 import logging
 
 from kinsun.accounts.models import ElderGuardian, PrincipalType, Role
+from kinsun.notifications.models import NotificationSeverity
 from kinsun.safety.deliveries import FakeRiskNotificationLogStore
 from kinsun.safety.notifier import GuardianNotifier, LogNotifier
 from kinsun.safety.tiers import RiskAssessment, RiskTier
@@ -26,6 +27,8 @@ class _SpyRouter:
 
     def __init__(self, fail_on=None, channels=("line",), no_route_on=()):
         self.sent = []
+        # 每次送出的呈現分級（2026-08-01）：`sent` 維持三元組不動，既有斷言不受影響。
+        self.sent_severities = []
         self._fail_on = fail_on
         self._channels = list(channels)
         self._no_route_on = set(no_route_on)
@@ -33,10 +36,13 @@ class _SpyRouter:
     def has_route(self, principal_type, principal_id):
         return principal_id not in self._no_route_on
 
-    def send_text_channels(self, principal_type, principal_id, text):
+    def send_text_channels(
+        self, principal_type, principal_id, text, *, severity=NotificationSeverity.NOTICE
+    ):
         if principal_id == self._fail_on or principal_id in self._no_route_on:
             return []
         self.sent.append((principal_type, principal_id, text))
+        self.sent_severities.append(severity)
         return list(self._channels)
 
 
@@ -220,3 +226,22 @@ def test_directory_failure_does_not_raise(caplog):
     with caplog.at_level(logging.WARNING, logger="kinsun.safety"):
         notifier.notify("e-elder", RiskAssessment(RiskTier.L2, 0.9, "求救", []), "救命")
     assert router.sent == []
+
+
+def test_guardian_alert_is_sent_with_alert_severity():
+    """危急通報必須帶 `alert` 分級出站——這是家屬畫面上分得出「跌倒了」與
+    「該吃藥了」的**唯一**真實訊號來源（2026-08-01 Leo 裁決）。
+
+    ⚠️ 這條測試同時是一道護欄：前端明文禁止用 content 字串比對關鍵字去猜危急
+    與否（見 web/src/notify/NotificationBanner.tsx）。少了這個欄位，那個誘惑
+    就會回來，而「什麼算危急」的判斷會從 safety/ 的權威分級散進前端字串比對。
+    """
+    router = _SpyRouter()
+    notifier = GuardianNotifier(_StubDirectory(["g1", "g2"]), router)
+
+    notifier.notify("e-elder", RiskAssessment(RiskTier.L2, 0.9, "疑似跌倒", ["fall"]), "我跌倒了")
+
+    assert router.sent_severities == [
+        NotificationSeverity.ALERT,
+        NotificationSeverity.ALERT,
+    ]

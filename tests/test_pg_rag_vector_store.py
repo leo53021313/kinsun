@@ -14,6 +14,7 @@ import pytest
 
 from kinsun.rag.releases import PgRagReleaseStore
 from kinsun.rag.schemas import (
+    RAG_EMBEDDING_DIMENSIONS,
     Audience,
     ChunkMetadata,
     ContentPolicy,
@@ -33,7 +34,7 @@ pytestmark = pytest.mark.skipif(
     os.environ.get("KINSUN_IT") != "1", reason="需 KINSUN_IT=1（連獨立測試庫）"
 )
 
-_DIM = 768
+_DIM = RAG_EMBEDDING_DIMENSIONS
 
 
 @pytest.fixture(autouse=True)

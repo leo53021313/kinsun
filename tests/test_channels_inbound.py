@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+from kinsun import turn_context
 from kinsun.accounts.models import Channel
 from kinsun.channels.inbound import (
     BIND_FIRST_PROMPT,
@@ -84,8 +85,10 @@ class _SpyVoice:
         self.delivered.append((msg.external_id, result.text))
 
 
-def _msg(kind, *, reply, text="", audio=b"", external_id="U-1"):
-    return InboundMessage(Channel.LINE, external_id, kind, text, audio, reply)
+def _msg(kind, *, reply, text="", audio=b"", external_id="U-1", reply_audio=None):
+    return InboundMessage(
+        Channel.LINE, external_id, kind, text, audio, reply, reply_audio=reply_audio
+    )
 
 
 def test_text_routes_to_binding():
@@ -266,6 +269,35 @@ def test_audio_pipeline_error_replies_fallback():
         gate=_Gate(True),
     )
     assert r.sent == [FALLBACK_PROMPT]
+
+
+def test_dispatch_declares_inline_delivery_when_reply_audio_present():
+    """有 reply_audio（WS 通道）→ 宣告內嵌投遞；沒有（LINE／POST）→ 不宣告。"""
+    seen: list[bool] = []
+
+    class _Probe:
+        def process(self, audio, **kwargs):
+            seen.append(turn_context.is_inline_audio_delivery())
+            return TtsResult(text="回覆", audio=b"x", duration_ms=1)
+
+    dispatch(
+        _msg("audio", audio=b"a", reply=_Replies(), reply_audio=lambda *a: None),
+        pipeline=_Probe(),
+        binding=_Binding(None),
+        gate=_Gate(True),
+        voice=_SpyVoice(),
+    )
+    assert seen == [True]
+
+    seen.clear()
+    dispatch(
+        _msg("audio", audio=b"a", reply=_Replies()),
+        pipeline=_Probe(),
+        binding=_Binding(None),
+        gate=_Gate(True),
+        voice=_SpyVoice(),
+    )
+    assert seen == [False]
 
 
 class _VoiceCapture:
@@ -524,6 +556,9 @@ def test_dispatch_reports_chunk_count_and_digest_of_the_real_reply():
 
     assert outcome.chunk_count == 2
     assert outcome.reply_digest == reply_digest(reply)
+    # 續段要切的那串文字同理（2026-08-01 審查 Critical 1）：`ws.py` 拿它去
+    # `split_for_speech`，餵成顯示字串的話第一句會被當成續段再唸一次。
+    assert outcome.reply_text == reply
     # 顯示字串確實帶了 debug 前綴——證明本測試真的踩在那個分岔上。
     assert cap.voice_sent[0][2].startswith("辨識：")
 

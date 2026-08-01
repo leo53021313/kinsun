@@ -2,10 +2,15 @@
 
 record_* 為 append-only 寫入；查詢供 web/routers/admin 使用。
 呼叫端埋點一律以 safe_record 包裹——觀測失敗絕不中斷對話。
+
+update_asr_source_audio_url 是唯一的例外（非 append-only）：進站音檔上傳背景化後
+（2026-07-30 延遲優化 B1），`record_asr_call` 當下多半還沒有網址，等上傳完成才用
+trace_id 事後補上那一列，見 `channels/app/inbound_audio.py`。
 """
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from collections.abc import Callable
 from datetime import datetime
@@ -107,6 +112,12 @@ class TraceStore(Protocol):
         source_audio_url: str,
         error_message: str,
     ) -> None: ...
+    def update_asr_source_audio_url(
+        self,
+        *,
+        trace_id: str,
+        source_audio_url: str,
+    ) -> bool: ...
     def record_llm_call(
         self,
         *,
@@ -283,6 +294,33 @@ class PgTraceStore:
                 self._now(),
             ),
         )
+
+    def update_asr_source_audio_url(self, *, trace_id: str, source_audio_url: str) -> bool:
+        """事後補上進站音檔網址（2026-07-30 B1）：見模組頂端說明。回傳有沒有打中那一列。
+
+        以 trace_id 更新，不比對 asr_call_id——呼叫端（背景上傳完成的那一刻）只知道
+        自己這一輪的 trace_id。一輪一次 ASR 呼叫是本表現行的唯一使用模式，故
+        trace_id 足以定位那一列。⚠️ 仍加 `trace_id <> ''` 護欄：`pipeline.process`
+        的 `trace_id` 預設是空字串，哪天有別的入口接上這條路，一次 UPDATE 會改掉
+        所有歷史空 trace_id 的列。
+
+        ⚠️ **回傳值非可選**（2026-07-30 審查 H1）：進站上傳與 ASR 的耗時分布大幅重疊
+        （實測 ASR 中位 1.84 秒、上傳 1–4 秒），上傳較快時這個 UPDATE 會打在還不存在
+        的列上。原本的實作不看影響列數，於是「網址永久遺失」與「正常補寫」在呼叫端
+        完全無法區分——而這個網址是 2026-07-18 錄音截斷與 2026-07-29 ASR 幻覺兩次
+        根因診斷唯一的原始證據來源，遺失它等於下次再發生時查不到。呼叫端據此重試，
+        重試用盡才留 warning（見 `channels/app/inbound_audio.py::attach_source_audio_url`）。
+
+        用 `query_one`＋`RETURNING` 而非 `execute`：後者不回傳影響列數。psycopg_pool
+        的 `connection()` 於正常離開時套用連線的 context 行為（成功即 commit），
+        故這裡跑 UPDATE 是安全的。
+        """
+        row = self._db.query_one(
+            "UPDATE asr_calls SET source_audio_url = %s "
+            "WHERE trace_id = %s AND trace_id <> '' RETURNING asr_call_id",
+            (source_audio_url, trace_id),
+        )
+        return row is not None
 
     def record_llm_call(
         self,
@@ -748,6 +786,20 @@ class FakeTraceStore:
                 self.now,
             )
         )
+
+    def update_asr_source_audio_url(self, *, trace_id: str, source_audio_url: str) -> bool:
+        """⚠️ 就地索引賦值，不可整串重建 list（2026-07-30 審查 M4）：重建是「讀快照→
+        建新 list→rebind」，中間若另一條執行緒 `record_asr_call` 做了 append，那筆
+        append 會被整個蓋掉。B1 的背景上傳執行緒讓這件事在測試裡就會發生（`background`
+        未 configure 時 `safe_record` 就地執行）。就地賦值在 GIL 下對既存索引安全，
+        也與同類 `record_*` 的 append 慣例一致。
+        """
+        hit = False
+        for index, call in enumerate(self.asr_calls):
+            if call.trace_id == trace_id and trace_id:
+                self.asr_calls[index] = dataclasses.replace(call, source_audio_url=source_audio_url)
+                hit = True
+        return hit
 
     def record_llm_call(
         self,

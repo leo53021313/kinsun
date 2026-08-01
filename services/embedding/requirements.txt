@@ -1,0 +1,8 @@
+# 僅在 DGX Spark（Linux + ARM64/aarch64 + GPU）安裝。
+# 版本對齊 services/asr（2026-08-01 於 DGX 實機以該環境跑完整輪 A/B，未新增任何套件）。
+# BGE-M3 的 dense 模式只需 transformers 的 AutoModel/AutoTokenizer，
+# 不必安裝 FlagEmbedding 或 sentence-transformers。
+fastapi==0.139.0
+uvicorn==0.49.0
+transformers==5.12.1
+torch==2.12.1

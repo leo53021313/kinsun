@@ -33,9 +33,9 @@ DISCOVERY_SOURCE_IDS = frozenset(
 
 DEFAULT_SOURCES: tuple[Source, ...] = (
     Source(
-        "hpa_elder_health",
-        "銀髮族健康",
-        "https://www.hpa.gov.tw/Pages/List.aspx?nodeid=39",
+        "hpa_health_education",
+        "國民健康署衛教文章",
+        "https://www.hpa.gov.tw/",
         "衛生福利部國民健康署",
         SourceType.GOVERNMENT,
         TrustLevel.HIGH,
@@ -43,7 +43,27 @@ DEFAULT_SOURCES: tuple[Source, ...] = (
         RecommendedStatus.APPROVED,
         True,
         ("hpa.gov.tw",),
-        "官方長者衛教入口。",
+        "國民健康署整站衛教文章，清單取自 sitemap.xml（5,667 篇），"
+        "實際收錄與否由 content_filter 逐篇判定。",
+        content_url_pattern=r"Detail\.aspx",
+        sitemap_url="https://www.hpa.gov.tw/sitemap.xml",
+    ),
+    # 以下四個來源已由 hpa_health_education 取代（2026-08-01）。
+    # 它們各自從 List.aspx 爬連結，但國健署每頁都渲染全站 225 個分類選單，
+    # 實測三者收回來的文章落在同一批 nodeid（頁尾共用連結），主題區隔等於零。
+    # 保留條目供稽核與歷史追溯，approved_for_rag 設 False 不再收錄。
+    Source(
+        "hpa_elder_health",
+        "銀髮族健康",
+        "https://www.hpa.gov.tw/Pages/List.aspx?nodeid=39",
+        "衛生福利部國民健康署",
+        SourceType.GOVERNMENT,
+        TrustLevel.HIGH,
+        CopyrightStatus.ALLOWED,
+        RecommendedStatus.OUT_OF_SCOPE,
+        False,
+        ("hpa.gov.tw",),
+        "已併入 hpa_health_education；此列表頁本身沒有自己的文章。",
     ),
     Source(
         "hpa_elder_chronic",
@@ -53,10 +73,10 @@ DEFAULT_SOURCES: tuple[Source, ...] = (
         SourceType.GOVERNMENT,
         TrustLevel.HIGH,
         CopyrightStatus.ALLOWED,
-        RecommendedStatus.APPROVED,
-        True,
+        RecommendedStatus.OUT_OF_SCOPE,
+        False,
         ("hpa.gov.tw",),
-        "官方老人健康與慢性病衛教入口。",
+        "已併入 hpa_health_education。",
     ),
     Source(
         "hpa_chronic_disease",
@@ -66,10 +86,10 @@ DEFAULT_SOURCES: tuple[Source, ...] = (
         SourceType.GOVERNMENT,
         TrustLevel.HIGH,
         CopyrightStatus.ALLOWED,
-        RecommendedStatus.APPROVED,
-        True,
+        RecommendedStatus.OUT_OF_SCOPE,
+        False,
         ("hpa.gov.tw",),
-        "官方慢性病防治衛教入口。",
+        "已併入 hpa_health_education。",
     ),
     Source(
         "hpa_handbooks",
@@ -105,10 +125,10 @@ DEFAULT_SOURCES: tuple[Source, ...] = (
         SourceType.GOVERNMENT,
         TrustLevel.HIGH,
         CopyrightStatus.ALLOWED,
-        RecommendedStatus.APPROVED,
-        True,
+        RecommendedStatus.OUT_OF_SCOPE,
+        False,
         ("hpa.gov.tw",),
-        "官方 FAQ，適合一般民眾理解。",
+        "已併入 hpa_health_education；問答文章同樣在 sitemap 的 Detail.aspx 底下。",
     ),
     Source(
         "health99",
