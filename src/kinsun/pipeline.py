@@ -624,8 +624,15 @@ class VoicePipeline:
         內容都不可以因為分段而被切掉；只有 `audio` 是第一段。切不出兩段以上時
         （短回覆、回退話術、被攔的回絕話術）不分段，因為分段的代價（多一次往返）
         換不到任何東西。
+
+        ⚠️ 另需 `turn_context.is_inline_audio_delivery()`：分段只在投遞端逐段接得住時
+        才成立，見該函式說明。
         """
-        chunks = split_for_speech(reply_text) if channel in self._chunked_channels else []
+        chunks = (
+            split_for_speech(reply_text)
+            if channel in self._chunked_channels and turn_context.is_inline_audio_delivery()
+            else []
+        )
         chunked = len(chunks) > 1
         spoken = chunks[0] if chunked else reply_text
         try:

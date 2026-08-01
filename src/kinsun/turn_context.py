@@ -316,3 +316,34 @@ def remaining_budget() -> float | None:
     if deadline is None:
         return None
     return deadline - time.monotonic()
+
+
+_inline_audio: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "kinsun_inline_audio_delivery", default=False
+)
+
+
+@contextmanager
+def inline_audio_delivery(enabled: bool) -> Iterator[None]:
+    """這一輪的音檔會不會直接走長連線交回通道（C1 內嵌投遞）。由 `dispatch` 設定。
+
+    ⚠️ 為什麼 `pipeline` 需要知道（2026-08-01）：分段只在**投遞端接得住**時才有意義。
+    WS 通道能逐段推，`POST /turns` 只能回一則——後者若照樣分段，長輩就只拿得到第一句，
+    其餘永遠取不回來（續拉端點已隨本次改動移除）。而兩條路徑的 `channel` 同為 `app`，
+    `_chunked_channels` 分不出來。
+
+    走 contextvars 而非改 `pipeline.process` 簽章，理由與本模組其餘六個機制相同：
+    改簽章會波及所有測試替身與呼叫端，而真正需要這個資訊的只有 `_synthesize` 一處。
+
+    `default=False`＝沒有人宣告時**不分段**。這是安全側：漏標的呼叫端會拿到完整音檔
+    （慢一點但完整），而不是只拿到第一句、其餘無聲消失。
+    """
+    token = _inline_audio.set(enabled)
+    try:
+        yield
+    finally:
+        _inline_audio.reset(token)
+
+
+def is_inline_audio_delivery() -> bool:
+    return _inline_audio.get()

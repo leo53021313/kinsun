@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from kinsun import background
+from kinsun import background, turn_context
 from kinsun.agent import NOT_HEARD_REPLY, CareAgent
 from kinsun.llm import LLMError, Message, report_llm_usage
 from kinsun.pipeline import VoicePipeline
@@ -824,9 +824,11 @@ def test_chunked_channel_synthesizes_only_the_first_sentence():
     回覆**文字**仍是完整的一段——長輩看到的字幕與寫進記憶的內容都不可以被切掉。
     """
     tts = _SpyTts()
-    result = _chunking_pipeline(tts, chunked_channels=frozenset({"app"})).process_text(
-        "我想聊天", elder_id="u1", channel="app"
-    )
+    # 2026-08-01：分段另需宣告內嵌投遞，見 turn_context.inline_audio_delivery
+    with turn_context.inline_audio_delivery(True):
+        result = _chunking_pipeline(tts, chunked_channels=frozenset({"app"})).process_text(
+            "我想聊天", elder_id="u1", channel="app"
+        )
 
     assert tts.spoken == ["阿公今天早上好嗎。"]  # 只合成第一句
     assert result.text == _LONG_REPLY  # 但文字是完整的
@@ -867,9 +869,23 @@ def test_short_reply_is_not_chunked_even_on_a_chunked_channel():
         chunked_channels=frozenset({"app"}),
     )
 
-    result = pipeline.process_text("我想聊天", elder_id="u1", channel="app")
+    # 2026-08-01：分段另需宣告內嵌投遞，見 turn_context.inline_audio_delivery
+    with turn_context.inline_audio_delivery(True):
+        result = pipeline.process_text("我想聊天", elder_id="u1", channel="app")
 
     assert tts.spoken == ["阿公您今天過得好嗎"]
+    assert result.chunk_count == 0
+
+
+def test_chunking_requires_inline_audio_delivery():
+    """走 POST 降級路徑（非內嵌投遞）時不分段——否則長輩只拿得到第一句。"""
+    tts = _SpyTts()
+    with turn_context.inline_audio_delivery(False):
+        result = _chunking_pipeline(tts, chunked_channels=frozenset({"app"})).process_text(
+            "我想聊天", elder_id="u1", channel="app"
+        )
+
+    assert tts.spoken == [_LONG_REPLY], "非內嵌投遞應合成完整回覆，不是第一句"
     assert result.chunk_count == 0
 
 

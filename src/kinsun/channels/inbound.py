@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 
-from kinsun import tracing
+from kinsun import tracing, turn_context
 from kinsun.accounts.models import Channel
 from kinsun.agent import SYSTEM_TROUBLE_REPLY
 from kinsun.llm import LLMError
@@ -222,19 +222,20 @@ def dispatch(
         if elder_id is None:
             msg.reply(BIND_FIRST_PROMPT)
             return None
-        return _run_pipeline(
-            msg,
-            lambda: pipeline.process_text(
-                msg.text,
-                elder_id=elder_id,
-                external_id=msg.external_id,
-                channel=msg.channel.value,
-                trace_id=msg.trace_id,
-            ),
-            voice=voice,
-            traces=traces,
-            timer=timer,
-        )
+        with turn_context.inline_audio_delivery(msg.reply_audio is not None):
+            return _run_pipeline(
+                msg,
+                lambda: pipeline.process_text(
+                    msg.text,
+                    elder_id=elder_id,
+                    external_id=msg.external_id,
+                    channel=msg.channel.value,
+                    trace_id=msg.trace_id,
+                ),
+                voice=voice,
+                traces=traces,
+                timer=timer,
+            )
     if msg.kind != "audio":
         msg.reply(NON_AUDIO_PROMPT)
         return None
@@ -242,20 +243,21 @@ def dispatch(
     if elder_id is None:
         msg.reply(BIND_FIRST_PROMPT)
         return None
-    return _run_pipeline(
-        msg,
-        lambda: pipeline.process(
-            msg.audio,
-            elder_id=elder_id,
-            external_id=msg.external_id,
-            channel=msg.channel.value,
-            trace_id=msg.trace_id,
-            audio_url=msg.audio_url,
-        ),
-        voice=voice,
-        traces=traces,
-        timer=timer,
-    )
+    with turn_context.inline_audio_delivery(msg.reply_audio is not None):
+        return _run_pipeline(
+            msg,
+            lambda: pipeline.process(
+                msg.audio,
+                elder_id=elder_id,
+                external_id=msg.external_id,
+                channel=msg.channel.value,
+                trace_id=msg.trace_id,
+                audio_url=msg.audio_url,
+            ),
+            voice=voice,
+            traces=traces,
+            timer=timer,
+        )
 
 
 @tracing.track(name="care_conversation", type="general", capture_input=False, capture_output=False)
