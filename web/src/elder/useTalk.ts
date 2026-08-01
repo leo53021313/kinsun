@@ -84,6 +84,20 @@ const MAX_DEFERRED_REPLIES = 2;
 
 /** 分段播放的進度。`digest` 綁定這是哪一輪的回覆——換一輪就整個作廢。 */
 type ChunkQueue = {
+  /**
+   * 這串續段屬於**哪一輪**（`TalkFrame.turn_id`；POST 降級路徑沒有 turn_id，改用
+   * 同樣一輪內唯一的 `reply_digest`）。
+   *
+   * ⚠️ **為什麼光有 `digest` 不夠**（2026-08-01 審查抓到的 Critical，本輪補播引入）：
+   * `advanceQueue` 是由播放器的「這一則播完了」事件觸發的，它讀 `chunkQueueRef` 拿到
+   * 的是「**現在**的續拉佇列」，不保證是「剛播完的那一則所屬的那一輪」。補播讓兩者
+   * 分家變成常態——舊答案補播到一半時新一輪的 `reply` 訊框抵達、把 `chunkQueueRef`
+   * 換成新那一輪，舊答案第 0 段播完就會去接**新那一輪的第 1 段**。實測序列：
+   * `A-chunk0 → B-chunk1 → B-chunk0`（長輩聽到「您的血壓藥早上吃…」接上一句公車答案
+   * 的中段，再聽到公車答案的開頭）。而多段是常態不是邊角：後端 `speech/chunking.py`
+   * 的 `MIN_CHUNK_CHARS = 8`、回覆字數 p50 39 字，`chunk_count > 1` 是預設狀況。
+   */
+  turnId: string;
   digest: string;
   total: number;
   /** 下一個「要去取」的段號（第 0 段已隨回覆拿到）。 */
@@ -189,6 +203,15 @@ export function useTalk(options: {
   const playQueueRef = useRef<ReturnType<typeof createPlaybackQueue> | null>(null);
   /** 目前正在播的那一則的 uri：插嘴回收 blob URL 時要把它排除在外。 */
   const playingUriRef = useRef<string | null>(null);
+  /**
+   * 目前正在播的那一則屬於**哪一輪**。
+   *
+   * ⚠️ 兩個地方非它不可（皆為 2026-08-01 審查所抓、補播引入的問題）：①`advanceQueue`
+   * 據此確認「要接的續段」與「剛播完的那一則」是同一輪（見 `ChunkQueue.turnId`）；
+   * ②`onFrame` 據此判斷「現在正在播的是別一輪的聲音」，那時新一輪的字不可以先把字幕
+   * 搶走——否則長輩聽到藥的答案、看到公車的字。
+   */
+  const playingTurnIdRef = useRef<string | null>(null);
   const chunkQueueRef = useRef<ChunkQueue | null>(null);
   const placeRef = useRef<Promise<ElderPlace | null> | null>(null);
   /** 這一輪開錄流程的 promise：停止前先 await，消除「放開跑在開錄完成前」的競態。 */
@@ -312,6 +335,22 @@ export function useTalk(options: {
   const advanceQueue = useCallback(async () => {
     const queue = chunkQueueRef.current;
     const player = playerRef.current;
+    // ⚠️ **剛播完的那一則與現在的續拉佇列必須是同一輪**（2026-08-01 審查 Critical，
+    // 見 `ChunkQueue.turnId`）：補播舊答案時，新一輪的 `reply` 訊框很可能已經把
+    // `chunkQueueRef` 換掉了，這時去接續段接到的是**新那一輪的第 1 段**，長輩聽到的
+    // 是「舊答案開頭 → 新答案中段 → 新答案開頭」。
+    // 對不上時不動續拉佇列：新那一輪自己的第 0 段還在播放佇列裡等著，它播完時就對得
+    // 上了。⚠️ 但佇列裡若其實什麼都沒有（新那一輪有字沒有聲音、又剛好是在收音期間
+    // 抵達的，所以連 `onFrame` 那條「回到待機」也沒走到），要把畫面放回待機——否則
+    // avatar 停在「說話中」，長輩看著一張正在講話的臉、卻一個字都沒聽到。
+    //（⚠️ 誠實界定後果：`TalkScreen` 的麥克風鍵只在 `thinking` 時停用，停在
+    //  `speaking` **不會**讓他按不動，也會被下一輪的訊框自行修正。）
+    if (queue !== null && queue.turnId !== playingTurnIdRef.current) {
+      if ((playQueueRef.current?.size() ?? 0) === 0) {
+        setAvatarBoth("idle");
+      }
+      return;
+    }
     if (!queue?.pending || player === null) {
       chunkQueueRef.current = null;
       setAvatarBoth("idle");
@@ -370,6 +409,8 @@ export function useTalk(options: {
       }
       setAvatarBoth("speaking");
       playingUriRef.current = item.audioUrl;
+      // 記下「現在播的是哪一輪」：續拉要接對輪次、字幕不可被別一輪搶走，兩者都靠它。
+      playingTurnIdRef.current = item.turnId;
       // 字幕跟著**真的播出來的那一則**走：收音期間收下來的那幾則，字幕要等補播時
       // 才顯示，否則長輩聽到的跟看到的是兩件事。
       if (item.text) {
@@ -418,9 +459,15 @@ export function useTalk(options: {
     // 等於沒解鎖。所以「更早」的上界就是**這顆播放器誕生之後的第一個手勢**。
     //
     // ⚠️ 兩道守門：
-    // ①佇列正在播時不解鎖——`unlockAudio` 會 `replace()` 播放器的來源，等於把金孫
-    //   講到一半的那句話**當場切斷**並回收它的 blob URL。長輩按一下鈴鐺就把回覆
+    // ①**金孫正在講話時不解鎖**——`unlockAudio` 會 `replace()` 播放器的來源，等於把
+    //   他講到一半的那句話**當場切斷**並回收它的 blob URL。長輩按一下鈴鐺就把回覆
     //   打斷，會是這條監聽器自己製造出來的新故障。
+    //   ⚠️ 判斷用 `avatarRef === "speaking"` **加上** `queue.isPlaying()`，不可只看後者
+    //   （2026-08-01 審查 Minor 1）：`createPlaybackQueue` 的 `running` 只在佇列回呼
+    //   執行期間為真，而 `advanceQueue` 播的第 2 段以後、以及 `stopAndSend` 的 POST
+    //   降級路徑**都不經佇列**——只看 `isPlaying()` 的話，那兩段期間的觸碰照樣會把
+    //   聲音切掉。`speaking` 涵蓋這三者（播放開始時設、續段放完才回到 `idle`）；
+    //   `isPlaying()` 則多守住「已推進佇列、drain 還沒起跑」那一瞬。
     // ②`micActiveRef` 為真時不解鎖——長輩正按著麥克風講話，這時放任何聲音都會被
     //   錄進去（P3 Task 8 Critical 2 守的就是這件事）。
     //   ⚠️ **誠實記載這一道的份量**：以目前的形狀它獨自承重不起來，也測不出來
@@ -431,7 +478,7 @@ export function useTalk(options: {
     //   長輩按住麥克風期間的任何一次觸碰都會把無聲檔放進他的錄音裡。
     // 兩種情形下都不移除監聽器：下一次觸碰再試。
     const unlockOnFirstGesture = () => {
-      if (micActiveRef.current || queue.isPlaying()) {
+      if (micActiveRef.current || avatarRef.current === "speaking" || queue.isPlaying()) {
         return;
       }
       unlockAudio(player);
@@ -472,6 +519,19 @@ export function useTalk(options: {
         // 也不要把 avatar 從「在聽」搶走。那一則的字幕會在它真的播出來的時候補上
         //（見上面的播放回呼）。
         const canTakeOverScreen = !micActiveRef.current;
+        // ⚠️ **字幕另有一道守門**（2026-08-01 審查 Important，補播引入）：現在正在播的
+        // 若是**別一輪**的聲音（補播舊答案時就是這種情形），這一輪的字不可以現在就蓋
+        // 上去——實測長輩會在聽「您的血壓藥早上吃一顆」的同時看到「好，我幫您查一下
+        // 喔」，而舊答案還要播八秒。那正是本檔播放回呼自己寫下要避免的事（「否則長輩
+        // 聽到的跟看到的是兩件事」），對重聽的長輩尤其嚴重：字幕是他取得答案的另一半
+        // 通道。
+        // ⚠️ **只擋「自己會帶著聲音出場」的那些字**（`audio_url` 非空）：它們的字會在
+        // 自己的聲音播出來時補上（見播放回呼）。錯誤、排隊、以及有字沒聲音的回覆沒有
+        // 第二次機會，照顯示。
+        const isSpeakingAnotherTurn =
+          avatarRef.current === "speaking" &&
+          playingTurnIdRef.current !== null &&
+          playingTurnIdRef.current !== frame.turn_id;
         if (frame.type === "error") {
           // 錯誤訊息照顯示（長輩需要知道），但收音中不動 avatar。
           setReplyText(frame.text);
@@ -488,7 +548,10 @@ export function useTalk(options: {
           }
           return;
         }
-        if (canTakeOverScreen) {
+        // 走到這裡只剩 `ack`／`reply`，兩者都有 `audio_url` 欄位（型別收窄後才讀）。
+        const canTakeOverSubtitle =
+          canTakeOverScreen && !(Boolean(frame.audio_url) && isSpeakingAnotherTurn);
+        if (canTakeOverSubtitle) {
           setReplyText(frame.text);
         }
         if (frame.type === "reply") {
@@ -496,6 +559,7 @@ export function useTalk(options: {
           chunkQueueRef.current = null;
           if (frame.chunk_count > 1 && frame.reply_digest) {
             const chunks: ChunkQueue = {
+              turnId: frame.turn_id,
               digest: frame.reply_digest,
               total: frame.chunk_count,
               nextIndex: 1,
@@ -563,6 +627,7 @@ export function useTalk(options: {
       chunkQueueRef.current = null;
       placeRef.current = null;
       playingUriRef.current = null;
+      playingTurnIdRef.current = null;
       socketOpenRef.current = false;
       socketRef.current = null;
       playQueueRef.current = null;
@@ -669,8 +734,14 @@ export function useTalk(options: {
       chunkQueueRef.current = null;
       if (reply.audio_url) {
         setAvatarBoth("speaking");
+        // ⚠️ POST 降級路徑的回應（`TurnReply`）**沒有 `turn_id` 這個欄位**，改用同一輪
+        // 內唯一的 `reply_digest` 當輪次識別：兩邊（續拉佇列與「現在播的是哪一輪」）
+        // 用同一個值就對得上，而萬一長連線稍後才接上、送來帶真 `turn_id` 的訊框，
+        // 比對不合正是我們要的結果（不把新那一輪的續段接在這一則後面）。
+        const replyTurnId = reply.reply_digest;
         if (reply.chunk_count > 1 && reply.reply_digest) {
           const queue: ChunkQueue = {
+            turnId: replyTurnId,
             digest: reply.reply_digest,
             total: reply.chunk_count,
             nextIndex: 1,
@@ -680,6 +751,7 @@ export function useTalk(options: {
           prefetchNext(queue);
         }
         playingUriRef.current = reply.audio_url;
+        playingTurnIdRef.current = replyTurnId;
         playerRef.current?.replace({ uri: reply.audio_url });
         playerRef.current?.play();
       } else {
