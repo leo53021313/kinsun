@@ -225,7 +225,9 @@ export function createTalkSocket(options: TalkSocketOptions) {
         return;
       }
       // 內嵌音檔的回覆訊框（C1）：落地成本地檔之後，當成一則**普通的 reply**交出去
-      // ——`audio_url` 換成 `file://…`，呼叫端（含分段續拉的整套邏輯）一行都不必改。
+      // ——`audio_url` 換成 `file://…`，呼叫端一行都不必改（當年這句話是為了說明
+      // C1 沒有波及分段續拉；續拉已於 2026-08-01 移除，但這條「reply 與 chunk
+      // 共用同一段解析與推播路徑」的性質沒變，`chunk` 訊框走的正是這裡）。
       const buffer = asArrayBuffer(event.data);
       if (!buffer || !writeAudio) return;
       const parsed = parseAudioFrame(buffer);
@@ -235,7 +237,10 @@ export function createTalkSocket(options: TalkSocketOptions) {
         uri = writeAudio(parsed.bytes).uri;
       } catch {
         // 落地失敗＝這一則沒有聲音。刻意仍把 frame 交出去（`audio_url` 留空）：
-        // 字幕與分段資訊照樣有用，長輩至少看得到字、續拉還能繼續。
+        // 字幕照樣有用，長輩至少看得到字——對重聽的長輩，字幕本來就是取得答案的
+        // 另一半通道。⚠️ 原本這裡寫「續拉還能繼續」，那是 REST 續拉時代的說法，
+        // 續拉已於 2026-08-01 隨續段 WS 直送移除；現在後端會自己把剩下的段推過來，
+        // 這一則落地失敗不影響後續 `chunk` 訊框。
         onFrame({ ...parsed.header, audio_url: "" } as unknown as TalkFrame);
         return;
       }

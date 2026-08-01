@@ -38,9 +38,15 @@
   ⚠️ `turn_id` 是必要的：併發之下同時可能有多輪在推段，前端靠它歸屬。
   ⚠️ `index` 有一個例外：續段合成中途失敗（或本來就切不出第二段）時，會補送一個
   `index=0、text=""、audio` 為空、`is_last=true` 的終止訊框——`index` 因此**不保證 ≥1**。
-  `index=0` 不是續段編號，是「這輪講完了（不論是不是講完整）」的哨兵值，前端只要看到
-  `is_last=true` 就該結束這一輪，不必等 `index` 對得上實際段數（見
+  `index=0` 不是續段編號，是「這輪講完了（不論是不是講完整）」的哨兵值（見
   `_push_continuation_chunks`）。
+  ⚠️ **`is_last` 目前沒有任何客戶端在讀**（2026-08-01 全分支審查 Important 2 核實：
+  `web/src/` 全庫只有型別宣告與測試 fixture）。它是**協定欄位**，不是前端的結束條件
+  ——網頁端回到待機是由**播放佇列排空**驅動的（`useTalk.ts` 的 drain 完成後轉
+  `idle`），這條路不需要知道「還有沒有下一段」。終止訊框仍然照送：它讓**未來的**
+  客戶端（或別的通道）有辦法知道這一輪講完了，而這種「送得出去卻沒人讀」的欄位
+  一旦停送就再也補不回來。**不要**改成讓前端去消費 `is_last`——那會把「回到待機」
+  這件事變成兩個來源說了算，兩者不同調時長輩會卡在「說話中」。
 
 ⚠️ **為什麼 header 要嵌在 binary frame 裡，而不是「先送 JSON 再送 binary」**：同一條
 連線最多三輪併發（`_MAX_CONCURRENT_TURNS`），兩輪幾乎同時算完時，「JSON(A)、JSON(B)、
@@ -379,6 +385,19 @@ def create_app_ws_router(
 
         return announce
 
+    # ⚠️ **這個 span 目前是 Opik 上的孤兒 root trace，不是掛在對話那棵樹底下**
+    # （2026-08-01 全分支審查 Important 3，已在本機 Opik 實測確認）：本函式的呼叫點
+    # 在 `dispatch(...)` **回傳之後**，那時 `care_conversation`（trace root）與
+    # `care_turn_voice` 都已關閉、opik 的 context 已清空，而
+    # `opik/decorator/span_creation_handler.py::create_span_respecting_context` 在
+    # 「沒有 current span 也沒有 current trace」時會**新建一棵 trace**。實測（本機
+    # Opik，獨立專案）：一輪跑完後後端存在兩筆 root trace——`care_conversation` 與
+    # `tts_chunks`。因此每一輪都會多產生一棵孤兒樹（舊的 REST 續拉是每次續拉一棵）。
+    # 要修得把續段納入對話那棵樹的生命週期（例如以 distributed trace headers 承接，
+    # 或把續段搬進 `care_turn_voice` 之內），那是結構性改動，不在這一波範圍；此處
+    # 只誠實記載，設計文件 §5.5 原本宣稱「順帶修掉孤兒 root trace」已同步更正。
+    # ⚠️ **不要為了修它而搬動呼叫點**：這個位置同時承載 D-2（續段留在
+    # `turn_gate.admit()` 之內）與 Important 1（在途清單在續段之前解除）兩項約束。
     @tracing.track(
         name="tts_chunks",
         type="general",
