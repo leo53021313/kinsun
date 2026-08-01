@@ -131,7 +131,7 @@ RAG_DDL = (
     "CREATE TABLE IF NOT EXISTS rag_chunks ("
     "chunk_id TEXT PRIMARY KEY, document_id TEXT NOT NULL REFERENCES rag_documents(document_id) "
     "ON DELETE CASCADE, source_id TEXT NOT NULL REFERENCES rag_sources(source_id), "
-    "text TEXT NOT NULL, embedding vector(768), title TEXT NOT NULL, publisher TEXT NOT NULL, "
+    "text TEXT NOT NULL, embedding vector(1024), title TEXT NOT NULL, publisher TEXT NOT NULL, "
     "source_url TEXT NOT NULL, source_type TEXT NOT NULL, language TEXT NOT NULL, "
     "topic TEXT NOT NULL, audience TEXT NOT NULL, medical_scope TEXT NOT NULL, "
     "trust_level TEXT NOT NULL, approved_for_rag BOOLEAN NOT NULL, "
@@ -140,6 +140,24 @@ RAG_DDL = (
     "source_role TEXT NOT NULL DEFAULT 'answer', embedding_model TEXT NOT NULL DEFAULT '');"
     "ALTER TABLE rag_chunks ADD COLUMN IF NOT EXISTS source_role TEXT NOT NULL DEFAULT 'answer';"
     "ALTER TABLE rag_chunks ADD COLUMN IF NOT EXISTS embedding_model TEXT NOT NULL DEFAULT '';"
+    # 向量維度遷移。CREATE TABLE IF NOT EXISTS 不會改既有表，空測試庫跑得過但正式庫
+    # 不會升級（2026-08-01 從 Gemini 768 維換成 BGE-M3 1024 維時就靠這段）。
+    # 換維度等於既有向量全部作廢，故直接重建欄位；HNSW 索引必須先刪、之後由下方
+    # 的 CREATE INDEX IF NOT EXISTS 重建（順序：建表 → 遷移 → 建索引）。
+    "DO $$"
+    "DECLARE current_dimensions integer;"
+    "BEGIN"
+    "  SELECT a.atttypmod INTO current_dimensions FROM pg_attribute a"
+    "  JOIN pg_class c ON c.oid = a.attrelid"
+    "  WHERE c.relname = 'rag_chunks' AND a.attname = 'embedding' AND NOT a.attisdropped;"
+    "  IF current_dimensions IS NOT NULL AND current_dimensions <> 1024 THEN"
+    "    RAISE NOTICE 'rag_chunks.embedding 由 % 維改為 1024 維，既有向量作廢，需重建索引版本',"
+    "      current_dimensions;"
+    "    DROP INDEX IF EXISTS idx_rag_chunks_embedding;"
+    "    ALTER TABLE rag_chunks DROP COLUMN embedding;"
+    "    ALTER TABLE rag_chunks ADD COLUMN embedding vector(1024);"
+    "  END IF;"
+    "END $$;"
     "CREATE INDEX IF NOT EXISTS idx_rag_chunks_source_topic ON rag_chunks (source_id, topic);"
     "CREATE INDEX IF NOT EXISTS idx_rag_chunks_embedding "
     "ON rag_chunks USING hnsw (embedding vector_cosine_ops);"

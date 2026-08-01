@@ -23,7 +23,7 @@ from kinsun.memory.models import MemoryItem
 from kinsun.news.models import NewsItem
 from kinsun.news.store import FakeNewsStore
 from kinsun.rag.releases import RagIndexRelease, ReleaseStatus
-from kinsun.rag.schemas import ContentPolicy
+from kinsun.rag.schemas import RAG_EMBEDDING_DIMENSIONS, ContentPolicy
 from kinsun.reports.reminders import FakeReminderLogStore
 from kinsun.reports.summaries import FakeConversationSummaryStore
 from kinsun.safety.deliveries import FakeRiskNotificationLogStore
@@ -377,7 +377,7 @@ def test_rag_status_warns_for_active_classroom_demo_release():
         index_version="rag-v1",
         status=ReleaseStatus.ACTIVE,
         embedding_model="gemini-embedding-001",
-        embedding_dimensions=768,
+        embedding_dimensions=RAG_EMBEDDING_DIMENSIONS,
         content_policy=ContentPolicy.CLASSROOM_DEMO,
         quality_metrics={"document_count": 12, "chunk_count": 30},
         relevance_threshold=0.7,

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import StrEnum
 
-RAG_EMBEDDING_DIMENSIONS = 768
+RAG_EMBEDDING_DIMENSIONS = 1024
 
 
 class SourceType(StrEnum):

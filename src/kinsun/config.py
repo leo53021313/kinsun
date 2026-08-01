@@ -337,6 +337,10 @@ class Settings(_BaseEnvSettings):
     news_blocked_keywords: str = "兇殺,命案,殺人,分屍,性侵,虐童,自殺,輕生"
     rag_content_policy: Annotated[str, BeforeValidator(_content_policy)] = "allowed_only"
     rag_embedding_model: Annotated[str, BeforeValidator(_embedding_model)] = "gemini-embedding-001"
+    # 嵌入後端：gemini＝雲端 API、local＝DGX 上的 services/embedding（比照 ASR_BACKEND）
+    rag_embedding_backend: str = "gemini"
+    rag_embedding_endpoint: str = ""
+    rag_embedding_api_key: str = ""
     rag_refresh_enabled: Bool = False
     rag_refresh_cron: Annotated[str, BeforeValidator(_refresh_cron)] = "0 3 * * 0"
     rag_audit_retention_days: Annotated[
@@ -540,6 +544,10 @@ class RagWorkerSettings(_BaseEnvSettings):
     )
     rag_content_policy: Annotated[str, BeforeValidator(_content_policy)] = "allowed_only"
     rag_embedding_model: Annotated[str, BeforeValidator(_embedding_model)] = "gemini-embedding-001"
+    # 嵌入後端：gemini＝雲端 API、local＝DGX 上的 services/embedding（比照 ASR_BACKEND）
+    rag_embedding_backend: str = "gemini"
+    rag_embedding_endpoint: str = ""
+    rag_embedding_api_key: str = ""
     rag_refresh_enabled: Bool = False
     rag_refresh_cron: Annotated[str, BeforeValidator(_refresh_cron)] = "0 3 * * 0"
     rag_audit_retention_days: Annotated[
