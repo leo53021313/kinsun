@@ -11,13 +11,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from kinsun.binding.session import BindingSession, BindingSessionStore, BindingState
 from kinsun.schedules.models import CreatedBy, Occurrence, RepeatKind, ScheduleKind
 from kinsun.schedules.service import ScheduleService, ScheduleValidationError
-from kinsun.schedules.timeparse import TimeParseError, parse_epoch
-from kinsun.schedules.wording import slot_label
+from kinsun.schedules.timeparse import TimeParseError, build_appointment_reminders, parse_epoch
+from kinsun.schedules.wording import appointment_day_before_skipped_text, slot_label
 
 _MENU = "提醒設定：請回覆數字：\n1️⃣ 新增提醒\n2️⃣ 查看提醒\n3️⃣ 刪除提醒"
 _KIND_PROMPT = "請問是哪一種？回覆數字：\n1️⃣ 吃藥\n2️⃣ 回診\n3️⃣ 其他"
@@ -156,7 +156,7 @@ class ScheduleMenu:
         data = session.data
         kind = ScheduleKind(data["kind"])
         try:
-            occurrences, event_at = self._parse_when(kind, text)
+            occurrences, event_at, notice = self._parse_when(kind, text)
         except TimeParseError as exc:
             return f"{exc}\n{self._when_prompt(kind)}"
         try:
@@ -174,7 +174,9 @@ class ScheduleMenu:
         groups = self._schedules.groups_for_elder(data["elder_id"])
         added = next((g for g in groups if g.title == data["title"]), None)
         detail = self._describe(added) if added else data["title"]
-        return f"已為『{data['elder_name']}』新增：{detail}。"
+        confirmation = f"已為『{data['elder_name']}』新增：{detail}。"
+        # 少建一顆鬧鐘不可以靜默——清單只顯示「一件事」，家屬沒有別的地方會發現。
+        return f"{confirmation}\n{notice}" if notice else confirmation
 
     def _del_pick(self, session: BindingSession, text: str, line_user_id: str) -> str:
         groups = session.data["groups"]
@@ -198,13 +200,18 @@ class ScheduleMenu:
 
     def _parse_when(
         self, kind: ScheduleKind, text: str
-    ) -> tuple[tuple[Occurrence, ...], float | None]:
+    ) -> tuple[tuple[Occurrence, ...], float | None, str]:
+        """回傳（鬧鐘, 事件時刻, 要補告訴家屬的話——沒有就空字串）。
+
+        第三格只有回診用得到（前一天那顆已經過期而沒建），但由這裡統一回傳，
+        呼叫端才不必知道哪一種類型會說話。
+        """
         cleaned = text.strip()
         if kind == ScheduleKind.MEDICATION:
-            return self._parse_medication_when(cleaned), None
+            return self._parse_medication_when(cleaned), None, ""
         if kind == ScheduleKind.APPOINTMENT:
             return self._parse_appointment_when(cleaned)
-        return (self._parse_custom_when(cleaned),), None
+        return (self._parse_custom_when(cleaned),), None, ""
 
     def _parse_medication_when(self, text: str) -> tuple[Occurrence, ...]:
         """數字＝早中晚睡四時段（沿用家屬熟悉的問法），也接受直接輸入時刻。"""
@@ -220,27 +227,27 @@ class ScheduleMenu:
             for i in chosen
         )
 
-    def _parse_appointment_when(self, text: str) -> tuple[tuple[Occurrence, ...], float]:
-        """回診固定兩個鬧鐘（前一天＋當天），與舊行為一字不差。"""
+    def _parse_appointment_when(self, text: str) -> tuple[tuple[Occurrence, ...], float, str]:
+        """回診固定兩個鬧鐘（前一天＋當天）。
+
+        推算改共用 `timeparse.build_appointment_reminders`——那份現在也是 REST 入口的
+        唯一答案（12 §9 F-16 的修法）。連帶得到「已過期的那顆略過」：原本下午替明天
+        的回診設提醒，會因為「前一天 08:00」＝今天早上而整筆建不起來。
+        """
         parts = text.replace("　", " ").split()
         date_text = parts[0] if parts else ""
         time_text = parts[1] if len(parts) > 1 else ""
         now = self._clock()
         event_at = parse_epoch(date_text, time_text, now=now)
-        event_day = datetime.fromtimestamp(event_at, now.tzinfo).date()
-        occurrences = tuple(
-            Occurrence(
-                RepeatKind.ONCE,
-                scheduled_at=datetime(
-                    *(event_day - timedelta(days=offset)).timetuple()[:3],
-                    self._appointment_hour,
-                    0,
-                    tzinfo=now.tzinfo,
-                ).timestamp(),
-            )
-            for offset in (1, 0)
+        reminders = build_appointment_reminders(
+            event_at=event_at, hour=self._appointment_hour, now=now
         )
-        return occurrences, event_at
+        notice = (
+            appointment_day_before_skipped_text(self._appointment_hour)
+            if reminders.is_day_before_skipped
+            else ""
+        )
+        return reminders.occurrences, event_at, notice
 
     def _parse_custom_when(self, text: str) -> Occurrence:
         parts = text.replace("　", " ").split()

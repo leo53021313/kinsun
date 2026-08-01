@@ -90,6 +90,44 @@ def test_add_appointment_creates_two_alarms(menu_and_store):
     assert group.kind.value == "appointment"
 
 
+def test_add_appointment_puts_the_day_before_alarm_on_the_day_before(menu_and_store):
+    """回診日 2026-07-30 的前一天是 07-29——推算與 REST 入口共用同一份（12 §9 F-16）。
+
+    ⚠️ 時區釘在斷言裡，不讀執行機器的環境時區。
+    """
+    menu, _, service = menu_and_store
+    _walk(menu, None, ["1", "2", "心臟科回診", "2026-07-30 10:30"])
+    group = service.groups_for_elder("e1")[0]
+    assert sorted(s.scheduled_at for s in group.schedules) == [
+        datetime(2026, 7, 29, 8, 0, tzinfo=TZ).timestamp(),
+        datetime(2026, 7, 30, 8, 0, tzinfo=TZ).timestamp(),
+    ]
+
+
+def test_tomorrows_appointment_set_in_the_afternoon_is_created_and_the_guardian_is_told():
+    """下午設明天的回診：前一天那顆已經過了，只建當天那顆，而且要告訴家屬。
+
+    原本整筆會被服務層擋成「那個時間已經過去了」，家屬只會看到那句話與重問一次日期。
+    """
+    afternoon = datetime(2026, 7, 25, 15, 0, tzinfo=TZ)
+    store = FakeScheduleStore()
+    service = ScheduleService(store, clock=lambda: afternoon)
+    menu = ScheduleMenu(
+        service,
+        _Accounts([_Elder("e1", "阿嬤")]),
+        FakeBindingSessionStore(),
+        clock=lambda: afternoon,
+        slot_hours={"morning": 8, "noon": 12, "evening": 18, "bedtime": 21},
+        appointment_hour=8,
+    )
+    reply = _walk(menu, None, ["1", "2", "心臟科回診", "2026-07-26 10:30"])
+    group = service.groups_for_elder("e1")[0]
+    assert [s.scheduled_at for s in group.schedules] == [
+        datetime(2026, 7, 26, 8, 0, tzinfo=TZ).timestamp()
+    ]
+    assert "前一天" in reply and "08:00" in reply
+
+
 def test_add_appointment_without_a_time(menu_and_store):
     menu, _, service = menu_and_store
     _walk(menu, None, ["1", "2", "牙科", "2026-07-31"])

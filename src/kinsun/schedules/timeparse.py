@@ -8,7 +8,8 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 from kinsun.schedules.models import Occurrence, RepeatKind
 
@@ -17,7 +18,10 @@ _TIME = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 
 
 class TimeParseError(ValueError):
-    """日期或時刻格式不合法。訊息為白話，可直接回給使用者。"""
+    """日期或時刻不合法：格式錯誤，或推算出來的提醒時刻全部已過。
+
+    訊息為白話，可直接回給使用者。
+    """
 
 
 def parse_epoch(date_text: str, time_text: str, *, now: datetime) -> float:
@@ -62,3 +66,50 @@ def build_occurrence(
             raise TimeParseError("每週提醒要說是星期幾（0 是星期一）。")
         return Occurrence(kind, repeat_time=cleaned, repeat_weekday=weekday)
     return Occurrence(kind, repeat_time=cleaned)
+
+
+@dataclass(frozen=True)
+class AppointmentReminders:
+    """回診的一組提醒。`occurrences` 已經剔除掉時刻已過的那幾顆。
+
+    `is_day_before_skipped` 是給呼叫端**拿去告訴家屬**的：少建一顆鬧鐘不可以靜默，
+    家屬心裡設的是「前一天也會提醒」，這一次得由他自己開口。
+    """
+
+    occurrences: tuple[Occurrence, ...]
+    is_day_before_skipped: bool
+
+
+def build_appointment_reminders(
+    *, event_at: float, hour: int, now: datetime
+) -> AppointmentReminders:
+    """回診固定兩顆鬧鐘（前一天與當天的 `hour` 點），日期由**後端**自己從回診日推算。
+
+    ⚠️ **不採信 client 送來的「前一天」**（12 §9 F-16）：`app/`／`frontend/` 兩份前端
+    以 `new Date("YYYY-MM-DDT00:00:00")`（依**本地時區**解析）減 24 小時、再用
+    `toISOString()`（**UTC**）取日期字串。UTC+8 的本地午夜是前一天 16:00Z，於是
+    「前一天」被多減一天——提醒提早**兩天**響，長輩白跑一趟。本模組檔頭寫的正是這件事
+    （散在三處的時區處理必然各寫一版），故「前一天是哪一天」自此只有這一份答案。
+
+    **時刻已過的那幾顆直接不建**——你沒辦法提醒一個人昨天。下午替明天的回診設提醒時，
+    「前一天 `hour` 點」是今天早上，原本會讓服務層以「那個時間已經過去了」擋掉**整筆**
+    排程（不是只少一顆），而家屬填的明明是明天。兩顆都過去了才拋錯，並把話講在回診日
+    上——那才是家屬能改的東西。
+    """
+    event_day = datetime.fromtimestamp(event_at, now.tzinfo).date()
+    current = now.timestamp()
+    occurrences: list[Occurrence] = []
+    is_day_before_skipped = False
+    for days_before in (1, 0):
+        day = event_day - timedelta(days=days_before)
+        at = datetime(day.year, day.month, day.day, hour, 0, tzinfo=now.tzinfo).timestamp()
+        # 門檻用 `<=` 與 `ScheduleService._validate` 對齊：留下一顆剛好等於此刻的鬧鐘，
+        # 服務層下一瞬間仍會判它過期，整筆照樣建不起來——那正是這裡要防的症狀。
+        if at <= current:
+            if days_before == 1:
+                is_day_before_skipped = True
+            continue
+        occurrences.append(Occurrence(RepeatKind.ONCE, scheduled_at=at))
+    if not occurrences:
+        raise TimeParseError("這個回診的提醒時間都已經過了，請確認回診日期。")
+    return AppointmentReminders(tuple(occurrences), is_day_before_skipped)

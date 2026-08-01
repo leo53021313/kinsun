@@ -45,6 +45,23 @@ def appointment_texts(
     return elder, guardian
 
 
+def appointment_day_before_skipped_text(hour: int) -> str:
+    """回診「前一天」那顆因為時刻已過而沒建時，要讓**家屬**看見的話。
+
+    少建一顆鬧鐘不可以靜默：家屬設回診時心裡預期的是「前一天也會提醒」，而回診清單
+    只顯示一件事、不逐顆列鬧鐘，他沒有別的地方會發現。這句話同時交代替代作法——
+    前一天那次改由他自己講，這是他唯一還能做的補救。
+
+    鐘點用 `HH:00` 而不是「早上」：`APPOINTMENT_REMINDER_HOUR` 可調，時段詞一旦被
+    改成 21 就會冒出「睡前 21 點」這種話。
+    """
+    stamp = f"{hour:02d}:00"
+    return (
+        f"回診前一天的提醒時間（{stamp}）已經過了，這次只設定了回診當天 {stamp} 的提醒；"
+        "前一天那次請您自己跟長輩提一聲。"
+    )
+
+
 def custom_text(elder_name: str, title: str, minutes_ahead: int) -> str:
     """提前提醒才講「再過幾分鐘」；準時提醒講「提醒您」。"""
     if minutes_ahead > 0:

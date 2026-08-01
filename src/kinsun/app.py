@@ -329,6 +329,8 @@ def build_app() -> FastAPI:
             risk_events=risk_events,
             reminder_logs=core.reminder_logs,
             summaries=summaries,
+            # 與 ScheduleMenu 同一個來源：回診提醒的鐘點只有一份設定。
+            appointment_hour=settings.appointment_reminder_hour,
         ),
         prefix="/api/v1",
     )

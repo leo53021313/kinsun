@@ -31,10 +31,14 @@ class _Verifier:
         return LineIdentity(id_token, "兒子")
 
 
-@pytest.fixture
-def client_and_elder():
+def _make_client(*, now: datetime = NOW, appointment_hour: int = 8):
+    """⚠️ `now` 一律帶著 `Asia/Taipei` 進來，不讀執行機器的環境時區。
+
+    回診「前一天」那段推算只在 UTC 以東的時區出錯（12 §9 F-16），跟著機器時區跑的
+    測試會在 UTC 的 CI 上一路綠燈。
+    """
     store = FakeAccountStore()
-    accounts = AccountService(store, clock=lambda: NOW)
+    accounts = AccountService(store, clock=lambda: now)
     elder = accounts.create_elder("U-son", "兒子", "阿嬤")
     app = FastAPI()
     install_error_envelope(app)
@@ -42,15 +46,21 @@ def client_and_elder():
         create_guardian_face_router(
             verifier=_Verifier(),
             accounts=accounts,
-            schedules=ScheduleService(FakeScheduleStore(), clock=lambda: NOW),
-            clock=lambda: NOW,
+            schedules=ScheduleService(FakeScheduleStore(), clock=lambda: now),
+            clock=lambda: now,
             risk_events=FakeRiskEventStore(),
             reminder_logs=FakeReminderLogStore(),
             summaries=FakeConversationSummaryStore(),
+            appointment_hour=appointment_hour,
         ),
         prefix="/api/v1",
     )
     return TestClient(app), elder.elder_id
+
+
+@pytest.fixture
+def client_and_elder():
+    return _make_client()
 
 
 AUTH = {"Authorization": "Bearer U-son"}
@@ -98,6 +108,161 @@ def test_create_appointment_with_event_time(client_and_elder):
     data = created.json()["data"]
     assert len(data["occurrences"]) == 2
     assert data["event_at"] == datetime(2026, 7, 30, 10, 30, tzinfo=TZ).timestamp()
+    # 沒有東西要告訴家屬時 meta 維持 null，不平白多一則雜訊要 UI 去分辨。
+    assert created.json()["meta"] is None
+
+
+def test_appointment_day_before_is_recomputed_not_taken_from_the_client():
+    """回診的「前一天」由**後端**從 `event_date` 重算，client 送什麼都不算數。
+
+    ⚠️ 這條釘的是一個真的進過資料庫的 bug（12 §9 F-16）：三份前端共用的那段推算
+    ——`new Date("2026-08-05T00:00:00")`（依**本地時區**解析）減 86400000 毫秒、再用
+    `toISOString()`（**UTC**）取日期——在 `Asia/Taipei` 會算出 **2026-08-03**，提醒提早
+    兩天響。下面 `occurrences` 送的正是 `app/`／`frontend/` 在台灣實際會送出的內容。
+
+    ⚠️ **時區必須釘死在斷言裡**：這個 bug 在 UTC 與美洲時區都算得對，跟著執行機器
+    的環境時區跑的測試會在 CI 上一路綠燈——它就是這樣活了六天沒被發現。
+    """
+    client, elder_id = _make_client(now=datetime(2026, 7, 25, 12, 0, tzinfo=TZ))
+    created = _post(
+        client,
+        elder_id,
+        kind="appointment",
+        title="心臟科回診",
+        occurrences=[
+            {"repeat": "once", "date": "2026-08-03", "time": "08:00"},  # 前端算錯的那一天
+            {"repeat": "once", "date": "2026-08-05", "time": "08:00"},
+        ],
+        event_date="2026-08-05",
+    )
+    assert created.status_code == 201
+    assert sorted(o["scheduled_at"] for o in created.json()["data"]["occurrences"]) == [
+        datetime(2026, 8, 4, 8, 0, tzinfo=TZ).timestamp(),
+        datetime(2026, 8, 5, 8, 0, tzinfo=TZ).timestamp(),
+    ]
+
+
+def test_appointment_reminder_hour_comes_from_settings_not_from_the_client():
+    """鐘點也由後端決定：前端寫死 08:00，`APPOINTMENT_REMINDER_HOUR` 改了它不會跟。"""
+    client, elder_id = _make_client(now=datetime(2026, 7, 25, 12, 0, tzinfo=TZ), appointment_hour=9)
+    created = _post(
+        client,
+        elder_id,
+        kind="appointment",
+        title="心臟科回診",
+        occurrences=[{"repeat": "once", "date": "2026-08-05", "time": "08:00"}],
+        event_date="2026-08-05",
+    )
+    assert created.status_code == 201
+    assert sorted(o["scheduled_at"] for o in created.json()["data"]["occurrences"]) == [
+        datetime(2026, 8, 4, 9, 0, tzinfo=TZ).timestamp(),
+        datetime(2026, 8, 5, 9, 0, tzinfo=TZ).timestamp(),
+    ]
+
+
+def test_tomorrows_appointment_set_in_the_afternoon_still_creates_the_day_of_reminder():
+    """下午設明天的回診：「前一天 08:00」已經過了，略過它、當天那顆照建。
+
+    原本整筆會被服務層擋成「那個時間已經過去了」——家屬填的明明是明天。
+    """
+    client, elder_id = _make_client(now=datetime(2026, 7, 25, 15, 0, tzinfo=TZ))
+    created = _post(
+        client,
+        elder_id,
+        kind="appointment",
+        title="心臟科回診",
+        occurrences=[
+            {"repeat": "once", "date": "2026-07-25", "time": "08:00"},
+            {"repeat": "once", "date": "2026-07-26", "time": "08:00"},
+        ],
+        event_date="2026-07-26",
+    )
+    assert created.status_code == 201
+    occurrences = created.json()["data"]["occurrences"]
+    assert [o["scheduled_at"] for o in occurrences] == [
+        datetime(2026, 7, 26, 8, 0, tzinfo=TZ).timestamp()
+    ]
+
+
+def test_skipping_the_day_before_reminder_is_told_to_the_guardian():
+    """少建一顆鬧鐘不可以靜默：回應要帶著能直接顯示給家屬看的繁中人話。"""
+    client, elder_id = _make_client(now=datetime(2026, 7, 25, 15, 0, tzinfo=TZ))
+    created = _post(
+        client,
+        elder_id,
+        kind="appointment",
+        title="心臟科回診",
+        occurrences=[{"repeat": "once", "date": "2026-07-26", "time": "08:00"}],
+        event_date="2026-07-26",
+    )
+    warnings = created.json()["meta"]["warnings"]
+    assert len(warnings) == 1
+    assert "前一天" in warnings[0]
+    assert "08:00" in warnings[0]
+
+
+def test_appointment_whose_reminders_have_all_passed_says_so_in_plain_chinese():
+    """今天下午才設今天的回診：兩顆都過去了，明說是回診日的問題，不含糊帶過。"""
+    client, elder_id = _make_client(now=datetime(2026, 7, 25, 15, 0, tzinfo=TZ))
+    created = _post(
+        client,
+        elder_id,
+        kind="appointment",
+        title="心臟科回診",
+        occurrences=[{"repeat": "once", "date": "2026-07-25", "time": "08:00"}],
+        event_date="2026-07-25",
+    )
+    assert created.status_code == 400
+    body = created.json()["error"]
+    assert body["code"] == "invalid_schedule"
+    assert "回診" in body["message"] and "已經過了" in body["message"]
+
+
+def test_update_also_recomputes_the_day_before(client_and_elder):
+    """編輯走的是同一支前端函式，接管也必須同時涵蓋 PUT。"""
+    client, elder_id = client_and_elder
+    group_id = _post(
+        client,
+        elder_id,
+        kind="appointment",
+        title="心臟科回診",
+        occurrences=[{"repeat": "once", "date": "2026-07-30", "time": "08:00"}],
+        event_date="2026-07-30",
+    ).json()["data"]["group_id"]
+    updated = client.put(
+        f"/api/v1/elders/{elder_id}/schedules/{group_id}",
+        json={
+            "kind": "appointment",
+            "title": "心臟科回診",
+            "occurrences": [
+                {"repeat": "once", "date": "2026-08-03", "time": "08:00"},  # 又是算錯的那天
+                {"repeat": "once", "date": "2026-08-05", "time": "08:00"},
+            ],
+            "event_date": "2026-08-05",
+        },
+        headers=AUTH,
+    )
+    assert updated.status_code == 200
+    assert sorted(o["scheduled_at"] for o in updated.json()["data"]["occurrences"]) == [
+        datetime(2026, 8, 4, 8, 0, tzinfo=TZ).timestamp(),
+        datetime(2026, 8, 5, 8, 0, tzinfo=TZ).timestamp(),
+    ]
+
+
+def test_appointment_without_an_event_date_keeps_the_client_occurrences():
+    """沒給回診日就沒得重算——這條路徑維持原樣，接管不可以順手改掉它。"""
+    client, elder_id = _make_client(now=datetime(2026, 7, 25, 12, 0, tzinfo=TZ))
+    created = _post(
+        client,
+        elder_id,
+        kind="appointment",
+        title="心臟科回診",
+        occurrences=[{"repeat": "once", "date": "2026-08-05", "time": "14:30"}],
+    )
+    assert created.status_code == 201
+    assert [o["scheduled_at"] for o in created.json()["data"]["occurrences"]] == [
+        datetime(2026, 8, 5, 14, 30, tzinfo=TZ).timestamp()
+    ]
 
 
 def test_list_can_filter_by_kind(client_and_elder):
