@@ -400,39 +400,54 @@ def create_app_ws_router(
         優先權 `CHUNK`：長輩正在聽第一段、續段有餘裕，別位長輩的第一段（`REPLY`）
         應該先做。
         """
-        if tts is None:
-            return
-        chunks = split_for_speech(reply_text)
         sent_terminator = False
-        for index, text in enumerate(chunks[1:], start=1):
-            is_last = index == len(chunks) - 1
-            try:
-                with tts_priority(TtsPriority.CHUNK):
-                    result = tts.synthesize(text)
-            except TTSError:
-                logger.warning("續段合成失敗 turn=%s index=%s", turn_id, index)
-                break
-            if result.audio is None:
-                logger.warning("續段無音檔 turn=%s index=%s", turn_id, index)
-                break
-            sender.send_chunk_audio(
-                {
-                    "type": "chunk",
-                    "turn_id": turn_id,
-                    "index": index,
-                    "text": text,
-                    "duration_ms": result.duration_ms,
-                    "is_last": is_last,
-                },
-                result.audio,
-            )
-            logger.info("續段推出 turn=%s index=%s 字數=%s", turn_id, index, len(text))
-            sent_terminator = is_last
+        # ⚠️ 整段包一層 try（2026-08-01 全分支審查）：底下只接得住 `TTSError`，而
+        # TTS client 換人（或 `split_for_speech` 有 bug）時冒出來的別種例外會一路
+        # 衝到 `_run_turn` 的 `except Exception`，於是長輩明明已經聽到第一段，畫面
+        # 卻跳出系統錯誤訊息並提前回到待機。機率低，但這是改動前不存在的失敗形態
+        # ——續段炸掉最多就是「後半段沒講」，不該把已經成功的前半段一起打成錯誤。
+        try:
+            # `tts` 未注入＝這個 router 組不出續段（正式環境恆有，見 `app.py`）。
+            # ⚠️ 刻意不在這裡 `return`：終止訊框是協定層的承諾（見模組 docstring 的
+            # 下行協定），不該因為某種組裝方式少注入一個依賴就默默不送——同一個函式
+            # 底下才剛寫著「無論如何都要有終止訊號」。
+            chunks = split_for_speech(reply_text) if tts is not None else []
+            for index, text in enumerate(chunks[1:], start=1):
+                is_last = index == len(chunks) - 1
+                try:
+                    with tts_priority(TtsPriority.CHUNK):
+                        result = tts.synthesize(text)
+                except TTSError:
+                    logger.warning("續段合成失敗 turn=%s index=%s", turn_id, index)
+                    break
+                if result.audio is None:
+                    logger.warning("續段無音檔 turn=%s index=%s", turn_id, index)
+                    break
+                sender.send_chunk_audio(
+                    {
+                        "type": "chunk",
+                        "turn_id": turn_id,
+                        "index": index,
+                        "text": text,
+                        "duration_ms": result.duration_ms,
+                        "is_last": is_last,
+                    },
+                    result.audio,
+                )
+                logger.info("續段推出 turn=%s index=%s 字數=%s", turn_id, index, len(text))
+                sent_terminator = is_last
+        except Exception:  # noqa: BLE001 - 續段炸掉不可把已經送出的前半段打成錯誤
+            logger.exception("續段推送意外失敗 turn=%s", turn_id)
         if not sent_terminator:
-            # ⚠️ 無論如何都要有終止訊號：前端靠 `is_last` 知道這一輪講完了，
-            # 缺了會把該輪當成還沒結束（見 spec §5.2）。中途失敗（合成炸掉或無音檔）
-            # 與「切不出第二段」（迴圈根本沒跑）都會走到這裡，補送一個空音檔、
-            # 空文字的終止訊框。
+            # ⚠️ 無論如何都要有終止訊號：協定承諾每一輪都以 `is_last=true` 收尾，
+            # 缺了會讓「讀 `is_last` 的客戶端」把該輪當成還沒結束。中途失敗（合成
+            # 炸掉或無音檔）與「切不出第二段」（迴圈根本沒跑）都會走到這裡，補送一個
+            # 空音檔、空文字的終止訊框。
+            # ⚠️ 現況核實（2026-08-01 審查 Important 2）：**目前的網頁客戶端不讀
+            # `is_last`**，它回到待機是靠播放佇列排空。所以這個訊框此刻沒有消費者，
+            # 送它是為了守住協定、留給未來的客戶端——但也正因為沒人讀，它的
+            # `text: ""` 曾經在前端把字幕整個抹掉（同日審查 Critical 2）：空音檔
+            # 讓它不進播放佇列，卻擋不住它走過字幕那條路。前端已補上空字串守門。
             sender.send_chunk_audio(
                 {
                     "type": "chunk",
@@ -519,6 +534,21 @@ def create_app_ws_router(
                             traces=traces,
                             elder_id=elder_id,  # 入口已解析並複核同意（✅ 庚-12）
                         )
+                    # ⚠️ **在途登記在這裡解除，不等續段跑完**（2026-08-01 全分支審查
+                    # Important 1）：走到這裡代表答案已經送到長輩耳朵、且本輪已寫進
+                    # `turns` 表（`pipeline._settle_memory_write` 保證），這一輪對
+                    # 「還在處理中」的定義而言已經結束。續段迴圈還要跑 7～10 秒，若把
+                    # 解除留給下面的 finally，長輩這段期間插嘴問 B 時，B 的情境會同時
+                    # 看到 A 的問句（`shortterm.recent()` 已含 A 的問答配對）與
+                    # `current_pending_utterances()` 再附一次 A 的問句——模型看到
+                    # `user:A / assistant:A答 / user:A / user:B`，一個**已經回答過的
+                    # 問題**被當成還沒回答擺在最新位置。`turn_context.pending_utterances`
+                    # 的定義是「還有哪些話**正在處理中**」，答案已入耳的不該還在裡面。
+                    # ⚠️ 這裡解除的只是**在途清單**的名額；容量閘門的名額仍照 D-2 保留
+                    # 到續段跑完（續段一樣打 GPU）——兩者是不同的東西，不可一起搬。
+                    # ⚠️ 下面的 finally 仍留著同一行：`finish` 是冪等的（`pop` 預設值
+                    # ＋`in` 判斷），而失敗與排隊逾時那兩條路徑走不到這裡。
+                    in_flight.finish(turn_id)
                     if collector.audio_sent:
                         # 續段直送（2026-08-01）：第一段已經在播了，剩下的逐段合成、逐段推出去。
                         # ⚠️ 迴圈在 `turn_gate.admit()` 的 with 區塊**之內**（見上方 try 的縮排）：
@@ -547,6 +577,9 @@ def create_app_ws_router(
             # ⚠️ 一定要在 finally：這一輪失敗或排隊逾時時若沒有解除登記，`in_flight`
             # 的名額會一直被佔著，長輩問滿三次之後就再也得不到回應。閘門本身的名額
             # 由 `turn_gate.admit()` 自己的 finally 釋放，不必在這裡重複處理。
+            # ⚠️ 成功那條路徑已經在續段之前先解除過一次（見上方說明），這裡是重複但
+            # 無害的保險——`_InFlight.finish` 冪等。刪掉它會讓失敗與逾時兩條路徑漏掉
+            # 解除，那正是本行最初存在的理由。
             in_flight.finish(turn_id)
         # ⚠️ 走到這裡代表 `collector.audio_sent` 必為 False：音檔 frame（與續段）已在
         # `with turn_gate.admit()` 之內就近推送並 return，不會落到這裡；此處只剩

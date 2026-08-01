@@ -756,8 +756,12 @@ def test_too_many_concurrent_turns_gets_a_busy_reply_not_silence():
         assert "還在忙" in busy["text"]
         gate.set()
         # 前三輪照樣各自回答，沒有被第四次影響。
-        replies = [_receive_frame(ws) for _ in range(3)]
-    assert [r["type"] for r in replies] == ["reply"] * 3
+        # ⚠️ 收 6 個訊框：每一輪除了 reply 還會補一個續段終止訊框（`_SlowLLM` 的
+        # 「答案來了」切不出第二段），而三輪的訊框會交錯抵達，不能假設它們成對出現
+        # ——故收滿再依 type 過濾（2026-08-01：終止訊框改成連 `tts` 未注入時也照送，
+        # 這一輪的訊框序列因此與正式環境一致了）。
+        frames = _frames(ws, 6)
+    assert [f["type"] for f in frames if f["type"] == "reply"] == ["reply"] * 3
 
 
 def test_a_second_question_sees_the_first_one_still_in_flight():
@@ -808,6 +812,82 @@ def test_a_second_question_sees_the_first_one_still_in_flight():
     assert session.histories[0] == [], "第一輪不該看到自己"
     assert session.histories[1] == ["今天有什麼新消息"], (
         f"第二輪沒看到在途的第一句：{session.histories}"
+    )
+
+
+def test_a_turn_leaves_the_in_flight_list_once_its_answer_is_out():
+    """⭐ 答案已經送到長輩耳朵的那一輪，不可以還掛在「正在處理中」的清單上
+    （2026-08-01 全分支審查 Important 1）。
+
+    失效情境：A 的回覆已推出（此時 `_settle_memory_write` 保證 A 已寫進 `turns`），
+    但續段還要推 7～10 秒。若 `in_flight.finish` 等到續段跑完才做，長輩這段期間
+    插嘴問 B 時，B 的情境會同時看到——
+      - `shortterm.recent()`：A 的問句＋金孫的回答（配對完整）
+      - `current_pending_utterances()`：**又**把 A 的問句附在歷史尾巴
+    模型於是看到 `user:A / assistant:A答 / user:A / user:B`，一個已經回答過的問題
+    被當成還沒回答、還擺在最新位置。`turn_context.pending_utterances` 的定義是
+    「還有哪些話**正在處理中**」，答案已入耳的那一句不該還在裡面。
+
+    ⚠️ 時序靠事件釘死、不靠 sleep：續段的第一次合成卡住之後才送第二輪，所以
+    「A 已經在推續段」在 B 組裝情境的當下必然成立——這正是要驗的那一刻。
+    """
+    import threading as _t
+
+    class _BlockingChunkTts:
+        """router 層的續段 TTS：第一次合成就卡住，把 A 釘在「正在推續段」的狀態。"""
+
+        def __init__(self) -> None:
+            self.entered = _t.Event()
+            self.release = _t.Event()
+
+        def synthesize(self, text: str) -> TtsResult:
+            self.entered.set()
+            self.release.wait(timeout=5)
+            return TtsResult(text=text, audio=b"fake-m4a", duration_ms=1200)
+
+    chunk_tts = _BlockingChunkTts()
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    session = _RecordingSession()
+    ids = (f"turn-{i}" for i in count(1))
+    pipeline = VoicePipeline(
+        asr=MockAsrClient("今天有什麼新消息"),
+        agent=CareAgent(_MultiSentenceLLM(), session),
+        tts=_VoiceTts(),  # 第一段照常合成（不卡），卡的是 router 層的續段
+        detector=RiskDetector(_NullClassifier()),
+        notifier=_NullNotifier(),
+        risk_events=FakeRiskEventStore(),
+    )
+    app = FastAPI()
+    app.include_router(
+        create_app_ws_router(
+            accounts=svc,
+            pipeline=pipeline,
+            gate=ConsentGate(svc),
+            voice=VoiceReplyDelivery(_FakePublisher(), include_text=True),
+            new_id=lambda: next(ids),
+            clock=lambda: NOW,
+            tts=chunk_tts,
+        ),
+        prefix="/api/v1",
+    )
+    client = TestClient(app)
+    try:
+        with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+            ws.send_bytes(b"\x00first")
+            assert chunk_tts.entered.wait(timeout=5), "第一輪沒有走到續段，這條測試沒驗到東西"
+            ws.send_bytes(b"\x00second")
+            for _ in range(500):
+                if len(session.histories) >= 2:
+                    break
+                _t.Event().wait(0.01)
+            chunk_tts.release.set()
+            _receive_frame(ws)  # 第一輪的 reply（其餘訊框不影響斷言）
+    finally:
+        chunk_tts.release.set()  # 斷言失敗時也要放掉，別讓工作執行緒卡滿逾時
+    assert len(session.histories) >= 2, f"第二輪沒有組裝情境：{session.histories}"
+    assert session.histories[1] == [], (
+        f"第一輪的答案已經送出去了，卻還掛在在途清單上：{session.histories}"
     )
 
 
