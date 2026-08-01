@@ -338,9 +338,7 @@ def test_navigation_links_are_dropped_even_when_they_look_like_articles():
     """
     from dataclasses import replace
 
-    source = replace(
-        SourceRegistry().get("hpa_elder_health"), content_url_pattern=r"Detail\.aspx"
-    )
+    source = replace(SourceRegistry().get("hpa_elder_health"), content_url_pattern=r"Detail\.aspx")
     page = _page(
         source.url,
         "<html><body>"
@@ -361,9 +359,7 @@ def test_crawler_visits_content_pages_before_navigation_pages():
     """待爬清單先抓文章頁：預算有限時，先花在內容而不是列表與導覽。"""
     from dataclasses import replace
 
-    source = replace(
-        SourceRegistry().get("hpa_elder_health"), content_url_pattern=r"Detail\.aspx"
-    )
+    source = replace(SourceRegistry().get("hpa_elder_health"), content_url_pattern=r"Detail\.aspx")
     pages = {
         source.url: _page(
             source.url,
@@ -399,9 +395,7 @@ def test_content_sources_only_follow_articles_and_treat_them_as_leaves():
     """
     from dataclasses import replace
 
-    source = replace(
-        SourceRegistry().get("hpa_elder_health"), content_url_pattern=r"Detail\.aspx"
-    )
+    source = replace(SourceRegistry().get("hpa_elder_health"), content_url_pattern=r"Detail\.aspx")
     article = "https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=39&pid=1"
     pages = {
         source.url: _page(
