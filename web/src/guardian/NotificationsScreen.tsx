@@ -3,6 +3,7 @@ import type { AppNotification } from "kinsun-shared/types";
 import { useEffect, useMemo, useState } from "react";
 
 import { saveSeenAt } from "@/notify/seen";
+import { toBannerSeverity } from "@/notify/severity";
 import { GuardianSession } from "@/session/contexts";
 import { makeSignOutOnAuthError } from "@/session/useSignOutOnAuthError";
 import { strings } from "@/strings";
@@ -71,15 +72,32 @@ export function NotificationsScreen() {
         <EmptyHint text={strings.notifications.empty} />
       ) : (
         <ul className="flex flex-col gap-2">
-          {items.map((item) => (
-            <li
-              key={`${item.created_at}-${item.content}`}
-              className="flex flex-col gap-1 rounded-2xl border border-line bg-surface p-4"
-            >
-              <span className="text-xs text-ink-soft">{formatTime(item.created_at)}</span>
-              <span className="text-sm leading-6 text-ink">{item.content}</span>
-            </li>
-          ))}
+          {items.map((item) => {
+            // ⚠️ 一律過 `toBannerSeverity`（不直接讀 `item.severity`）：欄位可能
+            // 缺席或是這一版前端不認得的值，收斂規則只有 `notify/severity.ts`
+            // 一個地方——兩支 NotificationsScreen 與橫幅共用同一份判斷。
+            const isAlert = toBannerSeverity(item.severity) === "alert";
+            return (
+              <li
+                key={`${item.created_at}-${item.content}`}
+                data-severity={isAlert ? "alert" : "notice"}
+                className={`flex flex-col gap-1 rounded-2xl p-4 ${
+                  isAlert ? "border-2 border-danger bg-surface" : "border border-line bg-surface"
+                }`}
+              >
+                {/* ⚠️ **文字標籤不可省，不能只靠紅框**（裁決 4，2026-08-01）：
+                    WCAG 1.4.1「Use of Color」——顏色不可是傳達資訊的唯一手段。
+                    讀螢幕的家屬收不到紅框，色覺辨認障礙者也可能收不到；這行字
+                    是他們唯一分得出「這則是危急」的線索。文案沿用橫幅那一句，
+                    同一個概念在系統裡只有一個名字。 */}
+                {isAlert ? (
+                  <span className="text-xs font-bold text-danger">{strings.notify.alertTitle}</span>
+                ) : null}
+                <span className="text-xs text-ink-soft">{formatTime(item.created_at)}</span>
+                <span className="text-sm leading-6 text-ink">{item.content}</span>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

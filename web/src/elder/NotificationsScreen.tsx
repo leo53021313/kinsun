@@ -17,6 +17,7 @@ import type { AppNotification } from "kinsun-shared/types";
 import { useEffect, useMemo, useState } from "react";
 
 import { saveSeenAt } from "@/notify/seen";
+import { toBannerSeverity } from "@/notify/severity";
 import { ElderSession } from "@/session/contexts";
 import { makeSignOutOnAuthError } from "@/session/useSignOutOnAuthError";
 import { strings } from "@/strings";
@@ -99,18 +100,34 @@ export function NotificationsScreen(props: {
         </p>
       ) : (
         <ul className="flex flex-col gap-3">
-          {items.map((item) => (
-            <li
-              key={`${item.created_at}-${item.content}`}
-              className="flex flex-col gap-1 rounded-2xl border border-line bg-surface p-5"
-            >
-              {/* ⚠️ 22px 起跳（`--text-elder-min`）：這是長輩端唯一一處曾經低於下限的
-                  已渲染內容，而它偏偏是「幾點吃藥」。次要資訊用顏色（ink-soft）分層，
-                  不用縮字級。 */}
-              <span className="text-elder-min text-ink-soft">{formatTime(item.created_at)}</span>
-              <span className="text-elder-min leading-relaxed text-ink">{item.content}</span>
-            </li>
-          ))}
+          {items.map((item) => {
+            // 收斂規則與家屬端、橫幅共用同一份（`notify/severity.ts`）。
+            const isAlert = toBannerSeverity(item.severity) === "alert";
+            return (
+              <li
+                key={`${item.created_at}-${item.content}`}
+                data-severity={isAlert ? "alert" : "notice"}
+                className={`flex flex-col gap-1 rounded-2xl p-5 ${
+                  isAlert ? "border-2 border-danger bg-surface" : "border border-line bg-surface"
+                }`}
+              >
+                {/* ⚠️ 文字標籤不可省（WCAG 1.4.1，同家屬端）：顏色不可是傳達資訊
+                    的唯一手段。⚠️ 這行也**必須守 22px 下限**——長輩端沒有任何一行
+                    已渲染文字可以低於 `--text-elder-min`，而這行恰好是最該讀到的
+                    那一行；用顏色（danger）與粗體分層，不用縮字級。 */}
+                {isAlert ? (
+                  <span className="text-elder-min font-bold text-danger">
+                    {strings.notify.alertTitle}
+                  </span>
+                ) : null}
+                {/* ⚠️ 22px 起跳（`--text-elder-min`）：這是長輩端唯一一處曾經低於下限的
+                    已渲染內容，而它偏偏是「幾點吃藥」。次要資訊用顏色（ink-soft）分層，
+                    不用縮字級。 */}
+                <span className="text-elder-min text-ink-soft">{formatTime(item.created_at)}</span>
+                <span className="text-elder-min leading-relaxed text-ink">{item.content}</span>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

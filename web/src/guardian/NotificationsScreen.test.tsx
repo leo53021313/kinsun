@@ -153,3 +153,45 @@ describe("NotificationsScreen", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+// ── 清單也要分得出危急（裁決 4，2026-08-01）────────────────────
+//
+// ⚠️ **橫幅紅了但清單看起來一樣的話，家屬捲清單時仍然分不出哪一則是危急**
+// ——那是同一個「分不出來」的問題往下一層。橫幅只顯示 3.5 秒就消失，清單才是
+// 事後回頭查的地方。
+describe("NotificationsScreen 的呈現分級", () => {
+  it("危急那則有紅框，一般那則沒有", async () => {
+    renderScreen([
+      { content: "王阿嬤剛剛說：「我跌倒了」", created_at: 1754000100, severity: "alert" },
+      { content: "阿嬤該吃藥了", created_at: 1754000050, severity: "notice" },
+    ]);
+    const alertItem = await screen.findByText("王阿嬤剛剛說：「我跌倒了」");
+    const noticeItem = screen.getByText("阿嬤該吃藥了");
+
+    expect(alertItem.closest("li")!.className).toContain("border-danger");
+    expect(noticeItem.closest("li")!.className).not.toContain("border-danger");
+  });
+
+  it("危急那則帶「緊急通知」文字標籤——不可只靠顏色（WCAG 1.4.1）", async () => {
+    // ⚠️ 讀螢幕的家屬收不到紅框，色覺辨認障礙者也可能收不到；這行字是他們
+    // 唯一分得出「這則是危急」的線索。只驗紅框等於只驗了看得見顏色的那群人。
+    renderScreen([
+      { content: "王阿嬤剛剛說：「我跌倒了」", created_at: 1754000100, severity: "alert" },
+    ]);
+    expect(await screen.findByText("緊急通知")).toBeInTheDocument();
+  });
+
+  it("一般通知不帶「緊急通知」標籤", async () => {
+    // 對照組：少了它，「每則都掛標籤」的實作也會讓上一條通過。
+    renderScreen([{ content: "阿嬤該吃藥了", created_at: 1754000050, severity: "notice" }]);
+    await screen.findByText("阿嬤該吃藥了");
+    expect(screen.queryByText("緊急通知")).not.toBeInTheDocument();
+  });
+
+  it("後端沒送 severity（舊資料）時當成一般通知，不炸也不變紅", async () => {
+    renderScreen([{ content: "舊的通知", created_at: 1754000050 }]);
+    const item = await screen.findByText("舊的通知");
+    expect(item.closest("li")!.className).not.toContain("border-danger");
+    expect(screen.queryByText("緊急通知")).not.toBeInTheDocument();
+  });
+});

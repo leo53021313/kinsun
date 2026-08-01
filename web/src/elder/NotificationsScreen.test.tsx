@@ -203,3 +203,44 @@ describe("NotificationsScreen（長輩版）", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });
+
+// ── 清單也要分得出危急（裁決 4，2026-08-01）────────────────────
+//
+// ⚠️ 與家屬端對稱：橫幅只顯示 3.5 秒，清單才是長輩事後回頭看的地方。
+describe("長輩提醒列表的呈現分級", () => {
+  it("危急那則有紅框，一般那則沒有", async () => {
+    renderScreen([
+      { content: "家人請您立刻回電", created_at: 1754000100, severity: "alert" },
+      { content: "阿嬤該吃藥了", created_at: 1754000050, severity: "notice" },
+    ]);
+    const alertItem = await screen.findByText("家人請您立刻回電");
+    const noticeItem = screen.getByText("阿嬤該吃藥了");
+
+    expect(alertItem.closest("li")!.className).toContain("border-danger");
+    expect(noticeItem.closest("li")!.className).not.toContain("border-danger");
+  });
+
+  it("危急那則的「緊急通知」標籤必須守住 22px 下限", async () => {
+    // ⚠️ 長輩端沒有任何一行已渲染文字可以低於 `--text-elder-min`，而這行恰好是
+    // 最該讀到的那一行。同一個坑（`TalkScreen.tsx` 的未讀紅點、橫幅的標題／內容）
+    // 這個專案已經開過兩次，這裡先釘住。
+    renderScreen([
+      { content: "家人請您立刻回電", created_at: 1754000100, severity: "alert" },
+    ]);
+    const badge = await screen.findByText("緊急通知");
+    expect(badge.className).toContain("text-elder-min");
+  });
+
+  it("一般提醒不帶「緊急通知」標籤", async () => {
+    renderScreen([{ content: "阿嬤該吃藥了", created_at: 1754000050, severity: "notice" }]);
+    await screen.findByText("阿嬤該吃藥了");
+    expect(screen.queryByText("緊急通知")).not.toBeInTheDocument();
+  });
+
+  it("後端沒送 severity（舊資料）時當成一般提醒，不炸也不變紅", async () => {
+    renderScreen([{ content: "舊的提醒", created_at: 1754000050 }]);
+    const item = await screen.findByText("舊的提醒");
+    expect(item.closest("li")!.className).not.toContain("border-danger");
+    expect(screen.queryByText("緊急通知")).not.toBeInTheDocument();
+  });
+});
