@@ -30,7 +30,7 @@ from kinsun.pipeline import VoicePipeline
 from kinsun.safety.detector import RiskDetector
 from kinsun.speech.ack_audio import AckClip
 from kinsun.speech.asr import ASRError, MockAsrClient
-from kinsun.speech.tts import TtsResult
+from kinsun.speech.tts import TTSError, TtsResult
 from kinsun.tools.registry import ToolRegistry
 from tests.fakes import FakeAccountStore, FakeLocationStore, FakeRiskEventStore
 
@@ -102,6 +102,19 @@ class _TextOnlyTts:
 
     def synthesize(self, text: str) -> TtsResult:
         return TtsResult(text=text, audio=None)
+
+
+class _FailAfterFirstTts:
+    """第一次合成成功（那是回覆的第一段），第二次起擲 TTSError。"""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def synthesize(self, text: str) -> TtsResult:
+        self.calls += 1
+        if self.calls > 1:
+            raise TTSError("模擬合成失敗")
+        return TtsResult(text=text, audio=b"fake-m4a", duration_ms=1200)
 
 
 class _FakePublisher:
@@ -363,16 +376,20 @@ def test_a_text_only_turn_still_arrives_as_a_json_frame():
 
 
 def test_the_elder_never_gets_two_replies_for_one_turn():
-    """音檔 frame 推出去之後不可再補一則 JSON reply——播放佇列會把同一句話唸兩次。"""
+    """音檔 frame 推出去之後不可再補一則 JSON reply——播放佇列會把同一句話唸兩次。
+
+    ⚠️ 單段回覆現在也會多送一個續段終止訊框（2026-08-01，見 `_push_continuation_chunks`）
+    ——每輪要收 2 個 frame 才不會把上一輪沒收乾淨的終止訊框誤當成下一輪的 reply。
+    """
     svc = _service()
     _, token = _bound_elder_token(svc)
     client = _client(svc)
     with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
         ws.send_bytes(b"\x00fake-audio")
-        first = _receive_frame(ws)
+        first, _terminator = _frames(ws, 2)
         # 再送一輪；若上一輪補了第二則 reply，這裡收到的會是它而不是新一輪的。
         ws.send_bytes(b"\x00second-audio")
-        second = _receive_frame(ws)
+        second, _terminator2 = _frames(ws, 2)
     assert first["type"] == "reply"
     assert second["type"] == "reply"
     assert second["audio"] == b"fake-m4a"
@@ -400,16 +417,36 @@ def test_continuation_chunks_are_pushed_in_order():
 
 
 def test_single_segment_reply_pushes_no_audio_chunk():
-    """短回覆切不出第二段——不推任何**帶音檔**的續段訊框。"""
+    """短回覆切不出第二段——不推任何**帶音檔**的續段訊框。
+
+    ⚠️ 仍會收到一個空音檔的終止訊框：前端靠 is_last 結束該輪，缺了會把該輪當成
+    還沒結束（見 spec §5.2）。故此處收兩個訊框而不是一個。
+    """
     svc = _service()
     _, token = _bound_elder_token(svc)
     client = _client(svc)  # _EchoLLM 回短句
     with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
         ws.send_bytes(b"elder-audio")
-        frames = _frames(ws, 1)  # 只有 reply
+        frames = _frames(ws, 2)  # reply ＋ 終止訊框
 
     audio_chunks = [f for f in frames if f["type"] == "chunk" and f["audio"]]
     assert audio_chunks == []
+
+
+def test_chunk_synthesis_failure_still_sends_terminator():
+    """續段合成失敗 → 補送空音檔的 is_last 訊框，前端才不會把該輪當成還沒結束。"""
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    client = _client(svc, llm=_MultiSentenceLLM(), tts=_FailAfterFirstTts())
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_bytes(b"elder-audio")
+        frames = _frames(ws, 2)  # reply ＋ 終止訊框
+
+    terminator = frames[-1]
+    assert terminator["type"] == "chunk"
+    assert terminator["is_last"] is True, "無論如何都要有終止訊號"
+    assert terminator["text"] == "", "終止訊框不帶文字"
+    assert terminator["audio"] == b"", "終止訊框不帶音檔"
 
 
 def test_ack_arrives_before_the_reply_when_a_tool_is_called():

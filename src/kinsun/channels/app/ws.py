@@ -387,6 +387,7 @@ def create_app_ws_router(
         if tts is None:
             return
         chunks = split_for_speech(reply_text)
+        sent_terminator = False
         for index, text in enumerate(chunks[1:], start=1):
             is_last = index == len(chunks) - 1
             try:
@@ -394,10 +395,10 @@ def create_app_ws_router(
                     result = tts.synthesize(text)
             except TTSError:
                 logger.warning("續段合成失敗 turn=%s index=%s", turn_id, index)
-                return
+                break
             if result.audio is None:
                 logger.warning("續段無音檔 turn=%s index=%s", turn_id, index)
-                return
+                break
             sender.send_chunk_audio(
                 {
                     "type": "chunk",
@@ -410,6 +411,23 @@ def create_app_ws_router(
                 result.audio,
             )
             logger.info("續段推出 turn=%s index=%s 字數=%s", turn_id, index, len(text))
+            sent_terminator = is_last
+        if not sent_terminator:
+            # ⚠️ 無論如何都要有終止訊號：前端靠 `is_last` 知道這一輪講完了，
+            # 缺了會把該輪當成還沒結束（見 spec §5.2）。中途失敗（合成炸掉或無音檔）
+            # 與「切不出第二段」（迴圈根本沒跑）都會走到這裡，補送一個空音檔、
+            # 空文字的終止訊框。
+            sender.send_chunk_audio(
+                {
+                    "type": "chunk",
+                    "turn_id": turn_id,
+                    "index": 0,
+                    "text": "",
+                    "duration_ms": 0,
+                    "is_last": True,
+                },
+                b"",
+            )
 
     def _run_turn(
         *,
