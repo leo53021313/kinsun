@@ -2,14 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  bindElderDevice,
-  getTurnChunk,
-  listElderNotifications,
-  loginElder,
-  logoutSession,
-  postTurn,
-} from "./api";
+import { bindElderDevice, listElderNotifications, loginElder, logoutSession, postTurn } from "./api";
 
 function mockFetch(data: unknown, status = 200) {
   const spy = vi
@@ -89,12 +82,6 @@ describe("長輩端 API", () => {
     expect(init.body).toBe(audio);
     expect((init.headers as Headers).get("Authorization")).toBe("Bearer tok");
     expect((init.headers as Headers).get("Content-Type")).toBe("audio/m4a");
-  });
-
-  it("取後續語音段落時帶 digest", async () => {
-    const spy = mockFetch({ audio_url: "", duration_ms: null, text: "" });
-    await getTurnChunk(2, "abc123", "tok");
-    expect(spy.mock.calls[0][0]).toBe("/api/v1/turns/chunks/2?digest=abc123");
   });
 
   it("列長輩自己的提醒帶 token", async () => {

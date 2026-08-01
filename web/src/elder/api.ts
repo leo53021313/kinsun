@@ -7,7 +7,7 @@
  * 「您人在哪裡」，而那看起來完全像模型的行為問題。
  */
 
-import type { AppNotification, ElderSession, TurnChunk, TurnReply } from "kinsun-shared/types";
+import type { AppNotification, ElderSession, TurnReply } from "kinsun-shared/types";
 
 import { request } from "@/api";
 
@@ -57,16 +57,6 @@ export function postTurn(
     headers: { "Content-Type": "audio/m4a" },
     token,
   });
-}
-
-/**
- * 取回覆的第 index 段語音（第 0 段已隨 `postTurn` 回過）。
- *
- * `digest` 讓伺服器確認取的是同一輪的回覆——長輩若在播放中又講了一句，這裡會回
- * 409，呼叫端應停止續拉，否則會把新回覆的句子接在舊回覆後面播出去。
- */
-export function getTurnChunk(index: number, digest: string, token: string): Promise<TurnChunk> {
-  return request(`/api/v1/turns/chunks/${index}?digest=${encodeURIComponent(digest)}`, { token });
 }
 
 /** 長輩讀自己的 App 內通知（用藥／回診提醒、主動關懷；X-01）。 */

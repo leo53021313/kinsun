@@ -247,17 +247,6 @@ function setup(
     player: makePlayer(),
     socket: makeSocket(),
     postTurn: vi.fn().mockResolvedValue(REPLY),
-    // ⚠️ 續段的網址帶上 digest 與段號：續拉「接到別一輪去」是看得見的（而回一個
-    // 固定網址的話，接對輪次與接錯輪次長得一模一樣，測不出來）。
-    getTurnChunk: vi
-      .fn()
-      .mockImplementation((index: number, digest: string) =>
-        Promise.resolve({
-          audio_url: `https://cdn.example/${digest}-c${index}.m4a`,
-          duration_ms: 900,
-          text: "",
-        }),
-      ),
     currentPlace: vi.fn().mockResolvedValue(null),
     revokeQueuedReplyAudio: vi.fn(),
     revokeReplyAudio: vi.fn(),
@@ -276,7 +265,6 @@ function setup(
           createPlayer: () => harness.player.create(),
           createSocket: harness.socket.factory,
           postTurn: harness.postTurn,
-          getTurnChunk: harness.getTurnChunk,
           currentPlace: harness.currentPlace,
           revokeQueuedReplyAudio: harness.revokeQueuedReplyAudio,
           revokeReplyAudio: harness.revokeReplyAudio,
@@ -655,69 +643,6 @@ describe("時序", () => {
     expect(order[1]).toBeLessThan(order[2]);
   });
 
-  it("補播舊答案時，續段要接**舊那一輪**的，不可以接到新那一輪的中段去", async () => {
-    // ⚠️ **2026-08-01 審查抓到的 Critical，本輪補播引入的可聽見退步**：`advanceQueue`
-    // 讀 `chunkQueueRef` 拿到的是「**現在**的續拉佇列」，而補播讓「剛播完的那一則」與
-    // 「現在的續拉佇列」分家變成常態——舊答案補播到一半時新一輪的 `reply` 訊框抵達、
-    // 把 `chunkQueueRef` 換掉，舊答案第 0 段播完就去接**新那一輪的第 1 段**。
-    // 長輩實際聽到：「您的血壓藥早上吃…」→ 一句公車答案的**中段** → 公車答案的開頭。
-    // ⚠️ 而多段是常態不是邊角：後端 `chunking.py` 的 `MIN_CHUNK_CHARS = 8`、回覆字數
-    // p50 39 字，`chunk_count > 1` 是預設狀況。
-    const h = setup();
-    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
-    h.socket.open();
-    act(() => h.view.result.current.pressIn());
-    act(() => h.recorder.finishStart());
-    await waitFor(() => expect(h.view.result.current.avatar).toBe("listening"));
-    // 上一輪的答案（兩段）在他講第二句時才回來 → 收進暫存等補播
-    h.socket.emit({
-      ...REPLY,
-      type: "reply",
-      turn_id: "t1",
-      reply_digest: "dA",
-      chunk_count: 2,
-      audio_url: "https://cdn.example/A-c0.m4a",
-    });
-    await act(async () => {
-      vi.advanceTimersByTime(600);
-    });
-    await act(async () => {
-      h.view.result.current.pressOut();
-    });
-    await act(async () => {});
-    expect(h.player.played).toContain("https://cdn.example/A-c0.m4a");
-
-    // 這一輪的答案（也是兩段）在舊答案補播到一半時抵達
-    h.socket.emit({
-      ...REPLY,
-      type: "reply",
-      turn_id: "t2",
-      reply_digest: "dB",
-      chunk_count: 2,
-      audio_url: "https://cdn.example/B-c0.m4a",
-    });
-    await act(async () => {});
-    // 舊答案的第 0 段播完
-    await act(async () => {
-      h.player.finish();
-    });
-    await waitFor(() => expect(h.player.played).toContain("https://cdn.example/B-c0.m4a"));
-    // ⚠️ **這一行是本條的重點**：舊答案後面接上的必須是新那一輪的**開頭**，
-    // 不是新那一輪的第 1 段（中段）。
-    // （濾掉 iOS 解鎖用的無聲檔——它是 `pressIn` 的補漏呼叫放的，不是一則回覆。）
-    expect(h.player.played.filter((uri) => uri !== "/demo/silent.wav")).toEqual([
-      "https://cdn.example/A-c0.m4a",
-      "https://cdn.example/B-c0.m4a",
-    ]);
-
-    // 新那一輪自己的第 0 段播完之後，續段才接得上——而且接的是它自己的。
-    await act(async () => {
-      h.player.finish();
-    });
-    await waitFor(() => expect(h.player.played).toContain("https://cdn.example/dB-c1.m4a"));
-    expect(h.player.played).not.toContain("https://cdn.example/dA-c1.m4a");
-  });
-
   it("補播的舊答案播完、而新那一輪有字沒聲音時，畫面要回到待機", async () => {
     // 上一條的守門「輪次對不上就什麼都不做」有個縫：新那一輪**有字沒有聲音**
     //（TTS 掛掉或落地失敗）又剛好在收音期間抵達時，`onFrame` 那條「回到待機」因為
@@ -1044,51 +969,22 @@ describe("時序", () => {
   });
 });
 
-describe("分段續播", () => {
-  it("回覆不只一段時會去取下一段", async () => {
-    const h = setup();
-    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
-    h.socket.open();
-    h.socket.emit({ ...REPLY, type: "reply", turn_id: "t1", chunk_count: 3 });
-    await waitFor(() => expect(h.getTurnChunk).toHaveBeenCalledWith(1, "d1", "tok"));
-  });
-
-  it("只有一段時不去取，播完就回到待機", async () => {
-    const h = setup();
-    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
-    h.socket.open();
-    h.socket.emit({ ...REPLY, type: "reply", turn_id: "t1", chunk_count: 1 });
-    await waitFor(() => expect(h.player.played.length).toBe(1));
-    await act(async () => {
-      h.player.finish();
-    });
-    expect(h.getTurnChunk).not.toHaveBeenCalled();
-    // 播完沒有下一段了，畫面要回到待機——停在「說話中」的話長輩會一直等他講完。
-    expect(h.view.result.current.avatar).toBe("idle");
-  });
-
-  it("長輩在播放中又講一句時，上一輪的續拉要作廢", async () => {
-    // ⚠️ 不作廢的話，新回覆的句子會被接在舊回覆後面播出去。
-    const h = setup();
-    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
-    h.socket.open();
-    h.socket.emit({ ...REPLY, type: "reply", turn_id: "t1", chunk_count: 3 });
-    await waitFor(() => expect(h.getTurnChunk).toHaveBeenCalledTimes(1));
-    // 新的一輪回覆進來，只有一段
-    h.socket.emit({ ...REPLY, type: "reply", turn_id: "t2", reply_digest: "d2", chunk_count: 1 });
-    await act(async () => {
-      h.player.finish();
-    });
-    // 舊那一輪的第 2 段不可以被取
-    expect(h.getTurnChunk).toHaveBeenCalledTimes(1);
-  });
-});
-
 describe("續段直送（2026-08-01）", () => {
   // ⚠️ 後端已改為主動從同一條連線推續段（新的 `type: "chunk"` 訊框），前端不再
-  // 靠 REST 去拉。第一段用 `chunk_count: 1` 起手，避開舊的 `prefetchNext`
-  // 路徑——那條路徑本任務刻意不動（見 `useTalk.ts` 該處註解），與這裡要驗的
-  // 「WS 直送」邏輯無關，混在一起跑會讓斷言分不清是哪條路徑推的音檔。
+  // 靠 REST 去拉——`getTurnChunk`／`prefetchNext`／`ChunkQueue` 那整套已經隨這次
+  // 任務移除（見 `useTalk.ts::advanceQueue` 該處說明），不再是「刻意不動」的舊
+  // 路徑，而是不存在的路徑。
+  //
+  // ⚠️ **已知的測試覆蓋缺口**：移除 REST 續拉時一併拿掉的「輪次比對」
+  //（`459051f` 引入的 `queue.turnId !== playingTurnIdRef.current`）曾經有一條
+  // 專屬測試守著「補播舊答案時，續段接的是舊那一輪、不會接到新那一輪的中段」。
+  // 那個機制存在的理由（REST 續拉的共用可變狀態 `chunkQueueRef` 會被補播覆寫）
+  // 已隨機制一起消失，所以那條測試也跟著刪除——**但它原本守住的「長輩不會聽到
+  // 錯亂的答案」這件事，現在沒有等價的測試覆蓋**，只由「訊框通常依抵達順序送達」
+  // 這個機率性質支撐。播放順序改為完全依訊框抵達順序後，理論上仍存在「A 的續段
+  // 合成得比 B 的整輪還慢，導致 `[A0, B0, A1]`」這種錯亂序列（估算與理由見
+  // `useTalk.ts::advanceQueue` 上方註解），只是目前沒有被寫成測試、也未在瀏覽器
+  // 上實測過。
   it("收到 chunk 訊框就進播放佇列，依 index 順序播", async () => {
     const h = setup();
     await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
@@ -1135,11 +1031,33 @@ describe("續段直送（2026-08-01）", () => {
     ]);
   });
 
+  it("沒有更多續段時，這一則播完就回到待機", async () => {
+    // ⚠️ 這條釘住 `advanceQueue` 拿掉 REST 拉取邏輯後唯一剩下的責任——「播放
+    // 佇列空了就回到待機」，不靠續段的終止訊框附帶測到（下一條的重點是「終止
+    // 訊框不進佇列」，兩者刻意分開）。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    h.socket.emit({
+      ...REPLY,
+      type: "reply",
+      turn_id: "t1",
+      audio_url: "https://cdn.example/a.m4a",
+      chunk_count: 1,
+    });
+    await waitFor(() => expect(h.player.played).toContain("https://cdn.example/a.m4a"));
+    await act(async () => {
+      h.player.finish();
+    });
+    expect(h.view.result.current.avatar).toBe("idle");
+  });
+
   it("空音檔的終止訊框不進播放佇列", async () => {
     // ⚠️ 續段合成失敗、或本來就切不出第二段時，後端會補送一則 `index=0`、
     // `text=""`、音檔位元組長度為 0、`is_last=true` 的終止訊框，只用來標示
     // 「這輪講完了」，不可以進播放佇列——播出一段 0 位元組的音檔沒有意義。
-    // ⚠️ `chunk_count: 1` 起手，理由同上一條：避開舊的 REST 續拉路徑。
+    // ⚠️ `chunk_count: 1` 起手：不代表還在避開什麼 REST 路徑（那條路徑已經不
+    // 存在），純粹是沿用 `REPLY` 這個共用 fixture 的預設值。
     // ⚠️ 光是「emit 之後 played 只有一個元素」不夠——終止訊框若被誤推進佇列，
     // 它會排在第一段**後面**，drain 要等第一段播完才輪得到它，emit 完當下
     // 播放佇列還沒走到那裡，斷言測不出來（實測過這個假陰性）。這裡讓第一段

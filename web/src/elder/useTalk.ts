@@ -6,8 +6,8 @@
  * 要重讀整支才知道會影響什麼。這裡把「狀態與副作用」與「畫面」切開，畫面只讀值。
  *
  * ⚠️ 依賴全部以 `deps` 注入。那不是為了測試跑得快——對講機的 bug 幾乎都是**時序**
- * 問題（放開比開錄先到、播放中又開口、上一輪的續拉沒作廢），而時序只有在能精確
- * 控制每一步的環境裡才測得出來。
+ * 問題（放開比開錄先到、播放中又開口、補播與新一輪訊框交錯抵達），而時序只有在
+ * 能精確控制每一步的環境裡才測得出來。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -38,11 +38,7 @@ import {
   type TalkFrame,
 } from "@/talk/talkSocket";
 
-import {
-  getTurnChunk as getTurnChunkApi,
-  postTurn as postTurnApi,
-  type ElderPlace,
-} from "./api";
+import { postTurn as postTurnApi, type ElderPlace } from "./api";
 import { currentPlace as currentPlaceApi } from "./location";
 
 export type AvatarState = "idle" | "listening" | "thinking" | "speaking";
@@ -82,36 +78,11 @@ const THINKING_TIMEOUT_MS = 75_000;
  */
 const MAX_DEFERRED_REPLIES = 2;
 
-/** 分段播放的進度。`digest` 綁定這是哪一輪的回覆——換一輪就整個作廢。 */
-type ChunkQueue = {
-  /**
-   * 這串續段屬於**哪一輪**（`TalkFrame.turn_id`；POST 降級路徑沒有 turn_id，改用
-   * 同樣一輪內唯一的 `reply_digest`）。
-   *
-   * ⚠️ **為什麼光有 `digest` 不夠**（2026-08-01 審查抓到的 Critical，本輪補播引入）：
-   * `advanceQueue` 是由播放器的「這一則播完了」事件觸發的，它讀 `chunkQueueRef` 拿到
-   * 的是「**現在**的續拉佇列」，不保證是「剛播完的那一則所屬的那一輪」。補播讓兩者
-   * 分家變成常態——舊答案補播到一半時新一輪的 `reply` 訊框抵達、把 `chunkQueueRef`
-   * 換成新那一輪，舊答案第 0 段播完就會去接**新那一輪的第 1 段**。實測序列：
-   * `A-chunk0 → B-chunk1 → B-chunk0`（長輩聽到「您的血壓藥早上吃…」接上一句公車答案
-   * 的中段，再聽到公車答案的開頭）。而多段是常態不是邊角：後端 `speech/chunking.py`
-   * 的 `MIN_CHUNK_CHARS = 8`、回覆字數 p50 39 字，`chunk_count > 1` 是預設狀況。
-   */
-  turnId: string;
-  digest: string;
-  total: number;
-  /** 下一個「要去取」的段號（第 0 段已隨回覆拿到）。 */
-  nextIndex: number;
-  /** 已在背景取的下一段；一邊播這段一邊取下一段，段與段之間才不會空掉。 */
-  pending: Promise<{ audio_url: string } | null> | null;
-};
-
 export type TalkDeps = {
   createRecorder: () => Recorder;
   createPlayer: () => WebPlayer;
   createSocket: (url: string) => WebSocket;
   postTurn: typeof postTurnApi;
-  getTurnChunk: typeof getTurnChunkApi;
   currentPlace: typeof currentPlaceApi;
   probeMicrophone: typeof probeMicrophone;
   /** 回收「造出來了卻還沒播到」的 blob URL（見 `talk/playback.ts`）。 */
@@ -175,7 +146,6 @@ export function useTalk(options: {
     createPlayer: createWebPlayer,
     createSocket: (url: string) => new WebSocket(url),
     postTurn: postTurnApi,
-    getTurnChunk: getTurnChunkApi,
     currentPlace: currentPlaceApi,
     probeMicrophone,
     revokeQueuedReplyAudio: revokeQueuedReplyAudioImpl,
@@ -206,13 +176,14 @@ export function useTalk(options: {
   /**
    * 目前正在播的那一則屬於**哪一輪**。
    *
-   * ⚠️ 兩個地方非它不可（皆為 2026-08-01 審查所抓、補播引入的問題）：①`advanceQueue`
-   * 據此確認「要接的續段」與「剛播完的那一則」是同一輪（見 `ChunkQueue.turnId`）；
-   * ②`onFrame` 據此判斷「現在正在播的是別一輪的聲音」，那時新一輪的字不可以先把字幕
-   * 搶走——否則長輩聽到藥的答案、看到公車的字。
+   * ⚠️ `onFrame` 據此判斷「現在正在播的是別一輪的聲音」，那時新一輪的字不可以先把
+   * 字幕搶走——否則長輩聽到藥的答案、看到公車的字。
+   *
+   * （2026-08-01 續段直送：這個 ref 原本還有第二個消費者——`advanceQueue` 用它確認
+   * 「要接的續段」與「剛播完的那一則」是同一輪。REST 續拉整套移除之後那個用途已經
+   * 不存在，見 `advanceQueue` 該處說明。）
    */
   const playingTurnIdRef = useRef<string | null>(null);
-  const chunkQueueRef = useRef<ChunkQueue | null>(null);
   const placeRef = useRef<Promise<ElderPlace | null> | null>(null);
   /** 這一輪開錄流程的 promise：停止前先 await，消除「放開跑在開錄完成前」的競態。 */
   const startPromiseRef = useRef<Promise<boolean>>(Promise.resolve(false));
@@ -333,65 +304,40 @@ export function useTalk(options: {
     }
   }, []);
 
-  /** 背景取下一段；取不到（409／網路／合成失敗）就記成 null，播完這段即收工。 */
-  const prefetchNext = useCallback(
-    (queue: ChunkQueue) => {
-      if (queue.nextIndex >= queue.total) {
-        queue.pending = null;
-        return;
-      }
-      const index = queue.nextIndex;
-      queue.nextIndex += 1;
-      queue.pending = deps.getTurnChunk(index, queue.digest, token).catch(() => null);
-    },
-    [deps, token],
-  );
-
-  /** 這一段播完了：接上已在背景取好的下一段；沒有下一段就回到待機。 */
-  const advanceQueue = useCallback(async () => {
-    const queue = chunkQueueRef.current;
-    const player = playerRef.current;
-    // ⚠️ **剛播完的那一則與現在的續拉佇列必須是同一輪**（2026-08-01 審查 Critical，
-    // 見 `ChunkQueue.turnId`）：補播舊答案時，新一輪的 `reply` 訊框很可能已經把
-    // `chunkQueueRef` 換掉了，這時去接續段接到的是**新那一輪的第 1 段**，長輩聽到的
-    // 是「舊答案開頭 → 新答案中段 → 新答案開頭」。
-    // 對不上時不動續拉佇列：新那一輪自己的第 0 段還在播放佇列裡等著，它播完時就對得
-    // 上了。⚠️ 但佇列裡若其實什麼都沒有（新那一輪有字沒有聲音、又剛好是在收音期間
-    // 抵達的，所以連 `onFrame` 那條「回到待機」也沒走到），要把畫面放回待機——否則
-    // avatar 停在「說話中」，長輩看著一張正在講話的臉、卻一個字都沒聽到。
-    //（⚠️ 誠實界定後果：`TalkScreen` 的麥克風鍵只在 `thinking` 時停用，停在
-    //  `speaking` **不會**讓他按不動，也會被下一輪的訊框自行修正。）
-    if (queue !== null && queue.turnId !== playingTurnIdRef.current) {
-      if ((playQueueRef.current?.size() ?? 0) === 0) {
-        setAvatarBoth("idle");
-      }
-      return;
-    }
-    if (!queue?.pending || player === null) {
-      chunkQueueRef.current = null;
+  /**
+   * 這一則播完了：若播放佇列已經空了，畫面回到待機；還有東西排著就什麼都不做
+   * ——那些是續段（`chunk` 訊框）或別一輪的 ack／reply，播放佇列自己的 `drain()`
+   * 會接著播下去，不需要這裡插手。
+   *
+   * ⚠️ **這裡以前還有「輪次比對＋去 REST 拉下一段」的邏輯，2026-08-01 隨續拉
+   * 整套移除**（見 `459051f`）：REST 續拉時代，`chunkQueueRef` 是單一、會被
+   * 補播覆寫的「目前正在追的續拉狀態」，`advanceQueue` 得先確認「剛播完的那一則」
+   * 與「現在的續拉佇列」是同一輪，否則會把新那一輪的續段接在舊答案後面。改成
+   * WS 主動推之後，續段訊框直接 `queue.push()` 進同一條 FIFO 播放佇列（見下方
+   * `onFrame`），**沒有人在猜『下一段該向誰要』**——那個會被覆寫的共用可變狀態
+   * 不存在了，輪次比對因此變成恆假的死碼，一併拿掉。
+   *
+   * ⚠️ **殘留風險（尚未實測，僅為理論推導）**：播放順序現在完全由訊框的**抵達
+   * 順序**決定，不是「正確順序」。長輩問 A（會切成多段）沒等完就問 B：續段
+   * 每段合成約 2.3–3.6 秒、`speech/chunking.py::MAX_CHUNKS = 4`（A 最多 3 段
+   * 續段，約 7–10 秒）；B 整輪（ASR＋LLM＋TTS）約 8–15 秒——兩個時間範圍重疊，
+   * 所以「A 的後段比 B 的整輪還慢送達」是低機率但真實存在的可能。一旦發生，
+   * 佇列順序會變成 `[A0, B0, A1]`：長輩聽到 A 的開頭、B 的完整答案、然後 A 的
+   * 第二句才冒出來——正是 `459051f` 當初要消滅的那種聽感，只是觸發條件從「補播
+   * 交錯」換成「後段合成比下一輪整輪還慢送達」。**這個任務刻意不加新的守門**
+   * （按輪分組或丟棄過期段需要另外設計），只在此記錄，供下一次處理續段時序時
+   * 參考。
+   */
+  const advanceQueue = useCallback(() => {
+    if ((playQueueRef.current?.size() ?? 0) === 0) {
       setAvatarBoth("idle");
-      return;
     }
-    const chunk = await queue.pending;
-    // ⚠️ 等待期間長輩又講了一句：這一輪已作廢，交給新的那一輪，不可以插播。
-    if (chunkQueueRef.current !== queue) {
-      return;
-    }
-    if (!chunk?.audio_url) {
-      chunkQueueRef.current = null;
-      setAvatarBoth("idle");
-      return;
-    }
-    prefetchNext(queue);
-    playingUriRef.current = chunk.audio_url;
-    player.replace({ uri: chunk.audio_url });
-    player.play();
-  }, [prefetchNext, setAvatarBoth]);
+  }, [setAvatarBoth]);
 
   // 建立錄音器、播放器、播放佇列與長連線。
   //
   // ⚠️ 相依只有 `token` 與 `visible` 兩個會變的東西：`deps` 只算一次（見上方
-  // `useState` 惰性初始化那段），而 `advanceQueue`／`prefetchNext`／`setAvatarBoth`／
+  // `useState` 惰性初始化那段），而 `advanceQueue`／`setAvatarBoth`／
   // `armThinkingWatchdog` 全都只隨 `token` 變。所以這條 effect 不需要 eslint-disable
   // ——它真的只在換人登入或這一欄被切走／切回來時重跑。
   useEffect(() => {
@@ -425,7 +371,7 @@ export function useTalk(options: {
       }
       setAvatarBoth("speaking");
       playingUriRef.current = item.audioUrl;
-      // 記下「現在播的是哪一輪」：續拉要接對輪次、字幕不可被別一輪搶走，兩者都靠它。
+      // 記下「現在播的是哪一輪」：字幕不可被別一輪搶走（見下方 `isSpeakingAnotherTurn`）。
       playingTurnIdRef.current = item.turnId;
       // 字幕跟著**真的播出來的那一則**走：收音期間收下來的那幾則，字幕要等補播時
       // 才顯示，否則長輩聽到的跟看到的是兩件事。
@@ -458,7 +404,7 @@ export function useTalk(options: {
 
     const subscription = player.addListener("playbackStatusUpdate", (status) => {
       if (status.didJustFinish) {
-        void advanceQueue();
+        advanceQueue();
       }
     });
 
@@ -571,21 +517,6 @@ export function useTalk(options: {
         if (canTakeOverSubtitle) {
           setReplyText(frame.text);
         }
-        if (frame.type === "reply") {
-          // 上一輪的續拉就此作廢（advanceQueue 以物件識別比對，舊佇列自行退場）。
-          chunkQueueRef.current = null;
-          if (frame.chunk_count > 1 && frame.reply_digest) {
-            const chunks: ChunkQueue = {
-              turnId: frame.turn_id,
-              digest: frame.reply_digest,
-              total: frame.chunk_count,
-              nextIndex: 1,
-              pending: null,
-            };
-            chunkQueueRef.current = chunks;
-            prefetchNext(chunks);
-          }
-        }
         // ⚠️ 續段直送（2026-08-01）的 `chunk` 訊框刻意**不**另開分支：它與
         // `ack`／`reply` 共用同一組欄位（`turn_id`／`audio_url`／`text`／
         // `duration_ms`），這段既有的通用推播邏輯結構上就完整涵蓋了它——
@@ -594,8 +525,9 @@ export function useTalk(options: {
         // 額外判斷 `is_last`（全檔沒有任何地方讀這個欄位，終止與否單純看
         // `audio_url` 是否為空）。加一個功能重複的 `chunk` 專屬分支只會製造
         // 「兩段程式碼做同一件事、忘記讓其中一段先 return 就重複推播」的風險
-        // ——2026-08-01 審查已實際驗證過這個風險（見 `useTalk.test.ts`「續段
-        // 直送」該段測試的變異紀錄）。
+        // ——見 2026-08-01 移除 REST 續拉（`getTurnChunk`／`prefetchNext`／
+        // `ChunkQueue`）那次 commit 的訊息：舊碼曾經讓 `chunk_count > 1` 同時
+        // 觸發這裡的推播**與**已刪除的 REST 續拉，造成同一段語音被播兩次。
         // ⚠️ **這裡是唯一還在守住續段行為的地方**：日後若有人把這段收窄成
         // 只認 `frame.type === "ack" || frame.type === "reply"`，續段會在這裡
         // 被悄悄濾掉、靜默失效（不會噴錯，只是長輩再也聽不到第二段以後的話）
@@ -655,7 +587,6 @@ export function useTalk(options: {
       // blob URL」的承諾。把回收寫在這裡，這條 cleanup 的「全部放掉」才是它自己保證的事，
       // 不是靠另一個模組的內部行為順便達成的。重複呼叫無副作用（集合已空）。
       deps.revokeQueuedReplyAudio();
-      chunkQueueRef.current = null;
       placeRef.current = null;
       playingUriRef.current = null;
       playingTurnIdRef.current = null;
@@ -672,16 +603,7 @@ export function useTalk(options: {
         setReplyText(strings.talk.idleHint);
       }
     };
-  }, [
-    token,
-    visible,
-    deps,
-    advanceQueue,
-    prefetchNext,
-    setAvatarBoth,
-    armThinkingWatchdog,
-    clearThinkingWatchdog,
-  ]);
+  }, [token, visible, deps, advanceQueue, setAvatarBoth, armThinkingWatchdog, clearThinkingWatchdog]);
 
   const startRecording = useCallback(async (): Promise<boolean> => {
     if (!micReadyRef.current || avatarRef.current === "thinking") {
@@ -760,27 +682,18 @@ export function useTalk(options: {
         return;
       }
       // 降級路徑：長連線連不上時仍然講得了話。
+      // ⚠️ 後端 POST /turns 已不分段（Task 1）：`reply.chunk_count` 這條路徑上
+      // 恆為 1，這裡不需要（也不應該）再處理續段。
       const reply = await deps.postTurn(audio, token, place);
       setReplyText(reply.text);
-      chunkQueueRef.current = null;
       if (reply.audio_url) {
         setAvatarBoth("speaking");
         // ⚠️ POST 降級路徑的回應（`TurnReply`）**沒有 `turn_id` 這個欄位**，改用同一輪
-        // 內唯一的 `reply_digest` 當輪次識別：兩邊（續拉佇列與「現在播的是哪一輪」）
-        // 用同一個值就對得上，而萬一長連線稍後才接上、送來帶真 `turn_id` 的訊框，
-        // 比對不合正是我們要的結果（不把新那一輪的續段接在這一則後面）。
+        // 內唯一的 `reply_digest` 當輪次識別：`onFrame` 的字幕守門（見
+        // `isSpeakingAnotherTurn`）據此判斷「現在播的是哪一輪」，萬一長連線稍後才
+        // 接上、送來帶真 `turn_id` 的訊框，比對不合正是我們要的結果（不讓別一輪的
+        // 字幕搶過來）。
         const replyTurnId = reply.reply_digest;
-        if (reply.chunk_count > 1 && reply.reply_digest) {
-          const queue: ChunkQueue = {
-            turnId: replyTurnId,
-            digest: reply.reply_digest,
-            total: reply.chunk_count,
-            nextIndex: 1,
-            pending: null,
-          };
-          chunkQueueRef.current = queue;
-          prefetchNext(queue);
-        }
         playingUriRef.current = reply.audio_url;
         playingTurnIdRef.current = replyTurnId;
         playerRef.current?.replace({ uri: reply.audio_url });
@@ -830,7 +743,6 @@ export function useTalk(options: {
     token,
     onBindingLost,
     signOutOn401,
-    prefetchNext,
     setAvatarBoth,
     armThinkingWatchdog,
     flushDeferredReplies,
