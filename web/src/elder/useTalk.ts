@@ -296,6 +296,22 @@ export function useTalk(options: {
     };
   }, [deps]);
 
+  // 進畫面就暖定位權限（F-17 第二段，2026-08-01）。⚠️ 與上面 `probeMicrophone`
+  // 那條同一個理由、刻意獨立成另一條 effect（不合併進去、不改動上面那條的邏輯
+  // 與相依陣列）：權限對話框跳出來的當下長輩的手指可能正按在麥克風鍵上，等他
+  // 按下去才問，開錄手勢會被系統面板搶走指標——與麥克風權限同一個坑，見
+  // `elder/location.ts` 檔頭。
+  //
+  // ⚠️ 這裡刻意**不使用**解出的值：目的只是讓瀏覽器把「允許／拒絕」這個決定在
+  // 安全的時機問完。`startRecording()` 需要的實際座標仍由它自己那一行
+  // `deps.currentPlace()` 取得（未改動）——同一 origin 的定位權限只會跳一次
+  // 對話框，之後的呼叫直接用瀏覽器自己的位置快取（`maximumAge`，見
+  // `location.ts`），不會在錄音進行中再跳窗。定位權限被拒或逾時不影響對講機
+  // 本身：`currentPlace()` 一律以 `null` 收尾，金孫照舊開口問所在地。
+  useEffect(() => {
+    void deps.currentPlace();
+  }, [deps]);
+
   /**
    * 把收音期間收下來的那幾則放回播放佇列（收音真的結束之後才可以呼叫）。
    *
@@ -690,11 +706,11 @@ export function useTalk(options: {
     // 錄音一開始就發動取位、不 await：長輩講話的那幾秒剛好把它蓋掉，送出時
     // 通常已經好了。currentPlace 永不拋，不需要 catch。
     //
-    // ⚠️ `currentPlace` 目前一律回 `null` 且**完全不碰定位 API**（見
-    // `elder/location.ts` 開頭）：在這個時機真的去要定位權限，對話框會在錄音進行中
-    // 跳出來，把長輩的第一句話吃掉——與上面 `probeMicrophone` 那段警告是同一個坑。
-    // F-17 補上、恢復取位時，權限請求要移到進畫面時（與麥克風權限一起問），這一行
-    // 只能留下「拿已經有的值」的部分。
+    // ⚠️ 這裡**不會**在錄音進行中跳出定位權限對話框（F-17 第二段已解，
+    // 2026-08-01）：權限請求已經在進畫面時的 mount effect 問過一次（見上方
+    // 與 `probeMicrophone` 並列的那條），這裡呼叫到的是瀏覽器已經解出的權限
+    // 狀態＋位置快取（`maximumAge`，見 `elder/location.ts`），不會再跳窗。
+    // 這一行只負責「拿已經有的值」，不負責問權限——那件事永遠只在 mount 時做。
     placeRef.current = deps.currentPlace();
     setAvatarBoth("listening");
     setReplyText(strings.talk.listening);

@@ -1,49 +1,91 @@
 /**
- * 取長輩目前所在的地名與模糊座標——目前**一律回 `null`，且完全不碰定位 API**。
+ * 取長輩目前所在的地名與模糊座標——**F-17 第二段：已恢復取位**（2026-08-01，
+ * 承接第一段 `countyCoords.ts` 落地的縣市反查；T4／T6 收尾後由專案負責人核准
+ * 動工）。
  *
- * ⚠️ **為什麼連 `getCurrentPosition` 都不呼叫**（全分支審查的 Critical 2）：三條
- * 回呼（成功、失敗、逾時）全部 `resolve(null)` 之後，那通呼叫換到的東西是零，
- * 代價卻是**在錄音進行中跳出一個權限對話框**——`useTalk::startRecording` 是在
- * `recorder.start()` 解出**之後**才發動取位的，那一刻長輩的手指正按在麥克風鍵上。
- * 系統面板搶走指標，iOS Safari 送 `pointercancel`，`TalkScreen` 把它轉成
- * `pressOut`：未達 500ms 門檻時手勢切成點按模式（他以為還按著），已達門檻時直接
- * 送出約 0.3 秒的錄音，後端回一句「沒聽清楚」。而那正是畢典展示的開場那一句。
+ * ## 這裡在做什麼、為什麼現在可以恢復呼叫 `getCurrentPosition`
  *
- * ⚠️ 同一支 `useTalk` 自己在麥克風權限那段寫著「不能等長輩按下去才問——權限對話框
- * 跳出來的當下他的手指正按在鍵上，第一次錄音會被對話框吃掉」（App 在 iOS 上踩過
- * 同一個坑，見 docs/dev/17 的 2026-07-18 故障）。`probeMicrophone` 為此被搬到掛載
- * 時，取位卻在按下去的那一刻引進了第二個權限對話框。
+ * 網頁沒有反查地名的 API（App 用的是 `expo-location` 的 `reverseGeocodeAsync`，
+ * 那是作業系統提供的），過去因此**完全不呼叫** `navigator.geolocation`——回傳值
+ * 100% 會被丟棄（沒有地名可配），代價卻是在長輩按住麥克風錄音的當下跳出定位
+ * 權限對話框，把他的第一句話吃掉（全分支審查 Critical 2）。
  *
- * ⚠️ **F-17 補上之後要恢復取位**（見下），但**屆時必須把權限請求移到安全的時機**
- * ——例如進畫面時與麥克風權限一起問（`useTalk` 的 `probeMicrophone` effect 旁），
- * **不可以放在開錄的當下**。恢復時原本的取位參數是 `{ timeout: 3000（不可拖住長輩
- * 講話）, maximumAge: 300_000（五分鐘內的快取直接算數，長輩不會五分鐘內走到另一個
- * 縣市）}`，`location.test.ts` 那條「不呼叫」的測試要一併改回。
+ * 現在有了 `countyCoords.ts` 的離線縣市反查，座標可以換成「台南市」這種縣市級
+ * 地名，半套換不到後端行為的問題已解決；**但權限對話框跳出的時機仍然不能變**
+ * ——本檔自己不知道、也不該假設「現在是不是安全的時機」，這件事由呼叫端負責：
+ * `elder/useTalk.ts` 新增了一條與 `probeMicrophone` 並列的 mount effect，進畫面
+ * 就呼叫一次本函式暖權限（見該檔），錄音時 `startRecording()` 那行呼叫則保留
+ * 不動——同一 origin 的定位權限只會跳一次對話框，之後的呼叫直接使用瀏覽器自己
+ * 的位置快取（`maximumAge`），不會在錄音進行中再跳窗。
  *
- * ⚠️ 網頁沒有反查地名的 API（App 用的是 expo-location 的 reverseGeocodeAsync，
- * 那是作業系統提供的）。後端 `channels/app/turns.py::_save_location` 要求地名
- * 與座標三者同時具備才寫入（缺一律視同「這輪沒有位置」，**不會**寫入空地名
- * ——`locations/store.py::is_valid_place` 對空字串／純空白回 `False`，是早退
- * 而非落庫）。網頁端永遠拿不到地名，若仍把座標送出去，換到的是零功能收益
- * （後端保證整組丟棄），代價卻不是零——座標已經離開瀏覽器，落進伺服器的
- * 記憶體與（潛在的）uvicorn 存取日誌 query string（`logging_setup.py` 刻意
- * 不接管 uvicorn 的 handler）。隱私邊界劃在資料離開裝置之前：這裡選擇**一律
- * 回 `null`、連座標都不送**——與 App 版做法一致（App 拿不到地名時也是整組
- * 不送，見 `lib/location.ts`），零傳輸。
+ * ## 座標怎麼處理：反查地名不等於降級座標精度
  *
- * 這是已知功能落差（見 docs/dev/12_前端架構規範.md §9 F-17）：要補齊需在
- * 後端加一支座標反查地名的服務、或改讓天氣查詢不要求地名同時存在，兩者皆
- * 超出本模組範圍。
+ * `nearestCounty` 只用來產生「稱呼用」的地名字串；**送給後端的座標仍是手機回報
+ * 的實際座標**（模糊化後），不是縣市代表點的座標。理由與 App 版 `lib/location.ts`
+ * 完全一致：真正決定天氣的是海拔不是行政區（實測台北市大安區與陽明山天氣天差
+ * 地遠），附近地點搜尋更是需要真實座標才查得到「附近」——降級成縣市代表點的話，
+ * 「附近有什麼藥局」會變成查縣市政府旁邊有什麼藥局，那不是長輩問的東西。
  *
- * 一切情況（未授權、逾時、成功取得座標）皆回 `null`，由呼叫端當成「這輪
- * 沒有位置」——金孫會照舊開口問，功能靜默降級，絕不阻擋對講機。
+ * 座標四捨五入到 0.01 度（約 1.1 公里）才離開瀏覽器，精確值永不上傳——與 App 版
+ * `blur()` 同一個理由：隱私邊界劃在資料離開裝置之前，後端一旦收到精確值，它就
+ * 已經進了伺服器的記憶體與（潛在的）log，再捨去也來不及。
+ *
+ * ## 反查不到（人在海外）時：整組不送，不是送半套
+ *
+ * `nearestCounty` 對明顯不在台灣的座標回 `null`（見該檔門檻說明）。這裡選擇
+ * **整組回 `null`、連座標都不送**——理由與過去「半套換不到後端行為就不送」的
+ * 判斷同一個形狀：`locations/store.py::is_valid_place` 對空字串回 `False`，送
+ * 一個空地名換不到 `_save_location` 寫入，等於白白讓座標離開瀏覽器卻沒有任何
+ * 功能收益；不確定地名時乾脆不送，也是隱私邊界上更保守的選擇。
+ *
+ * ## 失敗路徑
+ *
+ * 瀏覽器不支援定位 API、權限被拒、逾時（3 秒）、座標明顯不在台灣，四種情況皆
+ * 回 `null`，由呼叫端當成「這輪沒有位置」——金孫會照舊開口問，功能靜默降級，
+ * 絕不阻擋對講機。
+ *
+ * 這是 `docs/dev/12_前端架構規範.md` §9 F-17 的第二段修復；天氣、附近地點、
+ * 交通路線三者受影響的程度不同，見該文件段落。
  */
 
 import type { ElderPlace } from "./api";
+import { nearestCounty } from "./countyCoords";
+
+/**
+ * `timeout`：不可拖住長輩講話，3 秒內拿不到就放棄（`startRecording()` 是不等待
+ * 這個 Promise 的，但 `stopAndSend()` 送出時會等，故仍要有上限）。
+ * `maximumAge`：5 分鐘內的快取位置直接算數，長輩不會在 5 分鐘內走到另一個縣市，
+ * 也讓 mount 時暖過權限之後、`startRecording()` 再次呼叫幾乎瞬時解出。
+ */
+const GEOLOCATION_OPTIONS: PositionOptions = { timeout: 3000, maximumAge: 300_000 };
+
+/** 約 1.1 公里見方。市區內是上萬人的範圍，定位不到住址（同 App 版 `blur()`）。 */
+function blur(value: number): number {
+  return Math.round(value * 100) / 100;
+}
 
 export function currentPlace(): Promise<ElderPlace | null> {
-  // ⚠️ 這裡**不呼叫** `navigator.geolocation.getCurrentPosition`：回傳值 100% 會被
-  // 丟棄（沒有地名可配，見上），而那通呼叫會在長輩按著麥克風錄音的當下跳出權限
-  // 對話框，把他的第一句話吃掉。恢復條件與正確時機見本檔開頭。
-  return Promise.resolve(null);
+  return new Promise((resolve) => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      resolve(null);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const place = nearestCounty(position.coords.latitude, position.coords.longitude);
+        // 反查不到（明顯不在台灣、或座標本身不合法）：整組不送，見檔頭說明。
+        if (place === null) {
+          resolve(null);
+          return;
+        }
+        resolve({
+          place,
+          latitude: blur(position.coords.latitude),
+          longitude: blur(position.coords.longitude),
+        });
+      },
+      () => resolve(null),
+      GEOLOCATION_OPTIONS,
+    );
+  });
 }

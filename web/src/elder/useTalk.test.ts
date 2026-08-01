@@ -1464,3 +1464,42 @@ describe("這一欄被切到背景", () => {
     expect(h.player.disposed).toBe(1);
   });
 });
+
+describe("暖定位權限（F-17 第二段，2026-08-01）", () => {
+  it("進畫面就呼叫 currentPlace 暖權限，不必等長輩按下麥克風", async () => {
+    // ⚠️ 這條守的正是本輪的重點：權限請求要在「進畫面」這個安全時機完成，
+    // 不能等到按下麥克風才問（那正是本輪要避免重演的坑）。
+    const h = setup();
+    await waitFor(() => expect(h.currentPlace).toHaveBeenCalledTimes(1));
+    expect(h.recorder.started).toBe(0);
+  });
+
+  it("即使麥克風被拒，暖定位權限的呼叫依然會發生——兩條 mount effect 互不依賴", async () => {
+    // 這條守住「獨立成另一條 effect」這個設計決策：暖定位權限不可以被誰改成
+    // 「等麥克風准了才問」，那樣會讓拒絕麥克風的長輩連定位都問不到。
+    const h = setup({ granted: false });
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(false));
+    expect(h.currentPlace).toHaveBeenCalledTimes(1);
+  });
+
+  it("開錄時仍會再呼叫一次 currentPlace，取得送出當下的座標——暖權限不取代這一行", async () => {
+    // `startRecording()` 既有那行呼叫本輪刻意保留不動：暖權限只負責讓瀏覽器
+    // 提早問完權限，實際要送出的座標仍在開錄當下重新取一次。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    await waitFor(() => expect(h.currentPlace).toHaveBeenCalledTimes(1));
+    h.socket.open();
+    await holdAndRelease(h);
+    expect(h.currentPlace).toHaveBeenCalledTimes(2);
+  });
+
+  it("暖定位權限只在進畫面時發生一次，不會因為切換分頁可見度而重複呼叫", async () => {
+    // `deps` 在本元件生命週期內只算一次（見 useTalk.ts 檔頭），這條 effect
+    // 的相依陣列只有 `[deps]`，故不該隨 `visible` 切換而重跑。
+    const h = setup();
+    await waitFor(() => expect(h.currentPlace).toHaveBeenCalledTimes(1));
+    h.view.rerender({ visible: false });
+    h.view.rerender({ visible: true });
+    expect(h.currentPlace).toHaveBeenCalledTimes(1);
+  });
+});
