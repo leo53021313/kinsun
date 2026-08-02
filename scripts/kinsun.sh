@@ -257,6 +257,14 @@ launch_rag_worker() {
   info "啟動 RAG Worker…"
   (
     export PYTHONPATH="src${PYTHONPATH:+:$PYTHONPATH}"
+    # hpa.gov.tw 不送 TWCA 中繼憑證，沒掛 bundle 會整批 CERTIFICATE_VERIFY_FAILED
+    # （見 docs/dev/14_部署與運維.md 的憑證鏈說明）。外部已設就沿用，未設才給 DGX 預設值。
+    ca_bundle="${SSL_CERT_FILE:-/home/leo29/certs/ca_bundle_twca.pem}"
+    if [ -f "$ca_bundle" ]; then
+      export SSL_CERT_FILE="$ca_bundle"
+    else
+      warn "RAG Worker：找不到憑證 bundle（$ca_bundle），hpa.gov.tw 抓取將失敗"
+    fi
     _bg rag_worker uv run python -m kinsun.rag.worker
   )
 }
