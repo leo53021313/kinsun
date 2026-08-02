@@ -8,6 +8,7 @@ from kinsun.rag.crawler import (
     DomainParserRegistry,
     FetchedPage,
     HealthEducationCrawler,
+    _pdf_title,
 )
 from kinsun.rag.source_registry import SourceRegistry
 
@@ -717,3 +718,38 @@ def test_load_sitemap_urls_reads_rss_item_links():
     )
     # channel 層的首頁連結與不符內容樣式的公告頁都不收
     assert all("Bulletin" not in url for url in urls)
+
+
+def test_pdf_title_comes_from_the_download_filename():
+    """PDF 沒有 <title>，標題取自 Content-Disposition 的檔名。
+
+    2026-08-02 實測國健署 health.hpa.gov.tw 的下載端點：網址是
+    `Download.ashx?f=<guid>.pdf&o=<檔名>.pdf`，路徑段只有 "Download"。
+    標題會被接在內文前面一起送進嵌入模型（含標題 R@1 98.4%、純內文 85.2%），
+    也是引用時顯示給家屬看的字，取成 "Download" 兩邊都毀了。
+    伺服器送的 filename 是 percent-encoded UTF-8，需解碼。
+    """
+    page = FetchedPage(
+        url="https://health.hpa.gov.tw/common/Download.ashx?f=abc.pdf&o=x.pdf",
+        content_type="application/pdf",
+        body=b"%PDF-1.4",
+        fetched_at=datetime.now(),
+        content_disposition=(
+            'attachment; filename="05.%e7%9d%a1%e7%9c%a0%e8%88%87'
+            '%e7%b2%be%e7%a5%9e%e5%81%a5%e5%ba%b7.pdf"'
+        ),
+    )
+
+    assert _pdf_title(page) == "05.睡眠與精神健康"
+
+
+def test_pdf_title_falls_back_to_the_url_path():
+    """沒有 Content-Disposition 時維持既有行為：取網址最後一段。"""
+    page = FetchedPage(
+        url="https://example.gov.tw/files/%E8%A1%9B%E6%95%99.pdf",
+        content_type="application/pdf",
+        body=b"%PDF-1.4",
+        fetched_at=datetime.now(),
+    )
+
+    assert _pdf_title(page) == "衛教"

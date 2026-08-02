@@ -66,6 +66,8 @@ class FetchedPage:
     content_type: str
     body: bytes
     fetched_at: datetime
+    # 下載端點的真檔名（PDF 沒有 <title>，只能靠這個取標題）。
+    content_disposition: str = ""
 
 
 @dataclass(frozen=True)
@@ -200,7 +202,7 @@ class DomainParserRegistry:
         text = _extract_pdf_text(page.body)
         return ParsedPage(
             url=page.url,
-            title=_pdf_title(page.url) or source.title,
+            title=_pdf_title(page) or source.title,
             text=text,
             links=(),
             published_at=_infer_date(text),
@@ -414,6 +416,7 @@ class HealthEducationCrawler:
                     content_type=response.headers.get("Content-Type", ""),
                     body=response.read(),
                     fetched_at=datetime.now(),
+                    content_disposition=response.headers.get("Content-Disposition", ""),
                 )
 
         # 固定間隔重試 retries+1 次；重試間睡 delay_seconds（走注入的 self._sleep 供測試斷言）。
@@ -534,8 +537,24 @@ def _extract_pdf_text(body: bytes) -> str:
     return clean_text("\n".join(page.extract_text() or "" for page in reader.pages))
 
 
-def _pdf_title(url: str) -> str:
-    path = urllib.parse.urlsplit(url).path
+_DISPOSITION_FILENAME_RE = re.compile(r'filename\*?=(?:"([^"]*)"|([^;]+))', re.IGNORECASE)
+
+
+def _pdf_title(page: FetchedPage) -> str:
+    """PDF 的標題：優先取 Content-Disposition 的檔名，其次取網址最後一段。
+
+    下載端點的路徑段常常只是程式名（國健署 health.hpa.gov.tw 是
+    `Download.ashx`），真正的檔名在 Content-Disposition 或查詢字串裡。標題會接
+    在內文前面送進嵌入模型，也是引用時顯示給家屬看的字，取成「Download」兩邊都毀了。
+    """
+    match = _DISPOSITION_FILENAME_RE.search(page.content_disposition)
+    if match:
+        raw = (match.group(1) or match.group(2)).strip()
+        # 伺服器送的是 percent-encoded UTF-8（RFC 6266 的 filename* 亦同）。
+        name = urllib.parse.unquote(raw.split("''", 1)[-1])
+        if name:
+            return name.rsplit(".", 1)[0]
+    path = urllib.parse.urlsplit(page.url).path
     name = urllib.parse.unquote(path.rsplit("/", 1)[-1])
     return name.rsplit(".", 1)[0]
 

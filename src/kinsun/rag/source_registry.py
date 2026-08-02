@@ -145,6 +145,26 @@ DEFAULT_SOURCES: tuple[Source, ...] = (
         "（Leo 核定 2026-07-27），影音下載素材仍不抓取。",
     ),
     Source(
+        "hpa_sleep_handbook",
+        "睡眠與精神健康（國民健康署衛教手冊）",
+        "https://health.hpa.gov.tw/common/Download.ashx"
+        "?f=f70fe5f8-cf1f-4f89-929c-072a219d29ab.pdf"
+        "&o=05.%E7%9D%A1%E7%9C%A0%E8%88%87%E7%B2%BE%E7%A5%9E%E5%81%A5%E5%BA%B7.pdf",
+        "衛生福利部國民健康署",
+        SourceType.GOVERNMENT,
+        TrustLevel.HIGH,
+        CopyrightStatus.ALLOWED,
+        RecommendedStatus.APPROVED,
+        True,
+        ("health.hpa.gov.tw",),
+        "國健署健康職場資訊網的衛教手冊，文字型 PDF（非掃描檔），實測抽出 18,968 字，"
+        "涵蓋失眠盛行率、致病原因、對生活的影響、治療與注意事項。"
+        "2026-08-02 新增（Leo 核定）：長者睡眠衛教在既有來源全數落空——國健署 sitemap "
+        "的 5,667 篇裡標題含「睡」「眠」的 14 篇全是嬰兒猝死與寶寶睡姿，"
+        "衛福部那兩篇對的埋在焦點新聞第 1,094 頁分頁裡爬不到。"
+        "⚠️ 單一檔案來源：PDF 本身沒有連結，爬取到此為止；檔案 30 MB，每次週更會重抓。",
+    ),
+    Source(
         "mohw_health_window",
         "衛教視窗",
         "https://www.mohw.gov.tw/np-34-1.html",
@@ -214,6 +234,24 @@ DEFAULT_SOURCES: tuple[Source, ...] = (
         # 疾管署沒有 sitemap.xml（回 404），但 RSS 的 type=2 feed 列出 97 個疾病頁。
         sitemap_url="https://www.cdc.gov.tw/RSS/RssXml/M8GG46VTKYT2o1VJTKvl7A?type=2",
         content_url_pattern=r"Disease/SubIndex",
+    ),
+    Source(
+        "cdc_vaccination",
+        "疾病管制署預防接種專區",
+        "https://www.cdc.gov.tw/Category/List/jEcJbcX-J8_opidAmw3dyg",
+        "衛生福利部疾病管制署",
+        SourceType.GOVERNMENT,
+        TrustLevel.HIGH,
+        CopyrightStatus.ALLOWED,
+        RecommendedStatus.APPROVED,
+        True,
+        ("cdc.gov.tw",),
+        "疾管署預防接種專區（成人預防接種建議時程表、疫苗簡介、公費疫苗項目與接種時程、"
+        "疫苗區 Q&A），著作權依政府網站資料開放宣告，與 cdc_home／cdc_diseases 同一份。"
+        "2026-08-02 新增：cdc_diseases 的傳染病介紹講的是狂犬病、天花、M痘等疾病本身，"
+        "「疫苗」只出現在附件標題，全庫沒有一篇在講長者接種建議。"
+        "本區沒有 RSS 也沒有 sitemap，只能走連結爬取。",
+        content_url_pattern=r"Category/(?:Page|QAPage|MPage)",
     ),
     Source(
         "fda_home",
