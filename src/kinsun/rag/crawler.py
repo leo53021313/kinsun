@@ -430,7 +430,10 @@ class HealthEducationCrawler:
 
 
 def load_sitemap_urls(body: bytes, source: Source) -> tuple[str, ...]:
-    """從 sitemap.xml 取出屬於本來源的文章網址。
+    """從內容清單（sitemap.xml 或 RSS）取出屬於本來源的文章網址。
+
+    兩種格式都吃：sitemap 用 `<loc>`、RSS 用 `<item><link>`。cdc.gov.tw 沒有
+    sitemap 但有 RSS，兩者在管線裡扮演同一個角色——站方自己宣告的內容清單。
 
     只留下 `content_url_pattern` 命中的網址（留空則全收）與 allowlist 內的網域，
     並套用與爬取路徑相同的正規化（http→https、去 fragment），確保去重一致。
@@ -444,7 +447,7 @@ def load_sitemap_urls(body: bytes, source: Source) -> tuple[str, ...]:
     pattern = _content_pattern(source)
     urls: list[str] = []
     for node in root.iter():
-        if node.tag.rsplit("}", 1)[-1].lower() != "loc" or not node.text:
+        if node.tag.rsplit("}", 1)[-1].lower() not in ("loc", "link") or not node.text:
             continue
         url = _upgrade_to_https(_strip_fragment(unescape(node.text.strip())))
         if not _is_allowed_url(url, source.allowed_domains):

@@ -670,3 +670,50 @@ def test_crawl_sitemap_fetches_only_listed_articles():
     assert len(result.pages) == 2
     # 頁內連結完全不跟隨，主題不會漂移
     assert "https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=99&pid=1" not in fetched
+
+
+_RSS_FEED = """<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0"><channel>
+  <title>衛生福利部疾病管制署</title>
+  <link>https://www.cdc.gov.tw/</link>
+  <item>
+    <title>流感併發重症</title>
+    <link>https://www.cdc.gov.tw/Disease/SubIndex/AbCd1234</link>
+  </item>
+  <item>
+    <title>侵襲性肺炎鏈球菌感染症</title>
+    <link>http://www.cdc.gov.tw/Disease/SubIndex/EfGh5678</link>
+  </item>
+  <item>
+    <title>某則公告</title>
+    <link>https://www.cdc.gov.tw/Bulletin/List/ZzZz0000</link>
+  </item>
+</channel></rss>
+"""
+
+
+def test_load_sitemap_urls_reads_rss_item_links():
+    """疾管署沒有 sitemap，但有 RSS；同一個載入器要能吃兩種格式。
+
+    2026-08-01 實測：cdc 用爬樹只抓到同一個索引頁的 17 種參數變形，內容全是選單。
+    RSS 的 type=2 feed 直接列出 97 個疾病頁，那才是真正的內容清單。
+    """
+    from dataclasses import replace
+
+    from kinsun.rag.crawler import load_sitemap_urls
+
+    source = replace(
+        SourceRegistry().get("cdc_diseases"),
+        content_url_pattern=r"Disease/SubIndex",
+        allowed_domains=("cdc.gov.tw",),
+    )
+
+    urls = load_sitemap_urls(_RSS_FEED.encode("utf-8"), source)
+
+    assert urls == (
+        "https://www.cdc.gov.tw/Disease/SubIndex/AbCd1234",
+        # http 升級 https，與 sitemap 路徑套用同一套正規化
+        "https://www.cdc.gov.tw/Disease/SubIndex/EfGh5678",
+    )
+    # channel 層的首頁連結與不符內容樣式的公告頁都不收
+    assert all("Bulletin" not in url for url in urls)

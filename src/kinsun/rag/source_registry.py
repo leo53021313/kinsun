@@ -197,9 +197,9 @@ DEFAULT_SOURCES: tuple[Source, ...] = (
         "傳染病資訊高度時效敏感，需 topic whitelist。",
     ),
     Source(
-        "cdc_advocacy",
-        "CDC 宣導",
-        "https://www.cdc.gov.tw/Advocacy",
+        "cdc_diseases",
+        "疾病管制署傳染病介紹",
+        "https://www.cdc.gov.tw/Disease",
         "衛生福利部疾病管制署",
         SourceType.GOVERNMENT,
         TrustLevel.HIGH,
@@ -207,7 +207,13 @@ DEFAULT_SOURCES: tuple[Source, ...] = (
         RecommendedStatus.APPROVED,
         True,
         ("cdc.gov.tw",),
-        "疾管署官方宣導專區；文字內容依政府網站資料開放宣告使用（Leo 核定 2026-07-27）。",
+        "疾管署傳染病介紹（含流感、侵襲性肺炎鏈球菌等長者疫苗相關疾病）；"
+        "文字內容依政府網站資料開放宣告使用（Leo 核定 2026-07-27）。"
+        "原為 cdc_advocacy／宣導專區，2026-08-02 改指疾病介紹並更名——"
+        "宣導專區只有一個索引頁，爬回來的 17 份「文件」全是站台選單、零篇文章。",
+        # 疾管署沒有 sitemap.xml（回 404），但 RSS 的 type=2 feed 列出 97 個疾病頁。
+        sitemap_url="https://www.cdc.gov.tw/RSS/RssXml/M8GG46VTKYT2o1VJTKvl7A?type=2",
+        content_url_pattern=r"Disease/SubIndex",
     ),
     Source(
         "fda_home",

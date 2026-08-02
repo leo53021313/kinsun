@@ -60,7 +60,7 @@ def test_order_answer_first_puts_answer_sources_before_discovery():
 
     registry = SourceRegistry()
     # 刻意把 discovery 排前面
-    ids = ("hpa_rss_index", "hpa_elder_health", "cdc_home", "cdc_advocacy")
+    ids = ("hpa_rss_index", "hpa_elder_health", "cdc_home", "cdc_diseases")
 
     ordered = order_answer_first(ids, registry)
 
@@ -68,7 +68,7 @@ def test_order_answer_first_puts_answer_sources_before_discovery():
     assert roles == sorted(roles, key=lambda r: r != SourceRole.ANSWER)
     assert set(ordered) == set(ids), "只調順序，不可增刪來源"
     # 同一角色內維持原有相對順序（穩定排序，避免每輪 claim 歸屬跳動）
-    assert ordered.index("hpa_elder_health") < ordered.index("cdc_advocacy")
+    assert ordered.index("hpa_elder_health") < ordered.index("cdc_diseases")
 
 
 def test_hpa_articles_come_from_a_single_sitemap_source():
@@ -91,8 +91,12 @@ def test_hpa_articles_come_from_a_single_sitemap_source():
         assert retired not in approved, f"{retired} 已由 hpa_health_education 取代"
 
 
-def test_sources_without_sitemap_still_crawl_links():
-    """沒有 sitemap 的站台（cdc 實測 404）維持既有的爬連結路徑。"""
+def test_sources_without_a_content_feed_still_crawl_links():
+    """沒有內容清單可讀的站台維持既有的爬連結路徑。
+
+    衛福部的 sitemap.xml 只列出列表頁、沒有文章頁（2026-08-01 實測 403 個 loc
+    全是 lp-／np- 列表），讀了也拿不到文章，因此不設 sitemap_url。
+    """
     registry = SourceRegistry()
 
-    assert registry.get("cdc_advocacy").sitemap_url == ""
+    assert registry.get("mohw_health_window").sitemap_url == ""
