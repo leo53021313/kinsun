@@ -142,6 +142,7 @@ class IngestionPipeline:
         operator_or_job_id: str,
         index_version: str | None = None,
     ) -> tuple[RagDocument, ...]:
+        pages = _strip_site_chrome(pages)
         documents = tuple(_page_to_document(source, page, self._clock().date()) for page in pages)
         # 收錄判定只作用在爬取結果：seed 檔是人工整理過的，不需要也不該被過濾。
         admitted: list[RagDocument] = []
@@ -353,6 +354,47 @@ def _seed_to_document(source: Source, seed: SeedDocument, retrieved_at: date) ->
         published_at=seed.published_at,
         updated_at=seed.updated_at,
         retrieved_at=retrieved_at,
+    )
+
+
+# 跨文件骨架偵測：同來源多數頁面都出現的行視為站台骨架。低於這個頁數不做比對，
+# 樣本太小時「兩篇剛好都提到同一句」不足以判定為骨架。
+_CHROME_MIN_PAGES = 5
+_CHROME_PAGE_RATIO = 0.5
+
+
+def _strip_site_chrome(pages: tuple[ParsedPage, ...]) -> tuple[ParsedPage, ...]:
+    """剝掉整批頁面共有的站台骨架（選單、頁尾、客服電話）。
+
+    `strip_page_furniture` 的規則是照 hpa 的版型寫的；cdc.gov.tw 沒有「首頁 >」
+    麵包屑也沒有「跳到主要內容區塊」，那些規則一條都對不上，整份站台選單會原封
+    不動進索引（2026-08-01 實測：cdc_advocacy 的 17 篇全是選單，產生 38 個純導覽
+    chunk）。與其為每個網站寫一套規則，不如用「跨文件重複」這個站台無關的訊號。
+
+    刻意不用「行很短」或「沒有句號」判定——衛教海報整篇都是條列，〈高血壓〉這種
+    海報還是 golden set 的正解，用形狀判定會把它們一起殺掉。海報的每一行只出現在
+    自己那一篇，不會出現在多數頁面裡。
+    """
+    if len(pages) < _CHROME_MIN_PAGES:
+        return pages
+    appearances: dict[str, int] = {}
+    for page in pages:
+        for line in {raw.strip() for raw in page.text.splitlines() if raw.strip()}:
+            appearances[line] = appearances.get(line, 0) + 1
+    threshold = len(pages) * _CHROME_PAGE_RATIO
+    chrome = {line for line, count in appearances.items() if count > threshold}
+    if not chrome:
+        return pages
+    return tuple(
+        replace(
+            page,
+            text="\n".join(
+                line
+                for raw in page.text.splitlines()
+                if (line := raw.strip()) and line not in chrome
+            ),
+        )
+        for page in pages
     )
 
 
