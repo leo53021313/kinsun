@@ -367,10 +367,12 @@ def create_app_ws_router(
         現場合成一句 10 字的安撫話要 1.86 秒，等於把這個功能省下來的延遲還掉快一半。
         """
 
-        def announce(tool_names: list[str]) -> None:
+        def announce(tool_names: list[str], persona_id: str) -> None:
             if ack_audio is None:
                 return
-            clip = ack_audio.clip_for(tool_names[0])
+            # 人設由 agent 隨通知帶過來（2026-08-05），這裡**不查資料庫**：那一輪
+            # 的長輩檔案 agent 已經讀過了，為一句等待語再查一次是白付一次往返。
+            clip = ack_audio.clip_for(tool_names[0], persona_id=persona_id)
             if clip is None:  # 還沒暖好或簽章過期＝這輪不講（降級不是錯誤）
                 return
             sender.send(

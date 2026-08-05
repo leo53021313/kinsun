@@ -18,7 +18,7 @@ from kinsun.llm import LLMClient, Message, ToolCall, ToolResult
 from kinsun.memory.models import FactSection, InjectedContext, format_injected_context
 from kinsun.memory.recall import SessionMemory
 from kinsun.memory.shortterm import MemoryStoreError
-from kinsun.personas import get_persona
+from kinsun.personas import DEFAULT_PERSONA_ID, get_persona
 from kinsun.tools.registry import ToolInvocationContext
 from kinsun.turn_context import (
     announce_tools,
@@ -696,6 +696,7 @@ class CareAgent:
                         system_prompt,
                         base,
                         context=ToolInvocationContext(trace_id, elder_id, has_risk_signal),
+                        persona_id=persona_id,
                     )
                     reply = self._repair_empty_promise(
                         reply,
@@ -703,6 +704,7 @@ class CareAgent:
                         system_prompt,
                         base,
                         context=ToolInvocationContext(trace_id, elder_id, has_risk_signal),
+                        persona_id=persona_id,
                     )
             found = list(sources)
         # 順序有意義：先 `_speakable` 拆掉格式綁架的殼，冒名防線掃的才是人話；
@@ -768,6 +770,7 @@ class CareAgent:
         base: list[Message],
         *,
         context: ToolInvocationContext | None,
+        persona_id: str = DEFAULT_PERSONA_ID,
     ) -> str:
         """答應要記卻沒呼叫工具時，再跑一輪工具迴圈把排程真的建起來。
 
@@ -792,6 +795,7 @@ class CareAgent:
             system_prompt + _EMPTY_PROMISE_REPAIR,
             base,
             context=context,
+            persona_id=persona_id,
         )
         if _CREATE_SCHEDULE in actions:
             return repaired
@@ -855,6 +859,7 @@ class CareAgent:
         base: list[Message],
         *,
         context: ToolInvocationContext | None = None,
+        persona_id: str = DEFAULT_PERSONA_ID,
     ) -> str:
         results: list[ToolResult] = []
         announced = False
@@ -874,7 +879,7 @@ class CareAgent:
             # `POST /turns`、排程端皆然）。
             if not announced:
                 announced = True
-                announce_tools([call.name for call in turn.tool_calls])
+                announce_tools([call.name for call in turn.tool_calls], persona_id)
             results.extend(self._dispatch_tools(turn.tool_calls, context=context))
         # 末輪修復（✅ 庚-35／A-14）：迭代上限用盡但工具結果已在手——再讓模型
         # 消化一次產出文字，不把成功的工具工作丟掉；仍堅持要工具（無文字）才回退。
@@ -931,6 +936,7 @@ class CareAgent:
                         system_prompt,
                         base,
                         context=ToolInvocationContext("", elder_id, False),
+                        persona_id=persona_id,
                     )
             found = list(sources)
         reply = _no_fake_source(_speakable(reply), found)

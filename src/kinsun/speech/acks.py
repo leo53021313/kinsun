@@ -23,9 +23,12 @@
 
 ## 兩個維度：人設 × 工具
 
-日後會加入不同人設風格，故語庫是二維的。兩軸各有保底，**缺任何一格都不會壞，
-只會變得比較籠統**：人設不存在 → 退回 `DEFAULT_PERSONA`；工具沒配句子 → 退回該人設的
-`generic`。
+兩種人設各一套（2026-08-05 起，見 `personas.py`）。兩軸各有保底，**缺任何一格都不會
+壞，只會變得比較籠統**：人設不存在 → 退回 `DEFAULT_PERSONA`；工具沒配句子 → 退回該
+人設的 `generic`。
+
+語庫的鍵＝`personas.py` 的 id（單一出處）；`tests/test_speech_acks.py` 釘住「目錄裡
+的每個人設都要有一套語庫」——少一格不會報錯，只會讓那個人設默默用到別人的口氣。
 
 ⚠️ 只有**文字**住在這裡，音檔不進版控——它由當前 TTS 設定自動合成並快取
 （見 `speech/ack_audio.py`）。這是為了語音克隆：換聲音只要改 `TTS_VOICE_VERSION`，
@@ -45,6 +48,8 @@ import random
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from kinsun.personas import DEFAULT_PERSONA_ID, LIVELY_GRANDDAUGHTER, STEADY_GRANDSON
+
 # 明講「這個工具刻意用通用句」。與「忘了加這一格」在程式碼上必須看得出差別——
 # 後者會被測試擋下，前者是經過判斷的決定。
 USE_GENERIC: tuple[str, ...] = ()
@@ -58,7 +63,9 @@ class AckPersona:
     by_tool: Mapping[str, tuple[str, ...]]
 
 
-DEFAULT_PERSONA = "kinsun"
+# 保留這個名字（而不是全面改用 `personas.DEFAULT_PERSONA_ID`）：它是本模組四支
+# 函式的預設引數，改名會動到一批與人設無關的呼叫端。值則指向單一出處。
+DEFAULT_PERSONA = DEFAULT_PERSONA_ID
 
 # ⚠️ 每一句都會被 TTS 原封唸出來，故：
 #   - 台灣繁體中文口語，晚輩對阿公阿嬤講話的語氣
@@ -67,7 +74,7 @@ DEFAULT_PERSONA = "kinsun"
 #   - **只能說「正在查」，絕不可說「已經查好／已經記好」**——這句話是在工具**還沒跑**
 #     的時候唸出去的，說已完成而工具隨後失敗，等於對長輩說謊（語料實錄過這種洩漏）
 _PERSONAS: dict[str, AckPersona] = {
-    DEFAULT_PERSONA: AckPersona(
+    LIVELY_GRANDDAUGHTER: AckPersona(
         generic=(
             "好，我幫您查一下喔",
             "好，我看看喔",
@@ -93,6 +100,18 @@ _PERSONAS: dict[str, AckPersona] = {
             "cancel_schedule": ("好，我幫您看一下喔",),
         },
     ),
+    # 穩重孫子只寫 generic、**不複製一份逐工具句**：語料顯示逐工具的變化全部來自
+    # 工具的名詞（「查一下最近的新聞」「查一下車程」），而那正是 `phrases_for` 的
+    # 保底會做的事。複製之後兩份會各自演化，但它們本來就該講同一件事（「我正在
+    # 查」），只是口氣不同。哪天觀察到孫子的某個工具真的需要專屬句子，再補那一格。
+    STEADY_GRANDSON: AckPersona(
+        generic=(
+            "好，我查一下",
+            "我看看，稍等",
+            "馬上跟您說",
+        ),
+        by_tool={},
+    ),
 }
 
 
@@ -106,23 +125,23 @@ def persona(name: str = DEFAULT_PERSONA) -> AckPersona:
     return _PERSONAS.get(name) or _PERSONAS[DEFAULT_PERSONA]
 
 
-def phrases_for(tool_name: str, *, persona_name: str = DEFAULT_PERSONA) -> tuple[str, ...]:
+def phrases_for(tool_name: str, *, persona_id: str = DEFAULT_PERSONA) -> tuple[str, ...]:
     """這個工具的候選安撫話；沒配（或刻意 `USE_GENERIC`）就退回該人設的通用句。"""
-    chosen = persona(persona_name)
+    chosen = persona(persona_id)
     return chosen.by_tool.get(tool_name) or chosen.generic
 
 
 def pick(
     tool_name: str,
     *,
-    persona_name: str = DEFAULT_PERSONA,
+    persona_id: str = DEFAULT_PERSONA,
     rng: random.Random | None = None,
 ) -> str:
     """隨機挑一句。輪替是為了不讓長輩每一輪都聽到同一個音檔。
 
     `rng` 可注入，測試才能確定性地驗行為（同 `tools/news.py` 的慣例）。
     """
-    candidates = phrases_for(tool_name, persona_name=persona_name)
+    candidates = phrases_for(tool_name, persona_id=persona_id)
     if not candidates:  # 防呆：人設的 generic 被寫空時不要炸，改成這輪不講。
         return ""
     return (rng or random).choice(candidates)

@@ -134,13 +134,14 @@ def record_action(name: str) -> None:
         ledger.append(name)
 
 
-_announcer: contextvars.ContextVar[Callable[[list[str]], None] | None] = contextvars.ContextVar(
+_Announcer = Callable[[list[str], str], None]
+_announcer: contextvars.ContextVar[_Announcer | None] = contextvars.ContextVar(
     "kinsun_tool_announcer", default=None
 )
 
 
 @contextmanager
-def tool_announcer(callback: Callable[[list[str]], None]) -> Iterator[None]:
+def tool_announcer(callback: _Announcer) -> Iterator[None]:
     """在範圍內接收「這一輪要呼叫哪些工具」的通知（spec 2026-07-28 P2）。
 
     ⚠️ 這是安撫話的觸發點，而它的時機**非常關鍵**：非同步回覆要在模型決定查什麼之後、
@@ -261,8 +262,12 @@ def announce_transcript(text: str) -> None:
         logger.warning("在途原話登記失敗")
 
 
-def announce_tools(tool_names: list[str]) -> None:
-    """通知「這一輪要呼叫這些工具」；沒有人在聽時 no-op。
+def announce_tools(tool_names: list[str], persona_id: str) -> None:
+    """通知「這一輪要呼叫這些工具、用哪一種人設的口氣」；沒有人在聽時 no-op。
+
+    ⚠️ 人設由呼叫端（`agent`）帶過來，**不是**讓監聽端自己去查（2026-08-05）：
+    agent 這一輪本來就已經讀過長輩檔案，再查一次就是為了一句等待語多付一次跨網
+    往返，而它正好卡在長輩等回覆的那段時間裡。
 
     ⚠️ 通知失敗**絕不可**中斷對話：安撫話是加分項，而這裡的呼叫端是長輩回覆路徑的
     正中央。callback 拋出的任何例外就地吞掉——最壞的情況只是這一輪沒有安撫話。
@@ -271,7 +276,7 @@ def announce_tools(tool_names: list[str]) -> None:
     if callback is None or not tool_names:
         return
     try:
-        callback(tool_names)
+        callback(tool_names, persona_id)
     except Exception:  # noqa: BLE001 - 安撫話失敗不可中斷長輩的回覆
         logger.warning("安撫話通知失敗，本輪不講安撫話")
 
