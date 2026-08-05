@@ -52,7 +52,7 @@ function renderSignedIn() {
   );
 }
 
-const ELDERS = [{ elder_id: "e1", name: "王阿嬤", nickname: "" }];
+const ELDERS = [{ elder_id: "e1", name: "王阿嬤", nickname: "", persona: "lively_granddaughter" }];
 
 beforeEach(() => localStorage.clear());
 afterEach(() => vi.unstubAllGlobals());

@@ -14,7 +14,7 @@ import { createElder, listElders, logoutGuardian } from "./api";
 import { InviteCard } from "./InviteCard";
 
 export function HomeScreen(props: {
-  onOpenElder: (elderId: string, elderName: string) => void;
+  onOpenElder: (elderId: string, elderName: string, persona: string) => void;
   onOpenNotifications: () => void;
   /**
    * 把剛拿到的綁定碼直接送到長輩欄（spec W-15 內測捷徑，接線見
@@ -91,12 +91,18 @@ export function HomeScreen(props: {
     setBusy(true);
     try {
       const created = await createElder(name, token);
-      // ⚠️ 帶上 nickname：後端一直都有回它，App 版曾經在這裡把它丟掉，於是剛新增
-      // 的那一筆在列表上少一個稱謂、要重新整理才會出現（A-10）。
+      // ⚠️ 帶上 nickname 與 persona：後端一直都有回它們，App 版曾經在這裡把
+      // nickname 丟掉，於是剛新增的那一筆在列表上少一個稱謂、要重新整理才會
+      // 出現（A-10）。persona 若漏掉，點進詳情頁的個性選擇器會是空的。
       // `prev ?? []`：列表還沒載完（null）時家屬就按了建立，展開 null 會直接炸掉。
       setElders((prev) => [
         ...(prev ?? []),
-        { elder_id: created.elder_id, name: created.name, nickname: created.nickname },
+        {
+          elder_id: created.elder_id,
+          name: created.name,
+          nickname: created.nickname,
+          persona: created.persona,
+        },
       ]);
       setInviteCode(created.invite_code);
       setNewName("");
@@ -183,7 +189,7 @@ export function HomeScreen(props: {
             <li key={elder.elder_id}>
               <button
                 type="button"
-                onClick={() => props.onOpenElder(elder.elder_id, elder.name)}
+                onClick={() => props.onOpenElder(elder.elder_id, elder.name, elder.persona)}
                 className="flex min-h-14 w-full items-center justify-between rounded-2xl border border-line bg-surface px-4 text-left"
               >
                 <span className="text-base font-bold text-ink">{elder.name}</span>
