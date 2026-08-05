@@ -22,6 +22,12 @@ ACCOUNTS_DDL = (
     "elder_id TEXT PRIMARY KEY, name TEXT NOT NULL);"
     # 稱謂欄（2026-07-17）：既有庫走 ALTER 升級（建表→遷移順序，同 appointments.time）。
     "ALTER TABLE elders ADD COLUMN IF NOT EXISTS nickname TEXT NOT NULL DEFAULT '';"
+    # 人設欄（2026-08-05）：既有庫走 ALTER 升級，既有長輩自動拿到預設人設。
+    # ⚠️ 預設值字面寫死為 'lively_granddaughter' 而不是插入 `personas` 的常數：
+    # 把 Python 值拼進 SQL 字串會讓「資料庫預設」與「程式預設」看似同步、實則
+    # 各自演化。兩邊由 `tests/test_accounts_store_contract.py` 對帳。
+    "ALTER TABLE elders ADD COLUMN IF NOT EXISTS persona TEXT NOT NULL "
+    "DEFAULT 'lively_granddaughter';"
     "CREATE TABLE IF NOT EXISTS guardians ("
     "guardian_id TEXT PRIMARY KEY, name TEXT NOT NULL);"
     "CREATE TABLE IF NOT EXISTS elder_guardians ("

@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from kinsun.personas import DEFAULT_PERSONA_ID
+
 
 class Role(StrEnum):
     PRIMARY = "primary"
@@ -28,6 +30,9 @@ class Elder:
     # 稱謂（如「秀英阿嬤」）：金孫對長輩的稱呼，由家屬設定。空字串＝未設定，
     # 情境注入退回「用名字＋不猜性別」（2026-07-17：模型會亂猜阿公／阿嬤）。
     nickname: str = ""
+    # 人設（2026-08-05）：金孫對這位長輩用哪一種語氣，由家屬設定。值域見
+    # `personas.py`；不認得的值由 `personas.get_persona` 退回預設，不會壞。
+    persona: str = DEFAULT_PERSONA_ID
 
 
 @dataclass(frozen=True)
