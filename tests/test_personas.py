@@ -62,8 +62,17 @@ def test_tone_never_names_a_tool():
 
 
 def test_tone_does_not_claim_to_be_a_real_family_member():
-    """人設只管語氣，不得抵觸規則段的「你是 AI，不要假裝是真人或家人」。"""
+    """人設只管語氣，不得抵觸規則段的「你是 AI，不要假裝是真人或家人」。
+
+    ⚠️ 這條是回歸測試（2026-08-05 真模型探針）：初版的 tone 寫「把這位長輩當成
+    自己的阿公阿嬤在陪伴」，長輩問「你知道我是誰嗎」時兩種人設都把它當事實複述
+    ——「您是我的阿嬤啊」。措辭一旦像在陳述關係，模型就會照著講。
+    """
     for persona_id in personas.persona_ids():
         tone = personas.get_persona(persona_id).tone
         assert "真的孫" not in tone
         assert "不是 AI" not in tone
+        # 親屬稱謂只能出現在明講是比喻的句子裡（「口吻像個…孫女」），不可用來
+        # 陳述金孫與這位長輩的關係。
+        assert "當成自己的阿公阿嬤" not in tone
+        assert "你的阿嬤" not in tone and "你的阿公" not in tone

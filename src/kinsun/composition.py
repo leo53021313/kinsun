@@ -17,8 +17,8 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from kinsun import tracing
-from kinsun.accounts.facts import ElderProfileFacts
 from kinsun.accounts.models import Channel
+from kinsun.accounts.profile import ElderProfileReader
 from kinsun.accounts.service import AccountService
 from kinsun.accounts.store import PgAccountStore
 from kinsun.agent import SYSTEM_PROMPT, CareAgent
@@ -335,9 +335,10 @@ def assemble_core(
             # 「2026-07-30」，模型不知道今天幾號就算不出剩幾天。原為 get_current_time
             # 工具，但工具是「模型想到才呼叫」，時間卻是每輪都用得到的東西。
             TimeFacts(clock=clock),
-            # 稱呼緊接其後（2026-07-17）：沒有它，模型每輪亂猜「阿公／阿嬤」，
-            # 真實使用一半機率叫錯；稱呼是所有段落裡最先要對的事。
-            ElderProfileFacts(account_store),
+            # ⚠️ 稱呼**不在這裡**（2026-08-05）：它與人設由 `ElderProfileReader`
+            # 一次讀出、拼在提示詞開頭（見 `accounts/profile.py` 的模組說明）。
+            # 這裡曾經有一個 ElderProfileFacts，搬走的理由是「不要為了人設多查
+            # 一次同一張表」——正式環境的連線池只有 3 條。
             # 統一排程取代舊的用藥／回診兩段（D-76 P2）：三種 kind 各成一段，段落
             # 標題逐字沿用舊 facts（見 schedules/facts.py），prompt 因此零變動；
             # 第三段是全新的——長輩自己交代要提醒的事，金孫先前完全看不到。
@@ -379,6 +380,8 @@ def assemble_core(
     agent = CareAgent(
         externals.gemini,
         session,
+        # 人設＋稱呼（2026-08-05）：每輪開頭與情境組裝並行讀一次，見 accounts/profile.py。
+        profile_of=ElderProfileReader(account_store).get_profile,
         tools=build_tool_registry(
             clock=clock,
             rag_service=rag_service,

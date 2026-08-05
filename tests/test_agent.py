@@ -5,6 +5,7 @@ import time
 import pytest
 
 from kinsun import agent as agent_module
+from kinsun.accounts.profile import ElderProfile
 from kinsun.agent import (
     FALLBACK_REPLY,
     SYSTEM_PROMPT,
@@ -14,7 +15,16 @@ from kinsun.agent import (
 )
 from kinsun.llm import Message, ToolCall, ToolSpec, ToolTurn
 from kinsun.memory.shortterm import MemoryStoreError
+from kinsun.personas import (
+    DEFAULT_PERSONA_ID,
+    LIVELY_GRANDDAUGHTER,
+    STEADY_GRANDSON,
+    get_persona,
+)
 from kinsun.tools.registry import ToolRegistry
+
+# 預設人設的語氣段落——提示詞現在由它開頭（2026-08-05）。
+_DEFAULT_TONE = get_persona(DEFAULT_PERSONA_ID).tone
 
 
 class SpyLLM:
@@ -59,7 +69,7 @@ def test_handle_includes_history_and_writes_back():
     reply = agent.handle("u1", "我今天有點累")
 
     assert reply == "金孫回您：好的"
-    assert llm.system_prompt == SYSTEM_PROMPT
+    assert llm.system_prompt == _DEFAULT_TONE + SYSTEM_PROMPT
     assert llm.messages == [
         Message("user", "早安"),
         Message("assistant", "阿公早"),
@@ -74,7 +84,7 @@ def test_handle_injects_known_facts_into_system_prompt():
     llm = SpyLLM()
     agent = CareAgent(llm, SpySession(system_suffix="\n已知：高血壓（長者自述）"))
     agent.handle("u1", "嗨")
-    assert llm.system_prompt == SYSTEM_PROMPT + "\n已知：高血壓（長者自述）"
+    assert llm.system_prompt == _DEFAULT_TONE + SYSTEM_PROMPT + "\n已知：高血壓（長者自述）"
 
 
 def test_proactive_composes_with_memory_and_writes_back():
@@ -85,7 +95,7 @@ def test_proactive_composes_with_memory_and_writes_back():
     reply = agent.proactive("u1", "早安問候")
 
     assert reply == "金孫回您：好的"
-    assert llm.system_prompt == SYSTEM_PROMPT + "【記憶】"
+    assert llm.system_prompt == _DEFAULT_TONE + SYSTEM_PROMPT + "【記憶】"
     assert "早安問候" in llm.messages[-1].content
     # ✅ D-39（丙-8）：留存的記憶帶主動關懷標記——隔日 recall 不再看到憑空開場；
     # 回傳給長輩的 reply 本身不帶標記。
@@ -105,7 +115,12 @@ def test_proactive_writes_reply_to_trace_output(monkeypatch):
 
 
 def test_handle_attaches_care_system_prompt(monkeypatch):
-    """回合把 SYSTEM_PROMPT 註冊/連結到 trace（方案 A：程式碼為真相、Opik 只反映關聯）。"""
+    """回合把提示詞模板註冊/連結到 trace（方案 A：程式碼為真相、Opik 只反映關聯）。
+
+    ⚠️ 名稱帶人設 id、內容是「人設語氣＋規則段」（2026-08-05）：兩種人設是兩份不同
+    的提示詞，共用一個名字會在版本庫裡看起來像同一份被反覆改來改去。稱呼那一句
+    刻意不在裡面——它每位長輩都不同，混進去會變成每位長輩一個版本。
+    """
     from kinsun import tracing
 
     calls: list[tuple[str, str]] = []
@@ -113,7 +128,7 @@ def test_handle_attaches_care_system_prompt(monkeypatch):
         tracing, "attach_prompt", lambda name, content: calls.append((name, content))
     )
     CareAgent(SpyLLM(), SpySession()).handle("u1", "嗨")
-    assert ("care_system", SYSTEM_PROMPT) in calls
+    assert (f"care_system_{DEFAULT_PERSONA_ID}", _DEFAULT_TONE + SYSTEM_PROMPT) in calls
 
 
 def test_proactive_attaches_care_system_prompt(monkeypatch):
@@ -124,7 +139,7 @@ def test_proactive_attaches_care_system_prompt(monkeypatch):
         tracing, "attach_prompt", lambda name, content: calls.append((name, content))
     )
     CareAgent(SpyLLM(), SpySession()).proactive("u1", "早安問候")
-    assert ("care_system", SYSTEM_PROMPT) in calls
+    assert (f"care_system_{DEFAULT_PERSONA_ID}", _DEFAULT_TONE + SYSTEM_PROMPT) in calls
 
 
 def test_proactive_recalls_with_given_query_instead_of_intent():
@@ -1108,3 +1123,82 @@ def test_parallel_dispatch_carries_the_action_ledger_into_worker_threads():
         llm, SpySession(), tools=_registry_of({"create_schedule": create_schedule, "other": other})
     )
     assert agent.handle("u1", "明天下午兩點四十五要繳水電費") == reply
+
+
+# ── 人設（2026-08-05）──────────────────────────────────────────────
+
+
+def _persona_agent(persona_id: str = LIVELY_GRANDDAUGHTER, address_line: str = ""):
+    llm = SpyLLM()
+    return llm, CareAgent(
+        llm,
+        SpySession(),
+        profile_of=lambda _elder_id: ElderProfile(persona_id=persona_id, address_line=address_line),
+    )
+
+
+def test_prompt_starts_with_persona_then_address_then_rules():
+    """順序本身是契約：人設 → 稱呼 → 規則段 → 情境。"""
+    llm, agent = _persona_agent(STEADY_GRANDSON, "請用「秀英阿嬤」稱呼她／他。")
+    agent.handle("e1", "你好")
+
+    prompt = llm.system_prompt
+    assert prompt.startswith(get_persona(STEADY_GRANDSON).tone)
+    assert prompt.index("秀英阿嬤") < prompt.index(SYSTEM_PROMPT)
+
+
+def test_two_personas_differ_in_opening_but_share_identical_rules():
+    lively_llm, lively_agent = _persona_agent(LIVELY_GRANDDAUGHTER)
+    steady_llm, steady_agent = _persona_agent(STEADY_GRANDSON)
+    lively_agent.handle("e1", "你好")
+    steady_agent.handle("e1", "你好")
+
+    assert lively_llm.system_prompt != steady_llm.system_prompt
+    assert SYSTEM_PROMPT in lively_llm.system_prompt
+    assert SYSTEM_PROMPT in steady_llm.system_prompt
+
+
+def test_no_profile_reader_falls_back_to_default_persona():
+    """不注入讀取器＝預設人設、沒有稱呼那一句（既有呼叫端因此不必全部改）。"""
+    llm = SpyLLM()
+    CareAgent(llm, SpySession()).handle("e1", "你好")
+    assert llm.system_prompt.startswith(get_persona(DEFAULT_PERSONA_ID).tone)
+
+
+def test_unknown_persona_in_the_database_still_talks():
+    """資料庫裡的髒值不可讓長輩的對話卡死——退回預設，照常回覆。"""
+    llm, agent = _persona_agent("pirate_captain")
+    reply = agent.handle("e1", "你好")
+    assert reply == "金孫回您：好的"
+    assert llm.system_prompt.startswith(get_persona(DEFAULT_PERSONA_ID).tone)
+
+
+def test_profile_read_failure_degrades_without_breaking_the_turn():
+    """讀不到長輩檔案時照常回覆——不可為了一格設定把整輪打回回退話術。"""
+
+    def boom(_elder_id):
+        raise RuntimeError("資料庫掛了")
+
+    llm = SpyLLM()
+    reply = CareAgent(llm, SpySession(), profile_of=boom).handle("e1", "你好")
+
+    assert reply == "金孫回您：好的"
+    assert llm.system_prompt.startswith(get_persona(DEFAULT_PERSONA_ID).tone)
+
+
+def test_proactive_greeting_also_uses_the_persona():
+    """主動問候與對話走同一條組裝路徑，人設必須一樣生效。"""
+    llm, agent = _persona_agent(STEADY_GRANDSON)
+    agent.proactive("e1", "早安問候")
+    assert llm.system_prompt.startswith(get_persona(STEADY_GRANDSON).tone)
+
+
+def test_rules_no_longer_mandate_ending_with_a_question():
+    """罐頭感最直接的來源：第（5）條原本要求每一則都以關心或反問收尾。"""
+    assert "結尾自然帶一句關心或反問" not in SYSTEM_PROMPT
+    assert "不必每一則都用問句結束" in SYSTEM_PROMPT
+
+
+def test_rules_no_longer_declare_identity():
+    """身分宣告已移交人設段；規則段再宣告一次會與人設打架。"""
+    assert "溫暖、有耐心的台灣長輩陪伴助理" not in SYSTEM_PROMPT
