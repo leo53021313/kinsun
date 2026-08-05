@@ -114,6 +114,11 @@ class IngestionPipeline:
         # chunk 有 47% 是重複頁面，白燒嵌入配額且結構閘門直接擋下。
         # 一個 pipeline 實例＝一輪 ingest，故此狀態的生命週期正好是一輪。
         self._claimed_urls: dict[str, str] = {}
+        # 本輪已收錄的 content_hash → 收錄它的 source_id。
+        # 只比 URL 擋不住「不同網址、同一份內容」：衛福部的 np-16-1.html 與
+        # lp-16-1.html 都渲染〈焦點新聞〉，2026-08-05 實測三組跨來源重複內容
+        # 讓結構閘門以「有重複內容 hash」擋下整個 release。
+        self._claimed_hashes: dict[str, str] = {}
 
     def ingest_seed_documents(
         self,
@@ -176,22 +181,31 @@ class IngestionPipeline:
         documents: tuple[RagDocument, ...],
         source: Source,
     ) -> tuple[tuple[RagDocument, ...], tuple[tuple[RagDocument, str], ...]]:
-        """本輪內同一個 canonical URL 只讓第一個來源收錄，其餘留稽核後跳過。
+        """本輪內同一個 canonical URL 或同一份內容只讓第一個來源收錄。
 
         先到先得——呼叫端負責讓 ANSWER 來源排在 DISCOVERY 之前（見
         `source_registry.order_answer_first`），否則衛教內文可能被只留 membership
         的 discovery 來源搶走、不建回答向量。
+
+        兩把鑰匙都要：`deduplicate_documents` 的 hash 那一關只看得到單一來源的
+        批次，跨來源的同內容不同網址（衛福部 np-16-1.html 與 lp-16-1.html 都是
+        〈焦點新聞〉）只有在這裡才擋得住。
         """
         kept: list[RagDocument] = []
         discarded: list[tuple[RagDocument, str]] = []
         for document in documents:
             canonical = normalize_url(document.url)
-            owner = self._claimed_urls.get(canonical)
-            if owner is None:
-                self._claimed_urls[canonical] = source.source_id
-                kept.append(document)
+            url_owner = self._claimed_urls.get(canonical)
+            if url_owner is not None:
+                discarded.append((document, f"本輪已由來源 {url_owner} 收錄同一個 URL。"))
                 continue
-            discarded.append((document, f"本輪已由來源 {owner} 收錄同一個 URL。"))
+            hash_owner = self._claimed_hashes.get(document.content_hash)
+            if hash_owner is not None:
+                discarded.append((document, f"本輪已由來源 {hash_owner} 收錄同一份內容。"))
+                continue
+            self._claimed_urls[canonical] = source.source_id
+            self._claimed_hashes[document.content_hash] = source.source_id
+            kept.append(document)
         return tuple(kept), tuple(discarded)
 
     def ingest_documents(

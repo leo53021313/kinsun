@@ -541,3 +541,39 @@ def test_site_chrome_stripping_needs_enough_pages_to_be_meaningful():
 
     assert len(admitted) == 2
     assert all(shared in document.text for document in admitted)
+
+
+def test_identical_content_under_different_urls_is_claimed_once_across_sources():
+    """跨來源不只比網址，也比內容——同一份內容只收一次。
+
+    2026-08-05 實測：`mohw_health_window` 與 `mohw_health_list` 各收到一份
+    〈焦點新聞〉〈真相說明〉，網址不同但內容位元組相同。`deduplicate_documents`
+    的 hash 那一關只在單一來源的批次內作用，跨來源的 claim 表又只比 canonical
+    URL，兩關都放行，結構閘門直接以「有重複內容 hash」擋下整個 release。
+    """
+    store = _FakeStore()
+    registry = SourceRegistry()
+    pipeline = IngestionPipeline(
+        store=store,
+        embedding_model=CharacterHashEmbedding(dimensions=8),
+        clock=lambda: datetime(2026, 8, 5),
+    )
+    text = (
+        "衛生福利部焦點新聞：本部各單位發布的健康訊息與政策說明，包含疫苗接種、"
+        "慢性病防治、長者照護與食品安全等主題，內容定期更新並保留發布日期。"
+    )
+
+    pipeline.ingest_pages(
+        source=registry.get("mohw_health_window"),
+        pages=(_parsed("https://www.mohw.gov.tw/np-16-1.html", "焦點新聞", text),),
+        operator_or_job_id="job-1",
+        index_version="v1",
+    )
+    pipeline.ingest_pages(
+        source=registry.get("mohw_health_article"),
+        pages=(_parsed("https://www.mohw.gov.tw/lp-16-1.html", "焦點新聞", text),),
+        operator_or_job_id="job-1",
+        index_version="v1",
+    )
+
+    assert [document.source_id for document in store.documents] == ["mohw_health_window"]
