@@ -315,6 +315,7 @@ def test_one_turn_sends_a_reply_frame():
     assert reply["type"] == "reply"
     assert reply["turn_id"] == "turn-1"
     assert "今天有什麼新消息" in reply["text"]
+    assert reply["transcript"] == "今天有什麼新消息"
     assert reply["duration_ms"] == 1200
 
 
@@ -403,6 +404,7 @@ def test_a_text_only_turn_still_arrives_as_a_json_frame():
     assert reply["type"] == "reply"
     assert "audio" not in reply  # 純 JSON frame
     assert reply["audio_url"] == ""
+    assert reply["transcript"] == "今天有什麼新消息"
 
 
 def test_the_elder_never_gets_two_replies_for_one_turn():
@@ -754,6 +756,8 @@ def test_too_many_concurrent_turns_gets_a_busy_reply_not_silence():
         busy = _receive_frame(ws)
         assert busy["type"] == "error"
         assert "還在忙" in busy["text"]
+        assert busy["text"].startswith("我")
+        assert "金孫" not in busy["text"]
         gate.set()
         # 前三輪照樣各自回答，沒有被第四次影響。
         # ⚠️ 收 6 個訊框：每一輪除了 reply 還會補一個續段終止訊框（`_SlowLLM` 的

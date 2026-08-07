@@ -66,9 +66,11 @@ export type AppNotification = {
 export type GuardianSession = { guardian_id: string; name: string; token: string };
 export type ElderSession = { elder_id: string; name: string; token: string };
 export type TurnReply = {
+  /** ASR 辨識出的長輩原話；只回到長輩自己的裝置，不提供給家屬端清單。 */
+  transcript: string;
   text: string;
   audio_url: string;
-  /** 回覆音檔時長；目前三端零消費，保留給虛擬形象動畫對嘴（階段 5 後）。 */
+  /** 回覆音檔時長；Expo App 會與當段文字一起送給阿白 renderer 做 viseme 對嘴。 */
   duration_ms: number | null;
   /**
    * 分段串流（2026-07-26 延遲優化）：整段回覆被切成幾段。

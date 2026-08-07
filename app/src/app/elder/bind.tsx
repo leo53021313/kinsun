@@ -16,7 +16,7 @@ const BIND_ERRORS: Record<string, string> = {
   too_many_attempts: strings.elderBind.tooManyAttempts,
 };
 
-/** 長輩綁定：掃家人給的 QR（✅ D-54 丁-3）或輸入綁定碼，一次就好，之後永久登入。 */
+/** 長輩綁定：掃家人給的方塊圖（✅ D-54 丁-3）或輸入綁定碼，一次就好，之後永久登入。 */
 export default function ElderBind() {
   const router = useRouter();
   const { signIn } = useSession();
@@ -79,7 +79,12 @@ export default function ElderBind() {
           barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
           onBarcodeScanned={({ data }) => onScanned(data)}
         />
-        <Button label={strings.elderBind.switchToManual} variant="outline" onPress={() => setScanning(false)} />
+        <Button
+          label={strings.elderBind.switchToManual}
+          variant="outline"
+          size="big"
+          onPress={() => setScanning(false)}
+        />
       </View>
     );
   }
@@ -87,7 +92,13 @@ export default function ElderBind() {
   return (
     <View style={styles.container}>
       <Text style={styles.hint}>{strings.elderBind.hint}</Text>
-      <Button label={strings.elderBind.scanQr} size="big" onPress={startScan} disabled={busy} />
+      <Button
+        label={strings.elderBind.scanQr}
+        variant="outline"
+        size="big"
+        onPress={startScan}
+        disabled={busy}
+      />
       <TextInput
         style={styles.codeInput}
         value={code}
@@ -109,6 +120,7 @@ export default function ElderBind() {
       <Button
         label={strings.elderBind.loginLink}
         variant="outline"
+        size="big"
         onPress={() => router.push("/elder/login")}
         disabled={busy}
       />
