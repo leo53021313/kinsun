@@ -36,10 +36,10 @@
 
 ## 結構
 
-- `src/app/`：expo-router 檔案式路由（`role`／`guardian/*`／`elder/*`）
-- `src/lib/`：`api.ts`（後端呼叫，欄位 snake_case 與後端一致）、`auth.ts`（secure-store 存 token）、`theme.ts`
-- `src/components/`：共用 UI 與 `AvatarPlaceholder`（虛擬形象預留區，日後換 Rive／Live2D 不動版面）
+- `src/app/`：expo-router 檔案式路由（`role`／`auth/*`／`guardian/*` Tabs／`guardian-detail/*` 深頁／`elder/*`）
+- `src/lib/`：`api.ts`（後端呼叫，欄位 snake_case 與後端一致）、`auth.ts`（secure-store 存 token）、`theme.ts`、`todayLog.ts`
+- `src/components/`：共用 UI、固定角色舞台 `BearStage` 與離線 `OttoBearRenderer`
 
 ## 已知限制（MVP）
 
-- 推播通知未接（規劃階段 5：Apple Developer 帳號＋EAS dev build）。
+- Expo Go 無法驗證遠端推播；需使用具平台推播憑證的 EAS development build 或正式版本驗收。
