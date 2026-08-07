@@ -135,3 +135,27 @@ def test_elder_sleep_guidance_comes_from_a_single_handbook():
     assert source.allowed_domains == ("health.hpa.gov.tw",)
     assert source.url.endswith(".pdf")
     assert SourceValidator().validate(source).can_ingest is True
+
+
+def test_mohw_articles_come_from_a_single_content_hub():
+    """衛福部整站只留一個來源，指向真正有內文的衛生福利 e 寶箱。
+
+    2026-08-05 實測：三個 mohw 來源收回來的全是「109年衛生福利部新聞」這類
+    年度索引頁、零篇內文。`mohw_health_window` 的種子頁 np-34-1.html 標題雖是
+    「衛教視窗」，整頁只有站台選單與頁尾、沒有任何文章連結。三者又同爬一個
+    網域，跨來源去重先到先得，後兩者的成果實際上互相抵銷。
+    真正有內容的是 lp-88-1-40.html 底下的 30 個主題頁（用藥安全、健康促進、
+    醫療照護、傳染病防治、中醫藥⋯⋯），各 1,100～1,800 字，且子連結只有頁尾。
+    與 HPA 四來源合併（2026-08-01）是同一種病、同一種治法。
+    """
+    registry = SourceRegistry()
+    approved = {source.source_id for source in registry.approved_for_rag()}
+
+    mohw = registry.get("mohw_health_education")
+    assert mohw.url == "https://www.mohw.gov.tw/lp-88-1-40.html"
+    assert mohw.content_url_pattern == r"cp-88-\d+"
+    assert mohw.sitemap_url == ""
+    assert mohw.source_id in approved
+
+    for retired in ("mohw_health_window", "mohw_health_article", "mohw_health_list"):
+        assert retired not in approved, f"{retired} 已由 mohw_health_education 取代"

@@ -165,9 +165,9 @@ DEFAULT_SOURCES: tuple[Source, ...] = (
         "⚠️ 單一檔案來源：PDF 本身沒有連結，爬取到此為止；檔案 30 MB，每次週更會重抓。",
     ),
     Source(
-        "mohw_health_window",
-        "衛教視窗",
-        "https://www.mohw.gov.tw/np-34-1.html",
+        "mohw_health_education",
+        "衛生福利部衛教內容",
+        "https://www.mohw.gov.tw/lp-88-1-40.html",
         "衛生福利部",
         SourceType.GOVERNMENT,
         TrustLevel.HIGH,
@@ -175,7 +175,27 @@ DEFAULT_SOURCES: tuple[Source, ...] = (
         RecommendedStatus.APPROVED,
         True,
         ("mohw.gov.tw",),
-        "衛福部官方衛教入口。",
+        "衛生福利 e 寶箱底下的 30 個主題頁（用藥安全、健康促進、醫療照護、傳染病防治、"
+        "中醫藥⋯⋯），各 1,100～1,800 字，子連結只有頁尾，主題頁本身即是內容。",
+        content_url_pattern=r"cp-88-\d+",
+    ),
+    # 以下三個來源已由 mohw_health_education 取代（2026-08-05，Leo 核定）。
+    # 實測三者收回來的全是「109年衛生福利部新聞」這類年度索引頁、零篇內文；
+    # 又同爬一個網域，跨來源去重先到先得，後兩者的成果互相抵銷。
+    # 保留條目供稽核與歷史追溯，approved_for_rag 設 False 不再收錄。
+    Source(
+        "mohw_health_window",
+        "衛教視窗",
+        "https://www.mohw.gov.tw/np-34-1.html",
+        "衛生福利部",
+        SourceType.GOVERNMENT,
+        TrustLevel.HIGH,
+        CopyrightStatus.ALLOWED,
+        RecommendedStatus.OUT_OF_SCOPE,
+        False,
+        ("mohw.gov.tw",),
+        "已併入 mohw_health_education；種子頁 np-34-1.html 標題雖是「衛教視窗」，"
+        "整頁只有站台選單與頁尾、沒有任何文章連結。",
     ),
     Source(
         "mohw_health_article",
@@ -185,10 +205,10 @@ DEFAULT_SOURCES: tuple[Source, ...] = (
         SourceType.GOVERNMENT,
         TrustLevel.HIGH,
         CopyrightStatus.ALLOWED,
-        RecommendedStatus.APPROVED,
-        True,
+        RecommendedStatus.OUT_OF_SCOPE,
+        False,
         ("mohw.gov.tw",),
-        "需於 ingestion 時驗證單頁 metadata。",
+        "已併入 mohw_health_education；這是 e 寶箱底下的單一主題頁，不需要獨立來源。",
     ),
     Source(
         "mohw_health_list",
@@ -198,10 +218,10 @@ DEFAULT_SOURCES: tuple[Source, ...] = (
         SourceType.GOVERNMENT,
         TrustLevel.HIGH,
         CopyrightStatus.ALLOWED,
-        RecommendedStatus.APPROVED,
-        True,
+        RecommendedStatus.OUT_OF_SCOPE,
+        False,
         ("mohw.gov.tw",),
-        "適合 discovery，不直接作回答來源。",
+        "已併入 mohw_health_education——同一個種子頁，改以 ANSWER 角色收錄主題頁內文。",
     ),
     Source(
         "cdc_home",
