@@ -30,8 +30,13 @@ export type TalkFrame =
     }
   | { type: "error"; turn_id: string; text: string };
 
-/** setTimeout 的回傳值在 RN 與瀏覽器型別不同，這裡只當成不透明代號傳來傳去。 */
-export type RetryHandle = ReturnType<typeof setTimeout>;
+/**
+ * `setTimeout` 的回傳值在 RN／瀏覽器是 number，載入 Node 型別時則是 Timeout。
+ *
+ * 兩種宣告在不同作業系統的多載排序不一致，不能用單一 ReturnType 代表所有建置環境；
+ * 此值只會原樣交回 clearTimeout，因此保留聯集、不讀取其內部欄位。
+ */
+export type RetryHandle = number | ReturnType<typeof setTimeout>;
 
 /**
  * 把 WS 收到的 binary 訊框正規化成 ArrayBuffer。
