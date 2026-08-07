@@ -107,6 +107,61 @@ def test_openai_endpoint_rejects_oversized_batch(client, monkeypatch):
     assert res.status_code == 413
 
 
+# ── 用真的 openai 套件打：手工組 JSON 測不到的那一層 ──────────────
+
+
+def test_real_openai_client_round_trip(client):
+    """把 TestClient 注入 openai 套件，走 mem0 實際會走的那條路。
+
+    ⚠️ 這支測試是補漏洞補出來的：上面那些手工組 JSON 的測試全綠，但真的用 openai
+    套件打會拿到 400——因為**新版 SDK 未指定 encoding_format 時預設送 base64**，
+    而端點原本只收 float。手工組請求永遠模擬不出「對方預設會做什麼」，只有讓真正的
+    客戶端跑一遍才看得見。
+
+    這條路徑上，SDK 會自己把 base64 解回 float，所以斷言拿到的是還原後的數值——
+    等於同時驗了我們的編碼與它的解碼對得起來（dtype、位元組序）。
+    """
+    openai = pytest.importorskip("openai")
+    sdk = openai.OpenAI(base_url="http://testserver/v1", api_key="x", http_client=client)
+    res = sdk.embeddings.create(input=["第一句", "第二句"], model="BAAI/bge-m3", dimensions=1024)
+    assert [d.index for d in res.data] == [0, 1]
+    assert [len(d.embedding) for d in res.data] == [_FAKE_DIM, _FAKE_DIM]
+    assert [d.embedding[0] for d in res.data] == [0.0, 1.0]
+
+
+def test_base64_encoding_matches_openai_wire_format(client):
+    """base64 必須是 float32 小端序——SDK 固定以 float32 解碼，給 float64 會維度加倍且數值全錯。"""
+    import base64
+    import struct
+
+    res = client.post(
+        "/v1/embeddings",
+        json={"input": "血壓", "model": "m", "encoding_format": "base64"},
+    )
+    assert res.status_code == 200
+    payload = res.json()["data"][0]["embedding"]
+    assert isinstance(payload, str)
+    raw = base64.b64decode(payload)
+    assert len(raw) == _FAKE_DIM * 4  # float32 = 4 bytes
+    assert struct.unpack(f"<{_FAKE_DIM}f", raw)[0] == 0.0
+
+
+def test_float_encoding_still_returns_plain_list(client):
+    """明著要 float 時回原本的數字陣列（RAG 之外若有人直接打，行為不變）。"""
+    res = client.post(
+        "/v1/embeddings", json={"input": "血壓", "model": "m", "encoding_format": "float"}
+    )
+    assert isinstance(res.json()["data"][0]["embedding"], list)
+
+
+def test_unknown_encoding_format_is_rejected(client):
+    res = client.post(
+        "/v1/embeddings", json={"input": "血壓", "model": "m", "encoding_format": "gzip"}
+    )
+    assert res.status_code == 400
+    assert res.json()["detail"] == "unsupported_encoding_format"
+
+
 # ── 金鑰：openai SDK 只會送 Authorization: Bearer ────────────────
 
 

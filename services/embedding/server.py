@@ -156,6 +156,25 @@ async def embed(payload: EmbedRequest, request: Request) -> dict:
     }
 
 
+# OpenAI `/v1/embeddings` 的兩種編碼。⚠️ **base64 是 openai 套件的預設值**，不是選配：
+# 新版 SDK 為了省傳輸量，未指定 encoding_format 時一律送 base64，再自己解回 float。
+# 只支援 float 的話，mem0 走 openai provider 打過來的第一個請求就會拿到 400——而這
+# 在手工組 JSON 的測試裡完全看不出來（2026-08-07 用真的 openai 套件實測才發現）。
+_ENCODINGS = frozenset({"float", "base64"})
+
+
+def _encode_base64(vector: list[float]) -> str:
+    """比照 OpenAI：float32 小端序原始位元組再 base64。
+
+    dtype 必須是 float32——SDK 端固定以 `np.frombuffer(..., dtype="float32")` 解碼，
+    給 float64 會讓維度整整多一倍，而且解出來的數值全是亂的。
+    """
+    import base64
+    import struct
+
+    return base64.b64encode(struct.pack(f"<{len(vector)}f", *vector)).decode("ascii")
+
+
 class OpenAIEmbeddingRequest(BaseModel):
     """OpenAI `POST /v1/embeddings` 的請求子集（只收本服務用得到的欄位）。"""
 
@@ -184,7 +203,7 @@ async def openai_embeddings(payload: OpenAIEmbeddingRequest, request: Request) -
     """
     global _inflight
     _require_api_key(request)
-    if payload.encoding_format is not None and payload.encoding_format != "float":
+    if payload.encoding_format is not None and payload.encoding_format not in _ENCODINGS:
         raise HTTPException(status_code=400, detail="unsupported_encoding_format")
     texts = [payload.input] if isinstance(payload.input, str) else list(payload.input)
     if not texts:
@@ -203,12 +222,17 @@ async def openai_embeddings(payload: OpenAIEmbeddingRequest, request: Request) -
             vectors = await run_in_threadpool(_embed, texts)
     finally:
         _inflight -= 1
+    as_base64 = payload.encoding_format == "base64"
     return {
         "object": "list",
         # index 必須忠實對應輸入順序：mem0 的 embed_batch 依它重新排序（見其 openai.py），
         # 順序錯置會讓記憶與向量張冠李戴，而那看起來完全正常。
         "data": [
-            {"object": "embedding", "index": index, "embedding": vector}
+            {
+                "object": "embedding",
+                "index": index,
+                "embedding": _encode_base64(vector) if as_base64 else vector,
+            }
             for index, vector in enumerate(vectors)
         ],
         "model": EMBEDDING_MODEL_ID,
