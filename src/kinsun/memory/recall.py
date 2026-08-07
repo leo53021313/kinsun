@@ -27,16 +27,24 @@ _FACT_TIMEOUT_SECONDS = 5.0
 
 
 class FactProvider(Protocol):
-    def facts(self, elder_id: str) -> FactSection | None: ...
+    def facts(self, elder_id: str) -> FactSection | list[FactSection] | None: ...
 
 
-def _section_or_none(future) -> FactSection | None:
-    """取一路事實的結果；等太久就視同該段缺席（見 `_gather_facts` 的 ⚠️ 說明）。"""
+def _sections_of(future) -> list[FactSection]:
+    """取一路事實的結果，一律正規化成清單。
+
+    提供者可回單段、多段（`ScheduleFacts` 一次查詢供用藥／回診／自訂三段）或
+    `None`／空清單（該段缺席）。等太久同樣視同缺席（見 `_gather_facts` 的
+    ⚠️ 說明）——`fetch` 本來就允許回 None，逾時不是錯誤。
+    """
     try:
-        return future.result(timeout=_FACT_TIMEOUT_SECONDS)
+        result = future.result(timeout=_FACT_TIMEOUT_SECONDS)
     except FuturesTimeoutError:
         logger.warning("事實提供者逾時（%.1f 秒），略過該段", _FACT_TIMEOUT_SECONDS)
-        return None
+        return []
+    if result is None:
+        return []
+    return list(result) if isinstance(result, list) else [result]
 
 
 class SessionMemory:
@@ -166,7 +174,7 @@ class SessionMemory:
                 pool.submit(context.run, fetch, provider_facts)
                 for context, provider_facts in zip(contexts, providers, strict=True)
             ]
-            sections = [_section_or_none(future) for future in futures]
+            sections = [section for future in futures for section in _sections_of(future)]
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
-        return [section for section in sections if section is not None]
+        return sections

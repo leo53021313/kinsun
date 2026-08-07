@@ -242,3 +242,35 @@ def test_a_hanging_fact_provider_is_treated_as_a_missing_section(monkeypatch):
 
     assert [s.title for s in ctx.injected.sections] == ["\n用藥：\n"]
     assert elapsed < 1.0, f"耗時 {elapsed:.2f}s，卡住的那段沒有被放棄"
+
+
+def test_gather_facts_expands_provider_returning_multiple_sections():
+    """一個提供者可回多段，展開後仍排在它自己的註冊位置上。
+
+    ScheduleFacts 要用一次查詢供三段（用藥／回診／自訂），故 FactProvider
+    的回傳放寬為「單段、多段或缺席」。順序是 prompt 契約：多段要就地展開，
+    不可排到所有單段之後。
+    """
+
+    class _Multi:
+        def facts(self, elder_id):
+            return [FactSection("甲", ["a"]), FactSection("乙", ["b"])]
+
+    class _Single:
+        def facts(self, elder_id):
+            return FactSection("丙", ["c"])
+
+    memory = SessionMemory(_ShortTerm(), FakeLongTermStore(), facts=[_Multi(), _Single()])
+    sections = memory._gather_facts("elder-1")
+    assert [s.title for s in sections] == ["甲", "乙", "丙"]
+
+
+def test_gather_facts_provider_returning_empty_list_is_absent():
+    """回空清單＝該提供者整段缺席，與回 None 同義（某個 kind 沒排程時的情形）。"""
+
+    class _Empty:
+        def facts(self, elder_id):
+            return []
+
+    memory = SessionMemory(_ShortTerm(), FakeLongTermStore(), facts=[_Empty()])
+    assert memory._gather_facts("elder-1") == []
