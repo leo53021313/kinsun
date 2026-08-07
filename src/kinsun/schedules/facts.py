@@ -44,6 +44,12 @@ class ScheduleFacts:
 
     以 `group_id` 收斂：同一件事的多個鬧鐘（早晚兩次的藥、前一天加當天的回診）
     注入時必須合成一行，否則模型會以為那是兩種藥、兩次回診。
+
+    ⚠️ 取捨：`memory/recall.py::_gather_facts` 的 `fetch` 用同一個
+    `except Exception` 包住整個 `facts()` 呼叫，三段合一次查詢之後，若三段
+    格式化中有一段失敗，會連同其餘段落一併消失（改動前三個獨立提供者互不
+    影響）。目前查不到今天走得到的路徑（兩條寫入路徑皆有驗證守著），此為
+    記下的取捨，不是已知 bug。
     """
 
     def __init__(self, store: ScheduleStore, *, clock: Callable[[], datetime]) -> None:

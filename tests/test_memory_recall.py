@@ -245,24 +245,32 @@ def test_a_hanging_fact_provider_is_treated_as_a_missing_section(monkeypatch):
 
 
 def test_gather_facts_expands_provider_returning_multiple_sections():
-    """一個提供者可回多段，展開後仍排在它自己的註冊位置上。
+    """一個提供者可回多段，展開後仍排在它自己的註冊位置上（不是排到最前或最後）。
 
     ScheduleFacts 要用一次查詢供三段（用藥／回診／自訂），故 FactProvider
-    的回傳放寬為「單段、多段或缺席」。順序是 prompt 契約：多段要就地展開，
-    不可排到所有單段之後。
+    的回傳放寬為「單段、多段或缺席」。順序是 prompt 契約：多段要就地展開。
+
+    ⚠️ fixture 刻意用「單段→多段→單段」夾心：若誤實作成「多段一律前置」，
+    對 [單, 多, 單] 三個提供者會得到 [多段的兩個, 單段甲, 單段丁]，與「就地
+    展開」的正確順序不同，才測得出來（舊版 fixture 只有 [多, 單] 兩個提供者，
+    「多段前置」與「就地展開」剛好同解，測不出這種誤實作）。
     """
+
+    class _First:
+        def facts(self, elder_id):
+            return FactSection("丙", ["c"])
 
     class _Multi:
         def facts(self, elder_id):
             return [FactSection("甲", ["a"]), FactSection("乙", ["b"])]
 
-    class _Single:
+    class _Last:
         def facts(self, elder_id):
-            return FactSection("丙", ["c"])
+            return FactSection("丁", ["d"])
 
-    memory = SessionMemory(_ShortTerm(), FakeLongTermStore(), facts=[_Multi(), _Single()])
+    memory = SessionMemory(_ShortTerm(), FakeLongTermStore(), facts=[_First(), _Multi(), _Last()])
     sections = memory._gather_facts("elder-1")
-    assert [s.title for s in sections] == ["甲", "乙", "丙"]
+    assert [s.title for s in sections] == ["丙", "甲", "乙", "丁"]
 
 
 def test_gather_facts_provider_returning_empty_list_is_absent():

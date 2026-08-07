@@ -136,7 +136,9 @@ def test_link_rich_menu_passes_ids():
 # LINE API 一旦假死，該輪對話永遠不返回，佔住一個 uvicorn worker 與一條 Postgres 連線；
 # 家屬危急通報又排在回覆生成之前（pipeline.py），卡住的代價是長輩連回覆都拿不到。
 # 本專案為完全同型的問題付過兩次學費：llm.py:152-162（Gemini 的 timeout 存進欄位卻從沒
-# 傳給 SDK）與 db.py:445-465（死 TCP 讓排程器停擺七小時）。
+# 傳給 SDK）與 db.py 的 TCP keepalive 設定（見 db.py「連線層存活設定」區塊，防的是
+# 「對端連線真的消失、作業系統不通知」這類真實故障；⚠️ 不是 2026-07-26 排程器靜默
+# 停擺七小時的根因——那次根因是 try_claim 浮點等值比對，見 docs/dev/14 v1.17）。
 
 
 @pytest.mark.parametrize(
