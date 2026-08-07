@@ -13,7 +13,8 @@ let stored: string | null;
 
 beforeEach(async () => {
   jest.useFakeTimers();
-  jest.setSystemTime(new Date("2026-08-07T10:00:00+08:00"));
+  // 使用執行器的本地時間，讓測試在 UTC CI 與台北開發機都真的跨過本地午夜。
+  jest.setSystemTime(new Date(2026, 7, 7, 10, 0));
   stored = null;
   jest.clearAllMocks();
   storage.getItem.mockImplementation(async () => stored);
@@ -47,7 +48,7 @@ test("同時完成三輪仍保留三筆真實你說與阿白回答", async () =>
 
 test("跨到裝置本地的隔天自動視為空", async () => {
   await appendTurn({ at: 1, said: "今天的話", reply: "今天的回答" });
-  jest.setSystemTime(new Date("2026-08-08T00:01:00+08:00"));
+  jest.setSystemTime(new Date(2026, 7, 8, 0, 1));
 
   await expect(loadToday()).resolves.toEqual([]);
 });
