@@ -177,8 +177,9 @@ def test_three_kinds_query_the_store_only_once():
 def test_sections_follow_medication_appointment_custom_order():
     """段落順序是 prompt 契約：用藥 → 回診 → 自訂，與註冊三個實例時的順序相同。"""
     store = FakeScheduleStore()
-    store.save(_once("c1", "g3", int(NOW.timestamp()) + 3600, title="繳電費",
-                     kind=ScheduleKind.CUSTOM))
+    store.save(
+        _once("c1", "g3", int(NOW.timestamp()) + 3600, title="繳電費", kind=ScheduleKind.CUSTOM)
+    )
     store.save(_once("a1", "g2", int(NOW.timestamp()) + 86400))
     store.save(_daily("m1", "g1", "0800"))
     sections = ScheduleFacts(store, clock=lambda: NOW).facts("e1")

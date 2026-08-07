@@ -100,6 +100,7 @@ class HtmlTextExtractor(HTMLParser):
         self._primary_parts: list[str] = []
         self._fallback_parts: list[str] = []
         self._links: list[str] = []
+        self._anchor_depth = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = tag.lower()
@@ -115,10 +116,13 @@ class HtmlTextExtractor(HTMLParser):
         # 兩個不同主題的來源抓回一模一樣的 19 篇——本署簡介、組織架構圖、各業務
         # 服務窗口、本署位置……那 29 個是每頁都有的機關樣板頁，只是網址型態剛好
         # 也像文章。真正的主題文章是內容區那幾個。
-        if tag == "a" and self._skip_depth == 0:
-            href = dict(attrs).get("href")
-            if href:
-                self._links.append(urllib.parse.urljoin(self._base_url, href))
+        if tag == "a":
+            # 連結「文字」不收（見 handle_data），但連結本身照收——爬蟲整條路靠它。
+            self._anchor_depth += 1
+            if self._skip_depth == 0:
+                href = dict(attrs).get("href")
+                if href:
+                    self._links.append(urllib.parse.urljoin(self._base_url, href))
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
@@ -128,6 +132,8 @@ class HtmlTextExtractor(HTMLParser):
             self._title_depth -= 1
         if tag in _PRIMARY_TAGS and self._primary_depth:
             self._primary_depth -= 1
+        if tag == "a" and self._anchor_depth:
+            self._anchor_depth -= 1
 
     def handle_data(self, data: str) -> None:
         cleaned = _clean_inline(data)
@@ -135,6 +141,16 @@ class HtmlTextExtractor(HTMLParser):
             return
         if self._title_depth:
             self._title_parts.append(cleaned)
+        # 連結裡的文字是導覽，不是內文。政府網站的選單就是一堆連結，其文字全部
+        # 包在 <a> 裡——2026-08-07 實測國健署每頁 <a> 內恆為 3,084 字（各頁一字不差
+        # 的全站選單），<a> 外才是文章（三篇各 894／740／695 字）。附件與相關文件
+        # 的標題同理：疾管署〈新冠併發重症〉的 <a> 內是十餘份別份文件的標題，收進
+        # 來會把疾病介紹的向量污染成一份文件目錄。
+        # ⚠️ 先前壓平全頁再用外形猜哪段是選單，失敗過五次（長度下限→欄位數→
+        # 條列比例→跨文件行重複→重複次數門檻），每次都誤殺簡短的真衛教；改在解析
+        # 當下依結構分流，不再事後猜。
+        if self._anchor_depth:
+            return
         if self._skip_depth == 0:
             self._fallback_parts.append(cleaned)
             if self._primary_depth:
