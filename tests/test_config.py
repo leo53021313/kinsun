@@ -278,7 +278,8 @@ def test_internal_testing_enabled_defaults_false_and_parses():
 def test_database_pool_max_size_default_and_override():
     """✅ 庚-26（A-55）：連線池上限可調。
 
-    總量公式：WEB_WORKERS×本值＋排程 worker×本值 ≤ Supabase 直連上限 60。
+    總量公式：（WEB_WORKERS＋scheduler 1＋rag_worker 1）×本值 ≤ Supabase
+    pooler（session mode）的 pool_size（現 25，非直連上限）。
     """
     settings = load_settings(BASE_ENV)
     assert settings.database_pool_max_size == 5
