@@ -53,7 +53,6 @@ from kinsun.reports.reminders import PgReminderLogStore
 from kinsun.reports.summaries import PgConversationSummaryStore
 from kinsun.safety.events import PgRiskEventStore
 from kinsun.schedules.facts import ScheduleFacts
-from kinsun.schedules.models import ScheduleKind
 from kinsun.schedules.service import ScheduleService
 from kinsun.schedules.store import PgScheduleStore
 from kinsun.strategies.facts import StrategyFacts
@@ -342,9 +341,9 @@ def assemble_core(
             # 統一排程取代舊的用藥／回診兩段（D-76 P2）：三種 kind 各成一段，段落
             # 標題逐字沿用舊 facts（見 schedules/facts.py），prompt 因此零變動；
             # 第三段是全新的——長輩自己交代要提醒的事，金孫先前完全看不到。
-            ScheduleFacts(schedule_store, kind=ScheduleKind.MEDICATION, clock=clock),
-            ScheduleFacts(schedule_store, kind=ScheduleKind.APPOINTMENT, clock=clock),
-            ScheduleFacts(schedule_store, kind=ScheduleKind.CUSTOM, clock=clock),
+            # 2026-08-07：三段由**同一次** list_for_elder 供應（原為三個實例各查
+            # 一次相同的查詢）；`_gather_facts` 會就地展開這三段。
+            ScheduleFacts(schedule_store, clock=clock),
             # 閉環的最後一哩：反思學到的守則由此進入下一輪對話的 system prompt。
             StrategyFacts(strategies, max_strategies=settings.reflection_max_strategies),
             # 地點注入（spec 2026-07-17）：位置是線索不是答案，措辭見 locations/facts.py。
