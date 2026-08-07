@@ -1,5 +1,5 @@
 import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { KeyboardAvoidingView, Platform, StyleSheet, View } from "react-native";
 
 import { Button, ErrorText, Field } from "@/components/ui";
@@ -10,12 +10,18 @@ import { colors, spacing } from "@/lib/theme";
 
 export default function GuardianRegister() {
   const router = useRouter();
-  const { signIn } = useSession();
+  const { session: activeSession, signIn } = useSession();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (activeSession?.role === "guardian") {
+      router.replace("/guardian/home");
+    }
+  }, [activeSession?.role, router]);
 
   async function submit() {
     setError("");
@@ -27,7 +33,6 @@ export default function GuardianRegister() {
     try {
       const session = await registerGuardian(email, password, name.trim());
       await signIn({ role: "guardian", token: session.token, display_name: session.name });
-      router.replace("/guardian/home");
     } catch (exc) {
       if (exc instanceof ApiError && exc.code === "email_taken") {
         setError(strings.guardianRegister.emailTaken);

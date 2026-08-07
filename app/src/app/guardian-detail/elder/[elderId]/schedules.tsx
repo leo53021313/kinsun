@@ -1,5 +1,5 @@
-import { useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { useCallback, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { Button, EmptyHint, ErrorText, Field, Section } from "@/components/ui";
@@ -25,6 +25,7 @@ import { colors, spacing } from "@/lib/theme";
  */
 export default function SchedulesManage() {
   const { elderId } = useLocalSearchParams<{ elderId: string }>();
+  const router = useRouter();
   const { session } = useSession();
   const signOutOn401 = useSignOutOnAuthError();
   const token = session?.token ?? "";
@@ -49,11 +50,12 @@ export default function SchedulesManage() {
     }
   }, [elderId, token, signOutOn401]);
 
-  useEffect(() => {
-    // 同 medications 舊頁的說明：reload 的 setState 都在 await 之後，不會連鎖重繪。
-    // eslint-disable-next-line react-compiler/set-state-in-effect
-    reload();
-  }, [reload]);
+  // 獨立的回診編輯頁儲存／刪除後會 back 到這裡；每次重新取得焦點都要重載清單。
+  useFocusEffect(
+    useCallback(() => {
+      void reload();
+    }, [reload]),
+  );
 
   function toggleSlot(value: string) {
     setSlots((cur) => (cur.includes(value) ? cur.filter((s) => s !== value) : [...cur, value]));
@@ -111,6 +113,17 @@ export default function SchedulesManage() {
     setError(strings.schedules.editHint);
   }
 
+  function editGroup(group: ScheduleGroup) {
+    if (group.kind !== "appointment" || !elderId) {
+      startEdit(group);
+      return;
+    }
+    router.push({
+      pathname: "/guardian-detail/schedule/[scheduleId]/edit",
+      params: { scheduleId: group.group_id, elderId },
+    });
+  }
+
   function confirmRemove(group: ScheduleGroup) {
     Alert.alert(strings.schedules.deleteTitle, strings.schedules.confirmDelete(group.title), [
       { text: strings.common.cancel, style: "cancel" },
@@ -165,7 +178,7 @@ export default function SchedulesManage() {
                   label={strings.common.edit}
                   variant="outline"
                   disabled={busy}
-                  onPress={() => startEdit(g)}
+                  onPress={() => editGroup(g)}
                 />
                 <Button
                   label={strings.common.delete}

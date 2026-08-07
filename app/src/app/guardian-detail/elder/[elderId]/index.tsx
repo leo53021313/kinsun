@@ -142,6 +142,18 @@ export default function ElderDetail() {
             </View>
           ))
         )}
+        {summaries && summaries.length > 0 ? (
+          <Button
+            label={strings.elderDetail.viewDailySummaries}
+            variant="outline"
+            onPress={() =>
+              router.push({
+                pathname: "/guardian-detail/elder/[elderId]/summary",
+                params: { elderId },
+              })
+            }
+          />
+        ) : null}
       </Section>
 
       <Section title={strings.elderDetail.schedulesSection}>
@@ -157,7 +169,12 @@ export default function ElderDetail() {
         <Button
           label={strings.elderDetail.manageSchedules}
           variant="outline"
-          onPress={() => router.push(`/guardian/elder/${elderId}/schedules`)}
+              onPress={() =>
+                router.push({
+                  pathname: "/guardian-detail/elder/[elderId]/schedules",
+                  params: { elderId },
+                })
+              }
         />
       </Section>
 

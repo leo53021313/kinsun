@@ -8,6 +8,7 @@ import { RoleSwitcher } from "@/components/RoleSwitcher";
 import { Button, EmptyHint, ErrorText, Field, Section } from "@/components/ui";
 import { createElder, listElders, listNotifications, logoutGuardian, type Elder } from "@/lib/api";
 import { loadSeenAt } from "@/lib/notificationsSeen";
+import { useGuardianTabsState } from "@/lib/GuardianTabsProvider";
 import { useSession, useSignOutOnAuthError } from "@/lib/SessionProvider";
 import { strings } from "@/lib/strings";
 import { colors, spacing } from "@/lib/theme";
@@ -24,6 +25,7 @@ export default function GuardianHome() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const { refreshPrimaryElder } = useGuardianTabsState();
 
   useFocusEffect(
     useCallback(() => {
@@ -84,6 +86,7 @@ export default function GuardianHome() {
       ]);
       setInviteCode(created.invite_code);
       setNewName("");
+      void refreshPrimaryElder();
     } catch (exc) {
       if (await signOutOn401(exc)) return;
       setError(exc instanceof Error ? exc.message : strings.guardianHome.addFailed);
@@ -172,7 +175,12 @@ export default function GuardianHome() {
         renderItem={({ item }) => (
           <Pressable
             accessibilityRole="button"
-            onPress={() => router.push(`/guardian/elder/${item.elder_id}`)}
+            onPress={() =>
+              router.push({
+                pathname: "/guardian-detail/elder/[elderId]",
+                params: { elderId: item.elder_id },
+              })
+            }
             style={({ pressed }) => [styles.elderRow, pressed ? styles.elderRowPressed : null]}
           >
             <Text style={styles.elderName}>{item.name}</Text>

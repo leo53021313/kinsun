@@ -1,5 +1,5 @@
 import { Link, useRouter } from "expo-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { KeyboardAvoidingView, Platform, StyleSheet, Text, View } from "react-native";
 
 import { Button, ErrorText, Field } from "@/components/ui";
@@ -10,11 +10,17 @@ import { colors, spacing } from "@/lib/theme";
 
 export default function GuardianLogin() {
   const router = useRouter();
-  const { signIn } = useSession();
+  const { session: activeSession, signIn } = useSession();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (activeSession?.role === "guardian") {
+      router.replace("/guardian/home");
+    }
+  }, [activeSession?.role, router]);
 
   async function submit() {
     setError("");
@@ -22,7 +28,6 @@ export default function GuardianLogin() {
     try {
       const session = await loginGuardian(email, password);
       await signIn({ role: "guardian", token: session.token, display_name: session.name });
-      router.replace("/guardian/home");
     } catch (exc) {
       if (exc instanceof ApiError && exc.status === 401) {
         setError(strings.guardianLogin.wrongCredentials);
@@ -57,7 +62,7 @@ export default function GuardianLogin() {
         />
         <ErrorText message={error} />
         <Button label={strings.common.login} onPress={submit} busy={busy} />
-        <Link href="/guardian/register" style={styles.link}>
+        <Link href="/auth/guardian-register" style={styles.link}>
           <Text style={styles.linkText}>{strings.guardianLogin.registerLink}</Text>
         </Link>
       </View>
