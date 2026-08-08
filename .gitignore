@@ -260,3 +260,9 @@ evals/redteam/.promptfoo/
 
 # 外部參考用原始碼（clone 下來研究，不進版控）
 /ref/
+
+# 角色原始素材（Kevin／Otto 兩版北極熊的 mp4／mov／webp 母檔，約 2.2 GB）。
+# 正式 App 只用得到 Otto 版經 app/scripts/build-otto-renderer.mjs 產出的
+# renderer.html，母檔留在本機供日後重新出圖，不進版控——一次 git add -A
+# 就會把 2 GB 影片推上遠端，之後再刪也還在歷史裡。
+/Polar Bear/
