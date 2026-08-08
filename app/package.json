@@ -58,8 +58,8 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "bear:build": "node scripts/build-otto-renderer.mjs",
-    "bear:check": "node scripts/build-otto-renderer.mjs --check && node scripts/test-otto-runtime.mjs",
+    "bear:build": "node ../shared/otto-pet-core/build-renderer.mjs",
+    "bear:check": "node ../shared/otto-pet-core/build-renderer.mjs --check && node scripts/test-otto-runtime.mjs",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
     "test": "jest"

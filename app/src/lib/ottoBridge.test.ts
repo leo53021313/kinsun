@@ -2,7 +2,9 @@ import {
   createOttoSyncCommand,
   OTTO_BRIDGE_VERSION,
   parseOttoRendererEvent,
+  type OttoVisualState,
 } from "./ottoBridge";
+import type { TalkVisualState } from "./talkPresentation";
 
 describe("Otto WebView bridge", () => {
   test("非說話態只送五態，不把上一段文字帶進下一態", () => {
@@ -60,4 +62,14 @@ describe("Otto WebView bridge", () => {
     expect(parseOttoRendererEvent('{"version":1,"type":"anything"}')).toBeNull();
     expect(parseOttoRendererEvent("not-json")).toBeNull();
   });
+});
+
+test("bridge 的狀態聯集與對講機狀態機的五態相容", () => {
+  // 編譯期斷言（執行期沒有東西可驗）：`shared/ottoBridge.ts` 刻意不從
+  // `talkPresentation` 匯入型別——那支是接手指示第 11 條點名不准動的狀態機檔案，
+  // 而 shared 也不該反向依賴任何一端。代價是同一組五個名稱寫了兩份，這條斷言
+  // 就是防它們漂：任一邊多一個或改名，這裡會編譯失敗。
+  const toBridge: OttoVisualState = "speaking" as TalkVisualState;
+  const toStateMachine: TalkVisualState = "speaking" as OttoVisualState;
+  expect([toBridge, toStateMachine]).toEqual(["speaking", "speaking"]);
 });
