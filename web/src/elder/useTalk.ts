@@ -168,6 +168,13 @@ export function useTalk(options: {
   }));
 
   const [avatar, setAvatar] = useState<AvatarState>("idle");
+  /**
+   * 這一輪 ASR 認出來的長輩原話（W4：「之前聊過的」的「您說」那一行）。
+   *
+   * ⚠️ 舊版後端不送 `transcript`，此時維持空字串。呼叫端據此決定**不寫**
+   * 那一筆紀錄——寧可少一則，也不要讓長輩看到一句他沒講過的話。
+   */
+  const [transcript, setTranscript] = useState("");
   const [replyText, setReplyText] = useState(strings.talk.idleHint);
   const [micReady, setMicReady] = useState(false);
 
@@ -565,6 +572,11 @@ export function useTalk(options: {
         if (canTakeOverSubtitle && frame.text) {
           setReplyText(frame.text);
         }
+        // 逐字稿只跟著 `reply` 走：`ack` 是安撫話、`chunk` 是同一輪的續段，兩者都
+        // 不帶新的長輩原話，跟著設會把它清成空字串。
+        if (frame.type === "reply" && canTakeOverSubtitle) {
+          setTranscript(typeof frame.transcript === "string" ? frame.transcript : "");
+        }
         // ⚠️ 續段直送（2026-08-01）的 `chunk` 訊框刻意**不**另開分支：它與
         // `ack`／`reply` 共用同一組欄位（`turn_id`／`audio_url`／`text`／
         // `duration_ms`），這段既有的通用推播邏輯結構上就完整涵蓋了它——
@@ -857,5 +869,5 @@ export function useTalk(options: {
     }
   }, [stopAndSend]);
 
-  return { avatar, replyText, micReady, pressIn, pressOut };
+  return { avatar, replyText, transcript, micReady, pressIn, pressOut };
 }

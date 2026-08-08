@@ -7,11 +7,12 @@
  * 一定要斷言呼叫端到 hook 之間那條線——傳進去的參數、按下去呼叫了哪一支。
  */
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TalkScreen } from "./TalkScreen";
+import { loadToday } from "./todayLog";
 import type { AvatarState } from "./useTalk";
 
 const talkState = vi.hoisted(() => ({
@@ -19,6 +20,7 @@ const talkState = vi.hoisted(() => ({
   options: null as Record<string, unknown> | null,
   avatar: "idle" as AvatarState,
   replyText: "按住下面的麥克風說話，或按一下開始、說完再按一下",
+  transcript: "",
   micReady: true,
   pressIn: vi.fn(),
   pressOut: vi.fn(),
@@ -30,6 +32,7 @@ vi.mock("./useTalk", () => ({
     return {
       avatar: talkState.avatar,
       replyText: talkState.replyText,
+      transcript: talkState.transcript,
       micReady: talkState.micReady,
       pressIn: talkState.pressIn,
       pressOut: talkState.pressOut,
@@ -41,7 +44,9 @@ beforeEach(() => {
   talkState.options = null;
   talkState.avatar = "idle";
   talkState.replyText = "按住下面的麥克風說話，或按一下開始、說完再按一下";
+  talkState.transcript = "";
   talkState.micReady = true;
+  localStorage.clear();
   talkState.pressIn.mockClear();
   talkState.pressOut.mockClear();
 });
@@ -53,6 +58,7 @@ function renderScreen(
     unread: number;
     visible: boolean;
     onOpenNotifications: () => void;
+    onOpenHistory: () => void;
     onLogout: () => void;
     onBindingLost: () => void;
     onTokenRevoked: () => void;
@@ -62,6 +68,7 @@ function renderScreen(
     unread: 0,
     visible: true,
     onOpenNotifications: vi.fn(),
+    onOpenHistory: vi.fn(),
     onLogout: vi.fn(),
     onBindingLost: vi.fn(),
     onTokenRevoked: vi.fn(),
@@ -78,6 +85,7 @@ function renderScreen(
       unread={props.unread}
       visible={props.visible}
       onOpenNotifications={props.onOpenNotifications}
+      onOpenHistory={props.onOpenHistory}
       onLogout={props.onLogout}
       onBindingLost={props.onBindingLost}
       onTokenRevoked={props.onTokenRevoked}
@@ -376,5 +384,56 @@ describe("回話卡收合（W3b）", () => {
     talkState.avatar = "speaking";
     h.rerender();
     expect(screen.getByTestId("reply-card")).toBeInTheDocument();
+  });
+});
+
+
+describe("之前聊過的：入口與寫入（W4）", () => {
+  it("頁首左側有 60dp 圓鈕進「之前聊過的」", async () => {
+    const h = renderScreen();
+    const entry = screen.getByRole("button", { name: "之前聊過的" });
+    expect(entry.className).toContain("size-[var(--size-elder-round-button)]");
+    await userEvent.click(entry);
+    expect(h.onOpenHistory).toHaveBeenCalledOnce();
+  });
+
+  it("一輪講完就寫進當日紀錄", async () => {
+    talkState.avatar = "speaking";
+    talkState.transcript = "今天天氣真好";
+    talkState.replyText = "是啊，要不要出去走走？";
+    const h = renderScreen();
+    // 說完（speaking → idle）才算一輪結束
+    talkState.avatar = "idle";
+    h.rerender();
+    await waitFor(async () =>
+      expect((await loadToday()).map((t) => [t.said, t.reply])).toEqual([
+        ["今天天氣真好", "是啊，要不要出去走走？"],
+      ]),
+    );
+  });
+
+  it("後端沒送逐字稿時不寫——不可偽造長輩沒講過的話", async () => {
+    // 舊版後端不送 `transcript`。寧可少一則紀錄，也不要在「您說」那一行編一句話。
+    talkState.avatar = "speaking";
+    talkState.transcript = "";
+    talkState.replyText = "是啊。";
+    const h = renderScreen();
+    talkState.avatar = "idle";
+    h.rerender();
+    await waitFor(() => expect(screen.getByTestId("reply-collapsed")).toBeInTheDocument());
+    expect(await loadToday()).toEqual([]);
+  });
+
+  it("同一輪重繪很多次也只寫一筆", async () => {
+    talkState.avatar = "speaking";
+    talkState.transcript = "今天天氣真好";
+    talkState.replyText = "是啊。";
+    const h = renderScreen();
+    talkState.avatar = "idle";
+    h.rerender();
+    await waitFor(async () => expect(await loadToday()).toHaveLength(1));
+    h.rerender();
+    h.rerender();
+    expect(await loadToday()).toHaveLength(1);
   });
 });

@@ -42,6 +42,7 @@ import { Button } from "@/ui/Button";
 
 import { BearStage } from "./BearStage";
 import { MicIcon, TalkStatusIcon } from "./TalkIcons";
+import { appendTurn } from "./todayLog";
 import { useTalk, type AvatarState } from "./useTalk";
 
 /** 設計稿座標（以裝置畫面頂端／底端為原點）換算成 PhoneFrame 內容區的座標。 */
@@ -78,6 +79,8 @@ export function TalkScreen(props: {
   /** 這一欄目前是否真的看得見（窄螢幕頁籤模式）。轉交給 `useTalk`，見該檔說明。 */
   visible?: boolean;
   onOpenNotifications: () => void;
+  /** 進「之前聊過的」（頁首左側 60dp 圓鈕）。 */
+  onOpenHistory: () => void;
   onLogout: () => void;
   onBindingLost: () => void;
   /** 後端不認這支 token（401）。與 403 分開的理由見 `useTalk` 該 prop 的說明。 */
@@ -135,6 +138,26 @@ export function TalkScreen(props: {
     }
   }
 
+  // 一輪結束就寫進當日紀錄（W4）。
+  //
+  // ⚠️ 放在畫面層而不是 `useTalk`：與 App 一致（App 也寫在 talk.tsx），而且 useTalk
+  // 的播放佇列有補播與插嘴的競態，把寫入塞進去要動到那一段。`collapsed` 翻成 true
+  // 的那一刻就是「答案播完了」，正是要記的時機。
+  //
+  // ⚠️ `said` 或 `reply` 任一為空就不寫：舊版後端不送 `transcript`，寧可少一則紀錄，
+  // 也不要讓長輩看到一句他沒講過的話。
+  const loggedReplyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!collapsed) return;
+    const said = talk.transcript.trim();
+    const reply = talk.replyText.trim();
+    if (!said || !reply) return;
+    // 同一輪只寫一次：`collapsed` 期間任何重繪都會再跑一次這個 effect。
+    if (loggedReplyRef.current === reply) return;
+    loggedReplyRef.current = reply;
+    void appendTurn({ at: Date.now(), said, reply });
+  }, [collapsed, talk.transcript, talk.replyText]);
+
   const showCollapsed = collapsed && talk.replyText.trim().length > 0;
 
   return (
@@ -144,6 +167,15 @@ export function TalkScreen(props: {
         style={{ top: HEADER_TOP }}
         className="absolute inset-x-[var(--size-elder-page-padding)] z-40 flex items-center gap-2.5"
       >
+        <button
+          type="button"
+          onClick={props.onOpenHistory}
+          aria-label={strings.elderHistory.entryButton}
+          className="flex size-[var(--size-elder-round-button)] shrink-0 items-center justify-center rounded-full border border-line bg-surface text-3xl text-primary shadow-[var(--elevation-row)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+        >
+          <span aria-hidden>🕘</span>
+        </button>
+
         <button
           type="button"
           aria-label={
