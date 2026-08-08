@@ -64,6 +64,14 @@ const STATUS_TIME = "9:41";
 const SCREEN_W = 402;
 const SCREEN_H = 874;
 
+/**
+ * 頂部與底部安全區。匯出是因為畫面層要用它換算設計稿座標——設計稿的 y 座標
+ * 以**裝置畫面頂端**為原點（App 的對講機頁沒有包 SafeAreaView，狀態列是 OS
+ * 疊在 app 之上），而本元件的內容區已經扣掉這兩段。見 `elder/TalkScreen.tsx`。
+ */
+export const PHONE_STATUS_BAR_H = 54;
+export const PHONE_HOME_INDICATOR_H = 34;
+
 export function PhoneFrame(props: {
   title: string;
   os: PhoneOs;
@@ -91,7 +99,9 @@ export function PhoneFrame(props: {
     >
       {/* 狀態列高度取 Dynamic Island 機型的頂部安全區（約 54px），下方內容區
           因此拿到的高度就是真機上 app 可用的高度。 */}
-      <div className="relative flex h-[54px] shrink-0 items-center justify-between px-8 pt-1 text-sm font-semibold text-ink">
+      <div
+        style={{ height: PHONE_STATUS_BAR_H }}
+        className="relative flex shrink-0 items-center justify-between px-8 pt-1 text-sm font-semibold text-ink">
         <span>{STATUS_TIME}</span>
         {os === "ios" ? (
           <span
@@ -117,10 +127,18 @@ export function PhoneFrame(props: {
       </div>
 
       {/* 內容區 */}
-      <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+      {/* 內容區維持可捲：家屬端的清單本來就會超過一屏。長輩端的「一屏不捲」
+          由畫面自己負責——`elder/TalkScreen.tsx` 是 `h-full overflow-hidden`
+          的絕對定位版面，永遠不會撐出這個框，因此不需要在外框加一個開關。 */}
+      <div data-testid="phone-content" className="relative min-h-0 flex-1 overflow-y-auto">
+        {children}
+      </div>
 
       {/* home indicator：34px 是 iOS 底部安全區的既定值；home indicator 本身 5 × 140。 */}
-      <div className="flex h-[34px] shrink-0 items-end justify-center pb-2">
+      <div
+        style={{ height: PHONE_HOME_INDICATOR_H }}
+        className="flex shrink-0 items-end justify-center pb-2"
+      >
         <span aria-hidden className="h-[5px] w-[140px] rounded-full bg-ink/40" />
       </div>
     </section>

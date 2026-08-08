@@ -67,7 +67,12 @@ function renderScreen(
     onTokenRevoked: vi.fn(),
     ...overrides,
   };
-  const view = render(
+  /**
+   * ⚠️ 每次都建**新的** element，不可重用同一個參考：React 對referentially 相同、
+   * props 也相同的 element 會直接跳過重繪，`talkState` 改了也不會被讀到——症狀是
+   * 「改了狀態卻什麼都沒變」，很容易被誤判成元件壞掉。
+   */
+  const build = () => (
     <TalkScreen
       token="tok"
       unread={props.unread}
@@ -76,9 +81,17 @@ function renderScreen(
       onLogout={props.onLogout}
       onBindingLost={props.onBindingLost}
       onTokenRevoked={props.onTokenRevoked}
-    />,
+    />
   );
-  return { ...props, view };
+  const view = render(build());
+  /**
+   * 用同一組 props 重繪。
+   *
+   * `useTalk` 的假替身在每次 render 時才讀 `talkState`，所以「改 talkState 再重繪」
+   * 就等於模擬狀態轉場——這是驗收合／展開這種**跨狀態**行為唯一的辦法，光看單一
+   * 狀態的快照看不出「說完之後才收合」。
+   */
+  return { ...props, view, container: view.container, rerender: () => view.rerender(build()) };
 }
 
 function micButton() {
@@ -115,14 +128,22 @@ describe("TalkScreen", () => {
   });
 
   it.each([
-    ["idle", "阿白現在在等您說話"],
-    ["listening", "阿白現在在聽"],
-    ["thinking", "阿白現在在想"],
-    ["speaking", "阿白現在在說話"],
-  ])("虛擬形象在 %s 時有可讀的說明，不是只有一個表情符號", (state, label) => {
+    ["idle", "準備好了", "我在這裡等您"],
+    ["listening", "正在聽你說", "說完放開就好"],
+    ["thinking", "想一下喔", "馬上就好"],
+    ["speaking", "阿白正在說話", "聽完再按一下就好"],
+    ["error", "連線不太穩", "我暫時聽不到您說話"],
+  ])("狀態帶在 %s 時用可見文字說出狀態（W3b 起不再靠 aria-label）", (state, label, sub) => {
+    // W3a 之前狀態掛在舞台的 aria-label 上。狀態帶到位後改用可見文字——看得見的
+    // 人與聽的人拿到同一份資訊，也不會有「同一個狀態兩套說法」的漂移。
     talkState.avatar = state as AvatarState;
     renderScreen();
-    expect(screen.getByRole("img", { name: label })).toBeInTheDocument();
+    const band = screen.getByTestId("talk-status-band");
+    expect(band).toHaveTextContent(label);
+    expect(band).toHaveTextContent(sub);
+    // 三重編碼（規則 6）：文字之外還要有圖示與底色，拿掉顏色仍讀得懂。
+    expect(band.querySelector("svg")).toBeTruthy();
+    expect(band.style.backgroundColor).toContain(`--talk-${state}-pill`);
   });
 
   it("麥克風鍵有說明手勢的可及名稱", () => {
@@ -140,12 +161,15 @@ describe("TalkScreen", () => {
     // 一律回 0，`getComputedStyle` 也解不出 Tailwind 的工具類。class 名是這一層
     // 唯一測得到的契約；真正的視覺尺寸由人工驗收把關。
     renderScreen();
-    // 104px（與 App 的麥克風鍵同尺寸）
-    expect(micButton().className).toContain("size-[104px]");
-    // 30px 字幕
-    expect(screen.getByRole("status").className).toContain("text-elder-big");
-    // 56px 鈴鐺
-    expect(screen.getByRole("button", { name: "看阿白的提醒" }).className).toContain("size-14");
+    // 132px 主鍵（新視覺的長輩端主要態，`theme.ts` 的 elder.talkButton）
+    expect(micButton().style.width).toBe("132px");
+    expect(micButton().style.height).toBe("132px");
+    // 24px 回話內文（與 App 的 replyText 同值；仍高於 22px 下限）
+    expect(screen.getByRole("status").className).toContain("text-[24px]");
+    // 60px 頁首圓鈕（elder.roundButton）
+    expect(screen.getByRole("button", { name: "看阿白的提醒" }).className).toContain(
+      "size-[var(--size-elder-round-button)]",
+    );
     // 56px＋22px 登出
     const logout = screen.getByRole("button", { name: "登出" });
     expect(logout.className).toContain("min-h-14");
@@ -263,5 +287,94 @@ describe("登出", () => {
     await userEvent.click(screen.getByRole("button", { name: "取消" }));
     expect(h.onLogout).not.toHaveBeenCalled();
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+});
+
+
+describe("四層版面與一屏不捲（W3b）", () => {
+  it("整頁不捲：容器自己裁切，內容再多也不會把主鍵擠出畫面", () => {
+    // 規則 2「每個畫面一屏內不捲動——長輩不一定知道要滑」。舊版是 flex 直欄，
+    // 回覆一長就把麥克風鍵推下去，而外框還會整頁捲。
+    talkState.replyText = "很長的回答。".repeat(200);
+    const { container } = renderScreen();
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.className).toContain("h-full");
+    expect(root.className).toContain("overflow-hidden");
+  });
+
+  it("字級放大時只有回話內文捲，頁首、角色與主鍵仍固定", () => {
+    // 設計稿寫的是 RN 的「fontScale ≥ 1.5 時只有內容層可捲」。網頁沒有 fontScale
+    // 這個 API，等價物是使用者調大預設字級／縮放，效果就是文字撐高——所以改由
+    // 回話內文自己設上限並捲動，行為與設計意圖一致。
+    renderScreen();
+    const reply = screen.getByRole("status");
+    expect(reply.className).toContain("max-h-[330px]");
+    expect(reply.className).toContain("overflow-y-auto");
+  });
+
+  it("角色舞台固定在設計稿的 top 140（換算掉狀態列後）", () => {
+    // 規則 3：209 × 300 固定，永不縮放或位移。設計稿的 y 以裝置畫面頂端為原點，
+    // 而 PhoneFrame 的內容區已扣掉 54px 狀態列。
+    renderScreen();
+    const stage = screen.getByTestId("bear-stage").parentElement as HTMLElement;
+    expect(stage.style.top).toBe("86px");
+    expect(stage.className).toContain("z-10");
+  });
+
+  it("阿白說話時主鍵縮成 72 並改淡黃底，說完長回 132", () => {
+    talkState.avatar = "speaking";
+    const h = renderScreen();
+    expect(micButton().style.width).toBe("72px");
+    expect(micButton().style.backgroundColor).toContain("--talk-idle-pill");
+    expect(screen.getByText("等阿白說完，再按這裡")).toBeInTheDocument();
+
+    // 說完回到待機：主鍵長回 132
+    talkState.avatar = "idle";
+    h.rerender();
+    expect(micButton().style.width).toBe("132px");
+  });
+
+  it("說話時主鍵仍然按得到——它只是變小，不是停用", () => {
+    // 設計稿：「仍是可按的觸控目標」。72px 也高於 48px 下限。
+    talkState.avatar = "speaking";
+    renderScreen();
+    expect(micButton()).not.toBeDisabled();
+  });
+});
+
+describe("回話卡收合（W3b）", () => {
+  it("說完之後收成單行摘要，點一下展開回全文", async () => {
+    talkState.avatar = "speaking";
+    talkState.replyText = "早上的血壓藥要記得吃，飯後半小時吃比較不傷胃喔。";
+    const h = renderScreen();
+    expect(screen.getByTestId("reply-card")).toBeInTheDocument();
+
+    // 說完（speaking → idle）才收合
+    talkState.avatar = "idle";
+    h.rerender();
+    const pill = screen.getByTestId("reply-collapsed");
+    // 前 12 字（含全形逗號）＋刪節號。
+    expect(pill).toHaveTextContent("剛才阿白說：早上的血壓藥要記得吃，飯…");
+
+    await userEvent.click(pill);
+    expect(screen.getByTestId("reply-card")).toBeInTheDocument();
+    expect(screen.queryByTestId("reply-collapsed")).not.toBeInTheDocument();
+  });
+
+  it("新回覆一抵達就展開——不等整段合成完", () => {
+    // ⚠️ 分段播放的延遲優化（伺服器只先合成第一句就送出）是為了讓長輩不用等
+    // 5–8 秒。卡片若等整段會把這個優化整個吃掉。這裡以「replyText 一變就展開」
+    // 表達那個時機：第一段抵達時 replyText 就已經更新。
+    talkState.avatar = "speaking";
+    talkState.replyText = "第一句話。";
+    const h = renderScreen();
+    talkState.avatar = "idle";
+    h.rerender();
+    expect(screen.getByTestId("reply-collapsed")).toBeInTheDocument();
+
+    talkState.replyText = "下一輪的第一段。";
+    talkState.avatar = "speaking";
+    h.rerender();
+    expect(screen.getByTestId("reply-card")).toBeInTheDocument();
   });
 });

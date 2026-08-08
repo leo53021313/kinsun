@@ -1,19 +1,20 @@
 /**
- * 阿白的角色舞台（W3a）。
+ * 阿白的角色舞台。
  *
  * 取代原本的 emoji `Avatar`：角色改用 `shared/otto-pet-core` 的 SVG＋即時 rig，
  * 與 App 載入**同一份** `renderer.html`（`public/otto/`，由
  * `shared/otto-pet-core/build-renderer.mjs` 產出兩份）。情緒黑名單與注音 viseme
  * 對嘴因此只有一份實作——那是接手指示第 10 條、CRITICAL 等級的約束。
  *
- * ⚠️ **W3a 只換角色，不動版面。** 舞台尺寸已是核准的 209 × 300，但它現在仍待在
- * `TalkScreen` 原本的 flex 直欄裡；改成「固定 top 140、四層絕對定位、一屏不捲」
- * 是 W3b 的事。分兩步是為了出錯時分得出來是渲染還是版面。
+ * ⚠️ 舞台 209 × 300 是核准值，**永不縮放或位移**（規則 3）。它的絕對定位（固定
+ * top 140）由 `TalkScreen` 負責——本元件只保證自己的尺寸不變，需要空間時讓位的是
+ * 麥克風主鍵與回話卡，不是角色。
  *
- * ⚠️ **`role="img"` 與 `aria-label` 必須留著。** App 那側的舞台是純裝飾
- * （`accessibilityElementsHidden`），因為狀態由狀態帶的文字說出來；網頁版的狀態帶
- * 要到 W3b 才有，這裡先拿掉的話，看不見的長輩會完全失去「阿白現在在聽還是在想」
- * 這個唯一線索。
+ * ⚠️ **W3b 起舞台是純裝飾**（與 App 一致）：狀態改由狀態帶的**可見文字**說出來
+ * （「阿白正在說話」＋「聽完再按一下就好」）。W3a 期間這裡掛過 `role="img"` 與
+ * 逐狀態的 `aria-label`，那是因為當時還沒有狀態帶，拿掉會讓看不見的長輩失去唯一
+ * 線索；狀態帶到位後那組 aria-label 就退場了——可見文字比 aria-label 好，看得見的
+ * 人與聽的人拿到同一份資訊，也不會有「同一個狀態兩套說法」的漂移。
  *
  * ⚠️ 沒有靜態暫用圖。App 那側 renderer 未就緒時退回 `akin-hero.png`，而那張是
  * 舊角色阿金（黃金獵犬），已列在驗收報告。網頁版不重複這個錯：未就緒時只留光暈，
@@ -71,8 +72,7 @@ export function BearStage(props: { state: AvatarState; speechCue?: OttoSpeechCue
 
   return (
     <div
-      role="img"
-      aria-label={strings.talk.avatar[state]}
+      aria-hidden
       className="relative h-[var(--avatar-stage-h)] w-[var(--avatar-stage-w)] shrink-0"
       data-testid="bear-stage"
     >
@@ -86,7 +86,7 @@ export function BearStage(props: { state: AvatarState; speechCue?: OttoSpeechCue
       <iframe
         ref={frameRef}
         src={RENDERER_SRC}
-        title={strings.talk.avatar[state]}
+        title={strings.talk.companionTitle}
         aria-hidden
         tabIndex={-1}
         // allow-scripts 之外一律不給：renderer 沒有網路、沒有表單、沒有導覽需求，

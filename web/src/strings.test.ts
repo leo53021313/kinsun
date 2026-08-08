@@ -29,10 +29,12 @@ describe("角色文案：該叫阿白的地方不准殘留服務名", () => {
     ["talk.thinking", strings.talk.thinking],
     ["talk.noAnswer", strings.talk.noAnswer],
     ["talk.queued", strings.talk.queued(2)],
-    ["talk.avatar.idle", strings.talk.avatar.idle],
-    ["talk.avatar.listening", strings.talk.avatar.listening],
-    ["talk.avatar.thinking", strings.talk.avatar.thinking],
-    ["talk.avatar.speaking", strings.talk.avatar.speaking],
+    ["talk.status.speaking", strings.talk.status.speaking],
+    ["talk.statusSub.idle", strings.talk.statusSub.idle],
+    ["talk.statusSub.error", strings.talk.statusSub.error],
+    ["talk.actions.waitWhileSpeaking", strings.talk.actions.waitWhileSpeaking],
+    ["talk.collapsedPrefix", strings.talk.collapsedPrefix],
+    ["talk.companionTitle", strings.talk.companionTitle],
     ["elderNotifications.title", strings.elderNotifications.title],
     ["elderNotifications.empty", strings.elderNotifications.empty],
     ["elderNotifications.bell", strings.elderNotifications.bell],
@@ -51,13 +53,13 @@ describe("角色文案：該叫阿白的地方不准殘留服務名", () => {
     expect(text.startsWith("我")).toBe(true);
   });
 
-  it.each([
-    ["talk.avatar.idle", strings.talk.avatar.idle],
-    ["talk.avatar.listening", strings.talk.avatar.listening],
-    ["talk.avatar.thinking", strings.talk.avatar.thinking],
-    ["talk.avatar.speaking", strings.talk.avatar.speaking],
-  ])("%s 是系統在描述角色，用第三人稱「阿白」", (_key, text) => {
-    expect(text.startsWith("阿白")).toBe(true);
+  it("狀態帶是系統在描述角色，用第三人稱；副標是阿白自述，用第一人稱", () => {
+    // 兩層人稱在同一個畫面上並存：狀態帶「阿白正在說話」是系統在講它，
+    // 副標「我在這裡等您」是它自己在講。這是交付文件〈第一人稱的三條界線〉
+    // 的第二條，最容易在改文案時被抹平成同一種。
+    expect(strings.talk.status.speaking).toBe("阿白正在說話");
+    expect(strings.talk.statusSub.idle.startsWith("我")).toBe(true);
+    expect(strings.talk.statusSub.error.startsWith("我")).toBe(true);
   });
 
   it("長輩端的提醒頁叫「阿白的提醒」，不出現「通知」二字", () => {

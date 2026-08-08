@@ -334,12 +334,39 @@ export const strings = {
     // 從此按不動，也不知道發生什麼事。
     noAnswer: "我這次沒有回話，再說一次好嗎？",
     // 虛擬形象的可讀說明（讀螢幕軟體會唸出來；畫面上只有一個表情符號）。
-    avatar: {
-      idle: "阿白現在在等您說話",
-      listening: "阿白現在在聽",
-      thinking: "阿白現在在想",
-      speaking: "阿白現在在說話",
+    // 狀態帶：系統在描述角色，用第三人稱（用字取自 app/src/lib/strings.ts）。
+    status: {
+      idle: "準備好了",
+      listening: "正在聽你說",
+      thinking: "想一下喔",
+      speaking: "阿白正在說話",
+      error: "連線不太穩",
     },
+    // 狀態副標：阿白自述，用第一人稱。
+    statusSub: {
+      idle: "我在這裡等您",
+      listening: "說完放開就好",
+      thinking: "馬上就好",
+      speaking: "聽完再按一下就好",
+      error: "我暫時聽不到您說話",
+    },
+    actions: {
+      start: "按住說話，或按一下開始",
+      listening: "說完再按一下",
+      thinking: "正在想",
+      // 阿白說話時主鍵縮成 72，標籤換成這句
+      waitWhileSpeaking: "等阿白說完，再按這裡",
+      error: "再按一下重新說",
+    },
+    // 回話收合後的單行摘要前綴
+    collapsedPrefix: "剛才阿白說：",
+    // 角色舞台的名稱（iframe title）。
+    //
+    // ⚠️ W3b 起狀態改由狀態帶的**可見文字**說出來（與 app 一致），舞台本身成為
+    // 裝飾。原本那組 `avatar.*` aria-label（「阿白現在在聽」…）因此移除：留著會
+    // 變成沒人用的死字串，而且同一個狀態有兩套說法，改了一邊沒改另一邊就會不一致。
+    // 可見文字也比 aria-label 好——看得見的人與聽的人拿到同一份資訊。
+    companionTitle: "阿白在這裡",
     confirmLogoutButton: "確定登出",
   },
   // 長輩看的提醒（X-01，2026-07-29）：用詞比家屬版更白話，不用「通知」這個詞。

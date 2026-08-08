@@ -35,11 +35,19 @@ describe("BearStage", () => {
     vi.restoreAllMocks();
   });
 
-  it("狀態以 aria-label 說出來——看不見的長輩只有這條線索", () => {
-    // ⚠️ App 那側的舞台是純裝飾，因為狀態由狀態帶的文字說出來；網頁版的狀態帶要
-    // 到 W3b 才有。在那之前拿掉 aria-label，視障長輩會完全不知道阿白在做什麼。
+  it("舞台是純裝飾，狀態交給狀態帶的可見文字說（W3b 起）", () => {
+    // W3a 期間這裡掛過 role="img" 與逐狀態的 aria-label，因為當時還沒有狀態帶，
+    // 拿掉會讓看不見的長輩失去唯一線索。狀態帶到位後就換過去了——可見文字比
+    // aria-label 好，看得見的人與聽的人拿到同一份資訊。狀態帶本身由
+    // `TalkScreen.test.tsx` 驗。
     render(<BearStage state="listening" />);
-    expect(screen.getByRole("img", { name: strings.talk.avatar.listening })).toBeInTheDocument();
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.getByTestId("bear-stage")).toHaveAttribute("aria-hidden", "true");
+    // iframe 仍要有 title：即使 aria-hidden，沒有可及名稱的 frame 是 a11y 稽核項。
+    expect(document.querySelector("iframe")).toHaveAttribute(
+      "title",
+      strings.talk.companionTitle,
+    );
   });
 
   it("光暈用該狀態的設計 token，不是寫死的顏色", () => {

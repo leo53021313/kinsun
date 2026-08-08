@@ -1336,7 +1336,14 @@ describe("下行訊框", () => {
     expect(h.view.result.current.avatar).toBe("thinking");
     h.socket.emit({ type: "error", turn_id: "t1", text: "金孫有點忙，等一下再說好嗎" });
     await waitFor(() => expect(h.view.result.current.replyText).toBe("金孫有點忙，等一下再說好嗎"));
-    expect(h.view.result.current.avatar).toBe("idle");
+    // W3b 起 WS 錯誤訊框進 error 態而非直接回待機：狀態帶與角色光暈要一起變成
+    // 「連線不太穩」，否則畫面上只有一行紅字、阿白仍是待機的樣子。改的是期望值
+    // 不是放寬斷言——這條驗的「長輩可以再講一次」由麥克風鍵未被停用守著（error
+    // 不在 `disabled` 的條件裡），下一次 pressIn 會把狀態帶回 listening。
+    //
+    // ⚠️ 只有這一條改：HTTP 降級路徑（401／403／429／麥克風打不開）走的是另一段
+    // 程式碼，仍然回待機，本檔其餘七處 `toBe("idle")` 都不動。
+    expect(h.view.result.current.avatar).toBe("error");
   });
 
   it("回覆只有字沒有聲音時也要回到待機，不可停在「我想一下…」", async () => {

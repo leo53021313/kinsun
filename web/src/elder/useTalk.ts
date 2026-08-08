@@ -41,7 +41,12 @@ import {
 import { postTurn as postTurnApi, type ElderPlace } from "./api";
 import { currentPlace as currentPlaceApi } from "./location";
 
-export type AvatarState = "idle" | "listening" | "thinking" | "speaking";
+/**
+ * 對講機的視覺狀態。`error` 於 W3b 補上——新視覺的狀態帶與角色光暈是五態，
+ * 少了它，連線出問題時畫面會顯示錯誤文字但阿白仍是一副「準備好了」的樣子。
+ * 名稱與 App 的 `TalkVisualState`、renderer bridge 的 `OttoVisualState` 一致。
+ */
+export type AvatarState = "idle" | "listening" | "thinking" | "speaking" | "error";
 
 /**
  * 長按門檻（毫秒）。App 靠 `Pressable` 的 `delayLongPress` 預設值，網頁沒有
@@ -526,7 +531,10 @@ export function useTalk(options: {
           // 錯誤訊息照顯示（長輩需要知道），但收音中不動 avatar。
           setReplyText(frame.text);
           if (canTakeOverScreen) {
-            setAvatarBoth("idle");
+            // W3b 起進 error 態而非直接回待機：狀態帶與角色光暈要一起變成
+            // 「連線不太穩」，否則畫面上只有一行紅字、阿白仍是待機的樣子。
+            // 下一次 pressIn 會把它帶回 listening，不需要另外清。
+            setAvatarBoth("error");
           }
           return;
         }
@@ -581,7 +589,7 @@ export function useTalk(options: {
           });
         } else if (frame.type === "reply" && canTakeOverScreen) {
           // ⚠️ 這一輪有字沒有聲音（TTS 掛掉、或音檔落地失敗——`talkSocket` 刻意
-          // 仍把訊框交出來，字幕照樣有用）。不回到待機的話，畫面永遠停在「金孫
+          // 仍把訊框交出來，字幕照樣有用）。不回到待機的話，畫面永遠停在「我
           // 想一下…」而麥克風鍵一直是停用的，長輩從此按不動。`ack` 不在此列：
           // 那只是安撫話，真正的回覆還在路上。
           setAvatarBoth("idle");
