@@ -56,6 +56,10 @@ function RootStack() {
       <Stack.Screen name="elder/login" options={{ title: strings.nav.elderLogin }} />
       <Stack.Screen name="elder/talk" options={{ headerShown: false }} />
       <Stack.Screen name="elder/history" options={{ headerShown: false }} />
+      <Stack.Screen
+        name="elder/notifications"
+        options={{ title: strings.elderNotifications.title }}
+      />
     </Stack>
   );
 }
