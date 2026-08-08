@@ -31,7 +31,8 @@ from kinsun.safety.notifier import Notifier
 from kinsun.safety.tiers import RiskAssessment, RiskTier
 from kinsun.speech.asr import ASRClient
 from kinsun.speech.chunking import split_for_speech
-from kinsun.speech.tts import TTSClient, TTSError, TtsResult
+from kinsun.speech.tts import TTSClient, TTSError, TtsResult, VoiceReference
+from kinsun.voice_profiles.store import VoiceProfileStore
 
 logger = logging.getLogger("kinsun.pipeline")
 
@@ -70,6 +71,8 @@ class VoicePipeline:
         response_window_seconds: int = 3600,
         moderator: AbuseModerator | None = None,
         combined_classifier: CombinedSafetyClassifier | None = None,
+        voice_profiles: VoiceProfileStore | None = None,
+        sign_voice_url: Callable[[str], str] | None = None,
         chunked_channels: frozenset[str] = frozenset(),
         turn_budget_seconds: float = 0.0,
         recent_utterances: Callable[[str], list[str]] | None = None,
@@ -86,6 +89,22 @@ class VoicePipeline:
         self._timer = timer
         # 選填（預設 None＝不標記）：既有呼叫端與測試不受影響。
         self._reminder_logs = reminder_logs
+        # 選填（預設 None＝所有長輩皆用 DGX 端全域預設聲音）：長輩客製化聲音複製
+        # （2026-07-30），未設定時不影響既有呼叫端與測試。
+        self._voice_profiles = voice_profiles
+        # 設定檔存的是 bucket 內的物件路徑，要現簽成短效網址才能交給 DGX 下載
+        # （2026-08-01，見 VoiceProfile.prompt_audio_path 的說明）。
+        #
+        # ⚠️ 給了 store 卻沒給 signer 是接線錯誤，在建構當下就擋掉：放它過去的話
+        # resolve_voice 只能回 None，於是「設定檔明明存在、聲音卻沒換」，而且全程
+        # 不會有任何錯誤訊息——這正是 2026-07-31 花了大半天才查出來的那類缺陷。
+        if voice_profiles is not None and sign_voice_url is None:
+            raise ValueError(
+                "傳了 voice_profiles 就必須一併傳 sign_voice_url："
+                "設定檔存的是物件路徑，沒有簽章函式就組不出 DGX 能下載的網址，"
+                "長輩客製化聲音會靜默失效。"
+            )
+        self._sign_voice_url = sign_voice_url
         self._response_window_seconds = response_window_seconds
         # 選填（預設 None＝不審核，等同 SAFETY_MODERATION_ENABLED=false）。
         self._moderator = moderator
@@ -192,7 +211,11 @@ class VoicePipeline:
             tracing.update_trace_metadata(fallback="empty_speech")
             tracing.set_current_trace_io(user_input=user_text, assistant_output=NOT_HEARD_REPLY)
             result = self._synthesize(
-                NOT_HEARD_REPLY, external_id=external_id, channel=channel, trace_id=trace_id
+                NOT_HEARD_REPLY,
+                elder_id=elder_id,
+                external_id=external_id,
+                channel=channel,
+                trace_id=trace_id,
             )
             return replace(result, transcript=user_text)
         # 情境組裝先行啟動（2026-07-26 延遲實測）：它是本輪最慢的一段（長期記憶檢索
@@ -265,7 +288,11 @@ class VoicePipeline:
                 blocked_reply = reply_for(moderation.category)
                 tracing.set_current_trace_io(user_input=user_text, assistant_output=blocked_reply)
                 result = self._synthesize(
-                    blocked_reply, external_id=external_id, channel=channel, trace_id=trace_id
+                    blocked_reply,
+                    elder_id=elder_id,
+                    external_id=external_id,
+                    channel=channel,
+                    trace_id=trace_id,
                 )
                 return replace(result, transcript=user_text)
         reply_text = self._generate(
@@ -280,7 +307,11 @@ class VoicePipeline:
         # 對話原話＋回覆寫進 trace I/O，Opik Threads 才顯示 First／Last message。
         tracing.set_current_trace_io(user_input=user_text, assistant_output=reply_text)
         result = self._synthesize(
-            reply_text, external_id=external_id, channel=channel, trace_id=trace_id
+            reply_text,
+            elder_id=elder_id,
+            external_id=external_id,
+            channel=channel,
+            trace_id=trace_id,
         )
         self._settle_memory_write(prepared)
         # 附上本輪的使用者原話（語音為 ASR 辨識、文字為輸入），供 debug 顯示。
@@ -625,18 +656,19 @@ class VoicePipeline:
     # 輸出維持關閉：回傳 TtsResult 含音檔 bytes；輸入（要唸的文字）才是要看的東西。
     @tracing.track(name="tts", type="general", capture_input=True, capture_output=False)
     def _synthesize(
-        self, reply_text: str, *, external_id: str, channel: str, trace_id: str
+        self, reply_text: str, *, elder_id: str, external_id: str, channel: str, trace_id: str
     ) -> TtsResult:
         """啟用分段的通道只合成**第一段**，其餘由投遞端逐段取（2026-07-26 延遲優化）。
 
         回傳的 `text` 一律是完整回覆——長輩看到的字幕、寫進記憶的內容、觀測留存的
         內容都不可以因為分段而被切掉；只有 `audio` 是第一段。切不出兩段以上時
         （短回覆、回退話術、被攔的回絕話術）不分段，因為分段的代價（多一次往返）
-        換不到任何東西。
+        換不到任何東西。分段與長輩客製化聲音（2026-07-30）彼此獨立、可同時生效。
 
         ⚠️ 另需 `turn_context.is_inline_audio_delivery()`：分段只在投遞端逐段接得住時
         才成立，見該函式說明。
         """
+        voice = self.resolve_voice(elder_id)
         chunks = (
             split_for_speech(reply_text)
             if channel in self._chunked_channels and turn_context.is_inline_audio_delivery()
@@ -656,8 +688,51 @@ class VoicePipeline:
                     error_message=error_message,
                 )
             ):
-                result = self._tts.synthesize(spoken)
+                result = self._tts.synthesize(spoken, voice=voice)
                 return replace(result, text=reply_text, chunk_count=len(chunks) if chunked else 0)
         except TTSError:
             logger.warning("TTS 合成失敗，退化為純文字回覆")
             return TtsResult(text=reply_text, audio=None)
+
+    def resolve_voice(self, elder_id: str) -> VoiceReference | None:
+        """長輩客製化聲音複製（2026-07-30）：無設定檔或未設 voice_profiles 則回 None
+        （TTSClient 沿用 DGX 端全域預設聲音）。
+
+        公開而非私有：分段串流的續段由 `channels/app/ws.py::_push_continuation_chunks`
+        自己合成，不經本類別的 speak 流程，得自己解析同一位長輩的參考語音——否則第 0 段
+        是客製化聲音、第 1 段起換回預設聲音，長輩會聽到回覆講到一半換人。
+
+        ⚠️ 這個接縫斷過一次：續段原本走 `channels/app/turns.py` 的 REST 端點
+        （`get_turn_chunk`），該端點於 2026-08-01 隨續段語音 WS 直送移除，合成點也就
+        跟著搬家。任何新的續段合成路徑都必須帶上本函式的結果，否則同一個缺陷會再犯。
+        """
+        if self._voice_profiles is None or self._sign_voice_url is None:
+            return None
+        profile = self._voice_profiles.get_active(elder_id)
+        if profile is None:
+            return None
+        # 舊資料護欄（2026-08-01）：欄位從 prompt_audio_url 改名為 prompt_audio_path 時
+        # 只改名、不轉換值（功能未上線、正式環境無資料，見 db.py 的遷移說明）。若哪個
+        # 環境的舊值是網址，拿去簽會組出 .../object/sign/<bucket>/https://... 而 404，
+        # 然後靜默退回預設聲音。這裡先攔下並吼出來，讓它至少是看得見的失效。
+        if profile.prompt_audio_path.startswith(("http://", "https://")):
+            logger.error(
+                "voice_profiles.prompt_audio_path 存的是網址而非 bucket 內路徑，"
+                "本輪改用全域預設聲音；請重新註冊這位長輩的參考語音 elder_id=%s",
+                elder_id,
+            )
+            return None
+        # 設定檔存路徑、這裡才現簽成短效網址（2026-08-01）。簽章失敗不讓整輪陪葬：
+        # 退回全域預設聲音，長輩至少聽得到金孫說話。
+        try:
+            url = self._sign_voice_url(profile.prompt_audio_path)
+        except Exception:  # noqa: BLE001 - 簽章端的例外型別由注入的實作決定
+            logger.warning(
+                "客製化聲音簽章失敗，本輪改用全域預設聲音 elder_id=%s", elder_id, exc_info=True
+            )
+            return None
+        return VoiceReference(
+            elder_id=profile.elder_id,
+            prompt_audio_url=url,
+            prompt_text=profile.prompt_text,
+        )

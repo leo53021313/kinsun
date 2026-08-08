@@ -60,7 +60,7 @@ class _NullNotifier:
 class _VoiceTts:
     """回帶音檔的 TTS（觸發語音回覆路徑）。"""
 
-    def synthesize(self, text: str) -> TtsResult:
+    def synthesize(self, text: str, *, voice=None) -> TtsResult:
         return TtsResult(text=text, audio=b"fake-m4a", duration_ms=1200)
 
 

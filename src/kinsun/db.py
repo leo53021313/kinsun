@@ -372,6 +372,40 @@ NEWS_MENTIONS_DDL = (
     "PRIMARY KEY (elder_id, news_item_id));"
 )
 
+# 長輩客製化聲音複製設定檔（聲音克隆，2026-07-30）：一位長輩最多一組「目前生效」的
+# 參考語音，PK 直接用 elder_id；revoked_at 非 NULL 視同無效，同 consents 表慣例。
+#
+# ⚠️ 存的是 bucket 內的**物件路徑**而非網址（2026-08-01 改）：原本存 Supabase 簽章 URL，
+# 但簽章 URL 預設只有 1 天效期（AUDIO_SIGNED_URL_EXPIRES_SECONDS）。過期後 DGX 端一旦
+# 快取失效就下載失敗，而該處的 urlopen 未接例外 → 500 → 整輪退化成純文字，長輩完全
+# 聽不到聲音，且每輪重複發生（快取永遠暖不起來）。改存路徑後由應用層每次現簽短效 URL，
+# 既不會過期、外流的 URL 也很快失效。
+VOICE_PROFILES_DDL = (
+    "CREATE TABLE IF NOT EXISTS voice_profiles ("
+    "elder_id TEXT PRIMARY KEY, "
+    "prompt_audio_path TEXT NOT NULL, "
+    "prompt_text TEXT NOT NULL, "
+    "consented_by TEXT NOT NULL, "
+    "granted_at DOUBLE PRECISION NOT NULL, "
+    "revoked_at DOUBLE PRECISION);"
+)
+
+# 既有表的欄位改名（2026-08-01）。此處用 DO 區塊而非本檔慣用的
+# `ADD COLUMN IF NOT EXISTS`：改名沒有 IF EXISTS 語法，直接 RENAME 在已改過的庫上會
+# 報錯而讓整個 ensure_schema 失敗。以目錄查詢護住，重跑安全。
+#
+# ⚠️ 只改名、**不轉換既有的值**：本功能尚未上線（PR 未合併），正式環境的 voice_profiles
+# 一定是空的，寫解析舊簽章 URL 的轉換邏輯只是替不存在的資料付複雜度。若某個開發者的
+# 本機庫留有舊值（網址），`VoicePipeline.resolve_voice` 會攔下並記 ERROR、退回全域
+# 預設聲音，不會靜默壞掉。
+VOICE_PROFILES_RENAME_URL_TO_PATH_DDL = (
+    "DO $$ BEGIN "
+    "IF EXISTS (SELECT 1 FROM information_schema.columns "
+    "WHERE table_name = 'voice_profiles' AND column_name = 'prompt_audio_url') THEN "
+    "ALTER TABLE voice_profiles RENAME COLUMN prompt_audio_url TO prompt_audio_path; "
+    "END IF; END $$;"
+)
+
 # 台灣店家 POI（Overture Maps，2026-07-27 spec 附近地點搜尋）。2026-07-28 正式庫
 # 實測：285,140 列，佔用 153 MB（heap 76 MB + index 77 MB），整庫 235 MB / 500 MB。
 # spec 原估 19 MB，實際低估近 8 倍——Supabase 免費方案的 500 MB 是共用預算，
@@ -584,6 +618,10 @@ def ensure_schema(database_url: str) -> None:
         conn.execute(CONVERSATION_SUMMARIES_DDL)
         conn.execute(NEWS_ITEMS_DDL)
         conn.execute(NEWS_MENTIONS_DDL)
+        conn.execute(VOICE_PROFILES_DDL)
+        # 順序不可調換：建表（既有庫 no-op）→ 舊欄改名。新庫建出來就是新欄名，
+        # 改名的目錄查詢查無舊欄、直接跳過。
+        conn.execute(VOICE_PROFILES_RENAME_URL_TO_PATH_DDL)
         conn.execute(PLACES_DDL)
         # 三段順序不可調換：建表（既有庫 no-op）→ 舊欄改名／補 channel → 建索引。
         # 索引引用 external_id，既有庫要先改完名才建得起來。

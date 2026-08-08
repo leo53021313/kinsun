@@ -33,6 +33,8 @@ from kinsun.speech.asr import ASRError, MockAsrClient
 from kinsun.speech.chunking import split_for_speech
 from kinsun.speech.tts import TTSError, TtsResult
 from kinsun.tools.registry import ToolRegistry
+from kinsun.voice_profiles.models import VoiceProfile
+from kinsun.voice_profiles.store import FakeVoiceProfileStore
 from tests.fakes import FakeAccountStore, FakeLocationStore, FakeRiskEventStore
 
 TPE = timezone(timedelta(hours=8))
@@ -98,15 +100,28 @@ class _VoiceTts:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    def synthesize(self, text: str) -> TtsResult:
+    def synthesize(self, text: str, *, voice=None) -> TtsResult:
         self.calls.append(text)
+        return TtsResult(text=text, audio=b"fake-m4a", duration_ms=1200)
+
+
+class _SpyVoiceTts:
+    """記下每一段用了哪個參考語音：分段與客製化聲音是分批上線的兩個功能，接縫會漏。"""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.voices: list[object] = []
+
+    def synthesize(self, text: str, *, voice=None) -> TtsResult:
+        self.calls.append(text)
+        self.voices.append(voice)
         return TtsResult(text=text, audio=b"fake-m4a", duration_ms=1200)
 
 
 class _TextOnlyTts:
     """TTS 失敗退純文字的替身（audio=None）：C1 的內嵌路徑不該被走到。"""
 
-    def synthesize(self, text: str) -> TtsResult:
+    def synthesize(self, text: str, *, voice=None) -> TtsResult:
         return TtsResult(text=text, audio=None)
 
 
@@ -116,7 +131,7 @@ class _FailAfterFirstTts:
     def __init__(self) -> None:
         self.calls = 0
 
-    def synthesize(self, text: str) -> TtsResult:
+    def synthesize(self, text: str, *, voice=None) -> TtsResult:
         self.calls += 1
         if self.calls > 1:
             raise TTSError("模擬合成失敗")
@@ -135,7 +150,7 @@ class _FailAfterSecondTts:
     def __init__(self) -> None:
         self.calls = 0
 
-    def synthesize(self, text: str) -> TtsResult:
+    def synthesize(self, text: str, *, voice=None) -> TtsResult:
         self.calls += 1
         if self.calls > 2:
             raise TTSError("模擬合成失敗（跑到一半才炸）")
@@ -212,6 +227,7 @@ def _client(
     admission=None,
     rate_limiter=None,
     show_transcript=False,
+    voice_profiles=None,
 ):
     pipeline = VoicePipeline(
         asr=asr or MockAsrClient("今天有什麼新消息"),
@@ -220,6 +236,12 @@ def _client(
         detector=RiskDetector(_NullClassifier()),
         notifier=_NullNotifier(),
         risk_events=FakeRiskEventStore(),
+        voice_profiles=voice_profiles,
+        # 設定檔存的是 bucket 內物件路徑，簽章函式在此以假實作代替（2026-08-01）。
+        # 給了 store 就必須給 signer，否則 VoicePipeline 建構子會擋下。
+        sign_voice_url=(
+            None if voice_profiles is None else lambda path: f"https://signed.test/{path}"
+        ),
     )
     app = FastAPI()
     app.include_router(
@@ -492,6 +514,58 @@ def test_single_segment_reply_pushes_no_audio_chunk():
 
     audio_chunks = [f for f in frames if f["type"] == "chunk" and f["audio"]]
     assert audio_chunks == []
+
+
+def test_every_chunk_uses_the_elders_custom_voice():
+    """⭐ 設了客製化聲音的長輩，續段也要用同一個聲音。
+
+    迴歸測試（2026-07-31 實測踩到）：續段不經 `VoicePipeline.speak`，當初漏了解析參考
+    語音 → 第 0 段是客製化聲音、第 1 段起悄悄換回 DGX 全域預設，**長輩會聽到回覆講到
+    一半換人**。全程無錯誤訊息，只能靠聽或比對 TTS 服務日誌才發現。
+
+    ⚠️ 這條斷言曾經因為端點搬家而失效過：原本守著 `turns.py` 的 REST 續拉端點
+    （`get_turn_chunk`），該端點於 2026-08-01 隨續段語音 WS 直送移除，測試也跟著被刪，
+    缺陷等於在新路徑上原地復活。任何再一次的續段合成路徑搬遷都必須把這條帶著走。
+    """
+    svc = _service()
+    elder, token = _bound_elder_token(svc)
+    profiles = FakeVoiceProfileStore()
+    profiles.save(
+        VoiceProfile(
+            elder_id=elder.elder_id,
+            prompt_audio_path="voice-refs/grandson.wav",
+            prompt_text="阿嬤我是小明",
+            consented_by="孫子小明本人同意",
+            granted_at=NOW.timestamp(),
+        )
+    )
+    tts = _SpyVoiceTts()
+    client = _client(svc, llm=_MultiSentenceLLM(), tts=tts, voice_profiles=profiles)
+
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_bytes(b"elder-audio")
+        _frames(ws, 3)  # reply ＋ chunk1 ＋ chunk2
+
+    assert len(tts.voices) == 3, f"應該合成了三段，實際 {tts.voices}"
+    assert all(v is not None for v in tts.voices), "有段落退回了全域預設聲音"
+    # 兩段必須是**同一個**聲音——不是「都有值」就好，換成別人的聲音一樣是錯的。
+    assert tts.voices[0] == tts.voices[1] == tts.voices[2]
+    assert tts.voices[0].prompt_audio_url == "https://signed.test/voice-refs/grandson.wav"
+    assert tts.voices[0].prompt_text == "阿嬤我是小明"
+
+
+def test_chunks_fall_back_to_the_global_voice_when_the_elder_has_no_profile():
+    """沒有設定檔的長輩照舊走 DGX 全域預設聲音——本功能是選配，不可影響既有長輩。"""
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    tts = _SpyVoiceTts()
+    client = _client(svc, llm=_MultiSentenceLLM(), tts=tts)
+
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_bytes(b"elder-audio")
+        _frames(ws, 3)
+
+    assert tts.voices == [None, None, None]
 
 
 def test_chunk_synthesis_failure_still_sends_terminator():
@@ -840,7 +914,7 @@ def test_a_turn_leaves_the_in_flight_list_once_its_answer_is_out():
             self.entered = _t.Event()
             self.release = _t.Event()
 
-        def synthesize(self, text: str) -> TtsResult:
+        def synthesize(self, text: str, *, voice=None) -> TtsResult:
             self.entered.set()
             self.release.wait(timeout=5)
             return TtsResult(text=text, audio=b"fake-m4a", duration_ms=1200)

@@ -404,7 +404,9 @@ def create_app_ws_router(
         capture_input=False,  # reply_text 已在 care_turn_voice 的 I/O 裡
         capture_output=False,  # 回傳 None
     )
-    def _push_continuation_chunks(sender: _Sender, reply_text: str, turn_id: str) -> None:
+    def _push_continuation_chunks(
+        sender: _Sender, reply_text: str, turn_id: str, elder_id: str
+    ) -> None:
         """把第一段之後的句子逐段合成並推出去（spec 2026-08-01）。
 
         `reply_text` 必須是**真正的回覆文字**（`DeliveryOutcome.reply_text`／
@@ -418,6 +420,13 @@ def create_app_ws_router(
 
         優先權 `CHUNK`：長輩正在聽第一段、續段有餘裕，別位長輩的第一段（`REPLY`）
         應該先做。
+
+        ⚠️ `elder_id` 只為了長輩客製化聲音（2026-07-30 `voice_profiles`）：續段不經
+        `VoicePipeline.speak`，得自己解析同一位長輩的參考語音。省略等同傳 `voice=None`，
+        `DgxTtsClient` 就不帶 `elder_id`、DGX 端退回全域預設聲音，於是第 0 段是長輩的
+        客製化聲音、第 1 段起換成另一個——**長輩聽到回覆講到一半換人，而系統一切正常、
+        全程沒有任何錯誤訊息**。這個接縫在 REST 續拉端點時代就漏過一次（2026-07-31
+        實測踩到），端點搬到 WS 之後必須跟著搬，見 `pipeline.resolve_voice`。
         """
         sent_terminator = False
         # ⚠️ 整段包一層 try（2026-08-01 全分支審查）：底下只接得住 `TTSError`，而
@@ -431,11 +440,19 @@ def create_app_ws_router(
             # 下行協定），不該因為某種組裝方式少注入一個依賴就默默不送——同一個函式
             # 底下才剛寫著「無論如何都要有終止訊號」。
             chunks = split_for_speech(reply_text) if tts is not None else []
+            # 一輪解析一次，不是每段解析一次：`resolve_voice` 會查一次資料庫，而同一輪
+            # 的每一段本來就該是同一個聲音。REST 續拉端點時代每段是獨立請求，只能各自
+            # 解析；搬到 WS 之後整輪在同一個迴圈裡跑完，重複查沒有意義。切不出第二段時
+            # 連查都不必——多數短回覆都走這條，不該為它們多打一次資料庫。
+            #
+            # ⚠️ 刻意不叫 `voice`：本工廠的參數 `voice` 是 `VoiceReplyDelivery`（投遞層），
+            # 同名會把它遮蔽掉，下一個人在這個函式裡想用投遞層時會拿到參考語音。
+            voice_ref = pipeline.resolve_voice(elder_id) if len(chunks) > 1 else None
             for index, text in enumerate(chunks[1:], start=1):
                 is_last = index == len(chunks) - 1
                 try:
                     with tts_priority(TtsPriority.CHUNK):
-                        result = tts.synthesize(text)
+                        result = tts.synthesize(text, voice=voice_ref)
                 except TTSError:
                     logger.warning("續段合成失敗 turn=%s index=%s", turn_id, index)
                     break
@@ -583,7 +600,7 @@ def create_app_ws_router(
                         # 且 `_run_pipeline` 回了 outcome）；真的發生就只送終止訊框，寧可少講
                         # 後半段，也不要拿一串不知道是什麼的文字去合成。
                         _push_continuation_chunks(
-                            sender, outcome.reply_text if outcome else "", turn_id
+                            sender, outcome.reply_text if outcome else "", turn_id, elder_id
                         )
                         return
             except AdmissionTimeout:
