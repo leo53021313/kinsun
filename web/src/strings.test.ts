@@ -62,6 +62,24 @@ describe("角色文案：該叫阿白的地方不准殘留服務名", () => {
     expect(strings.talk.statusSub.error.startsWith("我")).toBe(true);
   });
 
+  it("長輩端不出現「QR」——一律叫「方塊圖」", () => {
+    // 規則 5 與「不出現通知」是同一條規則的兩半，而我第一輪只守了前者，
+    // `elderBind.scanQr`（「掃描 QR 碼」）與 `elderLogin.notPaired`（「綁定圖（QR）」）
+    // 因此漏到了實際畫面上——前者還是長輩最先看到、最可能按的那顆鈕。
+    //
+    // 家屬端可以用 QR（`guardianHome.qrAlt` 是給家屬看的圖片替代文字），不在此列。
+    const elderFacing = [
+      ...Object.values(strings.elderBind),
+      ...Object.values(strings.elderLogin),
+      ...Object.values(strings.elderNotifications),
+      ...Object.values(strings.elderHistory),
+    ].filter((value): value is string => typeof value === "string");
+
+    for (const text of elderFacing) {
+      expect(text).not.toMatch(/QR/i);
+    }
+  });
+
   it("長輩端的提醒頁叫「阿白的提醒」，不出現「通知」二字", () => {
     // 接手指示規則 5：長輩端絕不出現「通知」，家屬端才用。
     expect(strings.elderNotifications.title).toBe("阿白的提醒");

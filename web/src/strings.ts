@@ -303,7 +303,9 @@ export const strings = {
     scanHint: "把家人給的方塊圖對準框框",
     switchToManual: "改用輸入號碼",
     hint: "掃描家人給的方塊圖，或輸入號碼",
-    scanQr: "掃描 QR 碼",
+    // ⚠️ 規則 5：長輩端 QR 一律叫「方塊圖」。同一段的 `scanHint`／`hint` 都已經
+    // 是方塊圖了，只有這顆按鈕漏掉——而它正是長輩最先看到、最可能按的那一個。
+    scanQr: "掃描方塊圖",
     codeLabel: "綁定碼",
     codePlaceholder: "綁定碼",
     start: "開始使用",
@@ -321,7 +323,7 @@ export const strings = {
     signedOutByGuardian: "家人幫您重新設定了，請再掃一次他給的方塊圖，或輸入新的號碼。",
   },
   elderLogin: {
-    notPaired: "這支手機還沒跟家人配對過，請先請家人給您綁定圖（QR）掃描一次。",
+    notPaired: "這支手機還沒跟家人配對過，請先請家人給您方塊圖掃描一次。",
     wrongCredentials: "號碼或密碼不對，可以請家人幫忙確認。",
     hint: "輸入家人幫您設定的手機號碼和密碼，登入一次就會一直記住。",
     phoneLabel: "手機號碼",

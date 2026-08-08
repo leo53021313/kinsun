@@ -100,7 +100,7 @@ describe("StagePage", () => {
     // ——`MediaStream` 軌道與 `display:none` 無關，不會因為看不見就自己關閉。
     // 若切頁籤不會讓長輩欄停止掃描，相機會一直開到分頁關閉為止。
     render(<StagePage />);
-    await userEvent.click(screen.getByRole("button", { name: "掃描 QR 碼" }));
+    await userEvent.click(screen.getByRole("button", { name: "掃描方塊圖" }));
     expect(scannerState.createCount).toBe(1);
     expect(scannerState.stop).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("tab", { name: "家屬端" }));
@@ -112,9 +112,9 @@ describe("StagePage", () => {
     expect(scannerState.createCount).toBe(1);
   });
 
-  it("切回長輩端頁籤時，掃描仍在進行中會自動恢復（不強迫重新按「掃描 QR 碼」）", async () => {
+  it("切回長輩端頁籤時，掃描仍在進行中會自動恢復（不強迫重新按「掃描方塊圖」）", async () => {
     render(<StagePage />);
-    await userEvent.click(screen.getByRole("button", { name: "掃描 QR 碼" }));
+    await userEvent.click(screen.getByRole("button", { name: "掃描方塊圖" }));
     await userEvent.click(screen.getByRole("tab", { name: "家屬端" }));
     scannerState.stop.mockClear();
     await userEvent.click(screen.getByRole("tab", { name: "長輩端" }));
@@ -142,7 +142,7 @@ describe("寬螢幕兩欄同時可見時的長輩欄", () => {
   it("點頁籤不可以把還開著的長輩欄關掉（兩欄都看得見，沒有「切走」這回事）", async () => {
     stubMatchMedia(true);
     render(<StagePage />);
-    await userEvent.click(screen.getByRole("button", { name: "掃描 QR 碼" }));
+    await userEvent.click(screen.getByRole("button", { name: "掃描方塊圖" }));
     expect(scannerState.createCount).toBe(1);
 
     await userEvent.click(screen.getByRole("tab", { name: "家屬端" }));
@@ -154,7 +154,7 @@ describe("寬螢幕兩欄同時可見時的長輩欄", () => {
   it("窄螢幕切到家屬端之後把螢幕變寬，長輩欄要活過來", async () => {
     const media = stubMatchMedia(false);
     render(<StagePage />);
-    await userEvent.click(screen.getByRole("button", { name: "掃描 QR 碼" }));
+    await userEvent.click(screen.getByRole("button", { name: "掃描方塊圖" }));
     await userEvent.click(screen.getByRole("tab", { name: "家屬端" }));
     // 窄螢幕的既有行為不變：切走就關掉相機。
     expect(scannerState.stop).toHaveBeenCalled();

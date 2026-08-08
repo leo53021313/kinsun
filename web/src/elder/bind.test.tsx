@@ -241,7 +241,7 @@ describe("長輩配對", () => {
     await userEvent.type(screen.getByLabelText("密碼"), "correct-horse-8");
     await userEvent.click(screen.getByRole("button", { name: "登入" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "這支手機還沒跟家人配對過，請先請家人給您綁定圖（QR）掃描一次。",
+      "這支手機還沒跟家人配對過，請先請家人給您方塊圖掃描一次。",
     );
   });
 
@@ -382,7 +382,7 @@ describe("QR 掃碼的六種錯誤", () => {
 
   it.each(CASES)("%s 顯示長輩看得懂、知道下一步的話，並關閉相機", async (reason, expected) => {
     renderApp();
-    await userEvent.click(screen.getByRole("button", { name: "掃描 QR 碼" }));
+    await userEvent.click(screen.getByRole("button", { name: "掃描方塊圖" }));
     act(() => {
       scannerState.onError?.(reason);
     });
@@ -395,7 +395,7 @@ describe("QR 掃碼的六種錯誤", () => {
 describe("QR 掃碼的相機資源釋放", () => {
   it("按下改用輸入號碼會關閉相機、回到手動輸入", async () => {
     renderApp();
-    await userEvent.click(screen.getByRole("button", { name: "掃描 QR 碼" }));
+    await userEvent.click(screen.getByRole("button", { name: "掃描方塊圖" }));
     await userEvent.click(screen.getByRole("button", { name: "改用輸入號碼" }));
     expect(scannerState.stop).toHaveBeenCalled();
     expect(screen.getByLabelText("綁定碼")).toBeInTheDocument();
@@ -408,7 +408,7 @@ describe("QR 掃碼的相機資源釋放", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     renderApp();
-    await userEvent.click(screen.getByRole("button", { name: "掃描 QR 碼" }));
+    await userEvent.click(screen.getByRole("button", { name: "掃描方塊圖" }));
     act(() => {
       scannerState.onCode?.("QR9987");
     });
@@ -423,7 +423,7 @@ describe("QR 掃碼的相機資源釋放", () => {
 
   it("離開這個畫面時（元件卸載）會關閉相機", async () => {
     const { unmount } = renderApp();
-    await userEvent.click(screen.getByRole("button", { name: "掃描 QR 碼" }));
+    await userEvent.click(screen.getByRole("button", { name: "掃描方塊圖" }));
     unmount();
     expect(scannerState.stop).toHaveBeenCalled();
   });
