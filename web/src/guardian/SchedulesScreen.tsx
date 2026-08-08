@@ -17,6 +17,7 @@ import { GuardianSession } from "@/session/contexts";
 import { makeSignOutOnAuthError } from "@/session/useSignOutOnAuthError";
 import { strings } from "@/strings";
 import { Button } from "@/ui/Button";
+import { Chip } from "@/ui/Chip";
 import { EmptyHint, ErrorText, NoticeText } from "@/ui/Feedback";
 import { Field } from "@/ui/Field";
 import { Section } from "@/ui/Section";
@@ -269,24 +270,17 @@ export function SchedulesScreen(props: { elderId: string; elderName: string }) {
           <legend className="text-sm font-semibold text-ink-soft">{strings.schedules.kindLabel}</legend>
           <div role="radiogroup" aria-label={strings.schedules.kindLabel} className="mt-2 flex flex-wrap gap-2">
             {KIND_OPTIONS.map((option) => (
-              <button
+              <Chip
                 key={option.value}
-                type="button"
                 role="radio"
-                aria-checked={kind === option.value}
+                label={option.label}
+                selected={kind === option.value}
                 // 編輯模式下鎖住類型：中途改成別的類型再按更新，後端會因為新舊欄位對不
                 // 上而回 400（訊息本身沒問題），但這一趟本可省下——編輯中本來就該先把
                 // 現有那筆改完，要換類型就先取消編輯再新增一筆。
                 disabled={editingId !== null}
                 onClick={() => setKind(option.value)}
-                className={`min-h-12 rounded-full border-2 px-4 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${
-                  kind === option.value
-                    ? "border-primary bg-primary text-white"
-                    : "border-line bg-surface text-ink"
-                }`}
-              >
-                {option.label}
-              </button>
+              />
             ))}
           </div>
         </fieldset>
@@ -304,11 +298,11 @@ export function SchedulesScreen(props: { elderId: string; elderName: string }) {
               <legend className="text-sm font-semibold text-ink-soft">{strings.schedules.slotsLabel}</legend>
               <div className="mt-2 flex flex-wrap gap-2">
                 {SLOTS.map((slot) => (
-                  <button
+                  <Chip
                     key={slot.value}
-                    type="button"
                     role="checkbox"
-                    aria-checked={slots.includes(slot.value)}
+                    label={slot.label}
+                    selected={slots.includes(slot.value)}
                     onClick={() =>
                       setSlots((cur) =>
                         cur.includes(slot.value)
@@ -316,14 +310,7 @@ export function SchedulesScreen(props: { elderId: string; elderName: string }) {
                           : [...cur, slot.value],
                       )
                     }
-                    className={`min-h-12 rounded-full border-2 px-4 text-sm font-semibold ${
-                      slots.includes(slot.value)
-                        ? "border-primary bg-primary text-white"
-                        : "border-line bg-surface text-ink"
-                    }`}
-                  >
-                    {slot.label}
-                  </button>
+                  />
                 ))}
               </div>
             </fieldset>
