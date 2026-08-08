@@ -86,7 +86,7 @@ function micButton() {
 }
 
 describe("TalkScreen", () => {
-  it("顯示金孫的回覆", () => {
+  it("顯示阿白的回覆", () => {
     renderScreen();
     expect(screen.getByText("按住下面的麥克風說話，或按一下開始、說完再按一下")).toBeInTheDocument();
   });
@@ -99,26 +99,26 @@ describe("TalkScreen", () => {
   it("未讀超過 9 時紅點顯示 9+，但可及名稱仍講實際數字", () => {
     // 紅點的位置放不下三位數；聽的人不該因此少掉資訊。
     renderScreen({ unread: 12 });
-    expect(screen.getByRole("button", { name: "看金孫的提醒，12 則新的" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "看阿白的提醒，12 則新的" })).toBeInTheDocument();
     expect(screen.getByText("9+")).toBeInTheDocument();
   });
 
   it("沒有未讀時鈴鐺只講用途", () => {
     renderScreen({ unread: 0 });
-    expect(screen.getByRole("button", { name: "看金孫的提醒" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "看阿白的提醒" })).toBeInTheDocument();
   });
 
   it("按鈴鐺會去開提醒畫面", async () => {
     const h = renderScreen();
-    await userEvent.click(screen.getByRole("button", { name: "看金孫的提醒" }));
+    await userEvent.click(screen.getByRole("button", { name: "看阿白的提醒" }));
     expect(h.onOpenNotifications).toHaveBeenCalledOnce();
   });
 
   it.each([
-    ["idle", "金孫現在在等您說話"],
-    ["listening", "金孫現在在聽"],
-    ["thinking", "金孫現在在想"],
-    ["speaking", "金孫現在在說話"],
+    ["idle", "阿白現在在等您說話"],
+    ["listening", "阿白現在在聽"],
+    ["thinking", "阿白現在在想"],
+    ["speaking", "阿白現在在說話"],
   ])("虛擬形象在 %s 時有可讀的說明，不是只有一個表情符號", (state, label) => {
     talkState.avatar = state as AvatarState;
     renderScreen();
@@ -145,7 +145,7 @@ describe("TalkScreen", () => {
     // 30px 字幕
     expect(screen.getByRole("status").className).toContain("text-elder-big");
     // 56px 鈴鐺
-    expect(screen.getByRole("button", { name: "看金孫的提醒" }).className).toContain("size-14");
+    expect(screen.getByRole("button", { name: "看阿白的提醒" }).className).toContain("size-14");
     // 56px＋22px 登出
     const logout = screen.getByRole("button", { name: "登出" });
     expect(logout.className).toContain("min-h-14");
@@ -182,12 +182,12 @@ describe("麥克風鍵真的把手勢交出去", () => {
     expect(talkState.pressOut).toHaveBeenCalledOnce();
   });
 
-  it("金孫在想的時候麥克風鍵停用", () => {
+  it("阿白在想的時候麥克風鍵停用", () => {
     // ⚠️ 這裡只斷言 `disabled` 這個屬性，**不**斷言「按下去不會呼叫 pressIn」：
     // 瀏覽器不會把指標事件送給停用的表單控制項，但 `fireEvent` 是直接對節點
     // 派送、繞過那層抑制——那樣的斷言測的是 jsdom 而不是我們的程式碼，而且
     // 永遠不可能通過。真正「還在想的時候不可以再開錄」那條防線在 `useTalk`
-    // 自己身上（見 useTalk.test.ts「金孫還在想的時候又按下去」），那一層測得到。
+    // 自己身上（見 useTalk.test.ts「阿白還在想的時候又按下去」），那一層測得到。
     talkState.avatar = "thinking";
     renderScreen();
     expect(micButton()).toBeDisabled();

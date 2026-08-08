@@ -11,7 +11,7 @@ import type { PhoneOs } from "@/stage/PhoneFrame";
  * 鈴鐺的用途說明。`elderNotifications.bell` 與 `bellWithUnread` 都要用到它，
  * 抽成常數而非兩處各寫一次同樣的字面值——兩處寫死的話，改一處就會漂。
  */
-const ELDER_BELL_LABEL = "看金孫的提醒";
+const ELDER_BELL_LABEL = "看阿白的提醒";
 
 /**
  * 家屬首頁通知鈕的用途說明。`guardianHome.notify` 與 `notifyWithUnread` 都要
@@ -153,7 +153,7 @@ export const strings = {
     noRiskEvents: "沒有危急事件，一切平安。",
     remindersCount: (count: number) => `近 30 天提醒 ${count} 則`,
     dailySummarySection: "每日摘要",
-    noSummaries: "還沒有摘要——長輩與金孫聊過天後，隔天早上就會出現。",
+    noSummaries: "還沒有摘要——長輩與阿白聊過天後，隔天早上就會出現。",
     noSchedules: "還沒有任何提醒，點下方「管理行程」新增。",
     manageSchedules: "管理行程",
     accountSection: "長輩登入帳密（代辦）",
@@ -171,13 +171,13 @@ export const strings = {
     // 把長輩登出、一個不會。
     bindingWarning:
       "注意：一產生新碼，長輩目前手機上的金孫就會被登出，他要用新碼重綁一次才能" +
-      "再跟金孫說話。只是想邀請另一位家屬看資料的話，請用下面的「產生家屬邀請碼」。",
+      "再跟阿白說話。只是想邀請另一位家屬看資料的話，請用下面的「產生家屬邀請碼」。",
     regenerateBinding: "重新產生長輩綁定碼",
     // ⚠️ 確認列講**後果**、不講動作：「確定要重新產生嗎」只是把按鈕字樣抄一遍，
     // 家屬看了還是不知道自己要換掉什麼。刪一筆排程都要二次確認了，這個會把長輩
     // 手機上的金孫直接登出的操作更需要——而且他按下去的當下，長輩可能正在講話。
     confirmRegenerateBinding:
-      "長輩手機上的金孫會馬上被登出，他要用新的綁定碼重綁一次才能再跟金孫說話。確定要換嗎？",
+      "長輩手機上的金孫會馬上被登出，他要用新的綁定碼重綁一次才能再跟阿白說話。確定要換嗎？",
     confirmRegenerateBindingButton: "確定換新碼",
     bindingFailed: "重新產生綁定碼失敗，請稍後再試。",
     inviteSection: "邀請其他家屬",
@@ -213,7 +213,7 @@ export const strings = {
   },
   notifications: {
     title: "通知",
-    empty: "目前沒有通知。金孫有事會第一時間放在這裡。",
+    empty: "目前沒有通知。阿白有事會第一時間放在這裡。",
   },
   // 長輩端文案逐字沿用 app/src/lib/strings.ts 的既有措辭：口語敘述一律用
   // 「號碼」「方塊圖」，比「通知」「綁定」更白話；`codePlaceholder`（輸入框
@@ -280,12 +280,12 @@ export const strings = {
   },
   talk: {
     idleHint: "按住下面的麥克風說話，或按一下開始、說完再按一下",
-    fallback: "金孫沒聽清楚，再說一次好嗎？",
-    micPermission: "需要麥克風權限才能跟金孫說話，請到設定開啟。",
-    listening: "金孫在聽…",
-    listeningTapHint: "金孫在聽…說完再按一下",
-    thinking: "金孫想一下…",
-    // ⚠️ **`thinkingAfterSkipped`（「上一個問題就先跳過了，金孫想一下…」）已於
+    fallback: "我沒聽清楚，再說一次好嗎？",
+    micPermission: "需要麥克風權限才能跟阿白說話，請到設定開啟。",
+    listening: "我在聽…",
+    listeningTapHint: "我在聽…說完再按一下",
+    thinking: "我想一下…",
+    // ⚠️ **`thinkingAfterSkipped`（「上一個問題就先跳過了，我想一下…」）已於
     // 2026-08-01 移除**：專案裁決推翻「一律丟棄」、改回補播（長輩插嘴照樣打斷，
     // 但前一題的答案等他講完之後補播，見 `elder/useTalk.ts` 的
     // `deferredTurnsRef`）。既然那一句話會被補播，「跳過了」就是假話——一句與
@@ -313,7 +313,7 @@ export const strings = {
     // 上限 > 1 時，排隊名次 1 的人前面其實還有好幾輪正在跑、只是不在佇列裡
     // （見 channels/app/ws.py 與 06_API設計規範 §5 的既有裁決）。故不報「前面
     // 還有幾位」，改講排隊名次本身。
-    queued: (position: number) => `金孫正在跟別人說話，您排第 ${position} 位…`,
+    queued: (position: number) => `我還在忙，您現在排第 ${position} 位，輪到就馬上回您。`,
     micUnsupported: "這個瀏覽器不能錄音，請換 Chrome、Safari 或 Firefox。",
     // ⚠️ 麥克風拿不到有好幾種成因，長輩要做的下一步完全不同（P3 Task 8 補齊，
     // 對應 `talk/recorder.ts::MicrophoneProbeResult` 的六種結果）。一律講「請到
@@ -326,26 +326,26 @@ export const strings = {
     // `elderBind.cameraInsecureOrigin` 一致。
     micInsecureOrigin: "這個網址不能錄音，請改用家人給您、開頭是 https 的網址。",
     // 權限有了、但這一次就是打不開（裝置忙、系統把麥克風收走）。與
-    // `fallback`（「金孫沒聽清楚」）刻意分開：錄音根本沒開始，說「沒聽清楚」
+    // `fallback`（「我沒聽清楚」）刻意分開：錄音根本沒開始，說「沒聽清楚」
     // 會讓長輩以為是自己講得不夠大聲，於是一次比一次更用力喊。
     micStartFailed: "麥克風打不開，請再按一次試試看。",
     // 送出了、卻等不到任何回應（連線斷在半路、後端那一輪掉了）。⚠️ 沒有這條
-    // 保險的話，畫面會永遠停在「金孫想一下…」而麥克風鍵一直是停用的——長輩
+    // 保險的話，畫面會永遠停在「我想一下…」而麥克風鍵一直是停用的——長輩
     // 從此按不動，也不知道發生什麼事。
-    noAnswer: "金孫這次沒有回話，再說一次好嗎？",
+    noAnswer: "我這次沒有回話，再說一次好嗎？",
     // 虛擬形象的可讀說明（讀螢幕軟體會唸出來；畫面上只有一個表情符號）。
     avatar: {
-      idle: "金孫現在在等您說話",
-      listening: "金孫現在在聽",
-      thinking: "金孫現在在想",
-      speaking: "金孫現在在說話",
+      idle: "阿白現在在等您說話",
+      listening: "阿白現在在聽",
+      thinking: "阿白現在在想",
+      speaking: "阿白現在在說話",
     },
     confirmLogoutButton: "確定登出",
   },
   // 長輩看的提醒（X-01，2026-07-29）：用詞比家屬版更白話，不用「通知」這個詞。
   elderNotifications: {
-    title: "金孫的提醒",
-    empty: "現在沒有要提醒您的事。時間到了金孫會跟您說。",
+    title: "阿白的提醒",
+    empty: "現在沒有要提醒您的事。時間到了我會跟您說。",
     // ⚠️ 不可以借用 `common.loadFailed`（「載入失敗，請稍後再試。」）：長輩看完那句
     // 話，仍然不知道今天到底有沒有藥要吃——而「錯誤取代空狀態」這條不變量的目的就是
     // 不讓他推論「今天沒事」。這句話要替他排除那個推論，並告訴他還可以問誰。

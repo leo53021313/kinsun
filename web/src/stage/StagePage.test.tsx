@@ -690,7 +690,7 @@ describe("未讀數接上真正的輪詢結果（不再寫死 0／恆無徽章�
       }),
     );
     render(<StagePage />);
-    expect(await screen.findByRole("button", { name: "看金孫的提醒，1 則新的" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "看阿白的提醒，1 則新的" })).toBeInTheDocument();
   });
 
   it("家屬端首頁的通知鈕接上 guardianFeed.unread", async () => {
