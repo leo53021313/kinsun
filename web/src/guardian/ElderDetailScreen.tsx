@@ -31,6 +31,8 @@ export function ElderDetailScreen(props: {
   elderId: string;
   elderName: string;
   onManageSchedules: () => void;
+  /** 進每日摘要獨立畫面（W6）。本頁只列得下幾則，切日與分享在那邊。 */
+  onOpenSummaries?: () => void;
   /**
    * 把重新產生的長輩綁定碼直接送到長輩欄（spec W-15 內測捷徑，接線見
    * `stage/StagePage.tsx`）。不傳的話 `InviteCard` 不畫出「送到長輩的手機」鈕
@@ -227,6 +229,13 @@ export function ElderDetailScreen(props: {
             </div>
           ))
         )}
+        {props.onOpenSummaries && summaries && summaries.length > 0 ? (
+          <Button
+            label={strings.elderDetail.viewDailySummaries}
+            variant="outline"
+            onClick={props.onOpenSummaries}
+          />
+        ) : null}
       </Section>
 
       <Section title={strings.schedules.listSection}>

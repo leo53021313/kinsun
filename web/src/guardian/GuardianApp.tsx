@@ -25,6 +25,8 @@ import { GuardianSession } from "@/session/contexts";
 import { strings } from "@/strings";
 import { ErrorText } from "@/ui/Feedback";
 
+import { DailySummaryScreen } from "./DailySummaryScreen";
+import { EditAppointmentScreen } from "./EditAppointmentScreen";
 import { ElderDetailScreen } from "./ElderDetailScreen";
 import { GuardianTabBar, type GuardianTab } from "./GuardianTabBar";
 import { GuardianTabsProvider } from "./GuardianTabsProvider";
@@ -45,7 +47,11 @@ export type GuardianRoute =
   | { name: "elder"; elderId: string; elderName: string }
   // elderName 跟著一起帶：家屬管兩位以上長輩時，行程管理頁若只有「行程管理」
   // 四個字，畫面上沒有任何字告訴他正在編誰的提醒。
-  | { name: "schedules"; elderId: string; elderName: string };
+  | { name: "schedules"; elderId: string; elderName: string }
+  /** 每日摘要獨立畫面（W6）：切日與分享。 */
+  | { name: "summary"; elderId: string; elderName: string }
+  /** 改回診時間（W6）。回診有自己的畫面，其餘類型仍在行程管理頁原地編輯。 */
+  | { name: "editAppointment"; elderId: string; scheduleId: string };
 
 type GuardianAppProps = {
   /**
@@ -233,11 +239,37 @@ function GuardianAppBody(props: GuardianAppProps) {
                 elderName: route.elderName,
               })
             }
+            onOpenSummaries={() =>
+              push({
+                name: "summary",
+                elderId: route.elderId,
+                elderName: route.elderName,
+              })
+            }
             onSendCodeToElder={onSendCodeToElder}
           />
         );
       case "schedules":
-        return <SchedulesScreen elderId={route.elderId} elderName={route.elderName} />;
+        return (
+          <SchedulesScreen
+            elderId={route.elderId}
+            elderName={route.elderName}
+            onEditAppointment={(scheduleId) =>
+              push({ name: "editAppointment", elderId: route.elderId, scheduleId })
+            }
+          />
+        );
+      case "summary":
+        return <DailySummaryScreen elderId={route.elderId} />;
+      case "editAppointment":
+        return (
+          <EditAppointmentScreen
+            elderId={route.elderId}
+            scheduleId={route.scheduleId}
+            // 存檔或刪除成功後回上一頁——家屬要看到清單少一筆／時間改掉了。
+            onDone={stack.back}
+          />
+        );
       default: {
         // 走到這裡代表新增了路由卻忘了接畫面。編譯期就會抓到（never 型別）。
         const unreachable: never = route;

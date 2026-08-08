@@ -170,6 +170,7 @@ export const strings = {
     // 進長輩詳情那顆鈕的字。web 沒有 `nav` 區塊（畫面切換是元件狀態、不進網址列），
     // 用字沿用 App 的 `strings.nav.elderDetail`。
     openDetail: "長輩詳情",
+    viewDailySummaries: "查看每日摘要",
     healthReportSection: "健康報告（近 30 天）",
     noRiskEvents: "沒有危急事件，一切平安。",
     remindersCount: (count: number) => `近 30 天提醒 ${count} 則`,
@@ -251,6 +252,35 @@ export const strings = {
   // `cameraInsecureOrigin`／`cameraNoSignal`（P3 Task 7，對應 `talk/qrScanner.ts`
   // 的 `QrScannerError` 六種分類——App 端走 `expo-camera` 原生殼，沒有這麼細的
   // 瀏覽器相機錯誤分類）。
+  // 每日摘要獨立畫面（W6）。用字取自 app/src/lib/strings.ts。
+  //
+  // ⚠️ 後端的 `DailySummary` 只有 `{date, content, created_at}` 三個欄位。設計稿那個
+  // 三層結構（原話照登／阿白注意到的／四個事實數字）**沒有對應欄位**——App 那批
+  // 已經核對過真實型別並照做，web 一樣。要做三層版本得後端先拆結構。
+  dailySummary: {
+    section: "這一天",
+    prevDay: "看前一天",
+    nextDay: "看後一天",
+    disclaimer: "這是阿白整理的摘要，不是長輩的原話。",
+    share: "傳這份摘要給家人",
+    shareFailed: "無法開啟分享面板，請稍後再試。",
+    copied: "摘要已複製，可以直接貼給家人。",
+  },
+  // 改回診時間（W6）。只送現有 ScheduleInput 真正支援的日期與時間。
+  //
+  // ⚠️ `driver`（誰帶長輩去）與 `notify_elder`（讓阿白告訴長輩改了）兩個控制項
+  // **不做**：`ScheduleInput` 沒有這兩個欄位，後端也沒有。交付稿把它們畫進去了，
+  // 但那是設計稿與真實契約的矛盾，不是實作漏做。
+  editAppointment: {
+    whenLabel: "新的日期與時間",
+    whenHint: "改完記得也跟醫院改掛號——阿白不會幫您打電話。",
+    invalidWhen: "請用「西元年-月-日 時:分」填寫，時間可以省略。",
+    notFound: "找不到這筆回診行程，可能已被刪除。",
+    savedEffect: "存檔後，後續提醒會改用新的時間；阿白不會替您聯絡醫院改掛號。",
+    save: "存起來",
+    deleteThis: "刪除這個行程",
+    deleteConfirm: (title: string) => `確定要刪除「${title}」嗎？刪掉之後提醒就不會再響。`,
+  },
   elderBind: {
     inviteNotFound: "找不到這組號碼，請跟家人再確認一次。",
     inviteUsed: "這組號碼已經用過了，請家人重新產生一組。",

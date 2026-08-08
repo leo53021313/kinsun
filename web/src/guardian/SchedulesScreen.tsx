@@ -27,8 +27,16 @@ import { KIND_OPTIONS, SLOTS, describeGroup, toOccurrences } from "./schedules";
 
 type Kind = ScheduleGroup["kind"];
 
-export function SchedulesScreen(props: { elderId: string; elderName: string }) {
-  const { elderId, elderName } = props;
+export function SchedulesScreen(props: {
+  elderId: string;
+  elderName: string;
+  /**
+   * 回診改走專屬的「改回診時間」畫面（W6）。不傳就一律原地編輯——獨立測試
+   * 這支畫面時沒有上層路由可去。
+   */
+  onEditAppointment?: (groupId: string) => void;
+}) {
+  const { elderId, elderName, onEditAppointment } = props;
   const { session, signOut } = GuardianSession.useSession();
   const token = session?.token ?? "";
   // ⚠️ 用 useMemo 而非 useCallback：makeSignOutOnAuthError 是**工廠**，回傳的是函式
@@ -207,6 +215,12 @@ export function SchedulesScreen(props: { elderId: string; elderName: string }) {
                   variant="outline"
                   disabled={busy}
                   onClick={() => {
+                    // 回診有自己的畫面：那裡只問日期與時間，不會像這支表單一樣把
+                    // 「時間留空＋提示重填」那套規則套到一筆早就設好的回診上。
+                    if (group.kind === "appointment" && onEditAppointment) {
+                      onEditAppointment(group.group_id);
+                      return;
+                    }
                     setEditingId(group.group_id);
                     setKind(group.kind);
                     setTitle(group.title);
