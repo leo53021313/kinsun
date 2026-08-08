@@ -4595,8 +4595,20 @@ window.visemeOf = function (ch) {
   let lastSequence = -1;
 
   function notify(type, detail) {
-    if (!window.ReactNativeWebView) return;
-    window.ReactNativeWebView.postMessage(JSON.stringify({ version: 1, type, detail }));
+    const payload = JSON.stringify({ version: 1, type, detail });
+    // App：React Native WebView。
+    if (window.ReactNativeWebView) {
+      window.ReactNativeWebView.postMessage(payload);
+      return;
+    }
+    // 網頁版：一般瀏覽器的 iframe。targetOrigin 用 "*" 是必要的——iframe 帶
+    // sandbox 時是不透明來源，取不到父層 origin；訊息內容只有 ready 與
+    // invalid-message，不含任何機密，且父層以 `event.source === iframe.contentWindow`
+    // 驗證來源。判斷 `window.parent !== window` 是為了不在 App 那條路徑上自己
+    // 送給自己（RN WebView 是頂層文件，parent 就是自己）。
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage(payload, "*");
+    }
   }
 
   function stopTransientState() {

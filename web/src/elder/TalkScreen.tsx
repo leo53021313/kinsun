@@ -13,7 +13,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { strings } from "@/strings";
 import { Button } from "@/ui/Button";
 
-import { Avatar } from "./Avatar";
+import { BearStage } from "./BearStage";
 import { useTalk } from "./useTalk";
 
 export function TalkScreen(props: {
@@ -137,7 +137,7 @@ export function TalkScreen(props: {
       ) : null}
 
       <div className="flex justify-center">
-        <Avatar state={talk.avatar} />
+        <BearStage state={talk.avatar} />
       </div>
 
       {/* 回覆可捲動：短回覆置中、長回覆可上滑看完，字級不縮。
