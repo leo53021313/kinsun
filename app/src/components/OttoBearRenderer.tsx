@@ -1,5 +1,4 @@
 import { Asset } from "expo-asset";
-import { Image } from "expo-image";
 import { File } from "expo-file-system";
 import { Platform, StyleSheet, View } from "react-native";
 import { useEffect, useRef, useState } from "react";
@@ -78,14 +77,13 @@ export function OttoBearRenderer(props: {
 
   return (
     <View style={styles.container}>
-      {!isReady || Platform.OS === "web" ? (
-        <Image
-          source={require("@/assets/images/akin-hero.png")}
-          contentFit="contain"
-          transition={160}
-          style={styles.fallback}
-        />
-      ) : null}
+      {/* ⚠️ 未就緒時**不放暫用圖**。原本這裡退回 `akin-hero.png`，那是舊角色阿金
+          ——顯示錯的角色比暫時空著更糟：長輩會以為是兩個不同的東西。舞台的光暈
+          仍在（`BearStage` 那一層），所以不會是一整塊空白。
+
+          Expo Web 因 `react-native-webview` 不支援瀏覽器而永遠停在這一態；那是
+          開發時的便利路徑，正式 demo 走的是 `web/`（同一份 renderer，iframe 載入，
+          不受此限）。正式五態 PNG 交付後可在此補上真正的降級圖。 */}
       {html && Platform.OS !== "web" ? (
         <WebView
           ref={webViewRef}
@@ -132,7 +130,6 @@ export function OttoBearRenderer(props: {
 
 const styles = StyleSheet.create({
   container: { width: "100%", height: "100%" },
-  fallback: { position: "absolute", inset: 0 },
   webView: { flex: 1, backgroundColor: "transparent" },
   webViewHidden: { opacity: 0 },
 });

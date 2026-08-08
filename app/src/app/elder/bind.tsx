@@ -3,7 +3,7 @@ import { useRouter } from "expo-router";
 import { useRef, useState } from "react";
 import { StyleSheet, Text, TextInput, View } from "react-native";
 
-import { Button } from "@/components/ui";
+import { Button, ErrorText } from "@/components/ui";
 import { ApiError, bindElderDevice } from "@/lib/api";
 import { useSession } from "@/lib/SessionProvider";
 import { strings } from "@/lib/strings";
@@ -108,7 +108,14 @@ export default function ElderBind() {
         placeholder={strings.elderBind.codePlaceholder}
         placeholderTextColor={colors.textSoft}
       />
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {/* 用共用 ErrorText 而非自建樣式：它已經是「顏色＋圖示＋文字」三重編碼
+          （規則 6），文字色也已經是深一階的 dangerText（規則 15）。這裡原本自己
+          寫 `color: colors.danger`，對淡紫底只有 3.41:1。 */}
+      {error ? (
+        <View style={styles.errorRow}>
+          <ErrorText message={error} size="big" />
+        </View>
+      ) : null}
       <Button
         label={strings.elderBind.start}
         size="big"
@@ -149,5 +156,5 @@ const styles = StyleSheet.create({
     color: colors.text,
     letterSpacing: 2,
   },
-  error: { fontSize: elder.fontMin, color: colors.danger, textAlign: "center" },
+  errorRow: { alignSelf: "center" },
 });

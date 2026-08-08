@@ -59,12 +59,24 @@ describe("共用 UI 元件", () => {
     expect(label.props.maxFontSizeMultiplier).toBeUndefined();
   });
 
-  it("ErrorText 用 alert 語意且 big 時符合 22px 下限", async () => {
+  it("ErrorText 用 alert 語意、帶圖示做三重編碼，且 big 時符合 22px 下限", async () => {
+    // ⚠️ 結構改了：alert 從 Text 換成包住「圖示＋文字」的 View（規則 6 三重編碼），
+    // 所以字級要往內找那一則 Text，不能再直接讀 alert 自己的 style。
     const screen = await render(<ErrorText message="號碼不正確" size="big" />);
-    const error = screen.getByRole("alert");
 
-    expect(error.props.children).toBe("號碼不正確");
-    expect(StyleSheet.flatten(error.props.style).fontSize).toBe(elder.fontMin);
+    // alert 語意仍要在：讀螢幕的人不會自己去掃畫面找紅字。
+    expect(screen.getByRole("alert")).toBeTruthy();
+    expect(screen.getByText("號碼不正確")).toBeTruthy();
+    expect(StyleSheet.flatten(screen.getByText("號碼不正確").props.style).fontSize).toBe(
+      elder.fontMin,
+    );
+    // 拿掉顏色仍讀得懂：文字之外必須有圖示。
+    // ⚠️ 要 `includeHiddenElements`：圖示刻意掛 `accessibilityElementsHidden`
+    // ——讀螢幕的人該聽到的是訊息本身，不是多一則「圖片」。RNTL 預設會把對無障礙
+    // 隱藏的元素排除在查詢之外，所以這裡明講「我要找的就是那個刻意隱藏的視覺元素」。
+    //
+    // 標自己的 testID 而不是依賴 Phosphor 內部的命名——那是它的實作細節。
+    expect(screen.getByTestId("error-icon", { includeHiddenElements: true })).toBeTruthy();
   });
 
   it("Section 使用 24px 圓角與柔和陰影，inset 會取消陰影", async () => {
@@ -118,12 +130,23 @@ describe("共用 UI 元件", () => {
     );
     const chip = screen.getByRole("checkbox");
 
-    expect(chip.props.accessibilityState).toEqual({ selected: true });
+    // ⚠️ checkbox 的勾選狀態是 `checked`，不是 `selected`——後者是 radio／tab／
+    // option 那一類用的。原本兩種 role 都送 `selected`（從交付稿繼承），讀螢幕
+    // 軟體不會把它當勾選狀態播報：看得見的人有底色可看，聽的人什麼都沒有。
+    expect(chip.props.accessibilityState).toEqual({ checked: true });
     expect(StyleSheet.flatten(chip.props.style).minHeight).toBe(48);
     await fireEvent(chip, "focus");
     expect(StyleSheet.flatten(screen.getByRole("checkbox").props.style)).toMatchObject({
       outlineOffset: 2,
       outlineWidth: 2,
     });
+  });
+
+  it("Chip 是 radio 時用 selected——兩種 role 的狀態屬性不同", async () => {
+    const screen = await render(
+      <Chip label="吃藥" selected={false} onPress={jest.fn()} role="radio" />,
+    );
+
+    expect(screen.getByRole("radio").props.accessibilityState).toEqual({ selected: false });
   });
 });

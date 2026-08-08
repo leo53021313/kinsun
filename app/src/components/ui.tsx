@@ -18,6 +18,8 @@ import {
   type TextInputProps,
 } from "react-native";
 
+import { WarningCircleIcon } from "phosphor-react-native/src/icons/WarningCircle";
+
 import { colors, elder, radius, spacing } from "@/lib/theme";
 
 type ComponentSize = "normal" | "big";
@@ -120,17 +122,31 @@ export function Field(props: TextInputProps & { label: string; hint?: string; si
   );
 }
 
+/** 錯誤一律「顏色＋圖示＋文字」三重編碼（規則 6），拿掉顏色仍讀得懂。
+ *
+ * ⚠️ 圖示色用 `colors.danger`、文字色用 `colors.dangerText`：規則 15 明定前者只能
+ * 用於邊界與圖示（對白底 3.7:1，非文字元件達標），文字要用深一階才過 4.5:1。
+ *
+ * ⚠️ 圖示掛 `accessibilityElementsHidden`：`accessibilityRole="alert"` 在外層那一格，
+ * 讀螢幕的人聽到的是訊息本身，不該多聽一次「圖片」。 */
 export function ErrorText(props: { message: string; size?: ComponentSize }) {
   if (!props.message) {
     return null;
   }
+  const big = props.size === "big";
   return (
-    <Text
-      accessibilityRole="alert"
-      style={[styles.error, props.size === "big" ? styles.errorBig : null]}
-    >
-      {props.message}
-    </Text>
+    // ⚠️ `accessible` 不可省：RN 的 View 預設不是無障礙元素，只掛
+    // `accessibilityRole` 不會被讀螢幕軟體當成一則 alert（Text 預設才是）。
+    <View accessible accessibilityRole="alert" style={styles.errorRow}>
+      <View
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        testID="error-icon"
+      >
+        <WarningCircleIcon color={colors.danger} size={big ? 26 : 20} weight="bold" />
+      </View>
+      <Text style={[styles.error, big ? styles.errorBig : null]}>{props.message}</Text>
+    </View>
   );
 }
 
@@ -207,7 +223,11 @@ export function Chip(props: {
   return (
     <Pressable
       accessibilityRole={role}
-      accessibilityState={{ selected }}
+      // ⚠️ 依 role 分流：checkbox 的勾選狀態是 `checked`，`selected` 是
+      // radio／tab／option 那一類用的。送錯的話讀螢幕軟體不會播報勾選與否
+      // ——看得見的人有底色可看，聽的人什麼都沒有。（原本兩種 role 都送
+      // `selected`，那是從交付稿 handoff/ui.tsx:182 繼承下來的。）
+      accessibilityState={role === "checkbox" ? { checked: selected } : { selected }}
       onBlur={() => setIsFocused(false)}
       onFocus={() => setIsFocused(true)}
       onPress={onPress}
@@ -305,7 +325,8 @@ const styles = StyleSheet.create({
     color: colors.text,
   },
   inputBig: { fontSize: elder.fontMin },
-  error: { color: colors.dangerText, fontSize: 16 },
+  errorRow: { flexDirection: "row", alignItems: "center", gap: spacing.xs + 2 },
+  error: { flexShrink: 1, color: colors.dangerText, fontSize: 16 },
   errorBig: { fontSize: elder.fontMin },
   section: {
     backgroundColor: colors.surface,

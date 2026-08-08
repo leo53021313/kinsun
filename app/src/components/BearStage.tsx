@@ -4,7 +4,6 @@
  * 舞台固定 209 × 300、top 140，內容再多也不縮放或位移。
  */
 
-import { Image } from "expo-image";
 import { StyleSheet, View } from "react-native";
 
 import { OttoBearRenderer } from "@/components/OttoBearRenderer";
@@ -56,19 +55,25 @@ export function BearStage(props: {
   );
 }
 
-/** 清單頁的小頭像；正式五態 PNG 尚未交付，先沿用已納入的阿白靜態 fallback。 */
+/** 清單頁的小頭像。
+ *
+ * ⚠️ 用**同一個 renderer**而不是靜態圖：這裡原本 `require("akin-hero.png")`，而那張是
+ * 舊角色阿金（黃金獵犬＋已作廢的珊瑚橘圍巾）——長輩每次進「之前聊過的」都會看到
+ * 一隻狗，而畫面其他地方都叫他阿白。正式五態 PNG 尚未交付，與其再挑一張暫用圖，
+ * 不如直接用已經在跑的向量 renderer：只有一份角色，不會再有「這裡是狗那裡是熊」。
+ */
 export function BearAvatar(props: { systemState?: BearSystemState }) {
   const state = props.systemState ?? "idle";
   return (
-    <View style={styles.headerAvatar}>
+    <View
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      style={styles.headerAvatar}
+    >
       <View style={[styles.headerGlow, { backgroundColor: talkState[state].glow }]} />
-      <Image
-        accessibilityElementsHidden
-        contentFit="contain"
-        importantForAccessibility="no-hide-descendants"
-        source={require("@/assets/images/akin-hero.png")}
-        style={styles.headerImage}
-      />
+      <View style={styles.headerImage}>
+        <OttoBearRenderer state={state} speechCue={null} />
+      </View>
     </View>
   );
 }

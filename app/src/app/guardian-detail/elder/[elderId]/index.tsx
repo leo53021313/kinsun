@@ -215,8 +215,10 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   content: { padding: spacing.m, gap: spacing.m },
   reportBody: { gap: spacing.xs },
-  ok: { fontSize: 16, color: colors.success },
-  risk: { fontSize: 16, color: colors.danger },
+  // ⚠️ 文字一律用深一階（規則 15）：`colors.success` 對白底只有 2.45:1、
+  // `colors.danger` 3.70:1，兩者都是給邊界與圖示用的，當正文一律不合格。
+  ok: { fontSize: 16, color: colors.successText },
+  risk: { fontSize: 16, color: colors.dangerText },
   soft: { fontSize: 14, color: colors.textSoft },
   row: { fontSize: 17, color: colors.text },
   summaryItem: { gap: 2 },

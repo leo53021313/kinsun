@@ -1,8 +1,8 @@
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 
-import { Button, EmptyHint, ErrorText, Field, Section } from "@/components/ui";
+import { Button, Chip, EmptyHint, ErrorText, Field, Section } from "@/components/ui";
 import {
   ApiError,
   createSchedule,
@@ -197,25 +197,15 @@ export default function SchedulesManage() {
           {strings.schedules.kindLabel}
         </Text>
         <View style={styles.chipRow}>
-          {KIND_OPTIONS.map((option) => {
-            const selected = kind === option.value;
-            return (
-              <Pressable
-                key={option.value}
-                accessibilityRole="radio"
-                accessibilityState={{ selected }}
-                onPress={() => setKind(option.value)}
-                style={[styles.chip, selected ? styles.chipSelected : null]}
-              >
-                <Text
-                  maxFontSizeMultiplier={1.6}
-                  style={[styles.chipText, selected ? styles.chipTextSelected : null]}
-                >
-                  {option.label}
-                </Text>
-              </Pressable>
-            );
-          })}
+          {KIND_OPTIONS.map((option) => (
+            <Chip
+              key={option.value}
+              label={option.label}
+              role="radio"
+              selected={kind === option.value}
+              onPress={() => setKind(option.value)}
+            />
+          ))}
         </View>
 
         <Field
@@ -231,25 +221,15 @@ export default function SchedulesManage() {
               {strings.schedules.slotsLabel}
             </Text>
             <View style={styles.chipRow}>
-              {SLOTS.map((s) => {
-                const selected = slots.includes(s.value);
-                return (
-                  <Pressable
-                    key={s.value}
-                    accessibilityRole="checkbox"
-                    accessibilityState={{ checked: selected }}
-                    onPress={() => toggleSlot(s.value)}
-                    style={[styles.chip, selected ? styles.chipSelected : null]}
-                  >
-                    <Text
-                      maxFontSizeMultiplier={1.6}
-                      style={[styles.chipText, selected ? styles.chipTextSelected : null]}
-                    >
-                      {s.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
+              {SLOTS.map((s) => (
+                <Chip
+                  key={s.value}
+                  label={s.label}
+                  role="checkbox"
+                  selected={slots.includes(s.value)}
+                  onPress={() => toggleSlot(s.value)}
+                />
+              ))}
             </View>
             <Field
               label={strings.schedules.customTimeLabel}
@@ -290,15 +270,4 @@ const styles = StyleSheet.create({
   itemActions: { flexDirection: "row", gap: spacing.s },
   fieldTitle: { fontSize: 16, fontWeight: "600", color: colors.textSoft },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.s },
-  chip: {
-    borderWidth: 2,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    borderRadius: 999,
-    paddingVertical: 10,
-    paddingHorizontal: spacing.m,
-  },
-  chipSelected: { borderColor: colors.primary, backgroundColor: colors.primary },
-  chipText: { fontSize: 16, fontWeight: "600", color: colors.text },
-  chipTextSelected: { color: "#FFFFFF" },
 });
