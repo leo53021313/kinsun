@@ -1202,3 +1202,52 @@ def test_rules_no_longer_mandate_ending_with_a_question():
 def test_rules_no_longer_declare_identity():
     """身分宣告已移交人設段；規則段再宣告一次會與人設打架。"""
     assert "溫暖、有耐心的台灣長輩陪伴助理" not in SYSTEM_PROMPT
+
+
+# ── 等待要看得見（2026-08-08 觀測盤點）──
+#
+# 為什麼非有不可：情境組裝與安全檢查是並行的，組裝比較慢時 `handle` 會卡在
+# `context()` 乾等。這段乾等原本沒有任何 span，於是整段被記在 `agent_generate`
+# 頭上——正式 trace `019fdc37` 實錄 Agent 那格 3735ms 裡有 1725ms 是在等記憶。
+# 看 Opik 調延遲的人會以為要換模型或縮 prompt，真正該修的是記憶檢索。
+
+
+def _spy_span_names(monkeypatch) -> list[str]:
+    """啟用工程觀測、以假的 opik.track 攔下 span 名稱（hermetic，不連 Opik）。
+
+    ⚠️ 刻意不用 `importlib.reload(agent)`：那會換掉模組裡的類別物件，而其他模組
+    （composition、測試檔自己）持有的是舊的那一份，之後的 isinstance 與 patch 都會
+    對不上。`tracing.track` 的包裝是**呼叫時**才 lazy 建立的，所以攔 opik.track
+    就夠——不必動模組。
+    """
+    import opik
+
+    from kinsun.tracing import client as tracing_client
+    from kinsun.tracing import decorators as tracing_decorators
+
+    names: list[str] = []
+    monkeypatch.setattr(opik, "track", lambda **kw: (names.append(kw.get("name")), lambda f: f)[1])
+    monkeypatch.setattr(tracing_decorators, "is_enabled", lambda: True)
+    monkeypatch.setattr(tracing_client, "_ENABLED", True)
+    return names
+
+
+def test_context_wait_is_its_own_span(monkeypatch):
+    """等記憶必須自成一格，否則它會被誤記成 LLM 的時間。"""
+    names = _spy_span_names(monkeypatch)
+    released = threading.Event()
+    released.set()
+    agent = CareAgent(SpyLLM(), _HangingSession(released))
+    prepared = agent.prepare("u1", "我今天有點累")
+    prepared.context()
+    prepared.profile()
+    assert "context_wait" in names
+    assert "profile_wait" in names
+
+
+def test_context_wait_span_does_not_change_behaviour():
+    """加了 span 之後，正常路徑與逾時路徑都要與加之前一字不差。"""
+    released = threading.Event()
+    released.set()
+    agent = CareAgent(SpyLLM(), _HangingSession(released))
+    assert agent.prepare("u1", "我今天有點累").context().history == []

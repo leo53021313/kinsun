@@ -127,6 +127,13 @@ class SessionMemory:
             history=history,
         )
 
+    # capture_input／output 皆關（2026-08-08）：輸入是本輪的原話與回覆，兩者已由
+    # trace 的 I/O 與 `memory_assemble` 帶到，重複一份只是讓 payload 加倍；這一格
+    # 要看的是**寫了多久**。它走背景執行緒，但不是沒有人在等——`pipeline` 交出回覆
+    # 前會等它落地（見 `_settle_memory_write`），探針實測曾經跑到 4.2 秒。
+    @tracing.track(
+        name="memory_record_turn", type="general", capture_input=False, capture_output=False
+    )
     def record_turn(self, elder_id: str, *messages: Message, at: datetime | None = None) -> None:
         """`at`＝長輩開口的時刻，供併發輪維持正確的對話順序（見 `shortterm.append`）。"""
         for message in messages:

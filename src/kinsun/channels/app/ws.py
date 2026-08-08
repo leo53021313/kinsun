@@ -95,6 +95,7 @@ from kinsun.locations.store import ElderLocation, is_valid_coordinate, is_valid_
 from kinsun.speech.chunking import split_for_speech
 from kinsun.speech.tts import TTSError, TtsPriority, tts_priority
 from kinsun.turn_context import (
+    admission_wait,
     pending_utterances,
     tool_announcer,
     transcript_listener,
@@ -539,8 +540,13 @@ def create_app_ws_router(
 
         try:
             try:
+                # 排隊時間要量在 `admit()` 的 __enter__ 上（2026-08-08 觀測盤點）：
+                # 那段等待整個發生在 Opik trace 根開始之前，沒有任何 span 容得下它，
+                # 卻已經算進 `replies.round_trip_ms`。見 `turn_context.admission_wait`。
+                queued_at = time.monotonic()
                 with turn_gate.admit(on_queued=notify_queued):
                     with (
+                        admission_wait((time.monotonic() - queued_at) * 1000),
                         tool_announcer(_ack_sender(sender, turn_id)),
                         transcript_listener(lambda text: in_flight.set_utterance(turn_id, text)),
                         pending_utterances(lambda: in_flight.others(turn_id)),

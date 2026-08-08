@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from kinsun import tracing
 from kinsun.personas import DEFAULT_PERSONA_ID
 
 
@@ -51,6 +52,9 @@ class ElderProfileReader:
     def __init__(self, store) -> None:
         self._store = store
 
+    # capture_output 關：回傳含長輩稱呼（個資），這一格要看的是「查了多久、有沒有
+    # 查成功」。跑在 `PreparedTurn` 的第二條執行緒，與情境組裝並行（見該處說明）。
+    @tracing.track(name="elder_profile", type="general", capture_input=True, capture_output=False)
     def get_profile(self, elder_id: str) -> ElderProfile:
         elder = self._store.get_elder(elder_id)
         if elder is None:

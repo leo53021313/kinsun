@@ -506,6 +506,9 @@ class PreparedTurn:
         except Exception:  # noqa: BLE001 - 讀不到就用預設，不可中斷這一輪
             logger.warning("長輩檔案讀取失敗，本輪用預設人設且不帶稱呼")
 
+    # capture_output 關：回傳的 ElderProfile 帶長輩稱呼（個資），而這一格要看的是
+    # **等了多久**，不是內容。
+    @tracing.track(name="profile_wait", type="general", capture_input=True, capture_output=False)
     def profile(self) -> ElderProfile | None:
         """等長輩檔案讀完；讀不到、逾時、或根本沒提供讀取器都回 None（＝走預設）。
 
@@ -528,6 +531,15 @@ class PreparedTurn:
         except BaseException as exc:  # noqa: BLE001 - 原樣留給 context() 重拋
             self._error = exc
 
+    # ⚠️ 這一格是本輪最容易被誤讀的數字（2026-08-08 觀測盤點）：情境組裝與安全檢查
+    # 並行，組裝比較慢時 `handle` 就卡在這裡乾等——而這段乾等原本沒有任何 span，
+    # 於是整段被算進 `agent_generate`。正式 trace `019fdc37` 實錄：Agent 那格 3735ms
+    # 裡有 1725ms（46%）其實是在等記憶。沒有這一格，看 Opik 的人會去縮 prompt、
+    # 換模型，而真正該修的是記憶檢索。
+    # 0ms＝預取贏了（正常）；數字大＝組裝來不及，該去看 memory_assemble。
+    # capture_output 關：回傳的 TurnContext 已由 memory_assemble 完整捕捉，重複一份
+    # 只是讓每輪的 payload 加倍。
+    @tracing.track(name="context_wait", type="general", capture_input=True, capture_output=False)
     def context(self):
         """等組裝完成並取回情境；組裝期間的例外在此原樣重拋，等太久則放棄。
 
@@ -760,7 +772,7 @@ class CareAgent:
             except Exception:  # noqa: BLE001 - 背景寫入失敗不可讓已算好的回覆消失
                 logger.warning("本輪對話記憶寫入失敗 elder=%s", elder_id)
 
-        return background.run(write)
+        return background.run(write, name="memory_write")
 
     def _repair_empty_promise(
         self,

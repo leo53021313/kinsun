@@ -282,3 +282,32 @@ def test_gather_facts_provider_returning_empty_list_is_absent():
 
     memory = SessionMemory(_ShortTerm(), FakeLongTermStore(), facts=[_Empty()])
     assert memory._gather_facts("elder-1") == []
+
+
+# ── 寫記憶要看得見（2026-08-08 觀測盤點）──
+#
+# `record_turn` 走背景寫入，但它不是沒有人在等：`pipeline._settle_memory_write`
+# 會在交出回覆前等它落地。原本這兩段在 Opik 一格都沒有——探針實測寫入曾經跑到
+# 4.2 秒，而 trace 上完全看不出來。
+
+
+def _spy_span_names(monkeypatch) -> list[str]:
+    import opik
+
+    from kinsun.tracing import client as tracing_client
+    from kinsun.tracing import decorators as tracing_decorators
+
+    names: list[str] = []
+    monkeypatch.setattr(opik, "track", lambda **kw: (names.append(kw.get("name")), lambda f: f)[1])
+    monkeypatch.setattr(tracing_decorators, "is_enabled", lambda: True)
+    monkeypatch.setattr(tracing_client, "_ENABLED", True)
+    return names
+
+
+def test_record_turn_is_its_own_span(monkeypatch):
+    from kinsun.memory.shortterm import FakeMemoryStore
+
+    names = _spy_span_names(monkeypatch)
+    session = SessionMemory(FakeMemoryStore(), FakeLongTermStore())
+    session.record_turn("e1", Message("user", "嗨"), Message("assistant", "哈囉"))
+    assert "memory_record_turn" in names

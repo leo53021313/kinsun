@@ -49,6 +49,11 @@ class ToolRegistry:
         *,
         context: ToolInvocationContext | None = None,
     ) -> str:
+        # ⚠️ 必須是本函式的第一件事（2026-08-08）：`@track` 的名字在裝飾時就綁死，
+        # 而本函式是所有工具共用的單一入口，於是 Opik 上每一個工具都叫 `dispatch`。
+        # 排在最前面才涵蓋得到「找不到工具」與「handler 炸掉」——那兩格正是最需要
+        # 看出是誰的時候。
+        tracing.rename_current_span(f"tool:{name}")
         handler = self._handlers.get(name)
         if handler is None:
             return f"（找不到工具：{name}）"

@@ -52,3 +52,30 @@ def test_unknown_persona_value_is_passed_through_untouched():
     """讀取器不做值域判斷——退回預設是 `personas.get_persona` 的職責，只有一處。"""
     profile = _reader_for(Elder("e1", "王秀英", persona="pirate_captain")).get_profile("e1")
     assert profile.persona_id == "pirate_captain"
+
+
+# ── 讀人設要看得見（2026-08-08 觀測盤點）──
+#
+# 人設與稱呼跑在 `PreparedTurn` 的第二條執行緒上，讀不到就靜默退回預設（見
+# `PreparedTurn.profile` 的說明）。原本這次查詢在 Opik 一格都沒有——真的常常
+# 逾時也不會有人知道，只會覺得「金孫最近怎麼不叫阿嬤了」。
+
+
+def test_get_profile_is_its_own_span(monkeypatch):
+    import opik
+
+    from kinsun.accounts.profile import ElderProfile, ElderProfileReader
+    from kinsun.tracing import client as tracing_client
+    from kinsun.tracing import decorators as tracing_decorators
+
+    names: list[str] = []
+    monkeypatch.setattr(opik, "track", lambda **kw: (names.append(kw.get("name")), lambda f: f)[1])
+    monkeypatch.setattr(tracing_decorators, "is_enabled", lambda: True)
+    monkeypatch.setattr(tracing_client, "_ENABLED", True)
+
+    class _Store:
+        def get_elder(self, elder_id):
+            return None
+
+    assert ElderProfileReader(_Store()).get_profile("e1") == ElderProfile()
+    assert "elder_profile" in names
