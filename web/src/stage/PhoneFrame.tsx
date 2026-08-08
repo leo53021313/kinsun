@@ -1,6 +1,24 @@
 /**
  * 手機外框（spec §5.3）：讓觀眾一眼看出「這是長輩看到的、那是家屬看到的」。
  *
+ * ## 尺寸＝iPhone 17／17 Pro 的實際畫面（2026-08-09 裁決）
+ *
+ * 螢幕區固定 **402 × 874 CSS px**（@3x，6.3 吋）。iPhone 17 與 17 Pro 的視埠相同，
+ * 這個值同時涵蓋兩種「最新 iPhone」的讀法；17 Pro Max 是 440 × 956、Air 是
+ * 420 × 912，要換只改下面那兩個數字。
+ *
+ * 原本是 `aspect-[9/19.5]` 配 `max-w-[380px]` 的通用直式比例——那不是任何一支真
+ * 機的尺寸，版面在框裡看起來對、在真機上不一定對。改成真實視埠之後，框裡量到的
+ * 位置就是長輩手機上量到的位置，這對 W3b 的「一屏不捲」是必要條件：那條規則要
+ * 成立與否，取決於畫面到底有多高。
+ *
+ * ⚠️ 邊框用 `outline` 而非 `border`：Tailwind 的 preflight 把 box-sizing 設成
+ * border-box，用 border 的話 10px 邊框會從 402 裡面吃掉，螢幕實際只剩 382。
+ * outline 畫在框外、不進版面計算，402 × 874 才真的是 402 × 874。
+ *
+ * ⚠️ `max-w-full` 保留：組員拿手機開這個網址時視窗比 402 窄，等比縮小仍可用；
+ * 只有在放得下的時候才是 1:1。
+ *
  * ⚠️ 狀態列的時間是**固定的 9:41**，不是真的時鐘：展示畫面上跳動的數字會把
  * 觀眾的注意力吸走，而且每張截圖都會不一樣。
  *
@@ -42,6 +60,10 @@ export type PhoneOs = "ios" | "android";
 /** 展示用的固定時間。取 Apple 主視覺慣用的 9:41。 */
 const STATUS_TIME = "9:41";
 
+/** iPhone 17／17 Pro 的視埠（CSS px，@3x）。換機型只改這兩個值。 */
+const SCREEN_W = 402;
+const SCREEN_H = 874;
+
 export function PhoneFrame(props: {
   title: string;
   os: PhoneOs;
@@ -63,16 +85,19 @@ export function PhoneFrame(props: {
   return (
     <section
       aria-label={title}
-      className="relative mx-auto flex aspect-[9/19.5] w-full max-w-[380px] flex-col overflow-hidden rounded-[2.75rem] border-[10px] border-ink bg-background shadow-2xl"
+      data-testid="phone-frame"
+      style={{ width: SCREEN_W, aspectRatio: `${SCREEN_W} / ${SCREEN_H}` }}
+      className="relative mx-auto flex max-w-full flex-col overflow-hidden rounded-[55px] bg-background outline outline-[10px] outline-ink shadow-2xl"
     >
-      {/* 狀態列 */}
-      <div className="relative flex shrink-0 items-center justify-between px-6 pt-2 text-xs font-semibold text-ink">
+      {/* 狀態列高度取 Dynamic Island 機型的頂部安全區（約 54px），下方內容區
+          因此拿到的高度就是真機上 app 可用的高度。 */}
+      <div className="relative flex h-[54px] shrink-0 items-center justify-between px-8 pt-1 text-sm font-semibold text-ink">
         <span>{STATUS_TIME}</span>
         {os === "ios" ? (
           <span
             data-testid="dynamic-island"
             aria-hidden
-            className="absolute left-1/2 top-1.5 h-6 w-24 -translate-x-1/2 rounded-full bg-ink"
+            className="absolute left-1/2 top-[11px] h-[37px] w-[125px] -translate-x-1/2 rounded-full bg-ink"
           />
         ) : null}
         <span aria-hidden className="flex items-center gap-1">
@@ -86,7 +111,7 @@ export function PhoneFrame(props: {
       <div
         role={isAlert ? "alert" : "status"}
         aria-live={isAlert ? "assertive" : "polite"}
-        className="pointer-events-none absolute inset-x-0 top-10 z-20 px-3"
+        className="pointer-events-none absolute inset-x-0 top-[58px] z-20 px-3"
       >
         {notificationSlot}
       </div>
@@ -94,9 +119,9 @@ export function PhoneFrame(props: {
       {/* 內容區 */}
       <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
 
-      {/* home indicator */}
-      <div className="flex shrink-0 justify-center pb-2 pt-1">
-        <span aria-hidden className="h-1 w-28 rounded-full bg-ink/40" />
+      {/* home indicator：34px 是 iOS 底部安全區的既定值；home indicator 本身 5 × 140。 */}
+      <div className="flex h-[34px] shrink-0 items-end justify-center pb-2">
+        <span aria-hidden className="h-[5px] w-[140px] rounded-full bg-ink/40" />
       </div>
     </section>
   );

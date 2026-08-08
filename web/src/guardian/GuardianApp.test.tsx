@@ -70,7 +70,22 @@ describe("登入狀態守衛", () => {
       }),
     );
     renderSignedIn();
-    expect(await screen.findByRole("heading", { name: "家屬登入" })).toBeInTheDocument();
+    // ⚠️ timeout 拉到 5 秒不是為了讓它過：`findBy*` 的語意是「等到出現為止，逾時
+    // 才失敗」，上限只決定多晚判定沒出現，不改變這條在驗什麼。真的不會退回登入
+    // 畫面的話，等 5 秒照樣紅。
+    //
+    // 為什麼要拉：這條要走完「401 → 清 session → 重繪回登入畫面」跨數次 re-render
+    // 的轉場，而 43 支測試檔平行跑時單機負載高，預設 1 秒不夠。症狀是全庫跑穩定
+    // 紅、單獨跑穩定綠，2026-08-09 以 `vitest run --no-file-parallelism` 實測確認
+    // ——關掉平行後全過，是等待上限問題不是產品時序缺陷。
+    //
+    // 刻意只調這一條、不在 test-setup 調全域：本檔用真時鐘，但 `elder/useTalk.test.ts`
+    // 用 `vi.useFakeTimers`，而 `waitFor` 在假時鐘下會自己推進時間——全域拉高等於
+    // 允許它多推進 4 秒假時間，可能觸發該檔正在驗的那些保險計時器（實測改全域後
+    // 「打斷長回覆」那條就開始間歇性紅）。
+    expect(
+      await screen.findByRole("heading", { name: "家屬登入" }, { timeout: 5000 }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "我的長輩" })).not.toBeInTheDocument();
     // 本機那份 session 也要真的被清掉，否則重新整理又會回到「已登入」。
     expect(localStorage.getItem(SESSION_KEY)).toBeNull();
