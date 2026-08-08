@@ -31,6 +31,19 @@ STOP_ORDER=(opik ngrok app web frontend rag_worker scheduler webhook tts asr)
 
 declare -A PORT=([asr]=8001 [tts]=8002 [webhook]=8000 [frontend]=5173 [web]=5174 [app]=8081)
 
+# ── 模型預熱（ASR／TTS）──────────────────────────────────────────────
+# 為什麼 start／restart 要等到模型載進 GPU 才算完成（2026-08-07 實錄）：ASR 原本延遲
+# 載入，restart 後是**長輩的第一句話**才觸發載模型；DGX 是共用機，那一刻 GPU 被別人
+# 占滿就 CUDA OOM → /transcribe 回 500 → 長輩聽到「金孫這邊有點小狀況」。連兩輪都
+# 這樣，第三輪才擠進去。預熱把這份成本與它的失敗一起搬到 start，讓它出現在你的
+# 終端機，而不是長輩的耳朵。
+#
+# ⚠️ 預熱不會讓 GPU 變多——它換到的是「早知道」與「換你決定要不要重試」，
+# 不是「一定載得起來」。
+WARMUP_TIMEOUT="${KINSUN_WARMUP_TIMEOUT:-180}"
+WARMUP_RETRIES="${KINSUN_WARMUP_RETRIES:-3}"
+WARMUP_RETRY_WAIT="${KINSUN_WARMUP_RETRY_WAIT:-10}"
+
 # Opik 後端（docker）自架位置；隧道與後端啟停都在此執行 ./opik.sh（見「Opik 複合服務」段）。
 OPIK_DIR="${OPIK_DIR:-/home/leo29/opik}"
 
@@ -82,6 +95,72 @@ _port_open() {
 }
 
 _http_ok() { command -v curl >/dev/null 2>&1 && curl -fsS --max-time 2 "$1" >/dev/null 2>&1; }
+
+# ASR／TTS 的模型是否真的載進來了。
+# ⚠️ 別拿 healthz 通不通當依據：兩個服務都是**模型還沒載也照樣回 200**（延遲載入時
+# 本來就該如此）。分得出「服務活著」與「模型就緒」的只有 model_loaded 這個欄位。
+_model_loaded() {
+  local port="$1" body
+  command -v curl >/dev/null 2>&1 || return 1
+  body="$(curl -fsS --max-time 3 "http://127.0.0.1:${port}/healthz" 2>/dev/null)" || return 1
+  case "$body" in
+    *'"model_loaded":true'* | *'"model_loaded": true'*) return 0 ;;
+  esac
+  return 1
+}
+
+# 等某個 GPU 服務的模型就緒。三種結局用**不同的結束碼**回報，因為呼叫端要據此決定
+# 要不要重試（見 _launch_warm）：
+#   0＝就緒　1＝程序已退出（載入失敗，重試有意義）　2＝還活著但逾時（重試只會更慢）
+_wait_model_warm() {
+  local name="$1" port="$2" t0 elapsed
+  if ! command -v curl >/dev/null 2>&1; then
+    warn "$name：找不到 curl，略過預熱等待（模型仍會在服務啟動時載入）"
+    return 0
+  fi
+  t0="$(date +%s)"
+  info "$name：等待模型載入…（上限 ${WARMUP_TIMEOUT} 秒）"
+  while :; do
+    if _model_loaded "$port"; then
+      ok "$name：模型就緒（$(( $(date +%s) - t0 )) 秒）"
+      return 0
+    fi
+    # 程序不在了＝preload 在 lifespan 拋例外、uvicorn 起不來就退出。最常見的是
+    # CUDA OOM——共用 GPU 上那多半是瞬間的，所以這一種值得重試。
+    if ! is_running "$name"; then
+      err "$name：程序已退出，模型載入失敗 → tail -n 40 $LOG_DIR/$name.log"
+      return 1
+    fi
+    elapsed=$(( $(date +%s) - t0 ))
+    [ "$elapsed" -lt "$WARMUP_TIMEOUT" ] || break
+    sleep 2
+  done
+  warn "$name：${WARMUP_TIMEOUT} 秒內模型仍未就緒，但程序還活著——可能只是慢，先不重試"
+  warn "     看進度：tail -f $LOG_DIR/$name.log ；看 GPU：nvidia-smi"
+  return 2
+}
+
+# 起一個 GPU 模型服務，並等它預熱好；「載入中夭折」就重試。
+# ⚠️ 只有結束碼 1（程序已退出）才重試。逾時（2）刻意不重試：把一個還在載的模型砍掉
+# 重來，只會讓長輩等更久，而且會在 GPU 上留下一份剛配到一半的記憶體。
+_launch_warm() {
+  local name="$1" label="$2" port="$3"; shift 3
+  local attempt=1 rc
+  while :; do
+    info "啟動 ${label} (port ${port})…"
+    _bg "$name" "$@"
+    _wait_model_warm "$name" "$port"; rc=$?
+    [ "$rc" -eq 0 ] && return 0
+    if [ "$rc" -eq 1 ] && [ "$attempt" -lt "$WARMUP_RETRIES" ]; then
+      attempt=$((attempt + 1))
+      warn "${label}：${WARMUP_RETRY_WAIT} 秒後重試（第 ${attempt}／${WARMUP_RETRIES} 次）"
+      sleep "$WARMUP_RETRY_WAIT"
+      continue
+    fi
+    [ "$rc" -eq 1 ] && err "${label}：預熱失敗 ${WARMUP_RETRIES} 次，此服務未啟動"
+    return "$rc"
+  done
+}
 
 # 排程器是否由 systemd 常駐（deploy/kinsun-scheduler.service）。
 # ⚠️ 為什麼非查不可：systemd 起的排程器**不會寫 .run/scheduler.pid**，而本腳本判斷
@@ -179,8 +258,12 @@ launch_asr() {
     warn "ASR：找不到 $venv（請先在 DGX 建置 ASR 環境），跳過"
     return 0
   fi
-  info "啟動 ASR (port ${PORT[asr]})…"
-  _bg asr "$venv/bin/python" -m uvicorn services.asr.server:app --host 0.0.0.0 --port "${PORT[asr]}"
+  # ASR_PRELOAD=1：於 lifespan 就載模型，不要等長輩的第一句話（見頂部「模型預熱」）。
+  # 用 `env` 帶而不是 export，免得污染本腳本其餘服務的環境；外部已設則尊重外部——
+  # `ASR_PRELOAD=0 scripts/kinsun.sh start asr` 是回到延遲載入的逃生口。
+  _launch_warm asr ASR "${PORT[asr]}" \
+    env ASR_PRELOAD="${ASR_PRELOAD:-1}" \
+    "$venv/bin/python" -m uvicorn services.asr.server:app --host 0.0.0.0 --port "${PORT[asr]}"
 }
 
 launch_tts() {
@@ -190,7 +273,6 @@ launch_tts() {
     warn "TTS：找不到 $envfile（照 services/tts/.env.tts.example 建立後才會啟動），跳過"
     return 0
   fi
-  info "啟動 TTS (port ${PORT[tts]})…"
   (
     set -a; . "$envfile"; set +a
     local py="${TTS_PYTHON:-python}"
@@ -198,7 +280,10 @@ launch_tts() {
       warn "TTS：TTS_PYTHON=$py 不可執行（請於 .env.tts 指向 CosyVoice 環境的 python），跳過"
       exit 0
     fi
-    _bg tts "$py" -m uvicorn services.tts.server:app --host 0.0.0.0 --port "${PORT[tts]}"
+    # .env.tts 沒寫 TTS_PRELOAD 時補上，與 ASR 對稱（範本裡是 1，但舊的複本可能沒有）。
+    export TTS_PRELOAD="${TTS_PRELOAD:-1}"
+    _launch_warm tts TTS "${PORT[tts]}" \
+      "$py" -m uvicorn services.tts.server:app --host 0.0.0.0 --port "${PORT[tts]}"
   )
 }
 
@@ -687,8 +772,11 @@ _health_note() {
   local port="${PORT[$name]:-}"
   case "$name" in
     asr|tts)
-      if _http_ok "http://127.0.0.1:${port}/healthz"; then echo "healthz OK :${port}"
-      elif _port_open "$port"; then echo "埠開啟、模型載入中 :${port}"
+      # ⚠️ 舊版把「healthz OK」當就緒，那是說謊：模型還沒載也回 200。這一列要能分出
+      # 「模型就緒」與「服務活著但模型沒載」——後者的下一句話就是回退話術。
+      if _model_loaded "$port"; then echo "模型就緒 :${port}"
+      elif _http_ok "http://127.0.0.1:${port}/healthz"; then echo "⚠️ 模型未載入 :${port}"
+      elif _port_open "$port"; then echo "埠開啟、尚未回應 :${port}"
       else echo "—"; fi ;;
     webhook|frontend|web)
       if _port_open "$port"; then echo "listening :${port}"; else echo "—"; fi ;;
@@ -808,10 +896,21 @@ App（Expo Go）：
      STOPPED（而非以前那種騙人的 RUNNING），需手動 restart scheduler。要自動復活請改掛
      systemd（deploy/kinsun-scheduler.service），但別讓兩邊同時啟動同一個排程器。
 
+模型預熱（ASR／TTS）：
+  start／restart 會等到模型真的載進 GPU 才往下走，載入中夭折（多為 CUDA OOM）自動重試。
+  DGX 是共用機，別人的行程占滿 GPU 時預熱會失敗——訊息會直接印在這裡，
+  這正是重點：讓失敗出現在你的終端機，而不是長輩的第一句話。
+    nvidia-smi                        看是誰占著 GPU
+    scripts/kinsun.sh restart asr     GPU 空出來後單獨補起
+
 環境變數：
   KINSUN_RELOAD=1        Webhook 啟用 --reload（開發用；預設關）
   KINSUN_EXPO_TUNNEL=0   App 改走區網（僅手機與 DGX 同一個 Wi-Fi 時可用；啟動較快）
                          預設 1＝tunnel：經 exp.direct 對外，任何網路的手機都連得到。
+  KINSUN_WARMUP_TIMEOUT  等模型載入的上限秒數（預設 180）
+  KINSUN_WARMUP_RETRIES  預熱失敗重試次數（預設 3）；設 1＝不重試
+  KINSUN_WARMUP_RETRY_WAIT 兩次重試之間等幾秒（預設 10）
+  ASR_PRELOAD=0          回到延遲載入（首次請求才載模型）——出事時的逃生口
 
 log：logs/<service>.log　PID：.run/<service>.pid
 EOF
