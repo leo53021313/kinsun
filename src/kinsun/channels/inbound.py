@@ -20,13 +20,17 @@ from kinsun.speech.tts import TtsResult
 
 logger = logging.getLogger("kinsun.inbound")
 
-NON_AUDIO_PROMPT = "金孫現在聽得懂語音喔，您可以按住麥克風跟我說說話。"
+# 人稱與 agent 層的 SYSTEM_PROMPT 同一套（2026-08-07 新視覺人設）：角色叫阿白、
+# 對長輩說話一律第一人稱「我」；「金孫」只留作服務名。原文「金孫現在聽得懂語音喔，
+# 您可以按住麥克風跟我說說話」在同一句裡先第三人稱自稱金孫、再第一人稱說「跟我
+# 說」，對長輩而言那是兩個不同的對象。
+NON_AUDIO_PROMPT = "我現在聽得懂語音喔，您可以按住麥克風跟我說說話。"
 # 回退話術與 agent 層共用單一出處（✅ 庚-37）。這裡走的是**系統故障**那一句：
 # 觸發點是 ASRError／LLMError／MemoryStoreError，也就是服務出錯，不是長輩講不清楚
 # ——叫他再說一次只會讓他一再重試、一再失敗（2026-07-26 實測 M4）。
 FALLBACK_PROMPT = SYSTEM_TROUBLE_REPLY
 BIND_FIRST_PROMPT = (
-    "金孫需要先完成綁定才能陪您聊天喔。請把家人給您的邀請碼貼到這裡，或回覆「設定」開始。"
+    "要先完成綁定，我才能陪您聊天喔。請把家人給您的邀請碼貼到這裡，或回覆「設定」開始。"
 )
 
 
