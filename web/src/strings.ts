@@ -23,6 +23,7 @@ export const strings = {
   common: {
     loading: "載入中…",
     loadFailed: "載入失敗，請稍後再試。",
+    retry: "再試一次",
     connectionFailed: "連線失敗，請稍後再試。",
     saveFailed: "儲存失敗，請稍後再試。",
     deleteFailed: "刪除失敗，請稍後再試。",
@@ -41,6 +42,23 @@ export const strings = {
     passwordPlaceholder: "至少 8 碼",
     emailLabel: "Email",
     emailPlaceholder: "you@example.com",
+  },
+  // 家屬端五項導覽（W5）。用字取自 app/src/lib/strings.ts 的 guardianTabs。
+  guardianTabs: {
+    home: "首頁",
+    report: "報告",
+    add: "新增提醒",
+    addA11y: "新增用藥或回診提醒",
+    notifications: "通知",
+    /**
+     * ⚠️ 這是**讀不到當前長輩稱呼時的退路**，不是最終顯示值。
+     *
+     * 設計稿上這一項寫的是長輩的稱呼（「阿公」），寫死在多位長輩時一定會錯。
+     * 實際顯示由 `GuardianTabsProvider` 的 `primaryElder` 決定，這個字串只在
+     * 還沒載入或家屬名下還沒有長輩時頂著。App 那份 strings 沒有寫這段註記，
+     * 導致看到裸的「阿公」會誤以為是寫死的（已列在驗收報告）。
+     */
+    profileFallback: "阿公",
   },
   gate: {
     brand: "金孫",
@@ -149,6 +167,9 @@ export const strings = {
     accountSaved: "已設定完成。長輩手機用這組號碼＋密碼登入一次就會一直記住。",
     accountSaveFailed: "設定失敗，請稍後再試。",
     inviteFailed: "產生邀請碼失敗",
+    // 進長輩詳情那顆鈕的字。web 沒有 `nav` 區塊（畫面切換是元件狀態、不進網址列），
+    // 用字沿用 App 的 `strings.nav.elderDetail`。
+    openDetail: "長輩詳情",
     healthReportSection: "健康報告（近 30 天）",
     noRiskEvents: "沒有危急事件，一切平安。",
     remindersCount: (count: number) => `近 30 天提醒 ${count} 則`,
