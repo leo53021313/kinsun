@@ -10,5 +10,8 @@
 `weather.js`、`weather_art.js`、`food.js`、`scene.js`、`interactions.js`。這些模組會建立
 第二套麥克風／LLM／TTS／定位／外部網路流程，與金孫 App 已有的後端、安全與權限契約衝突。
 
+本目錄 2026-08-09 由 `app/vendor/` 搬到 `shared/`（✅ D-51 三端共用包）：網頁版要載入
+同一份 renderer，讓情緒黑名單與注音 viseme 對嘴只有一份實作，不在 web 那側另寫一套。
+
 產物由 `app/scripts/build-otto-renderer.mjs` 產生；請勿直接修改
 `app/assets/otto/renderer.html`。

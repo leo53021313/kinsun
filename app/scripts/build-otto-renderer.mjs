@@ -3,7 +3,9 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const coreRoot = resolve(appRoot, "vendor", "otto-pet-core");
+// 來源住在三端共用包 `shared/`（✅ D-51）：網頁版 W3 要載入同一份 renderer，
+// 讓情緒黑名單與 viseme 對嘴只有一份實作，不在 web 那側另寫一套。
+const coreRoot = resolve(appRoot, "..", "shared", "otto-pet-core");
 const outputPath = resolve(appRoot, "assets", "otto", "renderer.html");
 const scripts = [
   "bear_svg.js",

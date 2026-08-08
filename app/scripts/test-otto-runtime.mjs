@@ -6,7 +6,7 @@ import { JSDOM } from "jsdom";
 import vm from "node:vm";
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const coreRoot = resolve(appRoot, "vendor", "otto-pet-core");
+const coreRoot = resolve(appRoot, "..", "shared", "otto-pet-core");
 const context = {
   console,
   setTimeout,
