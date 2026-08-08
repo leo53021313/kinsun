@@ -142,6 +142,12 @@ export default function EditAppointmentScreen() {
       <Text style={styles.note} maxFontSizeMultiplier={2}>
         {strings.editAppointment.savedEffect}
       </Text>
+      {/* ⚠️ 這句與上一句講的**不是**同一件事：上面說「掛號要自己去改」，這句說的是
+          長輩那端看得到什麼。它是交付稿刻意留的隱私邊界聲明（長輩不會知道是誰改的、
+          改過幾次），漏掉的話家屬會以為長輩看得到完整的修改紀錄。 */}
+      <Text style={styles.note} maxFontSizeMultiplier={2}>
+        {strings.editAppointment.elderSeesOnlyNewTime}
+      </Text>
 
       <ErrorText message={error} />
       <Button

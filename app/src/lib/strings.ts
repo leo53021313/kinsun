@@ -31,16 +31,17 @@ export const strings = {
     passwordPlaceholder: "至少 8 碼",
   },
   nav: {
+    // ⚠️ 少了 `guardianHome` 與 `notifications`：批次 5 把家屬端首頁與通知改成
+    //    Tabs 之後，這兩個 Stack.Screen 的標題就不存在了。留著沒有呼叫端的
+    //    字串，下一個人會以為它們還在生效。
     role: "選擇身分",
     guardianLogin: "家屬登入",
     guardianRegister: "家屬註冊",
-    guardianHome: "我的長輩",
     elderDetail: "長輩詳情",
     schedules: "行程管理",
     dailySummary: "每日摘要",
     editAppointment: "改回診時間",
     criticalAlert: "危急詳情",
-    notifications: "通知",
     elderBind: "輸入綁定碼",
     elderLogin: "長輩登入",
     // 新增（批次 4）：長輩端當天對話

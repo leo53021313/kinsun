@@ -34,6 +34,38 @@ const expectedBlocked = [
 ];
 assert.deepEqual(Array.from(context.PET.BLOCKED_EMOTIONS), expectedBlocked);
 
+// ── theme.ts 的 emotionPolicy 與 renderer 的黑名單必須是同一份 ──────────────
+//
+// ⚠️ 這兩份清單分屬 App 與 renderer 兩個世界，型別檢查連不起來。任一邊漏改，症狀
+// 不是編譯錯誤，而是「阿白某天開始對長輩生氣」——而且只在長輩真的罵它的那一刻
+// 才看得到。接手指示第 10 條是 CRITICAL 等級，值得用建置期的閘門守著。
+const themeSource = readFileSync(
+  resolve(appRoot, "src", "lib", "theme.ts"),
+  "utf8",
+);
+const blockedBlock = themeSource.match(/blocked:\s*\[([\s\S]*?)\]/);
+assert.ok(blockedBlock, "theme.ts 找不到 emotionPolicy.blocked");
+const themeBlocked = Array.from(blockedBlock[1].matchAll(/"([a-z]+)"/g)).map((m) => m[1]);
+assert.deepEqual(
+  themeBlocked,
+  expectedBlocked,
+  "theme.ts 的 emotionPolicy.blocked 與 renderer 的 BLOCKED_EMOTIONS 不一致",
+);
+
+// ── assertKeysExist：黑名單的每個 key 都必須真的存在於情緒表 ────────────────
+//
+// `theme.ts` 宣告了 `assertKeysExist: true` 卻從來沒有人實作這個檢查（驗收報告
+// 列為缺失）。放在這裡而不是 runtime：這是 App 給長輩用的，開機 throw 等於整個
+// 對講機打不開；建置期擋下來才是對的時機。角色改版把某個情緒改名時，黑名單會
+// **安靜失效**——那正是這條要防的。
+assert.match(themeSource, /assertKeysExist:\s*true/, "theme.ts 應宣告 assertKeysExist");
+for (const key of expectedBlocked) {
+  assert.ok(
+    context.PET.EMOTION_KEYS.includes(key),
+    `黑名單的 ${key} 不存在於 PET.EMOTIONS——角色改版時黑名單會安靜失效`,
+  );
+}
+
 const localCases = [
   ["你真的很煩", "angry"],
   ["我氣死了", "furious"],

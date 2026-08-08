@@ -146,9 +146,21 @@ export default function GuardianHome() {
               />
               {/* 代辦同意文案（✅ 己-2）：資料去向＋永久保留＋團隊可讀，按建立即代為同意。 */}
               <Text style={styles.consentText}>{strings.guardianHome.consent}</Text>
-              <Button label={strings.guardianHome.createElder} onPress={addElder} busy={busy} />
+              {/* ⚠️ variant=outline 而非預設的 primary：規則 14「暖黃是每頁唯一主要
+                  行動」。分頁畫面的底部常駐著中央凸出的暖黃鍵（新增提醒），頁內再放
+                  一顆暖黃就是一屏兩個主要行動——而且是每一個分頁都違反。暖黃留給
+                  導覽列那顆，頁內動作用靛藍外框。 */}
+              <Button
+                label={strings.guardianHome.createElder}
+                variant="outline"
+                onPress={addElder}
+                busy={busy}
+              />
+              {/* 綁定碼面板＝「凹一階」的內嵌區塊，正是 Section 的 inset 在做的事。
+                  原本手寫 styles.invite，圓角 12 是全庫唯一沒對上 radius token 的
+                  內嵌區塊（inset 是 radius.control＝16）。 */}
               {inviteCode ? (
-                <View style={styles.invite}>
+                <Section inset>
                   <Text style={styles.inviteHint}>{strings.guardianHome.inviteHint}</Text>
                   <Text style={styles.inviteCode} selectable>
                     {inviteCode}
@@ -165,7 +177,7 @@ export default function GuardianHome() {
                       Alert.alert(strings.guardianHome.copiedTitle, strings.guardianHome.copiedMessage);
                     }}
                   />
-                </View>
+                </Section>
               ) : null}
               <ErrorText message={error} />
             </Section>
@@ -224,12 +236,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
   },
   badgeText: { color: "#FFFFFF", fontSize: 14, fontWeight: "800" },
-  invite: {
-    backgroundColor: colors.background,
-    borderRadius: 12,
-    padding: spacing.m,
-    gap: spacing.s,
-  },
   qrBox: { alignSelf: "center", backgroundColor: "#FFFFFF", padding: spacing.m, borderRadius: 12 },
   inviteHint: { fontSize: 14, color: colors.textSoft },
   consentText: { fontSize: 13, color: colors.textSoft, lineHeight: 19 },

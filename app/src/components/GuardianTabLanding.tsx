@@ -1,3 +1,8 @@
+/**
+ * ⚠️ 本頁的按鈕一律 `outline`：規則 14「暖黃是每頁唯一主要行動」，而分頁
+ * 底部常駐著中央凸出的暖黃鍵。頁內再放暖黃就是一屏兩個主要行動。
+ */
+
 import { useRouter } from "expo-router";
 import { StyleSheet, Text, View } from "react-native";
 
@@ -21,6 +26,7 @@ export function GuardianTabLanding(props: { title: string; actionLabel: string }
             <EmptyHint text={strings.guardianHome.empty} />
             <Button
               label={strings.guardianHome.addElderSection}
+              variant="outline"
               onPress={() => router.navigate("/guardian/home")}
             />
           </>
@@ -30,6 +36,7 @@ export function GuardianTabLanding(props: { title: string; actionLabel: string }
             <Text style={styles.elderName}>{elderName}</Text>
             <Button
               label={props.actionLabel}
+              variant="outline"
               onPress={() =>
                 router.push({
                   pathname: "/guardian-detail/elder/[elderId]",
