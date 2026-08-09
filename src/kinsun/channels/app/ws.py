@@ -95,6 +95,7 @@ from kinsun.locations.store import ElderLocation, is_valid_coordinate, is_valid_
 from kinsun.speech.chunking import split_for_speech
 from kinsun.speech.tts import TTSError, TtsPriority, tts_priority
 from kinsun.turn_context import (
+    admission_wait,
     pending_utterances,
     tool_announcer,
     transcript_listener,
@@ -367,10 +368,12 @@ def create_app_ws_router(
         現場合成一句 10 字的安撫話要 1.86 秒，等於把這個功能省下來的延遲還掉快一半。
         """
 
-        def announce(tool_names: list[str]) -> None:
+        def announce(tool_names: list[str], persona_id: str) -> None:
             if ack_audio is None:
                 return
-            clip = ack_audio.clip_for(tool_names[0])
+            # 人設由 agent 隨通知帶過來（2026-08-05），這裡**不查資料庫**：那一輪
+            # 的長輩檔案 agent 已經讀過了，為一句等待語再查一次是白付一次往返。
+            clip = ack_audio.clip_for(tool_names[0], persona_id=persona_id)
             if clip is None:  # 還沒暖好或簽章過期＝這輪不講（降級不是錯誤）
                 return
             sender.send(
@@ -537,8 +540,13 @@ def create_app_ws_router(
 
         try:
             try:
+                # 排隊時間要量在 `admit()` 的 __enter__ 上（2026-08-08 觀測盤點）：
+                # 那段等待整個發生在 Opik trace 根開始之前，沒有任何 span 容得下它，
+                # 卻已經算進 `replies.round_trip_ms`。見 `turn_context.admission_wait`。
+                queued_at = time.monotonic()
                 with turn_gate.admit(on_queued=notify_queued):
                     with (
+                        admission_wait((time.monotonic() - queued_at) * 1000),
                         tool_announcer(_ack_sender(sender, turn_id)),
                         transcript_listener(lambda text: in_flight.set_utterance(turn_id, text)),
                         pending_utterances(lambda: in_flight.others(turn_id)),

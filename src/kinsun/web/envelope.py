@@ -46,6 +46,7 @@ ERROR_MESSAGES: dict[str, str] = {
     "slots_required": "請至少選擇一個提醒時段",
     "invalid_slot": "提醒時段格式不正確",
     "invalid_kind": "提醒類型不正確",
+    "invalid_persona": "金孫的個性選項不正確",
     "kind_not_changeable": "提醒的類型不能修改，請刪掉這筆重新建立",
     "occurrences_required": "請至少設定一個提醒時間",
     "schedule_not_found": "找不到這筆提醒",

@@ -234,6 +234,12 @@ class Settings(_BaseEnvSettings):
     memory_max_turns: int = 200
     timezone: str = "Asia/Taipei"
     longterm_embedding_model: str = "gemini-embedding-001"
+    # 長期記憶的嵌入後端：local＝DGX 上的 BGE-M3 服務（1024 維），gemini＝雲端 API（768 維）。
+    # ⚠️ 切換 backend 等於換維度，既有向量全部作廢、必須重建向量表——這不是一個
+    # 改了旗標就能來回切的開關，見 .env.example 的說明。
+    longterm_embedding_backend: str = "gemini"
+    longterm_embedding_endpoint: str = ""
+    longterm_embedding_api_key: str = ""
     longterm_consolidation_hour: Annotated[
         int, BeforeValidator(_hour("LONGTERM_CONSOLIDATION_HOUR"))
     ] = 0

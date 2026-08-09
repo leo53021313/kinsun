@@ -16,6 +16,7 @@ import pytest
 
 import kinsun.tools as tools_pkg
 from evals.assertions import check_speakable
+from kinsun import personas
 from kinsun.llm import ToolSpec
 from kinsun.speech import acks
 
@@ -96,9 +97,25 @@ def test_every_phrase_is_short_enough_to_stay_cheap(phrase):
     assert len(phrase) <= 18, f"「{phrase}」{len(phrase)} 字，超過 18 字上限"
 
 
+def test_every_persona_in_the_catalogue_has_a_voice_library():
+    """人設目錄與語庫必須對得上（2026-08-05）。
+
+    少一格不會報錯，只會讓那個人設默默用到別人的口氣——選了穩重孫子卻聽到
+    孫女的「好，我幫您查一下喔」，而且沒有任何訊號。
+    """
+    assert set(acks.personas()) == set(personas.persona_ids())
+
+
+def test_secondary_persona_falls_back_to_its_own_generic():
+    """第二人設只寫 generic，逐工具句由保底供應——但保底必須是**它自己的**。"""
+    steady = acks.phrases_for("get_news", persona_id=personas.STEADY_GRANDSON)
+    assert steady == acks.persona(personas.STEADY_GRANDSON).generic
+    assert steady != acks.persona(personas.LIVELY_GRANDDAUGHTER).generic
+
+
 def test_unknown_persona_falls_back_to_the_default_one():
     assert acks.persona("還沒做的人設") is acks.persona(acks.DEFAULT_PERSONA)
-    assert acks.phrases_for("get_news", persona_name="還沒做的人設") == acks.phrases_for("get_news")
+    assert acks.phrases_for("get_news", persona_id="還沒做的人設") == acks.phrases_for("get_news")
 
 
 def test_tool_marked_use_generic_falls_back_to_the_generic_pool():

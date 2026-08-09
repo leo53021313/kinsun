@@ -287,7 +287,14 @@ class PgVectorStore:
         fetched_at: float,
         operator_or_job_id: str,
     ) -> bool:
-        """模型、維度、角色與品質皆相容時，重用已發布文件的 chunks／embeddings。"""
+        """模型、維度、角色與品質皆相容時，重用已發布文件的 chunks／embeddings。
+
+        比對必須含 URL，不能只認 content_hash：重用會沿用舊 row（連同它的網址），
+        內容相同但網址不同時，chunk 的來源網址會指向另一個頁面——引用給家屬看的
+        連結就錯了。2026-08-05 實錄：國健署 `?nodeid=1234&pid=6784` 與 `&pid=6800`
+        渲染同一頁，兩次抓取行順序不同使 hash 分岔、URL 與 hash 兩道去重都放行，
+        重用再把舊網址帶進來，release 裡出現兩份網址相同的文件而被結構閘門擋下。
+        """
         row = self._query_one(
             """
             SELECT d.document_id, old_r.index_version, COUNT(old_rc.chunk_id)
@@ -298,7 +305,7 @@ class PgVectorStore:
             JOIN rag_release_chunks old_rc ON old_rc.index_version=old_r.index_version
             JOIN rag_chunks c
               ON c.chunk_id=old_rc.chunk_id AND c.document_id=d.document_id
-            WHERE d.source_id=%s AND d.content_hash=%s
+            WHERE d.source_id=%s AND d.content_hash=%s AND d.url=%s
               AND old_r.status IN ('active','superseded','failed')
               AND old_r.embedding_model=new_r.embedding_model
               AND old_r.embedding_dimensions=new_r.embedding_dimensions
@@ -331,6 +338,7 @@ class PgVectorStore:
                 index_version,
                 document.source_id,
                 document.content_hash,
+                document.url,
                 source_role.value,
                 source_role.value,
             ),

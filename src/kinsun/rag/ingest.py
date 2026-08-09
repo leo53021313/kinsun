@@ -23,12 +23,52 @@ from kinsun.rag.ingestion import (
     group_seed_documents_by_source,
     load_seed_documents,
 )
-from kinsun.rag.releases import PgRagReleaseStore, QualityGateInput
+from kinsun.rag.releases import PgRagReleaseStore, QualityGateInput, ReleaseStatus
 from kinsun.rag.retriever import HealthEducationRetriever
 from kinsun.rag.schemas import RAG_EMBEDDING_DIMENSIONS, ContentPolicy
 from kinsun.rag.source_registry import SourceRegistry, order_answer_first
 from kinsun.rag.source_validator import SourceValidator
 from kinsun.rag.vector_store import PgVectorStore
+
+
+class ResetGuardError(RuntimeError):
+    """`--reset` 會刪掉正在服務的索引，需要操作者明確確認。"""
+
+
+def ensure_reset_is_safe(
+    active_index_version: str | None,
+    *,
+    building: str | None = None,
+    force_reset: bool,
+) -> None:
+    """有版本正在服務或建置中時擋下 `--reset`，除非明確加了 `--force-reset`。
+
+    清空並不是換版的必要步驟：不加 `--reset` 時舊版會繼續服務，直到新版通過
+    品質閘門才接手——這正是 release 機制存在的理由。2026-08-07 實錄：換來源設定
+    時沿用了上一輪洗髒資料用的 `--reset`，把已上線的 3,651 篇連同全部 chunk 直接
+    刪掉，衛教問答空窗四小時。週更是自動跑的，故不採互動式確認。
+
+    建置中的版本一併擋：它代表數小時的抓取成果，而既有的
+    `uq_rag_release_building` 唯一約束擋不住這條路——`--reset` 先刪再建，
+    刪完約束就不成立了。建置中途掛掉留下的殘列以 `--force-reset` 清除。
+    """
+    if force_reset:
+        return
+    if active_index_version is not None:
+        raise ResetGuardError(
+            f"目前有正在服務的索引 {active_index_version}，--reset 會把它連同全部文件與"
+            "chunk 直接刪掉，期間衛教問答沒有任何資料可用。\n"
+            "換來源設定或重新收錄不需要清空：拿掉 --reset 即可，舊版會服務到新版通過"
+            "品質閘門為止。\n"
+            "確定要清空（例如資料結構壞掉必須重來）請改加 --force-reset。"
+        )
+    if building is not None:
+        raise ResetGuardError(
+            f"版本 {building} 正在建置中，--reset 會把它已經抓到的東西全部刪掉"
+            "（全庫重建的抓取段約需四小時）。\n"
+            "先確認沒有另一個 ingest 在跑；若是上次建置中途掛掉留下的殘列，"
+            "請加 --force-reset 清除。"
+        )
 
 
 @tracing.track(name="rag_ingest", type="general", capture_input=False, capture_output=True)
@@ -45,10 +85,26 @@ def main() -> None:
     db = Database.open_for_cli(database_url)
     try:
         store = PgVectorStore(db)
+        releases = PgRagReleaseStore(db)
         if args.reset:
+            serving = releases.get_active()
+            # 沿用既有的 list_releases，不另開一支只為了讀 building 的查詢；
+            # `uq_rag_release_building` 保證至多一列。
+            in_flight = next(
+                (
+                    release.index_version
+                    for release in releases.list_releases()
+                    if release.status == ReleaseStatus.BUILDING
+                ),
+                None,
+            )
+            ensure_reset_is_safe(
+                serving.index_version if serving else None,
+                building=in_flight,
+                force_reset=args.force_reset,
+            )
             store.reset()
         index_version = args.index_version or datetime.now(UTC).strftime("rag-%Y%m%dT%H%M%SZ")
-        releases = PgRagReleaseStore(db)
         releases.begin_release(
             index_version,
             embedding_model=embedding_model,
@@ -242,6 +298,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--input", help="JSONL seed 文件路徑")
     parser.add_argument("--no-crawl", action="store_true", help="只匯入 --input，不啟動 crawler")
     parser.add_argument("--reset", action="store_true", help="先清空 RAG 文件與 chunk")
+    parser.add_argument(
+        "--force-reset",
+        action="store_true",
+        help="即使有正在服務的索引也照樣清空（會造成衛教問答空窗，僅限資料結構壞掉時）",
+    )
     parser.add_argument("--index-version", help="自訂 release 版本名稱")
     parser.add_argument("--golden-set", default="data/rag/golden_set.jsonl")
     parser.add_argument(
