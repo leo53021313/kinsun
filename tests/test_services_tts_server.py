@@ -24,7 +24,7 @@ def client(monkeypatch):
 def test_healthz_reports_model_not_loaded(client):
     res = client.get("/healthz")
     assert res.status_code == 200
-    assert res.json() == {"status": "ok", "model_loaded": False}
+    assert res.json() == {"status": "ok", "model_loaded": False, "stuck_workers": 0}
 
 
 def test_synthesize_contract_media_type_and_duration_header(client):
@@ -121,7 +121,7 @@ def test_resolve_voice_downloads_once_then_reuses_cache(monkeypatch, tmp_path):
     monkeypatch.setattr(tts_server, "TTS_VOICE_CACHE_DIR", str(tmp_path))
     calls = []
 
-    def fake_urlopen(url):
+    def fake_urlopen(url, timeout=None):
         calls.append(url)
         return _FakeHttpResponse(b"WAVDATA")
 
@@ -143,7 +143,9 @@ def test_resolve_voice_cache_evicts_oldest_when_full(monkeypatch, tmp_path):
     monkeypatch.setattr(tts_server, "_voice_cache", {})
     monkeypatch.setattr(tts_server, "TTS_VOICE_CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(tts_server, "TTS_VOICE_CACHE_SIZE", 1)
-    monkeypatch.setattr(tts_server.urllib.request, "urlopen", lambda url: _FakeHttpResponse(b"W"))
+    monkeypatch.setattr(
+        tts_server.urllib.request, "urlopen", lambda url, timeout=None: _FakeHttpResponse(b"W")
+    )
 
     tts_server._resolve_voice("e1", "https://example.test/e1.wav", "e1 逐字稿")
     tts_server._resolve_voice("e2", "https://example.test/e2.wav", "e2 逐字稿")
@@ -163,7 +165,7 @@ def test_resolve_voice_falls_back_when_download_fails(monkeypatch, tmp_path):
     monkeypatch.setattr(tts_server, "TTS_PROMPT_WAV", "/default.wav")
     monkeypatch.setattr(tts_server, "TTS_PROMPT_TEXT", "預設逐字稿")
 
-    def boom(_url):
+    def boom(_url, timeout=None):
         raise OSError("HTTP Error 400: Bad Request")  # 簽章網址過期時 Supabase 的回應
 
     monkeypatch.setattr(tts_server.urllib.request, "urlopen", boom)
@@ -183,7 +185,7 @@ def test_resolve_voice_does_not_cache_a_failed_download(monkeypatch, tmp_path):
 
     attempts = []
 
-    def flaky(url):
+    def flaky(url, timeout=None):
         attempts.append(url)
         if len(attempts) == 1:
             raise OSError("暫時失敗")
@@ -197,3 +199,103 @@ def test_resolve_voice_does_not_cache_a_failed_download(monkeypatch, tmp_path):
     second = tts_server._resolve_voice("e1", "https://x.test/v.wav", "逐字稿")
     assert second == (str(tmp_path / "voice-e1.wav"), "逐字稿")
     assert len(attempts) == 2
+
+
+# --- 逐請求合成逾時（2026-08-09） ---
+
+
+@pytest.fixture()
+def _reset_stuck(monkeypatch):
+    """每個測試從 0 條放生執行緒開始（模組層計數，不重置會互相汙染）。"""
+    monkeypatch.setattr(tts_server, "_stuck_workers", 0)
+
+
+def test_synthesize_times_out_instead_of_holding_the_slot_forever(monkeypatch, _reset_stuck):
+    """模型卡死時要回 504，而不是讓請求永遠掛著。
+
+    沒有這道上限的話，一次卡死就佔走 semaphore 名額（預設只有 1 個），
+    之後所有長輩都拿不到名額——整台服務不再產出任何語音，且不會自行恢復。
+    """
+    import time
+
+    monkeypatch.setattr(tts_server, "TTS_SYNTH_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(
+        tts_server, "_synthesize", lambda *_a: time.sleep(5) or (b"never-returns", 0)
+    )
+
+    res = TestClient(tts_server.app).post("/synthesize", json={"text": "阿嬤您好"})
+
+    assert res.status_code == 504
+    assert res.json()["detail"] == "synthesis_timeout"
+
+
+def test_the_slot_is_released_so_later_requests_still_work(monkeypatch, _reset_stuck):
+    """逾時後名額必須讓出來——這才是這道上限存在的理由。
+
+    只驗「回 504」是不夠的：即使回了 504，若名額沒釋放，下一個請求照樣卡死。
+    故先讓一個請求逾時，再送一個正常請求，斷言它拿得到名額並成功。
+    """
+    import time
+
+    monkeypatch.setattr(tts_server, "TTS_SYNTH_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(tts_server, "_synthesize", lambda *_a: time.sleep(5) or (b"", 0))
+    client = TestClient(tts_server.app)
+    assert client.post("/synthesize", json={"text": "會卡住的那句"}).status_code == 504
+
+    # 換成正常的合成：名額若沒讓出來，這一句會再度逾時（或永遠等待）。
+    monkeypatch.setattr(tts_server, "_synthesize", lambda *_a: (b"ok-m4a", 900))
+    res = client.post("/synthesize", json={"text": "後續的長輩"})
+
+    assert res.status_code == 200
+    assert res.content == b"ok-m4a"
+
+
+def test_healthz_reports_degraded_after_a_timeout(monkeypatch, _reset_stuck):
+    """放生的執行緒只能靠重啟回收，故 healthz 要講實話讓維運看得見。
+
+    先前 healthz 只看模型載入與否：服務癱瘓時它依然回 ok，監控全綠，
+    只有長輩發現金孫不說話了。
+    """
+    import time
+
+    client = TestClient(tts_server.app)
+    assert client.get("/healthz").json()["status"] == "ok"
+
+    monkeypatch.setattr(tts_server, "TTS_SYNTH_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(tts_server, "_synthesize", lambda *_a: time.sleep(5) or (b"", 0))
+    client.post("/synthesize", json={"text": "會卡住的那句"})
+
+    body = client.get("/healthz").json()
+    assert body["status"] == "degraded"
+    assert body["stuck_workers"] == 1
+
+
+def test_ffmpeg_conversion_has_a_timeout(monkeypatch):
+    """ffmpeg 是子行程、殺得掉，故直接給 subprocess.run 逾時即可真正回收。"""
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        seen.update(kwargs)
+        raise AssertionError("只驗參數，不實際執行")
+
+    monkeypatch.setattr(tts_server.subprocess, "run", fake_run)
+    with pytest.raises(AssertionError):
+        tts_server._wav_to_m4a(b"RIFF")
+
+    assert seen["timeout"] == tts_server.TTS_FFMPEG_TIMEOUT_SECONDS
+
+
+def test_voice_download_has_a_timeout(monkeypatch, tmp_path):
+    """參考音檔下載是對外網路呼叫，不設上限同樣會佔住名額。"""
+    monkeypatch.setattr(tts_server, "_voice_cache", {})
+    monkeypatch.setattr(tts_server, "TTS_VOICE_CACHE_DIR", str(tmp_path))
+    seen = {}
+
+    def fake_urlopen(url, timeout=None):
+        seen["timeout"] = timeout
+        return _FakeHttpResponse(b"WAVDATA")
+
+    monkeypatch.setattr(tts_server.urllib.request, "urlopen", fake_urlopen)
+    tts_server._resolve_voice("e1", "https://x.test/v.wav", "逐字稿")
+
+    assert seen["timeout"] == tts_server.TTS_VOICE_DOWNLOAD_TIMEOUT_SECONDS

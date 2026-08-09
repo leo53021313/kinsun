@@ -15,8 +15,9 @@
 | 路徑 | `POST /synthesize` |
 | 請求 | JSON `{"text": "<繁體國語漢字>", "elder_id"?: "...", "prompt_audio_url"?: "...", "prompt_text"?: "..."}`；後三個欄位選填，用於長輩客製化聲音複製（2026-07-30，見下方「長輩客製化聲音」） |
 | 回應 | body 為 **m4a（AAC）bytes**、`Content-Type: audio/mp4`、header `X-Duration-Ms: <int>`（合成語音毫秒數） |
-| 健康檢查 | `GET /healthz` → `{"status": "ok", "model_loaded": <bool>}` |
+| 健康檢查 | `GET /healthz` → `{"status": "ok"｜"degraded", "model_loaded": <bool>, "stuck_workers": <int>}`；`degraded`＝有合成逾時後放生的執行緒，需重啟行程回收 |
 | 過載 | 等候請求數超過 `TTS_MAX_CONCURRENCY + TTS_MAX_QUEUE` → 回 503 |
+| 逾時 | 合成超過 `TTS_SYNTH_TIMEOUT_SECONDS` → 回 504（`synthesis_timeout`） |
 | 呼叫端 | `kinsun.speech.tts.DgxTtsClient`（已實作，見 [tts.py](../../src/kinsun/speech/tts.py)） |
 
 > `DgxTtsClient` 會把回應包成 `TtsResult(text=text, audio=<bytes>, duration_ms=<int>)`，
@@ -40,6 +41,31 @@
 - 快取為簡單 FIFO（非 LRU），上限 `TTS_VOICE_CACHE_SIZE`，超過時淘汰最舊的一位長輩。
 - 已知限制：`prompt_audio_url` 目前是 Supabase 簽章 URL，會過期；過期後若快取又剛好失效
   會下載失敗，需重新註冊該長輩的參考語音（詳見 `docs/dev/05_架構與設計.md` §8.1）。
+
+## 逾時與降級（2026-08-09）
+
+`TTS_MAX_CONCURRENCY` 預設為 1（只有一顆 GPU），意即**任何一個卡死的請求都會佔走
+唯一的併發名額**，之後所有長輩都拿不到名額——整台服務不再產出語音，而且不會自行恢復。
+
+三處新增的逾時，性質**刻意不同**：
+
+| 位置 | 逾時後 | 資源真的回收嗎 |
+|---|---|---|
+| ffmpeg 轉檔 | 子行程被 SIGKILL | ✅ 完全回收 |
+| 參考音檔下載 | socket 逾時、拋例外 | ✅ 完全回收 |
+| **模型合成** | 讓出併發名額、回 504 | ⚠️ **執行緒仍在背景跑** |
+
+⚠️ **模型合成那道不是完全的復原。** 合成跑在 threadpool，而 Python 殺不掉執行緒——
+逾時只能讓等待的協程放棄、把名額讓出來，那條工作者仍在跑、仍握著 GPU。
+
+因此每次逾時都會累加 `stuck_workers`，並讓 `/healthz` 轉為 `degraded`：
+放生的執行緒只能靠**重啟行程**回收，維運需要看得見這件事。先前 healthz 只回報模型
+載入與否，於是服務癱瘓時它依然回 `ok`，監控全綠、只有長輩發現金孫不說話了。
+
+`TTS_SYNTH_TIMEOUT_SECONDS` 預設 120 秒刻意寬鬆：GPU 下長回覆約 8 秒，但 GPU 被佔滿時
+本服務會降級跑 CPU（RTF 13～16，同樣的話要 60～70 秒），照 GPU 抓會讓降級模式每句都逾時。
+長輩那端另有自己的 30 秒上限（應用層 `TTS_TIMEOUT_SECONDS`）；這裡的目的不是控制長輩
+等多久，而是不讓卡死的請求永久佔住名額。
 
 ## 參考語音的錄製準則（2026-08-09 實測）
 
@@ -151,6 +177,9 @@ mp4/m4a 的 `moov` atom 需可 seek 的輸出，故服務走可 seek 的暫存�
 | `TTS_PRELOAD` | `0` | 設 `1` 於服務啟動（lifespan）即載入模型，預設延遲載入（大小寫不敏感） |
 | `TTS_VOICE_CACHE_DIR` | 系統暫存目錄 | 長輩客製化參考音檔下載後的本機快取位置 |
 | `TTS_VOICE_CACHE_SIZE` | `20` | 最多同時快取幾位長輩的客製化參考音檔（FIFO 淘汰） |
+| `TTS_SYNTH_TIMEOUT_SECONDS` | `120` | 單一請求的合成上限；逾時回 504 並讓出併發名額（見下方「逾時與降級」） |
+| `TTS_VOICE_DOWNLOAD_TIMEOUT_SECONDS` | `15` | 參考音檔下載逾時 |
+| `TTS_FFMPEG_TIMEOUT_SECONDS` | `30` | wav→m4a 轉檔逾時（子行程，殺得掉） |
 
 ## 接到應用層
 
@@ -178,4 +207,5 @@ TTS_ENDPOINT=http://<dgx-host>:8002/synthesize
 - [ ] 錄製並定調正式**金孫參考語音**（目前驗證暫用 CosyVoice 內附範例聲；作為缺客製化設定檔
       時長輩聽到的全域預設聲音）。
 - [ ] 以真 LINE 帳號驗 `AudioMessage` 播放（需部署 app + 公開 URL；模型端 m4a 已確認可播）。
-- [ ] 服務端逐請求 timeout（目前僅呼叫端 `DgxTtsClient` 有 urlopen 逾時；模型卡住會佔住 semaphore 槽位）。
+- [x] 服務端逐請求 timeout（2026-08-09）：合成／下載／轉檔三處各有上限，逾時讓出併發名額並回 504；
+      模型合成的執行緒殺不掉，故累計 `stuck_workers` 並由 `/healthz` 回報 `degraded`（見上方「逾時與降級」）。

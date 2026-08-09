@@ -48,6 +48,17 @@ TTS_PROMPT_WAV = os.environ.get("TTS_PROMPT_WAV", "")
 TTS_PROMPT_TEXT = os.environ.get("TTS_PROMPT_TEXT", "")
 TTS_MAX_CONCURRENCY = int(os.environ.get("TTS_MAX_CONCURRENCY", "1"))
 TTS_MAX_QUEUE = int(os.environ.get("TTS_MAX_QUEUE", "8"))
+# 單一請求的合成時間上限（秒）。⚠️ 預設刻意寬鬆：GPU 下長回覆約 8 秒，但 GPU 被別人
+# 佔滿時本服務會降級跑 CPU（RTF 13～16，同樣的話要 60～70 秒），預設值若照 GPU 抓，
+# 降級模式會變成每一句都逾時。長輩那端本來就有自己的 30 秒上限（TTS_TIMEOUT_SECONDS），
+# 這裡的目的不是控制長輩等多久，而是**不讓卡死的請求永久佔住併發名額**。
+TTS_SYNTH_TIMEOUT_SECONDS = float(os.environ.get("TTS_SYNTH_TIMEOUT_SECONDS", "120"))
+# 參考音檔下載逾時（秒）：對外網路呼叫，不設上限同樣會佔住名額。
+TTS_VOICE_DOWNLOAD_TIMEOUT_SECONDS = float(
+    os.environ.get("TTS_VOICE_DOWNLOAD_TIMEOUT_SECONDS", "15")
+)
+# wav→m4a 的 ffmpeg 逾時（秒）：子行程殺得掉，逾時即回收。
+TTS_FFMPEG_TIMEOUT_SECONDS = float(os.environ.get("TTS_FFMPEG_TIMEOUT_SECONDS", "30"))
 # 合成文字長度上限（✅ D-26 乙-7）：缺 text 原本會靜默合成空音，改 400。
 TTS_MAX_TEXT_CHARS = int(os.environ.get("TTS_MAX_TEXT_CHARS", "1000"))
 # 共用金鑰（✅ D-56 丙-10）：設定後驗 X-Api-Key；未設＝內網開發模式不驗。
@@ -63,6 +74,16 @@ _INSTRUCT_PREFIX = "You are a helpful assistant.<|endofprompt|>"
 _model = None
 _sem = asyncio.Semaphore(TTS_MAX_CONCURRENCY)
 _inflight = 0
+# 合成逾時後「放生」的執行緒數（2026-08-09）。
+#
+# ⚠️ 為什麼需要這個計數：Python **殺不掉執行緒**。合成跑在 threadpool 裡，逾時只能讓
+# 等待的協程放棄、把 semaphore 名額讓出來，那條執行緒仍在背景跑、仍握著 GPU。
+# 也就是說逾時**不是完全的復原**——服務能繼續接客，但每多一條放生的執行緒，就多一份
+# 與新請求搶 GPU 的壓力，且 threadpool 的工作者數量有限，累積下去終究會耗盡。
+#
+# 真正的回收手段只有重啟行程。故把它累計起來並在 /healthz 顯示：讓維運看得見
+# 「這台需要重啟了」，而不是像現在這樣——服務癱瘓、healthz 照樣回 ok、沒人知道。
+_stuck_workers = 0
 # elder_id -> (本機 wav 路徑, 逐字稿)；簡單 FIFO 上限淘汰，不需要真正的 LRU。
 _voice_cache: dict[str, tuple[str, str]] = {}
 
@@ -82,7 +103,9 @@ def _resolve_voice(elder_id: str, prompt_audio_url: str, prompt_text: str) -> tu
     # **長輩整輪完全聽不到聲音**，而且每輪重複發生（快取永遠暖不起來）。
     # 客製化聲音失效是缺憾，沒聲音是故障——兩者嚴重度差一級，不該混為一談。
     try:
-        with urllib.request.urlopen(prompt_audio_url) as resp:  # noqa: S310 - 內部/簽章 URL
+        with urllib.request.urlopen(  # noqa: S310 - 內部/簽章 URL
+            prompt_audio_url, timeout=TTS_VOICE_DOWNLOAD_TIMEOUT_SECONDS
+        ) as resp:
             with open(local_path, "wb") as fh:
                 fh.write(resp.read())
     except Exception:
@@ -163,11 +186,14 @@ def _wav_to_m4a(wav_bytes: bytes) -> bytes:
     with tempfile.NamedTemporaryFile(suffix=".m4a", delete=False) as tmp:
         tmp_path = tmp.name
     try:
+        # timeout 與合成那道不同：子行程**殺得掉**，逾時會送 SIGKILL 並拋
+        # TimeoutExpired，資源真的回收得掉，不會留下背景殘骸。
         subprocess.run(
             ["ffmpeg", "-y", "-f", "wav", "-i", "pipe:0", "-c:a", "aac", tmp_path],
             input=wav_bytes,
             capture_output=True,
             check=True,
+            timeout=TTS_FFMPEG_TIMEOUT_SECONDS,
         )
         with open(tmp_path, "rb") as fh:
             return fh.read()
@@ -187,7 +213,17 @@ app = FastAPI(title="KinSun TTS (CosyVoice 3)", lifespan=lifespan)
 
 @app.get("/healthz")
 async def healthz() -> dict:
-    return {"status": "ok", "model_loaded": _model is not None}
+    """⚠️ `status` 會在有放生執行緒時轉 `degraded`（2026-08-09）。
+
+    先前只回報模型有沒有載入，於是「合成卡死、併發名額被永久佔走、整台服務不再
+    產出任何語音」這個狀態下，healthz 依然一路回 ok——監控全綠，只有長輩發現
+    金孫不說話了。放生的執行緒只能靠重啟行程回收，故這裡要講實話。
+    """
+    return {
+        "status": "degraded" if _stuck_workers else "ok",
+        "model_loaded": _model is not None,
+        "stuck_workers": _stuck_workers,
+    }
 
 
 def _require_api_key(request: Request) -> None:
@@ -212,13 +248,37 @@ async def synthesize(payload: dict, request: Request) -> Response:
     elder_id = str(payload.get("elder_id", "")).strip()
     prompt_audio_url = str(payload.get("prompt_audio_url", "")).strip()
     prompt_text_override = str(payload.get("prompt_text", "")).strip()
+    global _stuck_workers
     _inflight += 1
     try:
         async with _sem:
-            prompt_wav, prompt_text = await run_in_threadpool(
-                _resolve_voice, elder_id, prompt_audio_url, prompt_text_override
-            )
-            audio, duration_ms = await run_in_threadpool(_synthesize, text, prompt_wav, prompt_text)
+            # ⚠️ 逾時的意義是「不再等它、把併發名額讓出來」，**不是**中止合成——
+            # Python 殺不掉執行緒，那條工作者仍在背景跑、仍握著 GPU（見 _stuck_workers）。
+            # 沒有這道上限的話，一次模型卡死就等於這台服務永久癱瘓：名額只有
+            # TTS_MAX_CONCURRENCY 個（預設 1），被佔走就再也沒人拿得到，
+            # 而 /healthz 只看模型載入與否，會一路回報 ok。
+            try:
+                prompt_wav, prompt_text = await asyncio.wait_for(
+                    run_in_threadpool(
+                        _resolve_voice, elder_id, prompt_audio_url, prompt_text_override
+                    ),
+                    timeout=TTS_SYNTH_TIMEOUT_SECONDS,
+                )
+                audio, duration_ms = await asyncio.wait_for(
+                    run_in_threadpool(_synthesize, text, prompt_wav, prompt_text),
+                    timeout=TTS_SYNTH_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                _stuck_workers += 1
+                logger.error(
+                    "合成逾時 %.0f 秒，已讓出併發名額但該執行緒仍在背景執行"
+                    "（累計放生 %d 條，需重啟行程才能回收）elder_id=%s 字數=%d",
+                    TTS_SYNTH_TIMEOUT_SECONDS,
+                    _stuck_workers,
+                    elder_id or "(全域預設聲音)",
+                    len(text),
+                )
+                raise HTTPException(status_code=504, detail="synthesis_timeout") from None
     finally:
         _inflight -= 1
     return Response(
