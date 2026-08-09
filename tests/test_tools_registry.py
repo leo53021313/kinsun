@@ -106,3 +106,48 @@ def test_dispatch_truncates_a_runaway_tool_output():
     registry = ToolRegistry()
     registry.register(_spec("flood"), lambda args: "字" * 5000)
     assert len(registry.dispatch("flood", {})) <= TOOL_OUTPUT_MAX_CHARS + 40
+
+
+# ── 工具 span 的身分（2026-08-08 觀測盤點）──
+#
+# `dispatch` 是所有工具共用的單一入口，`@track` 的名字在裝飾時就綁死，於是 Opik 上
+# 每一個工具都叫 `dispatch`——長輩問的是天氣還是行程看不出來，一輪叫兩個工具時連
+# 「誰慢」都分不出來。名字必須在執行期補上。
+
+
+def test_dispatch_names_the_span_after_the_tool(monkeypatch):
+    from kinsun.tools import registry as registry_module
+
+    seen: list[str] = []
+    monkeypatch.setattr(registry_module.tracing, "rename_current_span", seen.append)
+    reg = ToolRegistry()
+    reg.register(SPEC, lambda args: "ok")
+    assert reg.dispatch("echo", {}) == "ok"
+    assert seen == ["tool:echo"]
+
+
+def test_dispatch_names_the_span_even_for_an_unknown_tool(monkeypatch):
+    """找不到的工具更需要名字：模型幻覺出一個工具名時，那正是要查的東西。"""
+    from kinsun.tools import registry as registry_module
+
+    seen: list[str] = []
+    monkeypatch.setattr(registry_module.tracing, "rename_current_span", seen.append)
+    reg = ToolRegistry()
+    assert "找不到工具" in reg.dispatch("不存在的工具", {})
+    assert seen == ["tool:不存在的工具"]
+
+
+def test_dispatch_names_the_span_before_the_handler_can_fail(monkeypatch):
+    """handler 炸掉的那一格尤其要看得出是誰炸的，故改名必須排在呼叫之前。"""
+    from kinsun.tools import registry as registry_module
+
+    seen: list[str] = []
+    monkeypatch.setattr(registry_module.tracing, "rename_current_span", seen.append)
+    reg = ToolRegistry()
+
+    def boom(args, context=None):
+        raise ValueError("壞了")
+
+    reg.register(SPEC, boom)
+    assert "工具執行失敗" in reg.dispatch("echo", {})
+    assert seen == ["tool:echo"]

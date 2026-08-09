@@ -317,6 +317,12 @@ class VoicePipeline:
         # 附上本輪的使用者原話（語音為 ASR 辨識、文字為輸入），供 debug 顯示。
         return replace(result, transcript=user_text)
 
+    # ⚠️ 這一格與 `memory_write` 是**兩件事**（2026-08-08）：`memory_write` 是背景那筆
+    # 寫入本身花了多久，這一格是「交出回覆前又多等了多久」。正常情況是 0ms（早就寫完
+    # 了）；有數字就代表背景落後，而長輩正在為它等待。
+    @tracing.track(
+        name="memory_settle_wait", type="general", capture_input=False, capture_output=False
+    )
     def _settle_memory_write(self, prepared) -> None:
         """交出回應前，確認本輪記憶已經落地（2026-07-30 審查 H2）。
 
@@ -386,7 +392,7 @@ class VoicePipeline:
             except Exception:  # noqa: BLE001 - 訊號落庫失敗不可中斷對話
                 logger.warning("提醒回應標記失敗 elder=%s", elder_id)
 
-        background.run(mark)
+        background.run(mark, name="reminder_mark")
 
     def _latency_ms(self, started: float) -> int:
         return int((self._timer() - started) * 1000)

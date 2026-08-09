@@ -13,8 +13,17 @@ _ENV = {
     "LINE_CHANNEL_ACCESS_TOKEN": "t",
     "GEMINI_API_KEY": "k",
     "GEMINI_MODEL": "gemini-x",
-    "LONGTERM_EMBEDDING_MODEL": "models/gemini-embedding-001",
+    "LONGTERM_EMBEDDING_MODEL": "BAAI/bge-m3",
+    "LONGTERM_EMBEDDING_BACKEND": "local",
+    "LONGTERM_EMBEDDING_ENDPOINT": "http://127.0.0.1:8003/v1",
     "DATABASE_URL": "postgresql://u:p@h:5432/db",
+}
+
+_GEMINI_ENV = {
+    **_ENV,
+    "LONGTERM_EMBEDDING_MODEL": "models/gemini-embedding-001",
+    "LONGTERM_EMBEDDING_BACKEND": "gemini",
+    "LONGTERM_EMBEDDING_ENDPOINT": "",
 }
 
 
@@ -22,7 +31,8 @@ def test_build_mem0_config_shape():
     cfg = build_mem0_config(load_settings(_ENV))
     assert cfg["llm"]["provider"] == "gemini"
     assert cfg["llm"]["config"]["model"] == "gemini-x"
-    assert cfg["embedder"]["provider"] == "gemini"
+    assert cfg["embedder"]["provider"] == "openai"
+    assert cfg["embedder"]["config"]["openai_base_url"] == "http://127.0.0.1:8003/v1"
     assert cfg["vector_store"]["provider"] == "supabase"
     assert cfg["vector_store"]["config"]["connection_string"] == "postgresql://u:p@h:5432/db"
     assert "graph_store" not in cfg
@@ -35,11 +45,37 @@ def test_build_mem0_config_includes_custom_instructions():
 
 
 def test_build_mem0_config_sets_consistent_embedding_dims():
-    """embedder 輸出維度必須與向量庫維度一致，否則向量查詢會維度不符（1536 vs 768）。"""
+    """embedder 輸出維度必須與向量庫維度一致，否則向量查詢會維度不符。
+
+    ⚠️ 維度由 backend 決定（BGE-M3 dense 1024／Gemini 768），兩邊必須同源，
+    不可各自寫死——2026-08-07 換 backend 時，這兩個數字對不上就是整個長期記憶
+    查不到東西，而 mem0 是靜默退化成「沒有記憶」、不會報錯。
+    """
     cfg = build_mem0_config(load_settings(_ENV))
     embedder_dims = cfg["embedder"]["config"]["embedding_dims"]
     store_dims = cfg["vector_store"]["config"]["embedding_model_dims"]
+    assert embedder_dims == store_dims == 1024
+
+
+def test_build_mem0_config_falls_back_to_gemini_backend():
+    """backend 切回 gemini 時，provider 與維度都要跟著回去（切換需重建向量表）。"""
+    cfg = build_mem0_config(load_settings(_GEMINI_ENV))
+    assert cfg["embedder"]["provider"] == "gemini"
+    assert "openai_base_url" not in cfg["embedder"]["config"]
+    embedder_dims = cfg["embedder"]["config"]["embedding_dims"]
+    store_dims = cfg["vector_store"]["config"]["embedding_model_dims"]
     assert embedder_dims == store_dims == 768
+
+
+def test_local_backend_requires_endpoint():
+    """地端 backend 少了 endpoint 要當場拒絕，不可讓 mem0 預設去打 api.openai.com。"""
+    import pytest
+
+    from kinsun.memory.longterm.mem0_factory import build_mem0_config as build
+
+    broken = {**_ENV, "LONGTERM_EMBEDDING_ENDPOINT": ""}
+    with pytest.raises(ValueError, match="LONGTERM_EMBEDDING_ENDPOINT"):
+        build(load_settings(broken))
 
 
 def test_disable_telemetry_sets_env_only_if_absent():

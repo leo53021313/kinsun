@@ -7,6 +7,7 @@ from collections.abc import Callable
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from kinsun import personas
 from kinsun.accounts.models import InviteRole
 from kinsun.accounts.service import AccountService, AppAccountError
 from kinsun.web.envelope import ok
@@ -30,6 +31,17 @@ class ElderProfileIn(BaseModel):
     nickname: str = Field(max_length=50)
 
 
+class ElderPersonaIn(BaseModel):
+    """家屬更改金孫的人設（2026-08-05）。值域由 handler 對照 `personas.py` 驗。
+
+    ⚠️ 刻意不併進 `ElderProfileIn`：那支是整份 upsert，前端漏帶 `nickname` 就會
+    把稱謂洗掉，而稱謂設錯的後果是金孫每輪亂猜「阿公／阿嬤」（2026-07-17 實測
+    過的真實問題）。獨立端點讓這種誤用不可能發生。
+    """
+
+    persona: str = Field(max_length=50)
+
+
 class ElderAccountIn(BaseModel):
     phone: str = Field(min_length=8, max_length=20)
     password: str = Field(min_length=8, max_length=128)
@@ -48,7 +60,15 @@ def create_elders_router(
         """列登入家屬管理的長輩（✅ D-28：/me/elders 改名；列表＝data 裸陣列）。"""
         elders = scope.elders_of(auth)
         return ok(
-            [{"elder_id": e.elder_id, "name": e.name, "nickname": e.nickname} for e in elders]
+            [
+                {
+                    "elder_id": e.elder_id,
+                    "name": e.name,
+                    "nickname": e.nickname,
+                    "persona": e.persona,
+                }
+                for e in elders
+            ]
         )
 
     @router.post("/elders", status_code=201)
@@ -69,6 +89,10 @@ def create_elders_router(
                 "elder_id": elder.elder_id,
                 "name": elder.name,
                 "nickname": elder.nickname,
+                # ⚠️ 新建的長輩也要回人設（2026-08-05）：前端把這個物件直接放進
+                # 清單，少一格會讓剛建立的那筆在畫面上與其他筆不同形狀，要重新
+                # 整理才對——A-10 就是同一個坑（後端有回、前端丟掉）。
+                "persona": elder.persona,
                 "invite_code": invite.code,
             }
         )
@@ -81,6 +105,21 @@ def create_elders_router(
         scope.assert_manages(auth, elder_id)
         elder = accounts.set_elder_nickname(elder_id, body.nickname.strip())
         return ok({"elder_id": elder.elder_id, "nickname": elder.nickname})
+
+    @router.put("/elders/{elder_id}/persona")
+    def update_elder_persona(
+        elder_id: str, body: ElderPersonaIn, auth: GuardianAuth = Depends(current_guardian)
+    ) -> dict:
+        """家屬更改金孫的人設（2026-08-05）。下一輪對話即生效。"""
+        scope.assert_manages(auth, elder_id)
+        persona_id = body.persona.strip()
+        if persona_id not in personas.persona_ids():
+            # 邊界要驗證：認不得的值當場擋下，不讓它進資料庫。
+            # ⚠️ 與 `personas.get_persona` 讀取時退回預設的寬容行為是刻意的分工：
+            # 寫入嚴格、讀取寬容——資料庫裡萬一有髒值也不會讓長輩的對話卡死。
+            raise HTTPException(status_code=400, detail=ErrorCode.INVALID_PERSONA)
+        elder = accounts.set_elder_persona(elder_id, persona_id)
+        return ok({"elder_id": elder.elder_id, "persona": elder.persona})
 
     @router.post("/elders/{elder_id}/guardian-invites", status_code=201)
     def create_guardian_invite(

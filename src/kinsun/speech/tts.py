@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import Protocol
 
+from kinsun import tracing
 from kinsun.transport import HttpxTransport, Transport, TransportError, header_value
 
 logger = logging.getLogger("kinsun.speech.tts")
@@ -182,21 +183,52 @@ class QueuedTtsClient:
         if self._closed:  # 關機後仍有人要合成：就地執行，不要靜默丟掉長輩的回覆。
             return self._inner.synthesize(text, voice=voice)
         future: Future = Future()
+        # worker 接手的訊號：把「排隊等」與「GPU 在算」切開的那一刀（見下方兩個
+        # 等待函式的說明）。
+        picked_up = threading.Event()
         # 優先權在**提交當下**取值：worker 執行緒沒有呼叫端的 context。
-        self._queue.put((int(current_tts_priority()), next(self._seq), text, voice, future))
+        self._queue.put(
+            (int(current_tts_priority()), next(self._seq), text, voice, future, picked_up)
+        )
+        self._wait_in_queue(picked_up)
+        return self._wait_for_synthesis(future)
+
+    # ⚠️ 為什麼要拆成兩個等待（2026-08-08 觀測盤點）：Opik 原本只有一格 `tts`，
+    # 裡面同時包著「排在別人後面等」與「GPU 真的在算」，而這兩者的處置完全不同——
+    # 排隊久＝併發超過一顆 GB10 的容量（該調閘門或降併發），合成久＝回覆太長或模型
+    # 太慢（該縮字數或改串流）。混成一格，看到「TTS 3 秒」不知道該修哪一個。
+    #
+    # 兩個等待都跑在**呼叫端**的執行緒，所以 span 會正確巢狀在本輪底下；worker
+    # 執行緒沒有呼叫端的 context，在那邊開 span 只會憑空消失。
+    @tracing.track(name="tts_queue_wait", type="general", capture_input=False, capture_output=False)
+    def _wait_in_queue(self, picked_up: threading.Event) -> None:
+        """等 worker 接手。已經輪到時是 0ms（＝沒有人在排隊，正常情形）。"""
+        picked_up.wait()
+
+    @tracing.track(name="tts_synthesize", type="general", capture_input=False, capture_output=False)
+    def _wait_for_synthesis(self, future: Future) -> TtsResult:
+        """等這一段真的算完；inner 的例外原樣重拋（`Future.result` 的既有語意）。"""
         return future.result()
 
     def _loop(self) -> None:
         while True:
-            _priority_value, _seq, text, voice, future = self._queue.get()
+            _priority_value, _seq, text, voice, future, picked_up = self._queue.get()
             try:
                 if future is None:  # 收工訊號
                     return
                 if future.set_running_or_notify_cancel():
+                    # ⚠️ 必須在呼叫 inner **之前**放行排隊那一格，否則兩格會一樣長，
+                    # 拆開就失去意義。
+                    picked_up.set()
                     future.set_result(self._inner.synthesize(text, voice=voice))
             except BaseException as exc:  # noqa: BLE001 - 原樣交回呼叫端
                 future.set_exception(exc)
             finally:
+                # ⚠️ 一定要在 finally：future 被取消、或 worker 在 set 之前就炸了時，
+                # 呼叫端仍卡在 `picked_up.wait()`——那是一個永遠不會結束的等待，
+                # 比少一格觀測嚴重得多。
+                if picked_up is not None:
+                    picked_up.set()
                 self._queue.task_done()
 
     def close(self) -> None:
@@ -207,7 +239,10 @@ class QueuedTtsClient:
             self._closed = True
         self._queue.join()
         # 收工訊號用最低優先權，確保排在所有已排隊的工作之後。
-        self._queue.put((int(TtsPriority.PREWARM) + 1, next(self._seq), "", None, None))
+        # ⚠️ 元數必須與 `synthesize` 放進去的那個 tuple 一致（text／voice／future／
+        # picked_up 四項）：`_loop` 是無條件解包，少一個欄位就在關機時炸在解包那行，
+        # 而不是走到底下「future 為 None＝收工」的判斷。
+        self._queue.put((int(TtsPriority.PREWARM) + 1, next(self._seq), "", None, None, None))
         self._worker.join(timeout=5)
 
 

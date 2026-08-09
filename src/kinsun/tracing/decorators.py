@@ -130,6 +130,27 @@ def set_current_trace_io(*, user_input: str = "", assistant_output: str = "") ->
         logger.warning("Opik trace I/O 寫入失敗")
 
 
+def rename_current_span(name: str) -> None:
+    """把當前 span 改名；停用/失敗/空名一律 no-op。
+
+    ⚠️ 為什麼需要它（2026-08-08 觀測盤點）：`@track` 的 `name` 在**裝飾時**就綁死，
+    而有些 span 的身分要到執行期才知道——最典型的是 `tools/registry.py::dispatch`，
+    它是所有工具共用的單一入口，於是 Opik 上每一個工具都叫 `dispatch`，看不出長輩
+    問的是天氣還是行程。一輪裡叫了兩個工具時，兩個一樣的名字連「誰慢」都分不出來。
+
+    只改名、不碰 input/output：那兩者已由 `@track` 的捕捉或 `set_current_span_io`
+    負責，混在一起會讓覆寫規則變得難以預期。
+    """
+    if not is_enabled() or not name:
+        return
+    try:
+        from opik import opik_context
+
+        opik_context.update_current_span(name=name)
+    except Exception:  # noqa: BLE001 - 觀測失敗絕不中斷對話
+        logger.warning("Opik span 改名失敗 name=%s", name)
+
+
 def set_current_span_io(*, span_input=None, span_output=None) -> None:
     """把乾淨內容寫進當前 span（非 trace）的 input/output；停用/失敗 no-op。
 

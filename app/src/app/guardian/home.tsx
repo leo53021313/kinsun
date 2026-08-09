@@ -75,14 +75,16 @@ export default function GuardianHome() {
     setError("");
     setBusy(true);
     try {
-      const created = await createElder(name, token);
-      // 帶上 nickname：`created` 一直都有回它，這裡原本丟掉，於是剛新增的那筆在列表上
-      // 少一個稱謂、要重新整理才會出現（A-10，2026-07-29——型別補齊後編譯器抓到的）。
-      setElders((prev) => [
-        ...prev,
-        { elder_id: created.elder_id, name: created.name, nickname: created.nickname },
-      ]);
-      setInviteCode(created.invite_code);
+      // 拆掉 invite_code、其餘原樣進列表：`CreatedElder = Elder & { invite_code }`，
+      // 所以剩下的部分**就是** Elder，不必逐欄位抄。
+      //
+      // ⚠️ 原本是逐欄位列舉，而這裡已經漏過兩次：先漏 nickname（A-10，2026-07-29，
+      // 剛新增的那筆在列表上少一個稱謂、要重新整理才會出現），再漏 persona（人設功能
+      // 加欄位時沒回頭改這裡）。逐欄位抄的寫法保證會有第三次——`Elder` 每加一個欄位
+      // 就要記得回來補，而忘記的代價是「新增後畫面資料不全」這種要重整才會發現的症狀。
+      const { invite_code: inviteCode, ...created } = await createElder(name, token);
+      setElders((prev) => [...prev, created]);
+      setInviteCode(inviteCode);
       setNewName("");
     } catch (exc) {
       if (await signOutOn401(exc)) return;

@@ -143,6 +143,19 @@ class AccountService:
         self._repo.save_elder(updated)
         return updated
 
+    def set_elder_persona(self, elder_id: str, persona_id: str) -> Elder:
+        """家屬更改人設（2026-08-05）。值域由 API 層驗（見 `web/routers/elders.py`）。
+
+        與 `set_elder_nickname` 分成兩支而不是合成一支「更新檔案」：它們是兩件
+        互不相干的設定，合成一支會讓呼叫端漏帶一個欄位就把另一個洗掉。
+        """
+        elder = self._repo.get_elder(elder_id)
+        if elder is None:
+            raise AppAccountError("elder_not_found")
+        updated = replace(elder, persona=persona_id)
+        self._repo.save_elder(updated)
+        return updated
+
     def generate_invite(self, elder_id: str, role: InviteRole, *, tx=None) -> Invite:
         expires_at = (self._clock() + timedelta(hours=self._ttl_hours)).timestamp()
         invite = Invite(self._new_code(), elder_id, role, expires_at, self._max_attempts)

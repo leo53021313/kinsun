@@ -11,7 +11,6 @@ import pathlib
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from kinsun.accounts.facts import ElderProfileFacts
 from kinsun.clock import TimeFacts
 from kinsun.composition import (
     AUDITED_SPECS,
@@ -24,7 +23,6 @@ from kinsun.config import load_settings
 from kinsun.locations.facts import LocationFacts
 from kinsun.news.store import FakeNewsStore
 from kinsun.schedules.facts import ScheduleFacts
-from kinsun.schedules.models import ScheduleKind
 from kinsun.strategies.facts import StrategyFacts
 from kinsun.tools.health_rag import HEALTH_RAG_SPEC
 from kinsun.tools.news import NEWS_DETAIL_SPEC, NEWS_SPEC
@@ -83,27 +81,25 @@ def test_assemble_core_agent_has_baseline_tools():
     }
 
 
-def test_assemble_core_injects_seven_fact_providers_in_order():
+def test_assemble_core_injects_four_fact_providers_in_order():
     # 順序即 prompt 中的段落順序。時間排最前（2026-07-25：它是其他事實的座標系，
-    # 回診印的是絕對日期）；稱呼緊接其後（2026-07-17：模型會亂猜阿公／阿嬤）；
-    # LocationFacts 排最後：位置是這幾段裡最不重要的一段。
-    # 統一排程（D-76 P2）把原本的用藥、回診兩段換成三段 ScheduleFacts——位置與
-    # 前兩段的標題逐字不變，第三段（長輩自己交代的事）是新增的。
+    # 回診印的是絕對日期）；LocationFacts 排最後：位置是這幾段裡最不重要的一段。
+    # 統一排程（D-76 P2）把原本的用藥、回診兩段換成三段——標題逐字不變，第三段
+    # （長輩自己交代的事）是新增的。
+    # ⚠️ 稱呼曾經是第二段（ElderProfileFacts），2026-08-05 隨人設功能搬到提示詞
+    # 開頭，事實提供者因此由七路降為六路。
+    # ⚠️ 2026-08-07 再降為四路：三個 ScheduleFacts 併成一個，由**同一次**
+    # list_for_elder 供應三段（原本三個實例各打一次完全相同的查詢）。註冊成三個
+    # 在功能上完全看不出來——段落一模一樣、只是多兩次跨海往返——故在此釘住只有
+    # 一個。三段的**內部順序**改由 schedules/facts.py 的 _KIND_ORDER 負責，
+    # 對應測試 test_sections_follow_medication_appointment_custom_order。
     core = _core()
     facts = core.agent._session._facts
     assert [type(f) for f in facts] == [
         TimeFacts,
-        ElderProfileFacts,
-        ScheduleFacts,
-        ScheduleFacts,
         ScheduleFacts,
         StrategyFacts,
         LocationFacts,
-    ]
-    assert [f._kind for f in facts if isinstance(f, ScheduleFacts)] == [
-        ScheduleKind.MEDICATION,
-        ScheduleKind.APPOINTMENT,
-        ScheduleKind.CUSTOM,
     ]
 
 

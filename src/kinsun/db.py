@@ -22,6 +22,12 @@ ACCOUNTS_DDL = (
     "elder_id TEXT PRIMARY KEY, name TEXT NOT NULL);"
     # 稱謂欄（2026-07-17）：既有庫走 ALTER 升級（建表→遷移順序，同 appointments.time）。
     "ALTER TABLE elders ADD COLUMN IF NOT EXISTS nickname TEXT NOT NULL DEFAULT '';"
+    # 人設欄（2026-08-05）：既有庫走 ALTER 升級，既有長輩自動拿到預設人設。
+    # ⚠️ 預設值字面寫死為 'lively_granddaughter' 而不是插入 `personas` 的常數：
+    # 把 Python 值拼進 SQL 字串會讓「資料庫預設」與「程式預設」看似同步、實則
+    # 各自演化。兩邊由 `tests/test_accounts_store_contract.py` 對帳。
+    "ALTER TABLE elders ADD COLUMN IF NOT EXISTS persona TEXT NOT NULL "
+    "DEFAULT 'lively_granddaughter';"
     "CREATE TABLE IF NOT EXISTS guardians ("
     "guardian_id TEXT PRIMARY KEY, name TEXT NOT NULL);"
     "CREATE TABLE IF NOT EXISTS elder_guardians ("
@@ -557,12 +563,18 @@ ELDER_GUARDIANS_TRANSCRIPT_COLUMN_RETIRE_DDL = (
 SCHEMA_MIGRATION_LOCK_KEY = 4_242_001
 
 
-# 連線層存活設定（2026-07-26 全流程模擬實測抓到的排程器假死）──
+# 連線層存活設定（源於 2026-07-26 全流程模擬實測診斷排程器假死時的初判）──
 #
 # 現場：排程程序活著、CPU 幾乎零、日誌零成長，但每分鐘該跑的 job 停在七小時前；
 # `ss -tnp` 顯示它與 Supabase 的連線 `Recv-Q=11988`——收到資料卻沒有人讀。
-# 那是一條對端已經不在、而本地毫不知情的 TCP 連線；沒有 keepalive，作業系統
-# 永遠不會告訴我們，psycopg 就一直等下去。整個排程（含用藥提醒）因此靜默停擺。
+# 當時初判是一條對端已經不在、而本地毫不知情的 TCP 連線；沒有 keepalive，
+# 作業系統永遠不會告訴我們，psycopg 就一直等下去。
+#
+# ⚠️ **根因更正（2026-07-26 23:20）**：那次七小時停擺的真正根因是
+# `scheduler/state.py::try_claim` 拿浮點數做等值比對，與連線層完全無關（見
+# `docs/2026-07-26_全流程模擬實測報告.md`「根因更正」段、`docs/dev/14_部署與運維.md`
+# v1.17）。以下的 TCP keepalive 設定仍予保留——它防的是「對端連線真的消失、
+# 作業系統不通知」這另一類真實故障，只是**不是**那次停擺的解方。
 #
 # ⚠️ 伺服器端的 statement_timeout 救不了這種情形——回應根本到不了，不是查詢跑太久。
 # （實測附帶結論：Supabase 的 Supavisor 會把連線的 statement_timeout 覆寫成自己的
@@ -693,8 +705,9 @@ class Database:
     @classmethod
     def open(cls, url: str, *, min_size: int = 1, max_size: int = 5) -> Database:
         # kwargs：每條池內連線都開 TCP keepalive（見 _KEEPALIVE_KWARGS 的實測來由）。
-        # 沒有它，對端消失的連線會讓借到它的人無限期等待——排程器就是這樣靜默停擺
-        # 七小時而狀態頁還顯示 RUNNING。
+        # 沒有它，對端消失的連線會讓借到它的人無限期等待——這是一類真實故障，
+        # 但**不是** 2026-07-26 排程器靜默停擺七小時的根因（那次根因是
+        # try_claim 浮點等值比對，見 _KEEPALIVE_KWARGS 上方註解與 docs/dev/14 v1.17）。
         return cls(
             ConnectionPool(
                 url,

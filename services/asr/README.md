@@ -39,7 +39,7 @@ pipeline——因為 HF 內建的 `ffmpeg_read` 是把 bytes 灌進 ffmpeg `stdi
 | `ASR_MAX_QUEUE` | `8` | 等候佇列上限，超過回 503（`overloaded`） |
 | `ASR_API_KEY` | 空 | 共用金鑰（✅ D-56）：設定後驗 `X-Api-Key`（錯誤回 401）；留空＝內網不驗 |
 | `ASR_MAX_BODY_BYTES` | `10485760` | 單請求 body 上限（bytes）；超過回 413、空 body 回 400（✅ D-26） |
-| `ASR_PRELOAD` | `0` | 設 `1` 於服務啟動（lifespan）即載入模型，預設延遲載入 |
+| `ASR_PRELOAD` | `0` | 設 `1` 於服務啟動（lifespan）即載入模型。⚠️ **`scripts/kinsun.sh` 啟動時一律帶 `1`**（2026-08-07 起，見 docs/dev/14 §1「GPU 模型預熱」）——預設 0 是給沒有 GPU 的開發機用的，正式機延遲載入等於讓長輩的第一句話去撞 CUDA OOM |
 | `ASR_SILENCE_PEAK` | `0.001` | 靜音峰值閘（約 -60 dBFS）：解碼後峰值低於此值視為純靜音，回空字串不進模型（2026-07-18 實錄：0.35 秒空錄音讓模型幻覺「來，請坐…」迴圈、一輪空燒約 10 秒 GPU） |
 | `ASR_LANGUAGE` | `zh` | **釘死辨識語言**（V-01，2026-07-29）。空字串＝回到自動偵測（修正前行為），是就地回退的逃生口。詳見下方「為什麼一定要釘語言」 |
 

@@ -287,6 +287,10 @@ def _run_pipeline(
     這是一次對話的 Opik trace root（工程視角）：內含 pipeline 各階段 span 與投遞 span，
     kinsun trace_id／elder_id 由 pipeline 內的 tag_current_trace 掛上（含 thread 分組）。
     """
+    # 排隊等待只能以 metadata 進 trace，不能是 span：容量閘門包住的是本函式，排隊
+    # 整段發生在這個 root 開始之前（見 `turn_context.admission_wait` 的說明）。
+    # 0 也照寫——「這輪沒有排隊」與「這欄位沒人填」是兩件事，後者查起來會卡住。
+    tracing.update_trace_metadata(admission_wait_ms=turn_context.current_admission_wait_ms())
     try:
         result = produce()
     except (ASRError, LLMError, MemoryStoreError) as exc:
@@ -324,12 +328,22 @@ def _record_reply(
     started: float,
     timer: Callable[[], float],
 ) -> None:
-    if traces is None or not msg.trace_id:
-        return
     ended = timer()
     latency_ms = int((ended - started) * 1000)
     # 往返延遲（✅ D-05 戊-2）：通道收件 → 回覆送達的端到端耗時；起點未知記 NULL。
     round_trip_ms = int((ended - msg.received_at) * 1000) if msg.received_at else None
+    # ⚠️ 掛在 trace 上而不是只落庫（2026-08-08 觀測盤點）：這個數字原本只在 Postgres
+    # 的 `replies` 裡，Opik 一個字都沒有——想看端到端分布只能查 DB，而 Opik 上那個
+    # trace 時長**比它短**（trace 根在容量閘門之後才開始，實測差 246ms 中位）。用
+    # feedback score 而非 metadata，是因為只有前者在 Opik 上聚合得起來（要看的是
+    # p50／p95，不是單筆）。
+    # ⚠️ 起點未知時整個略過，不可補 0：一筆 0 毫秒的往返會直接毀掉整條分布。
+    # 這幾行刻意排在 `traces is None` 的守門**之前**——Opik 與 Postgres 是兩套獨立
+    # 的觀測，沒有理由讓其中一套的缺席連帶關掉另一套。
+    if round_trip_ms is not None:
+        tracing.log_feedback_score("round_trip_ms", round_trip_ms)
+    if traces is None or not msg.trace_id:
+        return
     # 在 care_conversation trace context 內抓 Opik trace id 存下，供後台深連結（停用回空字串）。
     opik_trace_id = tracing.current_opik_trace_id()
     safe_record(

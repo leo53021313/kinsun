@@ -66,6 +66,8 @@ class FetchedPage:
     content_type: str
     body: bytes
     fetched_at: datetime
+    # 下載端點的真檔名（PDF 沒有 <title>，只能靠這個取標題）。
+    content_disposition: str = ""
 
 
 @dataclass(frozen=True)
@@ -98,6 +100,7 @@ class HtmlTextExtractor(HTMLParser):
         self._primary_parts: list[str] = []
         self._fallback_parts: list[str] = []
         self._links: list[str] = []
+        self._anchor_depth = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = tag.lower()
@@ -113,10 +116,13 @@ class HtmlTextExtractor(HTMLParser):
         # 兩個不同主題的來源抓回一模一樣的 19 篇——本署簡介、組織架構圖、各業務
         # 服務窗口、本署位置……那 29 個是每頁都有的機關樣板頁，只是網址型態剛好
         # 也像文章。真正的主題文章是內容區那幾個。
-        if tag == "a" and self._skip_depth == 0:
-            href = dict(attrs).get("href")
-            if href:
-                self._links.append(urllib.parse.urljoin(self._base_url, href))
+        if tag == "a":
+            # 連結「文字」不收（見 handle_data），但連結本身照收——爬蟲整條路靠它。
+            self._anchor_depth += 1
+            if self._skip_depth == 0:
+                href = dict(attrs).get("href")
+                if href:
+                    self._links.append(urllib.parse.urljoin(self._base_url, href))
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
@@ -126,6 +132,8 @@ class HtmlTextExtractor(HTMLParser):
             self._title_depth -= 1
         if tag in _PRIMARY_TAGS and self._primary_depth:
             self._primary_depth -= 1
+        if tag == "a" and self._anchor_depth:
+            self._anchor_depth -= 1
 
     def handle_data(self, data: str) -> None:
         cleaned = _clean_inline(data)
@@ -133,6 +141,16 @@ class HtmlTextExtractor(HTMLParser):
             return
         if self._title_depth:
             self._title_parts.append(cleaned)
+        # 連結裡的文字是導覽，不是內文。政府網站的選單就是一堆連結，其文字全部
+        # 包在 <a> 裡——2026-08-07 實測國健署每頁 <a> 內恆為 3,084 字（各頁一字不差
+        # 的全站選單），<a> 外才是文章（三篇各 894／740／695 字）。附件與相關文件
+        # 的標題同理：疾管署〈新冠併發重症〉的 <a> 內是十餘份別份文件的標題，收進
+        # 來會把疾病介紹的向量污染成一份文件目錄。
+        # ⚠️ 先前壓平全頁再用外形猜哪段是選單，失敗過五次（長度下限→欄位數→
+        # 條列比例→跨文件行重複→重複次數門檻），每次都誤殺簡短的真衛教；改在解析
+        # 當下依結構分流，不再事後猜。
+        if self._anchor_depth:
+            return
         if self._skip_depth == 0:
             self._fallback_parts.append(cleaned)
             if self._primary_depth:
@@ -200,7 +218,7 @@ class DomainParserRegistry:
         text = _extract_pdf_text(page.body)
         return ParsedPage(
             url=page.url,
-            title=_pdf_title(page.url) or source.title,
+            title=_pdf_title(page) or source.title,
             text=text,
             links=(),
             published_at=_infer_date(text),
@@ -414,6 +432,7 @@ class HealthEducationCrawler:
                     content_type=response.headers.get("Content-Type", ""),
                     body=response.read(),
                     fetched_at=datetime.now(),
+                    content_disposition=response.headers.get("Content-Disposition", ""),
                 )
 
         # 固定間隔重試 retries+1 次；重試間睡 delay_seconds（走注入的 self._sleep 供測試斷言）。
@@ -430,7 +449,10 @@ class HealthEducationCrawler:
 
 
 def load_sitemap_urls(body: bytes, source: Source) -> tuple[str, ...]:
-    """從 sitemap.xml 取出屬於本來源的文章網址。
+    """從內容清單（sitemap.xml 或 RSS）取出屬於本來源的文章網址。
+
+    兩種格式都吃：sitemap 用 `<loc>`、RSS 用 `<item><link>`。cdc.gov.tw 沒有
+    sitemap 但有 RSS，兩者在管線裡扮演同一個角色——站方自己宣告的內容清單。
 
     只留下 `content_url_pattern` 命中的網址（留空則全收）與 allowlist 內的網域，
     並套用與爬取路徑相同的正規化（http→https、去 fragment），確保去重一致。
@@ -444,7 +466,7 @@ def load_sitemap_urls(body: bytes, source: Source) -> tuple[str, ...]:
     pattern = _content_pattern(source)
     urls: list[str] = []
     for node in root.iter():
-        if node.tag.rsplit("}", 1)[-1].lower() != "loc" or not node.text:
+        if node.tag.rsplit("}", 1)[-1].lower() not in ("loc", "link") or not node.text:
             continue
         url = _upgrade_to_https(_strip_fragment(unescape(node.text.strip())))
         if not _is_allowed_url(url, source.allowed_domains):
@@ -531,8 +553,24 @@ def _extract_pdf_text(body: bytes) -> str:
     return clean_text("\n".join(page.extract_text() or "" for page in reader.pages))
 
 
-def _pdf_title(url: str) -> str:
-    path = urllib.parse.urlsplit(url).path
+_DISPOSITION_FILENAME_RE = re.compile(r'filename\*?=(?:"([^"]*)"|([^;]+))', re.IGNORECASE)
+
+
+def _pdf_title(page: FetchedPage) -> str:
+    """PDF 的標題：優先取 Content-Disposition 的檔名，其次取網址最後一段。
+
+    下載端點的路徑段常常只是程式名（國健署 health.hpa.gov.tw 是
+    `Download.ashx`），真正的檔名在 Content-Disposition 或查詢字串裡。標題會接
+    在內文前面送進嵌入模型，也是引用時顯示給家屬看的字，取成「Download」兩邊都毀了。
+    """
+    match = _DISPOSITION_FILENAME_RE.search(page.content_disposition)
+    if match:
+        raw = (match.group(1) or match.group(2)).strip()
+        # 伺服器送的是 percent-encoded UTF-8（RFC 6266 的 filename* 亦同）。
+        name = urllib.parse.unquote(raw.split("''", 1)[-1])
+        if name:
+            return name.rsplit(".", 1)[0]
+    path = urllib.parse.urlsplit(page.url).path
     name = urllib.parse.unquote(path.rsplit("/", 1)[-1])
     return name.rsplit(".", 1)[0]
 

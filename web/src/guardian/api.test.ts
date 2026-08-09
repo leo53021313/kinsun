@@ -84,7 +84,7 @@ describe("家屬端 API", () => {
   });
 
   it("建立長輩只送 name", async () => {
-    const spy = mockFetch({ elder_id: "e1", name: "阿嬤", nickname: "", invite_code: "AB12" });
+    const spy = mockFetch({ elder_id: "e1", name: "阿嬤", nickname: "", persona: "lively_granddaughter", invite_code: "AB12" });
     const created = await createElder("阿嬤", "tok");
     expect(bodyOf(spy)).toEqual({ name: "阿嬤" });
     expect(created.invite_code).toBe("AB12");

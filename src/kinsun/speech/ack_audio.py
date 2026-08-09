@@ -101,15 +101,13 @@ class AckAudioCache:
 
     # ── 對話路徑（必須極快、且絕不拋例外）────────────────────────────
 
-    def clip_for(
-        self, tool_name: str, *, persona_name: str = acks.DEFAULT_PERSONA
-    ) -> AckClip | None:
+    def clip_for(self, tool_name: str, *, persona_id: str = acks.DEFAULT_PERSONA) -> AckClip | None:
         """這輪要唸的安撫話；還沒暖好或已過期就回 None（＝這輪不講）。
 
         ⚠️ 回 None 是**降級不是錯誤**：長輩退回原本的乾等體感，整輪對話照常完成。
         呼叫端不可因此讓這一輪失敗。
         """
-        phrase = acks.pick(tool_name, persona_name=persona_name, rng=self._rng)
+        phrase = acks.pick(tool_name, persona_id=persona_id, rng=self._rng)
         if not phrase:
             return None
         return self.clip_for_text(phrase)
