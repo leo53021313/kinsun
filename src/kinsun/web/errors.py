@@ -57,6 +57,7 @@ class ErrorCode(StrEnum):
     SLOTS_REQUIRED = "slots_required"
     INVALID_SLOT = "invalid_slot"
     INVALID_KIND = "invalid_kind"
+    INVALID_PERSONA = "invalid_persona"
     KIND_NOT_CHANGEABLE = "kind_not_changeable"
     OCCURRENCES_REQUIRED = "occurrences_required"
     INVALID_DATE = "invalid_date"

@@ -30,8 +30,22 @@ export type TalkFrame =
     }
   | { type: "error"; turn_id: string; text: string };
 
-/** setTimeout 的回傳值在 RN 與瀏覽器型別不同，這裡只當成不透明代號傳來傳去。 */
-export type RetryHandle = ReturnType<typeof setTimeout>;
+/**
+ * setTimeout 的回傳值在 RN 與瀏覽器型別不同，這裡只當成不透明代號傳來傳去。
+ *
+ * ⚠️ **兩種形狀都要明寫，不可用 `ReturnType<typeof setTimeout>` 去推**：`lib.dom`
+ * 宣告 `setTimeout` 回 `number`、`@types/node` 宣告它回 `NodeJS.Timeout`，兩份宣告
+ * 合併成多載，而 `ReturnType` 只取得到**其中一個**——取到哪一個由宣告檔的載入順序
+ * 決定，那個順序在不同機器上不一樣。症狀是「本機 tsc 全綠、CI 紅」：CI 上 `ReturnType`
+ * 取到 `Timeout`、呼叫端卻算出 `number | Timeout`，於是 `talkSocket.ts` 的 retryHandle
+ * ／guard 兩處與 `talkSocket.test.ts` 三個假 timer 全部報 TS2322（main 的 app job
+ * 自 2026-08-01 起長期紅字即此）。
+ *
+ * ⚠️ 也不可寫成 `ReturnType<typeof setTimeout> | number`：在 `ReturnType` 取到
+ * `number` 的機器上它塌縮成 `number`，一樣容不下 `Timeout`——看起來像修好了，
+ * 但只是在本機那一種順序下剛好成立，換到 CI 依然紅。
+ */
+export type RetryHandle = number | NodeJS.Timeout;
 
 /**
  * 把 WS 收到的 binary 訊框正規化成 ArrayBuffer。

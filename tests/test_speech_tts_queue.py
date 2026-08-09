@@ -223,3 +223,79 @@ def test_priority_context_is_isolated_between_threads():
     for thread in threads:
         thread.join(timeout=5)
     assert sorted(seen) == [TtsPriority.REPLY, TtsPriority.PREWARM]
+
+
+# ── 排隊與合成要分得開（2026-08-08 觀測盤點）──
+#
+# Opik 上原本只有一格 `tts`，裡面同時包著「排在別人後面等」與「GPU 真的在算」。
+# 兩者的處置完全不同——排隊久代表併發超過一顆 GPU 的容量（要加閘門或降併發），
+# 合成久代表回覆太長或模型太慢（要縮字數或改串流）。混成一格就分不出該修哪個。
+
+
+def test_queue_wait_and_synthesis_are_separate_spans(monkeypatch):
+    """兩段各自成格，名字固定，供 Opik 分辨「在排隊」與「在算」。"""
+    import opik
+
+    from kinsun.tracing import client as tracing_client
+    from kinsun.tracing import decorators as tracing_decorators
+
+    names: list[str] = []
+    monkeypatch.setattr(opik, "track", lambda **kw: (names.append(kw.get("name")), lambda f: f)[1])
+    monkeypatch.setattr(tracing_decorators, "is_enabled", lambda: True)
+    monkeypatch.setattr(tracing_client, "_ENABLED", True)
+
+    client = QueuedTtsClient(_RecordingTts())
+    try:
+        assert client.synthesize("嗨").text == "嗨"
+    finally:
+        client.close()
+    assert "tts_queue_wait" in names
+    assert "tts_synthesize" in names
+
+
+def test_queue_wait_returns_once_the_worker_picks_the_job_up():
+    """排隊那一格要在 worker **接手時**結束，不是等整段合成完——否則兩格會一樣長。"""
+    inner = _RecordingTts()
+    inner.gate.clear()  # 卡住合成，讓「已接手但還沒算完」這個狀態存在
+    client = QueuedTtsClient(inner)
+    thread, box = _call_in_thread(client, "嗨")
+    try:
+        # worker 接手後，排隊已經結束，但合成還被 gate 卡著。
+        for _ in range(100):
+            if inner.started:
+                break
+            threading.Event().wait(0.01)
+        assert inner.started == ["嗨"]
+        assert not inner.finished
+    finally:
+        inner.gate.set()
+        thread.join(timeout=5)
+        client.close()
+    assert box["result"].text == "嗨"
+
+
+def test_inner_errors_still_reach_the_caller_with_spans_split():
+    """拆成兩段之後，例外仍要原樣傳回呼叫端——不可被排隊那一段吞掉。"""
+
+    class _Boom:
+        def synthesize(self, text: str, *, voice=None) -> TtsResult:
+            raise TTSError("壞了")
+
+    client = QueuedTtsClient(_Boom())
+    try:
+        with pytest.raises(TTSError, match="壞了"):
+            client.synthesize("嗨")
+    finally:
+        client.close()
+
+
+def test_caller_is_not_stuck_when_the_job_is_cancelled():
+    """worker 沒真的跑（future 被取消）時，排隊那一格仍必須結束，不可永遠等下去。"""
+    inner = _RecordingTts()
+    client = QueuedTtsClient(inner)
+    try:
+        assert client.synthesize("嗨").text == "嗨"
+    finally:
+        client.close()
+    # 關閉後仍有人要合成：就地執行，不走佇列（既有行為，不可因拆格而改變）。
+    assert client.synthesize("收工後").text == "收工後"

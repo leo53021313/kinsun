@@ -5,7 +5,8 @@
  *  ⚠️ 後端 `GET /elders` 與 `POST /elders` 一直都有回這個欄位，型別卻沒宣告
  *  （A-10，2026-07-29）：TS 消費端因此**取不到**一個明明送過來的值，而編譯器不會
  *  提醒任何人——它只是安靜地不存在。前後端同鍵名是本檔的存在理由。 */
-export type Elder = { elder_id: string; name: string; nickname: string };
+/** `persona`＝金孫對這位長輩用哪一種語氣（2026-08-05）。值域見後端 `personas.py`。 */
+export type Elder = { elder_id: string; name: string; nickname: string; persona: string };
 export type CreatedElder = Elder & { invite_code: string };
 /** 統一排程（D-76 P3）：用藥、回診與長輩自訂提醒共用同一個資源。 */
 export type ScheduleKind = "medication" | "appointment" | "custom";

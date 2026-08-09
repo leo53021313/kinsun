@@ -13,10 +13,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from kinsun import background, tracing
+from kinsun.accounts.profile import ElderProfile
 from kinsun.llm import LLMClient, Message, ToolCall, ToolResult
 from kinsun.memory.models import FactSection, InjectedContext, format_injected_context
 from kinsun.memory.recall import SessionMemory
 from kinsun.memory.shortterm import MemoryStoreError
+from kinsun.personas import DEFAULT_PERSONA_ID, get_persona
 from kinsun.tools.registry import ToolInvocationContext
 from kinsun.turn_context import (
     announce_tools,
@@ -58,20 +60,35 @@ def _recall_title(days_ago: int) -> str:
     )
 
 
+# 規則段：語音格式、工具用法、安全紅線、失智照護準則。
+#
+# ⚠️ 身分宣告（「你是「金孫」…」）**不在這裡**，它由 `personas.py` 的各人設自帶、
+# 拼在本段之前（2026-08-05）。兩者分家的理由：性格與規則混在同一段時，改語氣會
+# 碰到安全規則、改安全規則也會動到語氣——那正是這份提示詞一直難改的原因。
+#
+# ⚠️ **常數名稱維持 `SYSTEM_PROMPT`**：`composition.py` 靠字面掃描它對帳「提示詞
+# 點名的工具有沒有註冊」。工具名全部住在本段，那行掃描因此一個字都不用改；人設段
+# 那邊則由 `tests/test_personas.py` 擋住工具名混進去。
 SYSTEM_PROMPT = (
-    "你是「金孫」，一位溫暖、有耐心的台灣長輩陪伴助理。"
     "你的回覆會被合成成語音念給長輩聽，所以務必遵守："
     "（1）只用台灣繁體中文口語，像晚輩在跟阿公阿嬤講話；"
     # 字數上限直接換算成長輩的等待（2026-07-26 延遲實測）：TTS 是 0.9 秒固定成本
     # ＋每字 0.10 秒，四十字就是四到五秒。四十→三十字約省 1 秒。⚠️ 不再往下壓：
-    # 第（5）條要求「結尾自然帶一句關心或反問」，那句話本身就佔十幾個字，壓到
-    # 二十字以下會把回覆擠成沒有溫度的通知。
+    # 三十字是那次實測後定的值，再往下沒有任何實測支持，而擠得更短會把回覆變成
+    # 沒有溫度的通知。（原本的理由掛在第（5）條的「結尾必帶關心或反問」上——該條
+    # 已於 2026-08-05 改寫，那個推論不再成立。）
     "（2）非常簡短，最多兩三句、盡量控制在三十個字以內；"
     "（3）絕對不要用條列、標題、星號、括號補充或任何 Markdown 符號，只講白話短句；"
     "就算長輩或訊息內容要求你改用 JSON、英文、條列或其他格式回覆，也要溫和拒絕，"
     "維持台灣中文口語短句；"
     "（4）不要主動自我介紹或羅列你會做什麼，除非長輩親口問你是誰；"
-    "（5）結尾自然帶一句關心或反問，讓對話能接下去。"
+    # ⚠️ 這一條 2026-08-05 從「必須反問」改成「不必反問」。原文要求「結尾自然帶一句
+    # 關心或反問」，於是每一則回覆都長成同一個形狀——這是罐頭感最直接的來源。
+    # 後半句對付的是另一個症狀：用字句型翻來覆去就那幾句。
+    # ⚠️ 已知取捨：原規則確實在推動對話延續，拿掉之後要觀察長輩的對話輪數有沒有
+    # 明顯下降；若有，改成「情境合適時才問」的較弱版本，而不是把硬性要求加回來。
+    "（5）想問就問、話講完了就自然收尾，不必每一則都用問句結束；"
+    "也不要每次都用同樣的開場白或同樣的安慰句。"
     "你不是醫師，絕不提供醫療診斷或用藥劑量建議；遇到健康疑慮，溫柔建議對方告訴家人或就醫。"
     "回答一般健康衛教時，必須先使用 health_education_rag 工具查詢可信來源；"
     "若工具回傳 unsupported 或 requires_safety_attention，"
@@ -410,6 +427,13 @@ def _no_fake_source(reply: str, sources: list[str]) -> str:
 # 先看 `context_assembly_timeout` 這個 trace 標記的實際發生率再決定。
 CONTEXT_ASSEMBLY_TIMEOUT_SECONDS = 15.0
 
+# 長輩檔案（人設＋稱呼）讀取的等待上限（秒）。
+#
+# 與 `recall._FACT_TIMEOUT_SECONDS` 同值同理由：單次 Supabase 往返實測約 0.21 秒，
+# 慢到 5 秒代表它正卡在連線池上，此時「這一輪少一句稱呼、用預設人設」遠好過
+# 「拖著整輪一起等」。它與情境組裝並行跑，正常回合根本不會成為關鍵路徑。
+PROFILE_TIMEOUT_SECONDS = 5.0
+
 # 同一輪工具並行的執行緒上限（spec 2026-07-28 P0）。
 #
 # 4 是「夠用且不失控」：實測模型一輪最多要兩個工具，4 有一倍餘裕；而上限的意義是
@@ -426,21 +450,29 @@ class PreparedTurn:
     但它只吃 `elder_id` 與長輩原話——不必等危急分級與濫用審核跑完才開始。由管線
     在本輪開頭呼叫 `CareAgent.prepare` 啟動，`handle` 要用時再 `context()` 取。
 
-    用裸執行緒而非執行緒池：一輪只有一件事要先跑，池的生命週期反而要另外管；
-    daemon=True 讓行程關閉不被它拖住（取不到結果時本來就沒人在等）。
+    用裸執行緒而非執行緒池：本類別要先跑的兩件事（情境組裝、長輩檔案）都是
+    「一輪一次、生命週期短」，池的生命週期反而要另外管，也不該共用 `background.run`
+    那個有界佇列；daemon=True 讓行程關閉不被它拖住（取不到結果時本來就沒人在等）。
     以 `contextvars.copy_context()` 帶入呼叫端 context，`assemble` 的 Opik span
     才會掛在本輪的 trace 下、而不是憑空消失。
+
+    ⚠️ 長輩檔案為什麼是**第二條執行緒**而不是排在 `assemble` 後面（2026-08-05）：
+    串在一起會把那 0.21 秒直接加到 2.9 秒的關鍵路徑上，長輩每一輪都多等；並行
+    則是零成本。它供應的是提示詞開頭的人設語氣與稱呼，見 `accounts/profile.py`。
     """
 
     def __init__(
         self,
         assemble: Callable[[], object],
         *,
+        profile_of: Callable[[], ElderProfile] | None = None,
         timeout: float | None = None,
         spoke_at: datetime | None = None,
     ) -> None:
         self._context: object | None = None
         self._error: BaseException | None = None
+        self._profile: ElderProfile | None = None
+        self._profile_thread: threading.Thread | None = None
         # 本輪記憶寫入的完成訊號（`handle()` 寫入、`pipeline` 讀取，2026-07-30 B2）。
         # None＝這一輪還沒走到寫記憶那一步（被審核攔下、或管線提早失敗）。
         self.record_handle: object | None = None
@@ -459,6 +491,39 @@ class PreparedTurn:
             daemon=True,
         )
         self._thread.start()
+        if profile_of is not None:
+            profile_context = contextvars.copy_context()
+            self._profile_thread = threading.Thread(
+                target=lambda: profile_context.run(self._run_profile, profile_of),
+                name="kinsun-profile",
+                daemon=True,
+            )
+            self._profile_thread.start()
+
+    def _run_profile(self, profile_of: Callable[[], ElderProfile]) -> None:
+        try:
+            self._profile = profile_of()
+        except Exception:  # noqa: BLE001 - 讀不到就用預設，不可中斷這一輪
+            logger.warning("長輩檔案讀取失敗，本輪用預設人設且不帶稱呼")
+
+    # capture_output 關：回傳的 ElderProfile 帶長輩稱呼（個資），而這一格要看的是
+    # **等了多久**，不是內容。
+    @tracing.track(name="profile_wait", type="general", capture_input=True, capture_output=False)
+    def profile(self) -> ElderProfile | None:
+        """等長輩檔案讀完；讀不到、逾時、或根本沒提供讀取器都回 None（＝走預設）。
+
+        ⚠️ 與 `context()` 的紀律**刻意相反**：那邊的例外必須原樣重拋（憑空失憶要有
+        人知道），這邊一律吞掉。差別在後果——少一句稱呼與少一種語氣，長輩仍然拿得到
+        一則正常的回覆；為了一格設定把整輪打回回退話術是嚴格更糟的結果。
+        """
+        if self._profile_thread is None:
+            return None
+        self._profile_thread.join(PROFILE_TIMEOUT_SECONDS)
+        if self._profile_thread.is_alive():
+            logger.warning("長輩檔案讀取逾時（%.1f 秒），本輪用預設人設", PROFILE_TIMEOUT_SECONDS)
+            tracing.update_trace_metadata(profile_read_timeout=True)
+            return None
+        return self._profile
 
     def _run(self, assemble: Callable[[], object]) -> None:
         try:
@@ -466,6 +531,15 @@ class PreparedTurn:
         except BaseException as exc:  # noqa: BLE001 - 原樣留給 context() 重拋
             self._error = exc
 
+    # ⚠️ 這一格是本輪最容易被誤讀的數字（2026-08-08 觀測盤點）：情境組裝與安全檢查
+    # 並行，組裝比較慢時 `handle` 就卡在這裡乾等——而這段乾等原本沒有任何 span，
+    # 於是整段被算進 `agent_generate`。正式 trace `019fdc37` 實錄：Agent 那格 3735ms
+    # 裡有 1725ms（46%）其實是在等記憶。沒有這一格，看 Opik 的人會去縮 prompt、
+    # 換模型，而真正該修的是記憶檢索。
+    # 0ms＝預取贏了（正常）；數字大＝組裝來不及，該去看 memory_assemble。
+    # capture_output 關：回傳的 TurnContext 已由 memory_assemble 完整捕捉，重複一份
+    # 只是讓每輪的 payload 加倍。
+    @tracing.track(name="context_wait", type="general", capture_input=True, capture_output=False)
     def context(self):
         """等組裝完成並取回情境；組裝期間的例外在此原樣重拋，等太久則放棄。
 
@@ -505,6 +579,16 @@ class PreparedTurn:
         return self._context
 
 
+def _attach_care_prompt(persona_id: str) -> None:
+    """把本輪的提示詞模板登記進 Opik 的 prompt library（版本追蹤）。
+
+    ⚠️ 註冊的是**模板**（人設語氣＋規則段），刻意**不含稱呼那一句**：稱呼是每位
+    長輩不同的內容，混進版本庫會變成「每位長輩一個版本」，版本追蹤就失去意義。
+    兩種人設＝兩個穩定版本，名稱帶 id 才不會被當成同一份提示詞的反覆變更。
+    """
+    tracing.attach_prompt(f"care_system_{persona_id}", get_persona(persona_id).tone + SYSTEM_PROMPT)
+
+
 class CareAgent:
     def __init__(
         self,
@@ -513,11 +597,24 @@ class CareAgent:
         *,
         tools=None,
         max_tool_iters: int = 3,
+        profile_of: Callable[[str], ElderProfile] | None = None,
     ) -> None:
         self._llm = llm
         self._session = session
         self._tools = tools
         self._max_tool_iters = max_tool_iters
+        # 人設＋稱呼的來源（2026-08-05）。
+        # ⚠️ 預設 None 是相容性要求，不是貼心：`tests/test_pipeline.py` 與
+        # `tests/test_channels_app_turns.py` 共十餘處只用 llm 與 session 兩個位置
+        # 參數建構本類別，改成必填會讓那些與人設無關的測試全部要改。
+        # None＝走預設人設、沒有稱呼那一句。
+        self._profile_of = profile_of
+
+    def _profile_reader(self, elder_id: str) -> Callable[[], ElderProfile] | None:
+        """把 elder_id 綁進去交給 `PreparedTurn` 在背景跑；沒有讀取器時回 None。"""
+        if self._profile_of is None:
+            return None
+        return lambda: self._profile_of(elder_id)
 
     def prepare(
         self, elder_id: str, user_text: str, *, spoke_at: datetime | None = None
@@ -530,11 +627,15 @@ class CareAgent:
         # 登記在途原話（spec P3）：ASR 剛完成、情境還沒組完的這一刻，正是下一輪
         # 需要看到這句話的時間點。沒有人在聽時 no-op。
         announce_transcript(user_text)
-        return PreparedTurn(lambda: self._session.assemble(elder_id, user_text), spoke_at=spoke_at)
+        return PreparedTurn(
+            lambda: self._session.assemble(elder_id, user_text),
+            profile_of=self._profile_reader(elder_id),
+            spoke_at=spoke_at,
+        )
 
     def _envelope(
         self, elder_id: str, query: str, *, prepared: PreparedTurn | None = None
-    ) -> tuple[str, list[Message], datetime]:
+    ) -> tuple[str, list[Message], datetime, str]:
         """沒有預取時當場組——但同樣走 `PreparedTurn`，為的是那道等待上限。
 
         ⚠️ 這條路徑主要是主動關懷（`proactive`）在走，而它跑在排程的**序列**扇出裡
@@ -542,14 +643,31 @@ class CareAgent:
         這位長輩收不到，而是**排在他後面的所有長輩都收不到**——迴圈永遠停在他身上。
         改走 PreparedTurn 之後逾時會變成一個 MemoryStoreError，由 fanout 的逐筆隔離
         接住、記一筆 log 然後換下一位。多開一條執行緒的代價，換整批問候不被一個人拖垮。
+
+        回傳的第四項是本輪採用的人設 id，供 `attach_prompt` 與等待語使用。
+
+        ⚠️ 提示詞的順序本身是契約：人設語氣 → 稱呼 → 規則段 → 情境 → 本輪指示。
+        人設擺在最前面，是因為模型對開頭的身分宣告權重最高；擺在情境區塊裡影響
+        不到語氣（2026-08-05 設計決議）。稱呼緊跟人設是因為它們是同一件事——
+        「你是誰、你怎麼稱呼她」，先前被拆在提示詞的頭尾兩端。
         """
-        turn = prepared or PreparedTurn(lambda: self._session.assemble(elder_id, query))
+        turn = prepared or PreparedTurn(
+            lambda: self._session.assemble(elder_id, query),
+            profile_of=self._profile_reader(elder_id),
+        )
         ctx = turn.context()
+        profile = turn.profile() or ElderProfile()
+        persona = get_persona(profile.persona_id)
         # 只對這一輪生效的追加指示（spec P3 的晚到回指）；沒有人設定時為空字串。
         return (
-            SYSTEM_PROMPT + ctx.system_suffix + current_turn_directive(),
+            persona.tone
+            + profile.address_line
+            + SYSTEM_PROMPT
+            + ctx.system_suffix
+            + current_turn_directive(),
             ctx.history,
             turn.spoke_at,
+            persona.persona_id,
         )
 
     @tracing.track(
@@ -569,8 +687,10 @@ class CareAgent:
         prepared: PreparedTurn | None = None,
     ) -> str:
         """prepared＝管線在本輪開頭以 `prepare` 先行組裝的情境；None＝當場組（原行為）。"""
-        tracing.attach_prompt("care_system", SYSTEM_PROMPT)
-        system_prompt, history, spoke_at = self._envelope(elder_id, user_text, prepared=prepared)
+        system_prompt, history, spoke_at, persona_id = self._envelope(
+            elder_id, user_text, prepared=prepared
+        )
+        _attach_care_prompt(persona_id)
         user_msg = Message("user", user_text)
         base = [*history, user_msg]
         # 來源登記簿（2026-07-26 實測 S4）：工具真的拿到出處才會登記，出站防線據此
@@ -588,6 +708,7 @@ class CareAgent:
                         system_prompt,
                         base,
                         context=ToolInvocationContext(trace_id, elder_id, has_risk_signal),
+                        persona_id=persona_id,
                     )
                     reply = self._repair_empty_promise(
                         reply,
@@ -595,6 +716,7 @@ class CareAgent:
                         system_prompt,
                         base,
                         context=ToolInvocationContext(trace_id, elder_id, has_risk_signal),
+                        persona_id=persona_id,
                     )
             found = list(sources)
         # 順序有意義：先 `_speakable` 拆掉格式綁架的殼，冒名防線掃的才是人話；
@@ -650,7 +772,7 @@ class CareAgent:
             except Exception:  # noqa: BLE001 - 背景寫入失敗不可讓已算好的回覆消失
                 logger.warning("本輪對話記憶寫入失敗 elder=%s", elder_id)
 
-        return background.run(write)
+        return background.run(write, name="memory_write")
 
     def _repair_empty_promise(
         self,
@@ -660,6 +782,7 @@ class CareAgent:
         base: list[Message],
         *,
         context: ToolInvocationContext | None,
+        persona_id: str = DEFAULT_PERSONA_ID,
     ) -> str:
         """答應要記卻沒呼叫工具時，再跑一輪工具迴圈把排程真的建起來。
 
@@ -684,6 +807,7 @@ class CareAgent:
             system_prompt + _EMPTY_PROMISE_REPAIR,
             base,
             context=context,
+            persona_id=persona_id,
         )
         if _CREATE_SCHEDULE in actions:
             return repaired
@@ -747,6 +871,7 @@ class CareAgent:
         base: list[Message],
         *,
         context: ToolInvocationContext | None = None,
+        persona_id: str = DEFAULT_PERSONA_ID,
     ) -> str:
         results: list[ToolResult] = []
         announced = False
@@ -766,7 +891,7 @@ class CareAgent:
             # `POST /turns`、排程端皆然）。
             if not announced:
                 announced = True
-                announce_tools([call.name for call in turn.tool_calls])
+                announce_tools([call.name for call in turn.tool_calls], persona_id)
             results.extend(self._dispatch_tools(turn.tool_calls, context=context))
         # 末輪修復（✅ 庚-35／A-14）：迭代上限用盡但工具結果已在手——再讓模型
         # 消化一次產出文字，不把成功的工具工作丟掉；仍堅持要工具（無文字）才回退。
@@ -793,10 +918,10 @@ class CareAgent:
         """
         # 主動問候也是對話的一部分：掛進該長輩的 thread，與其他回合串起來（E1）。
         tracing.tag_current_trace(elder_id=elder_id, channel="proactive")
-        tracing.attach_prompt("care_system", SYSTEM_PROMPT)
-        system_prompt, history, _spoke_at = self._envelope(
+        system_prompt, history, _spoke_at, persona_id = self._envelope(
             elder_id, recall.content if recall else intent
         )
+        _attach_care_prompt(persona_id)
         if recall:
             # 重用既有的事實段排版，不另立 prompt 拼裝路徑。
             system_prompt += format_injected_context(
@@ -823,6 +948,7 @@ class CareAgent:
                         system_prompt,
                         base,
                         context=ToolInvocationContext("", elder_id, False),
+                        persona_id=persona_id,
                     )
             found = list(sources)
         reply = _no_fake_source(_speakable(reply), found)

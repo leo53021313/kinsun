@@ -15,7 +15,17 @@ from kinsun.memory.models import MemoryItem
 logger = logging.getLogger(__name__)
 
 # 每輪固定增補檢索：讓用藥/慢性病等穩定健康事實即使與當下話題無關也浮現。
-HEALTH_QUERY = "用藥 慢性病 過敏 回診 健康狀況"
+#
+# ⚠️ 不可改回**空格分隔**的關鍵字串（原為 "用藥 慢性病 過敏 回診 健康狀況"）：mem0 的
+# `_search_vector_store` 會先跑 `extract_entities(query)`，抽得出實體就多跑一輪
+# `_compute_entity_boosts`——一次 `embed_batch`（Gemini API）＋對 entity store 發
+# `top_k=500` 的向量查詢。空格分隔會被判成實體，自然中文句不會。
+# 2026-08-07 實測（真實長輩 16 筆記憶）：長輩原話那路 839ms（embed 302＋vector 518，
+# 加總即全部），本路 1808ms——多出的 994ms 全在 entity boost。兩路是並行的，總耗時
+# 由慢的那路決定，故這個空格讓整個長期記憶檢索從 0.84s 變成 1.8s。
+# 改寫後實測 1466ms → 701ms，且撈回的記憶與改寫前完全相同。
+# 由 `test_health_query_does_not_trigger_mem0_entity_boost` 守住。
+HEALTH_QUERY = "最近的用藥、慢性病、過敏與回診等健康狀況"
 
 
 class LongTermStore(Protocol):

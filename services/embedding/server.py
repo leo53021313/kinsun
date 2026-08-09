@@ -114,9 +114,22 @@ async def healthz() -> dict:
 
 
 def _require_api_key(request: Request) -> None:
+    """驗共用金鑰；未設＝內網開發模式不驗（比照 ASR／TTS）。
+
+    收兩種標頭：`X-Api-Key` 是本服務原生的作法（RAG 的 `LocalEmbeddingModel` 用它），
+    `Authorization: Bearer` 則是 OpenAI 相容端點的必要條件——openai 套件只會把金鑰
+    放進 Bearer，不會送 X-Api-Key，而 mem0 走 `provider="openai"` 打 `/v1/embeddings`
+    時用的正是那個套件。
+    """
     if not EMBEDDING_API_KEY:
         return
-    if not hmac.compare_digest(request.headers.get("x-api-key", ""), EMBEDDING_API_KEY):
+    supplied = request.headers.get("x-api-key", "")
+    if not supplied:
+        authorization = request.headers.get("authorization", "")
+        scheme, _, token = authorization.partition(" ")
+        if scheme.lower() == "bearer":
+            supplied = token.strip()
+    if not hmac.compare_digest(supplied, EMBEDDING_API_KEY):
         raise HTTPException(status_code=401, detail="invalid_api_key")
 
 
@@ -140,4 +153,89 @@ async def embed(payload: EmbedRequest, request: Request) -> dict:
         "vectors": vectors,
         "model": EMBEDDING_MODEL_ID,
         "dimensions": len(vectors[0]) if vectors else EMBEDDING_DIMENSIONS,
+    }
+
+
+# OpenAI `/v1/embeddings` 的兩種編碼。⚠️ **base64 是 openai 套件的預設值**，不是選配：
+# 新版 SDK 為了省傳輸量，未指定 encoding_format 時一律送 base64，再自己解回 float。
+# 只支援 float 的話，mem0 走 openai provider 打過來的第一個請求就會拿到 400——而這
+# 在手工組 JSON 的測試裡完全看不出來（2026-08-07 用真的 openai 套件實測才發現）。
+_ENCODINGS = frozenset({"float", "base64"})
+
+
+def _encode_base64(vector: list[float]) -> str:
+    """比照 OpenAI：float32 小端序原始位元組再 base64。
+
+    dtype 必須是 float32——SDK 端固定以 `np.frombuffer(..., dtype="float32")` 解碼，
+    給 float64 會讓維度整整多一倍，而且解出來的數值全是亂的。
+    """
+    import base64
+    import struct
+
+    return base64.b64encode(struct.pack(f"<{len(vector)}f", *vector)).decode("ascii")
+
+
+class OpenAIEmbeddingRequest(BaseModel):
+    """OpenAI `POST /v1/embeddings` 的請求子集（只收本服務用得到的欄位）。"""
+
+    input: str | list[str]
+    model: str | None = None  # 呼叫端指定的名字僅供辨識；本服務永遠是 EMBEDDING_MODEL_ID
+    dimensions: int | None = None
+    encoding_format: str | None = None
+
+
+@app.post("/v1/embeddings")
+async def openai_embeddings(payload: OpenAIEmbeddingRequest, request: Request) -> dict:
+    """OpenAI 相容端點，供 mem0 的長期記憶檢索使用（`provider="openai"`＋`openai_base_url`）。
+
+    為什麼另開一個端點而不是改 `/embed`：`/embed` 是 RAG 收錄與檢索的既有契約
+    （`kinsun.rag.embeddings.LocalEmbeddingModel`），不該為了第二個呼叫端變形。兩個
+    端點共用同一顆已載入的模型與同一道併發閘，只是外皮不同。
+
+    為什麼不用 mem0 的 `huggingface` provider：它在模組頂層 `import sentence_transformers`
+    （連帶拉進 torch），而 API 那一端刻意不裝這些重相依；`openai` 套件本來就在依賴裡，
+    走相容協定零新增相依。
+
+    ⚠️ `dimensions` 必須明著拒絕不合的值：mem0 設了 `embedding_dims` 就會把它傳下來
+    （見 mem0 `embeddings/openai.py`）。BGE-M3 的 dense 維度固定 1024，收到 768 這種
+    要求若悄悄回 1024，呼叫端會以為截斷成功、把 1024 維寫進 768 維的向量庫才爆，
+    而那時的錯誤訊息離根因已經很遠。
+    """
+    global _inflight
+    _require_api_key(request)
+    if payload.encoding_format is not None and payload.encoding_format not in _ENCODINGS:
+        raise HTTPException(status_code=400, detail="unsupported_encoding_format")
+    texts = [payload.input] if isinstance(payload.input, str) else list(payload.input)
+    if not texts:
+        raise HTTPException(status_code=422, detail="empty_input")
+    if len(texts) > EMBEDDING_MAX_BATCH:
+        raise HTTPException(status_code=413, detail="batch_too_large")
+    if any(not text.strip() for text in texts):
+        raise HTTPException(status_code=400, detail="empty_text")
+    if payload.dimensions is not None and payload.dimensions != EMBEDDING_DIMENSIONS:
+        raise HTTPException(status_code=400, detail="unsupported_dimensions")
+    if _inflight >= EMBEDDING_MAX_CONCURRENCY + EMBEDDING_MAX_QUEUE:
+        raise HTTPException(status_code=503, detail="overloaded")
+    _inflight += 1
+    try:
+        async with _sem:
+            vectors = await run_in_threadpool(_embed, texts)
+    finally:
+        _inflight -= 1
+    as_base64 = payload.encoding_format == "base64"
+    return {
+        "object": "list",
+        # index 必須忠實對應輸入順序：mem0 的 embed_batch 依它重新排序（見其 openai.py），
+        # 順序錯置會讓記憶與向量張冠李戴，而那看起來完全正常。
+        "data": [
+            {
+                "object": "embedding",
+                "index": index,
+                "embedding": _encode_base64(vector) if as_base64 else vector,
+            }
+            for index, vector in enumerate(vectors)
+        ],
+        "model": EMBEDDING_MODEL_ID,
+        # 本服務不計費，token 數僅為滿足 OpenAI 協定的必填欄位；不假裝算得準。
+        "usage": {"prompt_tokens": 0, "total_tokens": 0},
     }
