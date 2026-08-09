@@ -242,3 +242,72 @@ def test_a_hanging_fact_provider_is_treated_as_a_missing_section(monkeypatch):
 
     assert [s.title for s in ctx.injected.sections] == ["\n用藥：\n"]
     assert elapsed < 1.0, f"耗時 {elapsed:.2f}s，卡住的那段沒有被放棄"
+
+
+def test_gather_facts_expands_provider_returning_multiple_sections():
+    """一個提供者可回多段，展開後仍排在它自己的註冊位置上（不是排到最前或最後）。
+
+    ScheduleFacts 要用一次查詢供三段（用藥／回診／自訂），故 FactProvider
+    的回傳放寬為「單段、多段或缺席」。順序是 prompt 契約：多段要就地展開。
+
+    ⚠️ fixture 刻意用「單段→多段→單段」夾心：若誤實作成「多段一律前置」，
+    對 [單, 多, 單] 三個提供者會得到 [多段的兩個, 單段甲, 單段丁]，與「就地
+    展開」的正確順序不同，才測得出來（舊版 fixture 只有 [多, 單] 兩個提供者，
+    「多段前置」與「就地展開」剛好同解，測不出這種誤實作）。
+    """
+
+    class _First:
+        def facts(self, elder_id):
+            return FactSection("丙", ["c"])
+
+    class _Multi:
+        def facts(self, elder_id):
+            return [FactSection("甲", ["a"]), FactSection("乙", ["b"])]
+
+    class _Last:
+        def facts(self, elder_id):
+            return FactSection("丁", ["d"])
+
+    memory = SessionMemory(_ShortTerm(), FakeLongTermStore(), facts=[_First(), _Multi(), _Last()])
+    sections = memory._gather_facts("elder-1")
+    assert [s.title for s in sections] == ["丙", "甲", "乙", "丁"]
+
+
+def test_gather_facts_provider_returning_empty_list_is_absent():
+    """回空清單＝該提供者整段缺席，與回 None 同義（某個 kind 沒排程時的情形）。"""
+
+    class _Empty:
+        def facts(self, elder_id):
+            return []
+
+    memory = SessionMemory(_ShortTerm(), FakeLongTermStore(), facts=[_Empty()])
+    assert memory._gather_facts("elder-1") == []
+
+
+# ── 寫記憶要看得見（2026-08-08 觀測盤點）──
+#
+# `record_turn` 走背景寫入，但它不是沒有人在等：`pipeline._settle_memory_write`
+# 會在交出回覆前等它落地。原本這兩段在 Opik 一格都沒有——探針實測寫入曾經跑到
+# 4.2 秒，而 trace 上完全看不出來。
+
+
+def _spy_span_names(monkeypatch) -> list[str]:
+    import opik
+
+    from kinsun.tracing import client as tracing_client
+    from kinsun.tracing import decorators as tracing_decorators
+
+    names: list[str] = []
+    monkeypatch.setattr(opik, "track", lambda **kw: (names.append(kw.get("name")), lambda f: f)[1])
+    monkeypatch.setattr(tracing_decorators, "is_enabled", lambda: True)
+    monkeypatch.setattr(tracing_client, "_ENABLED", True)
+    return names
+
+
+def test_record_turn_is_its_own_span(monkeypatch):
+    from kinsun.memory.shortterm import FakeMemoryStore
+
+    names = _spy_span_names(monkeypatch)
+    session = SessionMemory(FakeMemoryStore(), FakeLongTermStore())
+    session.record_turn("e1", Message("user", "嗨"), Message("assistant", "哈囉"))
+    assert "memory_record_turn" in names

@@ -9,6 +9,7 @@
 那條防線是意外的。故根治必須是結構性的：讓工具拒絕沒有依據的地點。
 """
 
+from kinsun import turn_context
 from kinsun.turn_context import current_utterance, elder_utterance
 
 
@@ -121,3 +122,43 @@ def test_budget_is_reset_between_turns(monkeypatch):
     with tc.turn_budget(30.0):
         assert tc.remaining_budget() == 30.0
     assert tc.remaining_budget() is None
+
+
+# ── 排隊等待要看得見（2026-08-08 觀測盤點）──
+#
+# 容量閘門（`channels/app/admission.py`）包住的是 `dispatch`，而 `dispatch` 正是
+# Opik 的 trace 根——也就是說「排隊等空位」整段發生在**第一個 span 開始之前**，
+# Opik 上完全隱形，但它已經算進 `replies.round_trip_ms` 裡了。目前實測排隊約 0ms
+# （沒有人併發），但閘門的等待上限是 30 秒：多人同時講話時，那 30 秒會憑空消失。
+
+
+def test_admission_wait_defaults_to_zero():
+    """沒有人宣告時＝沒有排隊。預設 0 而非 None，metadata 才不會多一種形狀。"""
+    assert turn_context.current_admission_wait_ms() == 0
+
+
+def test_admission_wait_is_visible_inside_the_scope():
+    with turn_context.admission_wait(1234.5):
+        assert turn_context.current_admission_wait_ms() == 1234
+
+
+def test_admission_wait_resets_after_the_scope():
+    with turn_context.admission_wait(1234.5):
+        pass
+    assert turn_context.current_admission_wait_ms() == 0
+
+
+def test_admission_wait_is_isolated_between_threads():
+    """一位長輩排隊久，不可以讓另一位的 trace 也標上那個數字。"""
+    import threading
+
+    seen: list[int] = []
+
+    def other() -> None:
+        seen.append(turn_context.current_admission_wait_ms())
+
+    with turn_context.admission_wait(5000):
+        thread = threading.Thread(target=other)
+        thread.start()
+        thread.join()
+    assert seen == [0]

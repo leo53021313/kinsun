@@ -160,3 +160,60 @@ def test_handle_never_completes_when_the_queue_is_full(caplog):
     released.set()
     background.shutdown()
     assert "背景落庫佇列已滿" in caplog.text
+
+
+# ── 背景落庫要看得見（2026-08-08 觀測盤點）──
+#
+# 一輪對話有六筆背景寫入（五筆觀測稽核＋提醒標記），合計超過 1 秒的 Supabase 往返。
+# 沒有人在等它們**在正常情況下**成立，但佇列塞住時前景會跟著慢（兩者共用同一個
+# 連線池），而原本 Opik 上一格都沒有——探針實測印過「本輪記憶尚未落地」，trace 上
+# 完全看不出是背景在塞車。
+
+
+def _spy_span_names(monkeypatch) -> list[str]:
+    import opik
+
+    from kinsun.tracing import client as tracing_client
+    from kinsun.tracing import decorators as tracing_decorators
+
+    names: list[str] = []
+    monkeypatch.setattr(opik, "track", lambda **kw: (names.append(kw.get("name")), lambda f: f)[1])
+    monkeypatch.setattr(tracing_decorators, "is_enabled", lambda: True)
+    monkeypatch.setattr(tracing_client, "_ENABLED", True)
+    return names
+
+
+def test_background_action_gets_a_named_span(monkeypatch):
+    names = _spy_span_names(monkeypatch)
+    background.run(lambda: None, name="observability_write")
+    assert names == ["observability_write"]
+
+
+def test_background_span_name_defaults_when_caller_gives_none(monkeypatch):
+    """沒給名字也要有一格：無名總比沒有好，至少看得出背景在動。"""
+    names = _spy_span_names(monkeypatch)
+    background.run(lambda: None)
+    assert names == ["background_write"]
+
+
+def test_background_name_does_not_change_inline_behaviour():
+    """未 configure 時仍是就地執行、回傳已完成的 handle——與加名字之前一字不差。"""
+    ran: list[int] = []
+    handle = background.run(lambda: ran.append(1), name="whatever")
+    assert ran == [1]
+    assert handle.wait(0) is True
+
+
+def test_background_failures_still_swallowed_with_a_name(caplog):
+    """加了 span 之後，背景執行緒裡的失敗仍要就地吞掉、handle 仍要變成完成。
+
+    ⚠️ 只驗背景模式：就地模式（未 configure）本來就讓例外原樣上拋，由呼叫端自己
+    的 try/except 接（見 `observability.store.safe_record`），這條契約不因加 span 改變。
+    """
+    background.configure(max_workers=1)
+
+    handle = background.run(lambda: 1 / 0, name="observability_write")
+    background.shutdown()
+
+    assert "背景落庫失敗" in caplog.text
+    assert handle.wait(0) is True

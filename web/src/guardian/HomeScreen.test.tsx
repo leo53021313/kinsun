@@ -38,7 +38,7 @@ describe("HomeScreen", () => {
       "fetch",
       vi.fn().mockResolvedValue({
         status: 200,
-        json: async () => envelope([{ elder_id: "e1", name: "王阿嬤", nickname: "" }]),
+        json: async () => envelope([{ elder_id: "e1", name: "王阿嬤", nickname: "", persona: "lively_granddaughter" }]),
       }),
     );
     renderHome();
@@ -101,18 +101,20 @@ describe("HomeScreen", () => {
     expect(await screen.findByText("還沒有長輩檔案，先在上面建立一位吧。")).toBeInTheDocument();
   });
 
-  it("點長輩會把 id 與稱呼一起交出去", async () => {
+  it("點長輩會把 id、稱呼與人設一起交出去", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
         status: 200,
-        json: async () => envelope([{ elder_id: "e1", name: "王阿嬤", nickname: "" }]),
+        json: async () => envelope([{ elder_id: "e1", name: "王阿嬤", nickname: "", persona: "lively_granddaughter" }]),
       }),
     );
     const onOpenElder = vi.fn();
     renderHome({ onOpenElder });
     await userEvent.click(await screen.findByRole("button", { name: /王阿嬤/ }));
-    expect(onOpenElder).toHaveBeenCalledWith("e1", "王阿嬤");
+    // persona 也一起交出去（2026-08-05）：詳情頁的個性選擇器要知道目前是哪一種，
+    // 漏帶會讓每次進去都預選第一個、看起來像家屬的設定被吃掉了。
+    expect(onOpenElder).toHaveBeenCalledWith("e1", "王阿嬤", "lively_granddaughter");
   });
 
   it("沒填稱呼就按建立時擋下來，不打後端", async () => {
@@ -174,14 +176,14 @@ describe("HomeScreen", () => {
       .mockResolvedValueOnce({
         status: 201,
         json: async () =>
-          envelope({ elder_id: "e9", name: "阿公", nickname: "", invite_code: "AB12CD" }),
+          envelope({ elder_id: "e9", name: "阿公", nickname: "", persona: "lively_granddaughter", invite_code: "AB12CD" }),
       })
       .mockResolvedValueOnce({
         status: 200,
         json: async () =>
           envelope([
-            { elder_id: "e1", name: "王阿嬤", nickname: "" },
-            { elder_id: "e9", name: "阿公", nickname: "" },
+            { elder_id: "e1", name: "王阿嬤", nickname: "", persona: "lively_granddaughter" },
+            { elder_id: "e9", name: "阿公", nickname: "", persona: "lively_granddaughter" },
           ]),
       });
     vi.stubGlobal("fetch", spy);
@@ -227,12 +229,12 @@ describe("HomeScreen", () => {
       .mockResolvedValueOnce({
         status: 201,
         json: async () =>
-          envelope({ elder_id: "e9", name: "阿公", nickname: "", invite_code: "AB12CD" }),
+          envelope({ elder_id: "e9", name: "阿公", nickname: "", persona: "lively_granddaughter", invite_code: "AB12CD" }),
       })
       // 建立成功後會重打一次列表（見 HomeScreen 的 addElder）。
       .mockResolvedValueOnce({
         status: 200,
-        json: async () => envelope([{ elder_id: "e9", name: "阿公", nickname: "" }]),
+        json: async () => envelope([{ elder_id: "e9", name: "阿公", nickname: "", persona: "lively_granddaughter" }]),
       });
     vi.stubGlobal("fetch", spy);
     renderHome();
@@ -257,12 +259,12 @@ describe("HomeScreen", () => {
       .mockResolvedValueOnce({
         status: 201,
         json: async () =>
-          envelope({ elder_id: "e9", name: "阿公", nickname: "", invite_code: "AB12CD" }),
+          envelope({ elder_id: "e9", name: "阿公", nickname: "", persona: "lively_granddaughter", invite_code: "AB12CD" }),
       })
       // 建立成功後會重打一次列表（見 HomeScreen 的 addElder）。
       .mockResolvedValueOnce({
         status: 200,
-        json: async () => envelope([{ elder_id: "e9", name: "阿公", nickname: "" }]),
+        json: async () => envelope([{ elder_id: "e9", name: "阿公", nickname: "", persona: "lively_granddaughter" }]),
       });
     vi.stubGlobal("fetch", spy);
     renderHome();
@@ -312,12 +314,12 @@ describe("HomeScreen", () => {
       .mockResolvedValueOnce({
         status: 201,
         json: async () =>
-          envelope({ elder_id: "e9", name: "阿公", nickname: "", invite_code: "AB12CD" }),
+          envelope({ elder_id: "e9", name: "阿公", nickname: "", persona: "lively_granddaughter", invite_code: "AB12CD" }),
       })
       // 建立成功後會重打一次列表（見 HomeScreen 的 addElder）。
       .mockResolvedValueOnce({
         status: 200,
-        json: async () => envelope([{ elder_id: "e9", name: "阿公", nickname: "" }]),
+        json: async () => envelope([{ elder_id: "e9", name: "阿公", nickname: "", persona: "lively_granddaughter" }]),
       });
     vi.stubGlobal("fetch", spy);
     renderHome();
@@ -339,7 +341,7 @@ describe("HomeScreen", () => {
       .mockResolvedValueOnce({
         status: 201,
         json: async () =>
-          envelope({ elder_id: "e9", name: "阿公", nickname: "", invite_code: "AB12CD" }),
+          envelope({ elder_id: "e9", name: "阿公", nickname: "", persona: "lively_granddaughter", invite_code: "AB12CD" }),
       })
       .mockResolvedValueOnce({ status: 200, json: async () => envelope([]) });
     vi.stubGlobal("fetch", spy);
@@ -364,7 +366,7 @@ describe("HomeScreen", () => {
       .mockResolvedValueOnce({
         status: 201,
         json: async () =>
-          envelope({ elder_id: "e9", name: "阿公", nickname: "", invite_code: "AB12CD" }),
+          envelope({ elder_id: "e9", name: "阿公", nickname: "", persona: "lively_granddaughter", invite_code: "AB12CD" }),
       })
       .mockResolvedValueOnce({ status: 200, json: async () => envelope([]) });
     vi.stubGlobal("fetch", spy);
@@ -384,7 +386,7 @@ describe("HomeScreen", () => {
       vi.fn().mockResolvedValueOnce({ status: 200, json: async () => envelope([]) }).mockResolvedValueOnce({
         status: 201,
         json: async () =>
-          envelope({ elder_id: "e9", name: "阿公", nickname: "", invite_code: "AB12CD" }),
+          envelope({ elder_id: "e9", name: "阿公", nickname: "", persona: "lively_granddaughter", invite_code: "AB12CD" }),
       }).mockResolvedValueOnce({ status: 200, json: async () => envelope([]) }),
     );
     renderHome();

@@ -23,6 +23,8 @@ import queue
 import threading
 from collections.abc import Callable
 
+from kinsun import tracing
+
 logger = logging.getLogger("kinsun.background")
 
 # 佇列上限：一輪對話產生 6 筆背景寫入，256 約等於 40 輪的積壓。會積到這個量，
@@ -113,25 +115,36 @@ class Handle:
         return self._event.wait(timeout)
 
 
-def run(action: Callable[[], None]) -> Handle:
+def run(action: Callable[[], None], *, name: str = "background_write") -> Handle:
     """把 action 丟到背景執行；未 configure 時就地執行（預設）。回傳完成訊號。
 
     以 `contextvars.copy_context()` 帶入呼叫端的 context，Opik 的 span 巢狀與
     `turn_context.elder_utterance` 在背景執行緒裡才不會憑空消失。
 
+    `name`＝這筆背景工作在 Opik 上的 span 名稱（2026-08-08 觀測盤點）。一輪對話有
+    六筆背景寫入（五筆觀測稽核＋提醒標記），合計超過 1 秒的 Supabase 往返。正常情況
+    沒有人在等它們，但**佇列塞住時前景會跟著慢**——兩者共用同一個 psycopg 連線池。
+    原本這六筆在 Opik 一格都沒有，於是「背景在塞車」這件事只能靠 log 裡的一行
+    warning 猜。名字要能分辨是哪一類寫入，否則六格一樣的名字等於沒有拆。
+
     ⚠️ 佇列滿時整筆被丟棄（見 `_Writer.submit`），此時 handle **永遠不會**變成
     done——這正是呼叫端該看到的事實，故刻意不在丟棄時把它標記完成。
     """
+    # 兩條路徑用同一個包裝：就地模式（排程器、CLI、測試）同樣值得那一格——它跑在
+    # 呼叫端的 span 底下，本來就看得到。
+    tracked = tracing.track(name=name, type="general", capture_input=False, capture_output=False)(
+        action
+    )
     writer = _writer
     if writer is None:
-        action()
+        tracked()
         return Handle(done=True)
     handle = Handle()
     context = contextvars.copy_context()
 
     def guarded() -> None:
         try:
-            context.run(action)
+            context.run(tracked)
         finally:
             handle._mark_done()
 

@@ -106,6 +106,25 @@ export async function revokeElderDeviceBindings(
   return body.invite_code;
 }
 
+/**
+ * 更改金孫對這位長輩的人設（2026-08-05）。回傳後端實際採用的值。
+ *
+ * ⚠️ 後端刻意另開一支端點、不併進改稱謂的 `/profile`：那支是整份 upsert，
+ * 少帶 nickname 就會把稱謂洗掉。前端這裡同樣只送人設一格。
+ */
+export async function setElderPersona(
+  elderId: string,
+  persona: string,
+  token: string,
+): Promise<string> {
+  const body = await request<{ persona: string }>(`/api/v1/elders/${elderId}/persona`, {
+    method: "PUT",
+    body: JSON.stringify({ persona }),
+    token,
+  });
+  return body.persona;
+}
+
 /** 統一排程（D-76 P3）：用藥、回診與長輩自訂共用一支資源，操作單位是 group。 */
 export function listSchedules(
   elderId: string,

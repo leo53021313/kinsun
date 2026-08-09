@@ -231,7 +231,7 @@ describe("長輩詳情與返回", () => {
       "health-report": { risk_events: [], reminders: [] },
       "daily-summaries": [],
       schedules: [],
-      elders: [{ elder_id: "e1", name: "王阿嬤", nickname: "" }],
+      elders: [{ elder_id: "e1", name: "王阿嬤", nickname: "", persona: "lively_granddaughter" }],
     });
     renderApp();
     await userEvent.type(screen.getByLabelText("Email"), "a@example.com");

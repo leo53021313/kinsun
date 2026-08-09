@@ -1,5 +1,7 @@
 import time
 
+import pytest
+
 from kinsun.llm import Message
 from kinsun.memory.longterm.store import HEALTH_QUERY, Mem0LongTermStore
 
@@ -365,3 +367,27 @@ def test_search_raw_wrapped_with_span(monkeypatch):
     assert _texts(store.search("elder-1", "查詢")) == ["m"]
     raw_spans = [kw for kw in seen if kw["name"] == "mem0_search_raw"]
     assert raw_spans and raw_spans[0]["capture_output"] is False
+
+
+def test_health_query_does_not_trigger_mem0_entity_boost():
+    """`HEALTH_QUERY` 不可被 mem0 判定含實體——那會每輪白花約 1 秒（2026-08-07 實測）。
+
+    mem0 的 `_search_vector_store` 對抽得出實體的查詢會多跑一輪
+    `_compute_entity_boosts`：先 `embed_batch` 打一次 Gemini，再對 entity store
+    發 `top_k=500` 的向量查詢。實測長輩原話那路 839ms、`HEALTH_QUERY` 那路 1808ms，
+    差額 994ms 全在這裡；兩路並行故總耗時由慢的那路決定。
+
+    根因是**空格分隔**：`extract_entities("用藥 慢性病 過敏 回診 健康狀況")` 會回
+    `[('TOPIC', '用藥 慢性病 過敏'), ('PROPER', '慢性病 過敏')]`，而真正的長輩口語
+    （「我今天早上血壓有點高欸」）一律回 `[]`。改成頓號／自然句即不觸發，實測
+    1466ms → 701ms 且撈回的記憶完全相同。
+
+    這個成本在功能上完全看不出來（結果一樣、只是慢），沒有測試守著就會無聲回歸。
+    """
+    pytest.importorskip("mem0.utils.entity_extraction")
+    from mem0.utils.entity_extraction import extract_entities
+
+    assert extract_entities(HEALTH_QUERY) == [], (
+        f"HEALTH_QUERY={HEALTH_QUERY!r} 被 mem0 抽出實體，每輪會多花約 1 秒；"
+        "請避免以空格分隔關鍵字，改用頓號或自然句。"
+    )

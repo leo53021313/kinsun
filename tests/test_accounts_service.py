@@ -12,6 +12,7 @@ from kinsun.accounts.models import (
     Role,
 )
 from kinsun.accounts.service import AccountService, AppAccountError, InviteError
+from kinsun.personas import STEADY_GRANDSON
 from tests.fakes import FakeAccountStore
 
 TPE = timezone(timedelta(hours=8))
@@ -375,3 +376,22 @@ def test_whitespace_only_code_is_still_not_found():
     with pytest.raises(InviteError):
         svc.redeem_invite("   ", "U-elder", consent_by=ConsentBy.SELF)
     assert svc.preview_invite("  \n ") is None
+
+
+def test_set_elder_persona_updates_only_persona():
+    """改人設不可動到稱謂——它們是兩支獨立的設定。"""
+    repo = FakeAccountStore()
+    svc = _service(repo)
+    elder = svc.create_elder("U-son", "兒子", "王秀英", nickname="秀英阿嬤")
+
+    updated = svc.set_elder_persona(elder.elder_id, STEADY_GRANDSON)
+
+    assert updated.persona == STEADY_GRANDSON
+    assert updated.nickname == "秀英阿嬤"
+    assert repo.get_elder(elder.elder_id).persona == STEADY_GRANDSON
+
+
+def test_set_elder_persona_rejects_unknown_elder():
+    svc = _service(FakeAccountStore())
+    with pytest.raises(AppAccountError):
+        svc.set_elder_persona("e-nope", STEADY_GRANDSON)
