@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from kinsun.accounts.service import AccountService
+from kinsun.personas import DEFAULT_PERSONA_ID, STEADY_GRANDSON
 from kinsun.schedules.service import ScheduleService
 from kinsun.schedules.store import FakeScheduleStore
 from kinsun.web.auth import AuthError, LineIdentity
@@ -286,3 +287,67 @@ def test_update_elder_profile_rejects_overlong_nickname():
         f"/api/v1/elders/{elder_id}/profile", json={"nickname": "好" * 51}, headers=auth
     )
     assert res.status_code == 422
+
+
+def test_new_elder_starts_with_the_default_persona():
+    """建立時不必選人設，直接拿預設值；回傳一定要帶這一格（前端會直接放進清單）。"""
+    client, auth = _app_client_with_token()
+    created = client.post("/api/v1/elders", json={"name": "王秀英"}, headers=auth)
+    assert created.json()["data"]["persona"] == DEFAULT_PERSONA_ID
+
+    listed = client.get("/api/v1/elders", headers=auth)
+    assert {e["persona"] for e in listed.json()["data"]} == {DEFAULT_PERSONA_ID}
+
+
+def test_update_elder_persona_sets_and_lists_it():
+    client, auth = _app_client_with_token()
+    elder_id = client.post("/api/v1/elders", json={"name": "王秀英"}, headers=auth).json()["data"][
+        "elder_id"
+    ]
+    res = client.put(
+        f"/api/v1/elders/{elder_id}/persona", json={"persona": STEADY_GRANDSON}, headers=auth
+    )
+    assert res.status_code == 200
+    assert res.json()["data"]["persona"] == STEADY_GRANDSON
+
+    listed = client.get("/api/v1/elders", headers=auth)
+    assert [e["persona"] for e in listed.json()["data"] if e["elder_id"] == elder_id] == [
+        STEADY_GRANDSON
+    ]
+
+
+def test_update_elder_persona_does_not_touch_nickname():
+    """兩支端點各管各的——這正是人設不併進 /profile 的理由。"""
+    client, auth = _app_client_with_token()
+    elder_id = client.post(
+        "/api/v1/elders", json={"name": "王秀英", "nickname": "秀英阿嬤"}, headers=auth
+    ).json()["data"]["elder_id"]
+    client.put(
+        f"/api/v1/elders/{elder_id}/persona", json={"persona": STEADY_GRANDSON}, headers=auth
+    )
+    listed = client.get("/api/v1/elders", headers=auth)
+    row = next(e for e in listed.json()["data"] if e["elder_id"] == elder_id)
+    assert row["nickname"] == "秀英阿嬤"
+
+
+def test_update_elder_persona_rejects_unknown_value():
+    """寫入嚴格：認不得的值當場擋下，不讓它進資料庫。"""
+    client, auth = _app_client_with_token()
+    elder_id = client.post("/api/v1/elders", json={"name": "王秀英"}, headers=auth).json()["data"][
+        "elder_id"
+    ]
+    res = client.put(
+        f"/api/v1/elders/{elder_id}/persona", json={"persona": "pirate_captain"}, headers=auth
+    )
+    assert res.status_code == 400
+    # 走標準錯誤碼（06 §3），由 envelope 轉成繁中人話；本測試的 app 沒裝 envelope，
+    # 故直接看 detail。
+    assert res.json()["detail"] == "invalid_persona"
+
+
+def test_update_elder_persona_rejects_unmanaged():
+    client, auth = _app_client_with_token()
+    res = client.put(
+        "/api/v1/elders/id1/persona", json={"persona": STEADY_GRANDSON}, headers=auth
+    )  # id1 屬於 U-son（LIFF 家屬），不是本 App 家屬管的
+    assert res.status_code == 404

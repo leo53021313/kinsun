@@ -28,6 +28,7 @@ from kinsun.accounts.models import (
     Role,
 )
 from kinsun.accounts.store import FakeAccountStore, PgAccountStore
+from kinsun.personas import DEFAULT_PERSONA_ID, LIVELY_GRANDDAUGHTER, STEADY_GRANDSON
 
 
 @pytest.fixture(params=["fake", "pg"])
@@ -46,6 +47,25 @@ def test_elder_roundtrip_and_by_line(store, ns):
     assert got.name == "阿公"
     assert store.get_elder_by_line(f"{ns}U-elder").elder_id == f"{ns}e1"
     assert store.get_elder_by_line(f"{ns}nope") is None
+
+
+def test_elder_persona_roundtrip_and_defaults(store, ns):
+    """人設欄往返；沒指定時是預設人設。
+
+    ⚠️ 這條同時是「資料庫預設值」與「程式預設值」的對帳：`db.py` 的 DDL 把
+    'lively_granddaughter' 字面寫死在 SQL 裡，`personas.DEFAULT_PERSONA_ID` 是
+    Python 常數，兩邊各自演化不會有人發現——除非這裡跑的是 Pg adapter 而斷言
+    用的是 Python 常數。
+    """
+    store.save_elder(Elder(f"{ns}e-persona-default", "阿公"))
+    assert store.get_elder(f"{ns}e-persona-default").persona == DEFAULT_PERSONA_ID
+
+    store.save_elder(Elder(f"{ns}e-persona-set", "阿嬤", persona=STEADY_GRANDSON))
+    assert store.get_elder(f"{ns}e-persona-set").persona == STEADY_GRANDSON
+
+    # upsert 改人設：同一把主鍵重存，只有人設變
+    store.save_elder(Elder(f"{ns}e-persona-set", "阿嬤", persona=LIVELY_GRANDDAUGHTER))
+    assert store.get_elder(f"{ns}e-persona-set").persona == LIVELY_GRANDDAUGHTER
 
 
 def test_guardian_roundtrip_and_by_line(store, ns):

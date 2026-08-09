@@ -13,9 +13,56 @@ from kinsun.memory.longterm import provenance
 
 logger = logging.getLogger(__name__)
 
-# Gemini embedder 與 Supabase 向量庫的維度必須一致，否則向量查詢會維度不符。
-# mem0 gemini embedder 預設輸出 768 維，但 supabase 向量庫預設建 1536 維 → 兩邊都明確鎖 768。
-_EMBEDDING_DIMS = 768
+# embedder 與 Supabase 向量庫的維度必須一致，否則向量查詢會維度不符。mem0 的 gemini
+# embedder 預設輸出 768 維、supabase 向量庫預設建 1536 維，兩邊都不能靠預設，一律明著鎖。
+# ⚠️ 這兩個數字是同一個來源算出來的（`_embedding_dims`），不可各自寫死：對不上時 mem0
+# 是**靜默**退化成「查不到記憶」，長輩端不會有任何錯誤，只會覺得金孫忘了她說過的話。
+_GEMINI_EMBEDDING_DIMS = 768
+_LOCAL_EMBEDDING_DIMS = 1024  # BAAI/bge-m3 的 dense 維度
+
+
+def _embedding_dims(settings: Settings) -> int:
+    return (
+        _LOCAL_EMBEDDING_DIMS
+        if settings.longterm_embedding_backend == "local"
+        else _GEMINI_EMBEDDING_DIMS
+    )
+
+
+def _build_embedder_config(settings: Settings) -> dict:
+    """依 backend 組 embedder：地端 BGE-M3 服務或雲端 Gemini API。
+
+    地端走 **OpenAI 相容協定**（`services/embedding` 的 `/v1/embeddings`）而不是 mem0 的
+    `huggingface` provider：後者在模組頂層 `import sentence_transformers`，會把 torch
+    拉進 API 這一端，而重模型刻意只跑在 DGX 上（AGENTS.md「位置無關」）。`openai` 套件
+    本來就在依賴裡，走相容協定零新增相依。
+
+    ⚠️ 少了 endpoint 必須當場拒絕：mem0 的 OpenAIEmbedding 在 `openai_base_url` 為空時
+    會退回 `https://api.openai.com/v1`（見其 `embeddings/openai.py`），於是一個設定疏漏
+    會變成「把長輩的記憶送去 OpenAI」，而且因為沒有金鑰只會得到一個看似普通的 401。
+    """
+    dims = _embedding_dims(settings)
+    if settings.longterm_embedding_backend != "local":
+        return {
+            "provider": "gemini",
+            "config": {"model": settings.longterm_embedding_model, "embedding_dims": dims},
+        }
+    if not settings.longterm_embedding_endpoint:
+        raise ValueError(
+            "LONGTERM_EMBEDDING_BACKEND=local 需要 LONGTERM_EMBEDDING_ENDPOINT"
+            "（例如 http://127.0.0.1:8003/v1）；留空會讓 mem0 改打 api.openai.com"
+        )
+    return {
+        "provider": "openai",
+        "config": {
+            "model": settings.longterm_embedding_model,
+            "embedding_dims": dims,
+            "openai_base_url": settings.longterm_embedding_endpoint,
+            # openai 套件在 api_key 為 None 時直接拋錯，故內網未設金鑰時給一個佔位字串；
+            # 服務端 EMBEDDING_API_KEY 未設＝不驗（比照 ASR／TTS 的內網開發模式）。
+            "api_key": settings.longterm_embedding_api_key or "not-required-on-lan",
+        },
+    }
 
 
 def build_mem0_config(settings: Settings) -> dict:
@@ -24,19 +71,14 @@ def build_mem0_config(settings: Settings) -> dict:
             "provider": "gemini",
             "config": {"model": settings.gemini_model, "api_key": settings.gemini_api_key},
         },
-        "embedder": {
-            "provider": "gemini",
-            "config": {
-                "model": settings.longterm_embedding_model,
-                "embedding_dims": _EMBEDDING_DIMS,
-            },
-        },
+        "embedder": _build_embedder_config(settings),
         "vector_store": {
             "provider": "supabase",
             "config": {
                 "connection_string": settings.database_url,
                 "collection_name": "kinsun_memories",
-                "embedding_model_dims": _EMBEDDING_DIMS,
+                # 與 embedder 同源（見 `_embedding_dims`），不可各自寫死。
+                "embedding_model_dims": _embedding_dims(settings),
                 "index_method": "hnsw",
                 "index_measure": "cosine_distance",
             },

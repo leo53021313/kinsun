@@ -247,3 +247,34 @@ def test_attach_prompt_new_version_when_content_changes(monkeypatch):
     tracing.attach_prompt("care_system", "第一版")
     tracing.attach_prompt("care_system", "第二版")
     assert [c["prompt"] for c in constructed] == ["第一版", "第二版"]
+
+
+def test_rename_current_span_noop_when_disabled():
+    tracing_client.reset_for_test()
+    assert tracing.rename_current_span("tool:get_weather") is None
+
+
+def test_rename_current_span_sets_name_when_enabled(monkeypatch):
+    calls = _spy_update_current_span(monkeypatch)
+    tracing.rename_current_span("tool:get_weather")
+    assert calls == [{"name": "tool:get_weather"}]
+
+
+def test_rename_current_span_ignores_empty_name(monkeypatch):
+    """空名字比原本的名字更沒有資訊——寧可留著 `dispatch` 也不要一個沒有名字的 span。"""
+    calls = _spy_update_current_span(monkeypatch)
+    tracing.rename_current_span("")
+    assert calls == []
+
+
+def test_rename_current_span_survives_opik_failure(monkeypatch):
+    """觀測失敗絕不中斷對話：改名炸掉時工具照樣要跑完。"""
+    import opik
+
+    monkeypatch.setattr(tracing_client, "_ENABLED", True)
+
+    def boom(**_kwargs):
+        raise RuntimeError("opik down")
+
+    monkeypatch.setattr(opik.opik_context, "update_current_span", boom)
+    assert tracing.rename_current_span("tool:get_weather") is None

@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
+from kinsun import turn_context
 from kinsun.accounts.models import Channel, PrincipalType
 from kinsun.accounts.service import AccountService
 from kinsun.channels.app.admission import AdmissionTimeout, TurnAdmission
@@ -169,16 +170,22 @@ def create_app_turns_router(
             # 讓它們留在整個 `_run_turn` 裡（含在名額涵蓋範圍內）換來程式碼不必為了
             # 對齊 ws.py 而把 `_run_turn` 拆成「閘門前／閘門內」兩段——後者是更大幅
             # 的重構，風險高於這裡的些微時間差。
+            # 排隊時間要量在 `admit()` 的 __enter__ 上（2026-08-08 觀測盤點）：那段
+            # 等待整個發生在 Opik trace 根開始之前，沒有任何 span 容得下它，卻已經
+            # 算進 `replies.round_trip_ms`。見 `turn_context.admission_wait`。
+            queued_at = time.monotonic()
             with turn_gate.admit():
-                return _run_turn(
-                    audio=audio,
-                    elder_id=elder_id,
-                    external_id=external_id,
-                    location=location,
-                    latitude=latitude,
-                    longitude=longitude,
-                    received_at=received_at,
-                )
+                waited_ms = (time.monotonic() - queued_at) * 1000
+                with turn_context.admission_wait(waited_ms):
+                    return _run_turn(
+                        audio=audio,
+                        elder_id=elder_id,
+                        external_id=external_id,
+                        location=location,
+                        latitude=latitude,
+                        longitude=longitude,
+                        received_at=received_at,
+                    )
 
         # ⚠️ 一定要交給執行緒池：底下整段（進站上傳、ASR、Gemini、TTS、落庫）全是
         # 同步阻塞呼叫，留在 async handler 裡就是佔住事件迴圈。實測（2026-07-26 全流程

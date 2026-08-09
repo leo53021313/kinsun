@@ -27,16 +27,24 @@ _FACT_TIMEOUT_SECONDS = 5.0
 
 
 class FactProvider(Protocol):
-    def facts(self, elder_id: str) -> FactSection | None: ...
+    def facts(self, elder_id: str) -> FactSection | list[FactSection] | None: ...
 
 
-def _section_or_none(future) -> FactSection | None:
-    """取一路事實的結果；等太久就視同該段缺席（見 `_gather_facts` 的 ⚠️ 說明）。"""
+def _sections_of(future) -> list[FactSection]:
+    """取一路事實的結果，一律正規化成清單。
+
+    提供者可回單段、多段（`ScheduleFacts` 一次查詢供用藥／回診／自訂三段）或
+    `None`／空清單（該段缺席）。等太久同樣視同缺席（見 `_gather_facts` 的
+    ⚠️ 說明）——`fetch` 本來就允許回 None，逾時不是錯誤。
+    """
     try:
-        return future.result(timeout=_FACT_TIMEOUT_SECONDS)
+        result = future.result(timeout=_FACT_TIMEOUT_SECONDS)
     except FuturesTimeoutError:
         logger.warning("事實提供者逾時（%.1f 秒），略過該段", _FACT_TIMEOUT_SECONDS)
-        return None
+        return []
+    if result is None:
+        return []
+    return list(result) if isinstance(result, list) else [result]
 
 
 class SessionMemory:
@@ -56,11 +64,13 @@ class SessionMemory:
         self._short_term = short_term
         self._long_term = long_term
         self._facts = facts or []
-        # 逐提供者包 span（2026-07-30 spec）：索引＝注入順序——ScheduleFacts 註冊
-        # 三次（三種 kind），純類名會撞名；且順序本身是 prompt 契約，帶序號的
-        # waterfall 直接對得上段落順序。一次性包在建構時，wrapper 內的 lazy opik
-        # 快取才能跨輪重用。output 開是 capture 總原則的唯一例外：合併結果看不到
-        # 「哪一路回了 None（該段缺席）」，而缺席正是排查時要看的東西。
+        # 逐提供者包 span（2026-07-30 spec）：索引＝提供者的**註冊順序**，不等於
+        # 最終注入段落的位置——`ScheduleFacts` 一次查詢供三段，索引 1 涵蓋段落
+        # 1–3。純類名現已不會撞名（每個 Provider 只註冊一次），仍保留索引是因為
+        # 註冊順序本身是 prompt 契約，帶序號的 waterfall 讓 Opik span 名稱直接
+        # 對得上段落先後，不必回頭翻程式碼。一次性包在建構時，wrapper 內的 lazy
+        # opik 快取才能跨輪重用。output 開是 capture 總原則的唯一例外：合併結果
+        # 看不到「哪一路回了 None（該段缺席）」，而缺席正是排查時要看的東西。
         self._tracked_facts = [
             tracing.track(
                 name=f"facts_{index}_{type(provider).__name__}",
@@ -74,7 +84,7 @@ class SessionMemory:
     # 攤在 span 上可直接看到模型當輪被餵了什麼記憶與事實。input 仍關（首參是 self）。
     @tracing.track(name="memory_assemble", type="general", capture_input=True, capture_output=True)
     def assemble(self, elder_id: str, query: str) -> TurnContext:
-        """今日對話／長期記憶／七路事實三段並行（2026-07-30 延遲優化 A2）。
+        """今日對話／長期記憶／四路事實三段並行（2026-07-30 延遲優化 A2）。
 
         三段彼此無依賴：`recent` 只吃 `elder_id`、`long_term.search` 吃
         `elder_id`＋`query`、`gather_facts` 只吃 `elder_id`；串行跑等於白等
@@ -82,7 +92,7 @@ class SessionMemory:
         ≈ 它一段，而不是三段相加）。
 
         `contextvars.copy_context()` 帶入呼叫端 context，三顆 Opik span 與
-        `gather_facts` 內部既有的七路並行才不會巢狀消失（與 `_gather_facts`
+        `gather_facts` 內部既有的四路並行才不會巢狀消失（與 `_gather_facts`
         自己的既有作法同一套）。
 
         ⚠️ **刻意不用 `with ThreadPoolExecutor(...)`**（2026-07-30 審查 H3）：`with`
@@ -117,6 +127,13 @@ class SessionMemory:
             history=history,
         )
 
+    # capture_input／output 皆關（2026-08-08）：輸入是本輪的原話與回覆，兩者已由
+    # trace 的 I/O 與 `memory_assemble` 帶到，重複一份只是讓 payload 加倍；這一格
+    # 要看的是**寫了多久**。它走背景執行緒，但不是沒有人在等——`pipeline` 交出回覆
+    # 前會等它落地（見 `_settle_memory_write`），探針實測曾經跑到 4.2 秒。
+    @tracing.track(
+        name="memory_record_turn", type="general", capture_input=False, capture_output=False
+    )
     def record_turn(self, elder_id: str, *messages: Message, at: datetime | None = None) -> None:
         """`at`＝長輩開口的時刻，供併發輪維持正確的對話順序（見 `shortterm.append`）。"""
         for message in messages:
@@ -126,7 +143,7 @@ class SessionMemory:
     def _gather_facts(self, elder_id: str) -> list[FactSection]:
         """並行查所有事實提供者，結果仍按注入順序排列。
 
-        每個提供者都是一次獨立的 Supabase 查詢（稱呼／三種排程／守則／位置），實測
+        每個提供者都是一次獨立的 Supabase 查詢（排程／守則／位置），實測
         單次跨網往返固定約 0.21 秒且彼此無依賴——排隊查等於白等約 1.5 秒
         （2026-07-26 延遲實測）。
 
@@ -137,22 +154,28 @@ class SessionMemory:
         以 `contextvars.copy_context()` 帶入呼叫端 context，Opik 的 span 巢狀與
         `turn_context.elder_utterance` 在子執行緒裡才不會憑空消失。
 
-        併發度＝提供者數量（目前 7 個，其中 6 個碰 DB——`TimeFacts` 純算時間），刻意
-        不另設上限：真正的節流閥是 psycopg 連線池（`DATABASE_POOL_MAX_SIZE`，**正式
-        環境為 3**），多出來的查詢自然在池上排隊。⚠️ A2（`assemble` 三段並行）之後
-        `recent` 會與這 6 條同時搶那 3 條連線，峰值需求 6→7；淨值仍是賺（總耗時從
-        三段相加收斂到最慢那段），但「自然排隊」的餘裕已經很薄。
+        併發度＝提供者數量（目前 4 個，其中 3 個碰 DB——`TimeFacts` 純算時間），刻意
+        不另設上限：真正的節流閥是 psycopg 連線池（`DATABASE_POOL_MAX_SIZE`，
+        `.env.example` 與 `config.py` 預設皆為 5；⚠️ 正式環境的 `.env` 不在版控、
+        需手動同步，未同步前仍是 3），多出來的查詢自然在池上排隊。⚠️ A2（`assemble`
+        三段並行）之後 `recent` 會與這 3 條碰 DB 的事實同時搶連線，峰值需求 4
+        （`recent` 1 條 ＋ 碰 DB 的事實 3 條）；淨值仍是賺（總耗時從三段相加收斂到
+        最慢那段），但「自然排隊」的餘裕已經很薄。
 
         ⚠️ 每段各有 `_FACT_TIMEOUT_SECONDS` 上限（2026-07-30 審查 H4）：沒有它，
         `PreparedTurn.context()` 逾時放棄後這些執行緒仍握著 psycopg 連線不放，而
-        逾時率實測 10%——孤兒會繼續搶那 3 條連線、讓活著的輪更容易逾時，形成正回饋。
+        逾時率實測 10%——孤兒會繼續搶那 5 條連線、讓活著的輪更容易逾時，形成正回饋。
         逾時視同「該段缺席」（`fetch` 本來就允許回 None），不是錯誤。
         """
         providers = self._tracked_facts
         if not providers:
             return []
 
-        def fetch(provider_facts) -> FactSection | None:
+        def fetch(provider_facts) -> FactSection | list[FactSection] | None:
+            # ⚠️ 取捨：這個 except 一次包住整個 provider 呼叫，一個提供者回多段時
+            # （如 ScheduleFacts 一次查詢供三段）任一段格式化失敗會讓同一提供者的
+            # 其餘段落一併消失，改動前三個獨立提供者互不影響。目前查不到今天走得
+            # 到的路徑（兩條寫入路徑皆有驗證守著），先記下取捨，不是已知 bug。
             try:
                 return provider_facts(elder_id)
             except Exception:  # noqa: BLE001 - 事實提供者失敗不可中斷對話
@@ -166,7 +189,7 @@ class SessionMemory:
                 pool.submit(context.run, fetch, provider_facts)
                 for context, provider_facts in zip(contexts, providers, strict=True)
             ]
-            sections = [_section_or_none(future) for future in futures]
+            sections = [section for future in futures for section in _sections_of(future)]
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
-        return [section for section in sections if section is not None]
+        return sections
