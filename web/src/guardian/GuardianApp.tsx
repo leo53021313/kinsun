@@ -44,7 +44,9 @@ export type GuardianRoute =
   | { name: "register" }
   /** 分頁殼。哪一個分頁在前面由 `activeTab` 決定，不進堆疊——分頁之間是平行的。 */
   | { name: "tabs" }
-  | { name: "elder"; elderId: string; elderName: string }
+  // persona 跟著一起帶（2026-08-05）：詳情頁的個性選擇器要知道目前是哪一種，
+  // 才不會每次進去都預選第一個。與 elderName 同一條路。
+  | { name: "elder"; elderId: string; elderName: string; persona: string }
   // elderName 跟著一起帶：家屬管兩位以上長輩時，行程管理頁若只有「行程管理」
   // 四個字，畫面上沒有任何字告訴他正在編誰的提醒。
   | { name: "schedules"; elderId: string; elderName: string }
@@ -124,6 +126,7 @@ function GuardianAppBody(props: GuardianAppProps) {
         name: "elder",
         elderId: elder.elder_id,
         elderName: elder.nickname?.trim() || elder.name,
+        persona: elder.persona,
       }),
     [push],
   );
@@ -169,7 +172,9 @@ function GuardianAppBody(props: GuardianAppProps) {
       case "home":
         return (
           <HomeScreen
-            onOpenElder={(elderId, elderName) => push({ name: "elder", elderId, elderName })}
+            onOpenElder={(elderId, elderName, persona) =>
+              push({ name: "elder", elderId, elderName, persona })
+            }
             onOpenNotifications={() => setActiveTab("notifications")}
             onSendCodeToElder={onSendCodeToElder}
             unread={unread}
@@ -232,6 +237,7 @@ function GuardianAppBody(props: GuardianAppProps) {
           <ElderDetailScreen
             elderId={route.elderId}
             elderName={route.elderName}
+            persona={route.persona}
             onManageSchedules={() =>
               push({
                 name: "schedules",

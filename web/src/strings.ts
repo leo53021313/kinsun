@@ -178,6 +178,17 @@ export const strings = {
     noSummaries: "還沒有摘要——長輩與阿白聊過天後，隔天早上就會出現。",
     noSchedules: "還沒有任何提醒，點下方「管理行程」新增。",
     manageSchedules: "管理行程",
+    personaSection: "金孫的個性",
+    // ⚠️ 明講「聲音不會變」：這一版兩種個性共用同一個聲音，不先講家屬會以為壞了
+    // （選了孫子卻聽到原本的聲音）。聲音切換是下一階段的工項。
+    personaHelp: "選一種說話的方式，下一次跟金孫講話就會換過來。聲音不會變。",
+    personaLively: "活潑的孫女",
+    personaLivelyHint: "有活力、情緒藏不住，會替您開心也會替您緊張",
+    personaSteady: "穩重的孫子",
+    personaSteadyHint: "沉穩、話不多，關心用做事表達",
+    savePersona: "儲存個性",
+    personaSaved: "已經換好了，下一次跟金孫講話就會聽到。",
+    personaSaveFailed: "儲存失敗，請稍後再試。",
     accountSection: "長輩登入帳密（代辦）",
     accountHelp:
       "幫長輩設定手機號碼＋密碼。換手機或登出後，長輩用這組帳密登入即可，不用再掃碼；" +

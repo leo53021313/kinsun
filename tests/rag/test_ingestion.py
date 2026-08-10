@@ -416,3 +416,164 @@ def test_ingest_pages_strips_publisher_prefix_from_title():
 
     assert store.documents[0].title == "連喝水也會胖"
     assert not store.documents[0].text.startswith("連喝水也會胖\n連喝水也會胖")
+
+
+def _parsed(url: str, title: str, text: str):
+    from kinsun.rag.crawler import ParsedPage
+
+    return ParsedPage(
+        url=url, title=title, text=text, links=(), published_at=None, parser_used="html:test"
+    )
+
+
+# 疾管署每頁都渲染整份站台骨架，且骨架用語與國健署完全不同
+# （沒有「首頁 >」麵包屑、沒有「跳到主要內容區塊」），
+# strip_page_furniture 的規則一個都對不上，整頁選單會原封不動進索引。
+_CDC_CHROME = "\n".join(
+    [
+        "應用專區",
+        "宣導",
+        "影片",
+        "(Video)",
+        "海報",
+        "(Poster)",
+        "單張",
+        "(Leaflet)",
+        "授權說明",
+        "網站導覽",
+        "關於CDC",
+        "署長簡介",
+        "副署長簡介",
+        "沿革與成果",
+        "組織與職掌",
+        "重大政策",
+        "法令規章",
+        "政府資料公開",
+        "疫苗資訊",
+        "傳染病介紹",
+        "統計專區",
+        "出版品",
+        "1922",
+        "0800-001922",
+    ]
+)
+
+
+def test_lines_repeated_across_a_source_are_stripped_as_site_chrome():
+    """同一來源多數頁面都出現的行是站台骨架，切塊前要剝掉。
+
+    2026-08-01 實測：cdc_advocacy 收到的 17 篇「文章」其實是同一個索引頁的不同
+    參數，內容 100% 是選單，卻因為長度夠而通過收錄判定，讓 38 個純導覽 chunk
+    進了索引。用「跨文件重複」判定而非「行很短」或「沒有句號」——後兩者會誤殺
+    衛教海報（〈高血壓〉整篇就是條列，卻是 golden set 的正解）。
+    """
+    store = _FakeStore()
+    source = SourceRegistry().get("cdc_diseases")
+    pipeline = IngestionPipeline(
+        store=store,
+        embedding_model=CharacterHashEmbedding(dimensions=8),
+        clock=lambda: datetime(2026, 8, 2),
+    )
+    pages = tuple(
+        _parsed(f"https://www.cdc.gov.tw/Advocacy/SubIndex/x?d={i}", "宣導", _CDC_CHROME)
+        for i in range(6)
+    )
+
+    admitted = pipeline.ingest_pages(pages=pages, source=source, operator_or_job_id="job-1")
+
+    assert admitted == ()
+    assert any("未收錄" in (log.get("error_message") or "") for log in store.logs)
+
+
+def test_site_chrome_stripping_keeps_bullet_style_health_posters():
+    """衛教海報整篇都是條列、沒有句號，但每篇內容各不相同，不可被當成骨架剝掉。"""
+    store = _FakeStore()
+    source = SourceRegistry().get("cdc_diseases")
+    pipeline = IngestionPipeline(
+        store=store,
+        embedding_model=CharacterHashEmbedding(dimensions=8),
+        clock=lambda: datetime(2026, 8, 2),
+    )
+    # 長度比照庫裡真實的衛教海報（〈高血壓〉〈預防心血管疾病-阻塞篇〉約 45～60 字），
+    # 太短的素材會撞到既有的空殼門檻，測不到本題要測的東西。
+    posters = (
+        "阻塞 就在一瞬間\n預防心血管疾病五招\n保持健康飲食\n規律運動\n戒菸\n定期健檢\n"
+        "控制血壓血糖及血脂",
+        "流感疫苗接種三重點\n每年接種一次\n65歲以上長者公費接種\n接種後留觀三十分鐘\n發燒或急性病症時暫緩接種",
+        "腸病毒防治五要\n要洗手\n要通風\n要消毒\n要隔離\n要就醫並注意重症前兆\n家中有嬰幼兒者尤應留意",
+        "登革熱防治重點\n清除積水容器\n每週巡倒清刷\n出現發燒與肌肉痠痛儘速就醫\n住家加裝紗窗與紗門",
+        "結核病十分篩檢法\n咳嗽超過兩週\n有痰\n胸痛\n體重減輕\n食慾不振\n盜汗\n符合五分以上請儘速就醫",
+        "愛滋病防治要點\n安全性行為全程使用保險套\n不共用針具\n定期篩檢及早治療\n接受治療可有效控制病毒量",
+    )
+    pages = tuple(
+        _parsed(f"https://www.cdc.gov.tw/Disease/SubIndex/p{i}", f"衛教海報{i}", text)
+        for i, text in enumerate(posters)
+    )
+
+    admitted = pipeline.ingest_pages(pages=pages, source=source, operator_or_job_id="job-2")
+
+    assert len(admitted) == len(posters)
+    assert "保持健康飲食" in admitted[0].text
+
+
+def test_site_chrome_stripping_needs_enough_pages_to_be_meaningful():
+    """頁面太少時不做跨文件比對——兩篇文章剛好都提到同一句不代表那是骨架。"""
+    store = _FakeStore()
+    source = SourceRegistry().get("cdc_diseases")
+    pipeline = IngestionPipeline(
+        store=store,
+        embedding_model=CharacterHashEmbedding(dimensions=8),
+        clock=lambda: datetime(2026, 8, 2),
+    )
+    shared = "接種後請留觀三十分鐘，若有不適應立即告知醫護人員並儘速就醫處理。"
+    pages = (
+        _parsed(
+            "https://www.cdc.gov.tw/Disease/SubIndex/a", "流感疫苗", f"流感疫苗接種須知\n{shared}"
+        ),
+        _parsed(
+            "https://www.cdc.gov.tw/Disease/SubIndex/b",
+            "肺炎鏈球菌",
+            f"肺炎鏈球菌疫苗接種須知\n{shared}",
+        ),
+    )
+
+    admitted = pipeline.ingest_pages(pages=pages, source=source, operator_or_job_id="job-3")
+
+    assert len(admitted) == 2
+    assert all(shared in document.text for document in admitted)
+
+
+def test_identical_content_under_different_urls_is_claimed_once_across_sources():
+    """跨來源不只比網址，也比內容——同一份內容只收一次。
+
+    2026-08-05 實測：`mohw_health_window` 與 `mohw_health_list` 各收到一份
+    〈焦點新聞〉〈真相說明〉，網址不同但內容位元組相同。`deduplicate_documents`
+    的 hash 那一關只在單一來源的批次內作用，跨來源的 claim 表又只比 canonical
+    URL，兩關都放行，結構閘門直接以「有重複內容 hash」擋下整個 release。
+    """
+    store = _FakeStore()
+    registry = SourceRegistry()
+    pipeline = IngestionPipeline(
+        store=store,
+        embedding_model=CharacterHashEmbedding(dimensions=8),
+        clock=lambda: datetime(2026, 8, 5),
+    )
+    text = (
+        "衛生福利部焦點新聞：本部各單位發布的健康訊息與政策說明，包含疫苗接種、"
+        "慢性病防治、長者照護與食品安全等主題，內容定期更新並保留發布日期。"
+    )
+
+    pipeline.ingest_pages(
+        source=registry.get("mohw_health_window"),
+        pages=(_parsed("https://www.mohw.gov.tw/np-16-1.html", "焦點新聞", text),),
+        operator_or_job_id="job-1",
+        index_version="v1",
+    )
+    pipeline.ingest_pages(
+        source=registry.get("mohw_health_article"),
+        pages=(_parsed("https://www.mohw.gov.tw/lp-16-1.html", "焦點新聞", text),),
+        operator_or_job_id="job-1",
+        index_version="v1",
+    )
+
+    assert [document.source_id for document in store.documents] == ["mohw_health_window"]

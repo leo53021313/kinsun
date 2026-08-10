@@ -64,6 +64,7 @@ function renderDetail(props: Partial<Parameters<typeof ElderDetailScreen>[0]> = 
       <ElderDetailScreen
         elderId="e1"
         elderName="王阿嬤"
+        persona="lively_granddaughter"
         onManageSchedules={vi.fn()}
         {...props}
       />
@@ -146,6 +147,53 @@ describe("ElderDetailScreen", () => {
     expect(save).toBeDisabled();
     await userEvent.type(screen.getByLabelText("密碼（至少 8 碼）"), "correct-horse-8");
     expect(save).toBeEnabled();
+  });
+
+  it("個性選擇器預選目前的人設，切換並儲存後按鈕變回停用", async () => {
+    const spy = mockByPath({
+      "health-report": { risk_events: [], reminders: [] },
+      "daily-summaries": [],
+      schedules: [],
+      persona: { elder_id: "e1", persona: "steady_grandson" },
+    });
+    renderDetail({ persona: "lively_granddaughter" });
+
+    const lively = await screen.findByRole("radio", { name: /活潑的孫女/ });
+    const steady = screen.getByRole("radio", { name: /穩重的孫子/ });
+    expect(lively).toBeChecked();
+    const save = screen.getByRole("button", { name: "儲存個性" });
+    // 沒有改動就不該能按——否則家屬會以為每次進來都要按一次才算數。
+    expect(save).toBeDisabled();
+
+    await userEvent.click(steady);
+    expect(save).toBeEnabled();
+    await userEvent.click(save);
+
+    expect(await screen.findByText("已經換好了，下一次跟金孫講話就會聽到。")).toBeInTheDocument();
+    expect(steady).toBeChecked();
+    expect(save).toBeDisabled();
+    const call = spy.mock.calls.find((args) => String(args[0]).includes("/persona"));
+    expect(call?.[0]).toContain("/api/v1/elders/e1/persona");
+    const init = call?.[1] as RequestInit;
+    expect(init).toMatchObject({ method: "PUT" });
+    expect(JSON.parse(String(init.body))).toEqual({ persona: "steady_grandson" });
+  });
+
+  it("個性儲存失敗時保留家屬的選擇並顯示紅字，不會靜靜跳回舊值", async () => {
+    mockMixedByPath({
+      "health-report": { status: 200, body: envelope({ risk_events: [], reminders: [] }) },
+      "daily-summaries": { status: 200, body: envelope([]) },
+      schedules: { status: 200, body: envelope([]) },
+      persona: { status: 500, body: failure("server_error", "系統忙碌，請稍後再試") },
+    });
+    renderDetail({ persona: "lively_granddaughter" });
+
+    await userEvent.click(await screen.findByRole("radio", { name: /穩重的孫子/ }));
+    await userEvent.click(screen.getByRole("button", { name: "儲存個性" }));
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /穩重的孫子/ })).toBeChecked();
+    expect(screen.queryByText("已經換好了，下一次跟金孫講話就會聽到。")).not.toBeInTheDocument();
   });
 
   it("三支端點其中一支失敗時，其餘兩支照常顯示，失敗的那個區塊顯示錯誤而不是卡在載入中", async () => {

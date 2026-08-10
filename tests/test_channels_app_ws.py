@@ -26,6 +26,7 @@ from kinsun.channels.app.ws import create_app_ws_router
 from kinsun.channels.inbound import VoiceReplyDelivery
 from kinsun.llm import Message, ToolCall, ToolSpec, ToolTurn
 from kinsun.locations.store import ElderLocation
+from kinsun.personas import DEFAULT_PERSONA_ID
 from kinsun.pipeline import VoicePipeline
 from kinsun.safety.detector import RiskDetector
 from kinsun.speech.ack_audio import AckClip
@@ -156,14 +157,18 @@ class _FakeAckAudio:
 
     def __init__(self, clip: AckClip | None = None) -> None:
         self.asked: list[str] = []
+        # 這一輪被要求用哪一種人設的句子（2026-08-05）——人設由 agent 隨通知帶到
+        # 這裡，WS 端不查資料庫，故它是唯一能證明接線沒斷的地方。
+        self.personas: list[str] = []
         self._clip = clip or AckClip(
             text="好，我幫您看看最近的新聞喔",
             audio_url="https://cdn.example/ack.m4a",
             duration_ms=1300,
         )
 
-    def clip_for(self, tool_name: str, *, persona_name: str = "kinsun") -> AckClip | None:
+    def clip_for(self, tool_name: str, *, persona_id: str = DEFAULT_PERSONA_ID) -> AckClip | None:
         self.asked.append(tool_name)
+        self.personas.append(persona_id)
         return self._clip
 
 
@@ -552,6 +557,8 @@ def test_ack_arrives_before_the_reply_when_a_tool_is_called():
     assert ack["text"] == "好，我幫您看看最近的新聞喔"
     assert ack["audio_url"] == "https://cdn.example/ack.m4a"
     assert ack["duration_ms"] == 1300
+    # 人設有跟著送到語庫（2026-08-05）：這一輪沒有設定人設，故為預設。
+    assert ack_audio.personas == [DEFAULT_PERSONA_ID]
     assert reply["type"] == "reply"
     assert reply["text"] == "今天有三則新聞喔"
     assert ack["turn_id"] == reply["turn_id"], "同一輪的兩則訊息必須帶同一個 turn_id"

@@ -63,7 +63,7 @@ def safe_record(action: Callable[[], None]) -> None:
         except Exception:  # noqa: BLE001 - 觀測失敗不可影響主流程
             logger.warning("觀測記錄落庫失敗", exc_info=True)
 
-    background.run(guarded)
+    background.run(guarded, name="observability_write")
 
 
 def _llm_stage_stats(

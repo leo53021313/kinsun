@@ -27,45 +27,61 @@ _TITLES = {
     ScheduleKind.CUSTOM: "\n這位長者自己交代要提醒的事：\n",
 }
 
+# 段落順序是 prompt 契約：與先前「註冊三個實例」的順序相同（見 composition）。
+# 不靠 _TITLES 的 dict 插入序，明著寫出來才不會被無意的重排改掉。
+_KIND_ORDER = (ScheduleKind.MEDICATION, ScheduleKind.APPOINTMENT, ScheduleKind.CUSTOM)
+
 _WEEKDAYS = "一二三四五六日"
 
 
 class ScheduleFacts:
-    """facts(elder_id) -> FactSection | None（該 kind 無排程回 None）。
+    """facts(elder_id) -> list[FactSection]（三種 kind 各一段，無排程的 kind 不出現）。
 
-    一個 kind 一個實例，由組裝根註冊三次。以 `group_id` 收斂：同一件事的多個鬧鐘
-    （早晚兩次的藥、前一天加當天的回診）注入時必須合成一行，否則模型會以為那是
-    兩種藥、兩次回診。
+    **一次查詢供三段**：三種 kind 的資料來自同一個 `list_for_elder(elder_id)`，
+    先前一個 kind 一個實例、各打一次完全相同的查詢，三次跨海往返只是白等
+    （單次往返實測約 250ms，2026-08-07）。段落仍維持三段獨立——標題本身就在
+    告訴模型「這是藥」「這是回診」，併起來等於把分類資訊丟掉。
+
+    以 `group_id` 收斂：同一件事的多個鬧鐘（早晚兩次的藥、前一天加當天的回診）
+    注入時必須合成一行，否則模型會以為那是兩種藥、兩次回診。
+
+    ⚠️ 取捨：`memory/recall.py::_gather_facts` 的 `fetch` 用同一個
+    `except Exception` 包住整個 `facts()` 呼叫，三段合一次查詢之後，若三段
+    格式化中有一段失敗，會連同其餘段落一併消失（改動前三個獨立提供者互不
+    影響）。目前查不到今天走得到的路徑（兩條寫入路徑皆有驗證守著），此為
+    記下的取捨，不是已知 bug。
     """
 
-    def __init__(
-        self,
-        store: ScheduleStore,
-        *,
-        kind: ScheduleKind,
-        clock: Callable[[], datetime],
-    ) -> None:
+    def __init__(self, store: ScheduleStore, *, clock: Callable[[], datetime]) -> None:
         self._store = store
-        self._kind = kind
         self._clock = clock
 
-    def facts(self, elder_id: str) -> FactSection | None:
-        rows = [s for s in self._store.list_for_elder(elder_id) if s.kind == self._kind]
-        if not rows:
+    def facts(self, elder_id: str) -> list[FactSection]:
+        rows = self._store.list_for_elder(elder_id)
+        sections = []
+        for kind in _KIND_ORDER:
+            section = self._section(kind, rows)
+            if section is not None:
+                sections.append(section)
+        return sections
+
+    def _section(self, kind: ScheduleKind, rows: list[Schedule]) -> FactSection | None:
+        matched = [s for s in rows if s.kind == kind]
+        if not matched:
             return None
         groups: dict[str, list[Schedule]] = {}
-        for row in rows:
+        for row in matched:
             groups.setdefault(row.group_id, []).append(row)
-        items = [self._line(group) for group in groups.values()]
-        return FactSection(_TITLES[self._kind], items)
+        items = [self._line(kind, group) for group in groups.values()]
+        return FactSection(_TITLES[kind], items)
 
-    def _line(self, group: list[Schedule]) -> str:
+    def _line(self, kind: ScheduleKind, group: list[Schedule]) -> str:
         first = group[0]
-        if self._kind == ScheduleKind.MEDICATION:
+        if kind == ScheduleKind.MEDICATION:
             labels = "、".join(slot_label(int(s.repeat_time[:2])) for s in group if s.repeat_time)
             return f"{first.title}（{labels}）"
         tz = self._clock().tzinfo
-        if self._kind == ScheduleKind.APPOINTMENT:
+        if kind == ScheduleKind.APPOINTMENT:
             when = first.event_at if first.event_at is not None else first.scheduled_at
             date = datetime.fromtimestamp(when, tz).date().isoformat() if when else ""
             return f"{date} {first.title}".strip()

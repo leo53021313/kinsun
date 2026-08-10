@@ -326,3 +326,54 @@ def test_ensure_schema_upgrades_existing_768_dimension_column():
 
     assert dimensions == RAG_EMBEDDING_DIMENSIONS
     assert has_index == 1, "維度升級後 HNSW 索引必須重建"
+
+
+def test_reuse_requires_the_same_url_not_just_the_same_content(pg_database, ns):
+    """內容相同但網址不同時不可重用——重用會沿用舊 row 的網址。
+
+    2026-08-05 實錄：國健署 `?nodeid=1234&pid=6784` 與 `&pid=6800` 渲染同一頁，
+    兩次抓取的行順序不同使 hash 分岔，URL 與 hash 兩道去重都放行；重用只比對
+    `(source_id, content_hash)`，於是把舊 row（網址是 pid=6784）整個沿用進新
+    release，該 release 裡出現兩份網址相同的文件、結構閘門以「有重複 URL」擋下。
+    比網址更要緊的是引用正確性：重用會讓 chunk 的來源網址指向另一個頁面。
+    """
+    releases = PgRagReleaseStore(pg_database)
+    first = f"{ns}url1"
+    second = f"{ns}url2"
+    _begin(releases, first)
+    document_id = _build_document(pg_database, version=first)
+    pg_database.execute(
+        "UPDATE rag_index_releases SET status='candidate' WHERE index_version=%s",
+        (first,),
+    )
+    releases.publish(first)
+    _begin(releases, second)
+
+    source = SourceRegistry().get("hpa_health_education")
+    row = pg_database.query_one(
+        "SELECT source_id, url, title, publisher, text, content_hash, source_type, language, "
+        "topic, audience, medical_scope, trust_level, copyright_status, published_at, "
+        "updated_at, retrieved_at FROM rag_documents WHERE document_id=%s",
+        (document_id,),
+    )
+    from dataclasses import replace
+
+    from kinsun.rag.migrate import _row_to_document
+
+    original = _row_to_document((document_id, *row))
+    other_url = replace(original, url=original.url + "&pid=6800")
+
+    reused = PgVectorStore(pg_database).reuse_document(
+        other_url,
+        source_role=source.role,
+        index_version=second,
+        fetched_at=1.0,
+        operator_or_job_id=second,
+    )
+
+    assert reused is False
+    membership = pg_database.query_one(
+        "SELECT 1 FROM rag_release_documents WHERE index_version=%s AND document_id=%s",
+        (second, document_id),
+    )
+    assert membership is None

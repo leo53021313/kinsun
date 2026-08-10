@@ -702,3 +702,83 @@ def test_channel_prompts_use_a_bai_first_person_not_the_service_name():
     assert "按住麥克風" in NON_AUDIO_PROMPT
     assert "邀請碼" in BIND_FIRST_PROMPT
     assert "設定" in BIND_FIRST_PROMPT
+
+
+# ── 端到端秒數要進得了 Opik（2026-08-08 觀測盤點）──
+#
+# `round_trip_ms` 原本只寫進 Postgres 的 `replies`，Opik 一個字都沒有——想看端到端
+# 分布只能查 DB，而 Opik 上那個 trace 時長比它短（trace 根在容量閘門之後才開始）。
+# `log_feedback_score` 早就定義好、也匯出了，全庫零呼叫。
+
+
+def _spy_trace_writes(monkeypatch):
+    """攔下 update_current_trace，看 metadata 與 feedback score 有沒有寫上去。
+
+    ⚠️ `opik.track` 也必須換成 identity：只開 `_ENABLED` 而不換掉它，`@tracing.track`
+    會真的去初始化 Opik client 連 localhost:5273——單元測試不可以連任何東西。
+    而且 `tracing.track` 的包裝是**首次呼叫時**建好就快取的，一旦讓真的那個進了快取，
+    同一個 pytest 行程裡之後的每一個測試都會跟著連線。
+    """
+    import opik
+
+    from kinsun.tracing import client as tracing_client
+    from kinsun.tracing import decorators as tracing_decorators
+
+    calls: list[dict] = []
+    monkeypatch.setattr(opik, "track", lambda **kw: lambda f: f)
+    monkeypatch.setattr(tracing_decorators, "is_enabled", lambda: True)
+    monkeypatch.setattr(tracing_client, "_ENABLED", True)
+    monkeypatch.setattr(opik.opik_context, "update_current_trace", lambda **kw: calls.append(kw))
+    return calls
+
+
+def test_dispatch_sends_round_trip_to_opik(monkeypatch):
+    calls = _spy_trace_writes(monkeypatch)
+    msg = InboundMessage(
+        Channel.LINE, "U-1", "audio", "", b"xy", _Replies(), trace_id="t9", received_at=0.5
+    )
+    dispatch(
+        msg,
+        pipeline=_VoicePipeline(TtsResult(text="回覆")),
+        binding=_Binding(None),
+        gate=_Gate(True),
+        traces=FakeTraceStore(),
+        timer=iter([1.0, 1.25]).__next__,
+    )
+    scores = [s for c in calls for s in c.get("feedback_scores", [])]
+    assert {"name": "round_trip_ms", "value": 750, "reason": ""} in scores
+
+
+def test_dispatch_skips_the_opik_score_when_round_trip_is_unknown(monkeypatch):
+    """起點未知時不可掛 0——0 毫秒的往返會直接毀掉整條分布的可信度。"""
+    calls = _spy_trace_writes(monkeypatch)
+    msg = InboundMessage(Channel.LINE, "U-1", "audio", "", b"xy", _Replies(), trace_id="t10")
+    dispatch(
+        msg,
+        pipeline=_VoicePipeline(TtsResult(text="回覆")),
+        binding=_Binding(None),
+        gate=_Gate(True),
+        traces=FakeTraceStore(),
+        timer=iter([0.0, 0.1]).__next__,
+    )
+    scores = [s for c in calls for s in c.get("feedback_scores", [])]
+    assert [s for s in scores if s["name"] == "round_trip_ms"] == []
+
+
+def test_dispatch_records_admission_wait_on_the_trace(monkeypatch):
+    """排隊等待只能是 metadata：它發生在 trace 根開始之前，沒有 span 容得下。"""
+    from kinsun import turn_context
+
+    calls = _spy_trace_writes(monkeypatch)
+    msg = InboundMessage(Channel.LINE, "U-1", "audio", "", b"xy", _Replies(), trace_id="t11")
+    with turn_context.admission_wait(4321):
+        dispatch(
+            msg,
+            pipeline=_VoicePipeline(TtsResult(text="回覆")),
+            binding=_Binding(None),
+            gate=_Gate(True),
+            traces=FakeTraceStore(),
+            timer=iter([0.0, 0.1]).__next__,
+        )
+    metadata = [c.get("metadata", {}) for c in calls]
+    assert any(m.get("admission_wait_ms") == 4321 for m in metadata)

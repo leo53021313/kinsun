@@ -188,7 +188,7 @@ describe("跨欄連動：家屬把綁定碼送到長輩欄", () => {
           return Promise.resolve({
             status: 201,
             json: async () =>
-              envelope({ elder_id: "e9", name: "阿公", nickname: "", invite_code: "AB12CD" }),
+              envelope({ elder_id: "e9", name: "阿公", nickname: "", persona: "lively_granddaughter", invite_code: "AB12CD" }),
           });
         }
         return Promise.resolve({ status: 200, json: async () => envelope([]) });
@@ -225,7 +225,7 @@ describe("跨欄連動：家屬把綁定碼送到長輩欄", () => {
           return Promise.resolve({
             status: 201,
             json: async () =>
-              envelope({ elder_id: "e9", name: "阿嬤", nickname: "", invite_code: "ZZ99YY" }),
+              envelope({ elder_id: "e9", name: "阿嬤", nickname: "", persona: "lively_granddaughter", invite_code: "ZZ99YY" }),
           });
         }
         return Promise.resolve({ status: 200, json: async () => envelope([]) });

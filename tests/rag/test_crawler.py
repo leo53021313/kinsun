@@ -8,6 +8,8 @@ from kinsun.rag.crawler import (
     DomainParserRegistry,
     FetchedPage,
     HealthEducationCrawler,
+    HtmlTextExtractor,
+    _pdf_title,
 )
 from kinsun.rag.source_registry import SourceRegistry
 
@@ -440,22 +442,37 @@ def test_content_sources_only_follow_articles_and_treat_them_as_leaves():
 
 
 def test_sources_without_content_pattern_keep_following_all_links():
-    """未宣告內容樣式的來源行為完全不變（既有 discovery 來源仰賴這個）。"""
+    """未宣告內容樣式的來源仍然跟隨所有連結（既有 discovery 來源仰賴這個）。
+
+    ⚠️ 種子頁只有一個連結、沒有內文，不收成文件是對的（收進去也會被收錄判定
+    以「空殼」擋掉），但**連結必須照跟**——不然每個以導覽頁為種子的來源都會
+    當場斷頭。2026-08-07 拿掉連結文字後，這條分界才真正被測到。
+    """
     source = SourceRegistry().get("mohw_health_window")
     assert source.content_url_pattern == ""
     second = "https://www.mohw.gov.tw/cp-88-1-1.html"
+    fetched: list[str] = []
     pages = {
         source.url: _page(source.url, f'<html><body><a href="{second}">下一頁</a></body></html>'),
         second: _page(second, "<html><body><p>衛教內容。</p></body></html>"),
     }
 
+    def fetcher(url):
+        fetched.append(url)
+        return pages[url]  # robots.txt 不在字典裡，取不到即視為未設限（既有行為）
+
     crawler = HealthEducationCrawler(
         config=CrawlerConfig(max_pages_per_source=5, delay_seconds=0),
-        fetcher=lambda url: pages[url],
+        fetcher=fetcher,
         sleeper=lambda seconds: None,
     )
 
-    assert len(crawler.crawl(source).pages) == 2
+    result = crawler.crawl(source)
+
+    visited = [url for url in fetched if not url.endswith("robots.txt")]
+    assert visited == [source.url, second], "純導覽的種子頁仍要被走過並跟隨其連結"
+    assert [page.url for page in result.pages] == [second], "只有真的有內文的頁面才收成文件"
+    assert source.url in result.skipped_urls
 
 
 def _robots(body: str) -> FetchedPage:
@@ -670,3 +687,137 @@ def test_crawl_sitemap_fetches_only_listed_articles():
     assert len(result.pages) == 2
     # 頁內連結完全不跟隨，主題不會漂移
     assert "https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=99&pid=1" not in fetched
+
+
+_RSS_FEED = """<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0"><channel>
+  <title>衛生福利部疾病管制署</title>
+  <link>https://www.cdc.gov.tw/</link>
+  <item>
+    <title>流感併發重症</title>
+    <link>https://www.cdc.gov.tw/Disease/SubIndex/AbCd1234</link>
+  </item>
+  <item>
+    <title>侵襲性肺炎鏈球菌感染症</title>
+    <link>http://www.cdc.gov.tw/Disease/SubIndex/EfGh5678</link>
+  </item>
+  <item>
+    <title>某則公告</title>
+    <link>https://www.cdc.gov.tw/Bulletin/List/ZzZz0000</link>
+  </item>
+</channel></rss>
+"""
+
+
+def test_load_sitemap_urls_reads_rss_item_links():
+    """疾管署沒有 sitemap，但有 RSS；同一個載入器要能吃兩種格式。
+
+    2026-08-01 實測：cdc 用爬樹只抓到同一個索引頁的 17 種參數變形，內容全是選單。
+    RSS 的 type=2 feed 直接列出 97 個疾病頁，那才是真正的內容清單。
+    """
+    from dataclasses import replace
+
+    from kinsun.rag.crawler import load_sitemap_urls
+
+    source = replace(
+        SourceRegistry().get("cdc_diseases"),
+        content_url_pattern=r"Disease/SubIndex",
+        allowed_domains=("cdc.gov.tw",),
+    )
+
+    urls = load_sitemap_urls(_RSS_FEED.encode("utf-8"), source)
+
+    assert urls == (
+        "https://www.cdc.gov.tw/Disease/SubIndex/AbCd1234",
+        # http 升級 https，與 sitemap 路徑套用同一套正規化
+        "https://www.cdc.gov.tw/Disease/SubIndex/EfGh5678",
+    )
+    # channel 層的首頁連結與不符內容樣式的公告頁都不收
+    assert all("Bulletin" not in url for url in urls)
+
+
+def test_pdf_title_comes_from_the_download_filename():
+    """PDF 沒有 <title>，標題取自 Content-Disposition 的檔名。
+
+    2026-08-02 實測國健署 health.hpa.gov.tw 的下載端點：網址是
+    `Download.ashx?f=<guid>.pdf&o=<檔名>.pdf`，路徑段只有 "Download"。
+    標題會被接在內文前面一起送進嵌入模型（含標題 R@1 98.4%、純內文 85.2%），
+    也是引用時顯示給家屬看的字，取成 "Download" 兩邊都毀了。
+    伺服器送的 filename 是 percent-encoded UTF-8，需解碼。
+    """
+    page = FetchedPage(
+        url="https://health.hpa.gov.tw/common/Download.ashx?f=abc.pdf&o=x.pdf",
+        content_type="application/pdf",
+        body=b"%PDF-1.4",
+        fetched_at=datetime.now(),
+        content_disposition=(
+            'attachment; filename="05.%e7%9d%a1%e7%9c%a0%e8%88%87'
+            '%e7%b2%be%e7%a5%9e%e5%81%a5%e5%ba%b7.pdf"'
+        ),
+    )
+
+    assert _pdf_title(page) == "05.睡眠與精神健康"
+
+
+def test_pdf_title_falls_back_to_the_url_path():
+    """沒有 Content-Disposition 時維持既有行為：取網址最後一段。"""
+    page = FetchedPage(
+        url="https://example.gov.tw/files/%E8%A1%9B%E6%95%99.pdf",
+        content_type="application/pdf",
+        body=b"%PDF-1.4",
+        fetched_at=datetime.now(),
+    )
+
+    assert _pdf_title(page) == "衛教"
+
+
+def test_anchor_text_is_not_kept_as_document_content():
+    """連結裡的文字是導覽，不是內文。
+
+    2026-08-07 實測定案：政府網站的選單就是一堆連結，其文字全部包在 <a> 裡——
+    國健署每頁 <a> 內恆為 3,084 字（各頁一字不差的全站選單），<a> 外才是文章
+    （實測三篇各 894／740／695 字）。先前壓平全頁再用外形猜哪段是選單，失敗過
+    五次（長度下限→欄位數→條列比例→跨文件行重複→重複次數門檻），且每次都會
+    誤殺簡短的真衛教。改在解析當下就依結構分流，不再事後猜。
+
+    附件與相關文件的標題同理：疾管署〈新冠併發重症〉頁的 <a> 內是〈臨床處置
+    指引〉〈疫苗接種須知〉等十餘份**別份文件**的標題，收進來等於把疾病介紹的
+    向量污染成一份文件目錄。
+    """
+    # 選單與附件清單就放在內容區裡面——這是真實情況：疾管署與國健署的側欄選單
+    # 和「相關檔案」都渲染在 <main> 之內，不在 <nav> 裡，既有的主內容區規則攔不到。
+    html = (
+        "<html><body><main>"
+        "<a href='/menu-a'>關於本署</a><a href='/menu-b'>大事紀要</a>"
+        "<h1>貓抓病</h1>"
+        "<p>貓抓病是由韓瑟勒巴通氏菌所引起的疾病，主要流行季節在夏末及秋冬。</p>"
+        "<p>患者常因先前遭受貓抓、舔或咬傷而發病。</p>"
+        "<a href='/file-1'>新型冠狀病毒感染臨床處置指引</a>"
+        "</main></body></html>"
+    )
+    parser = HtmlTextExtractor("https://www.cdc.gov.tw/Disease/SubIndex/x")
+    parser.feed(html)
+
+    assert "韓瑟勒巴通氏菌" in parser.text
+    assert "關於本署" not in parser.text
+    assert "大事紀要" not in parser.text
+    assert "臨床處置指引" not in parser.text
+
+
+def test_dropping_anchor_text_does_not_stop_link_discovery():
+    """⚠️ 不收連結文字，但連結本身照收——爬蟲整條路靠它，斷了就什麼都抓不到。"""
+    html = (
+        "<html><body><article>"
+        "<a href='/Pages/Detail.aspx?pid=1'>第一篇</a>"
+        "<p>正文。</p>"
+        "<a href='https://www.hpa.gov.tw/Pages/Detail.aspx?pid=2'>第二篇</a>"
+        "</article></body></html>"
+    )
+    parser = HtmlTextExtractor("https://www.hpa.gov.tw/Pages/List.aspx")
+    parser.feed(html)
+
+    assert parser.links == (
+        "https://www.hpa.gov.tw/Pages/Detail.aspx?pid=1",
+        "https://www.hpa.gov.tw/Pages/Detail.aspx?pid=2",
+    )
+    assert "第一篇" not in parser.text

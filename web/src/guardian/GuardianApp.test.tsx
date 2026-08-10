@@ -52,7 +52,7 @@ function renderSignedIn() {
   );
 }
 
-const ELDERS = [{ elder_id: "e1", name: "王阿嬤", nickname: "" }];
+const ELDERS = [{ elder_id: "e1", name: "王阿嬤", nickname: "", persona: "lively_granddaughter" }];
 
 beforeEach(() => localStorage.clear());
 afterEach(() => vi.unstubAllGlobals());
@@ -287,7 +287,7 @@ describe("中央新增鍵（W5b）", () => {
   it("按下當刻重打一次 API，不讀快取", async () => {
     // ⚠️ 家屬剛在首頁建完第一位長輩，快取可能還是空的——讀快取會把他丟回首頁
     // 說「還沒有長輩」。這條守的就是那個時刻。
-    const spy = mockByPath({ elders: ELDERS });
+    const spy = mockByPath({ schedules: [], elders: ELDERS });
     renderSignedIn();
     await screen.findByRole("heading", { name: "我的長輩" });
     const before = spy.mock.calls.filter(([path]) => String(path).includes("elders")).length;

@@ -21,15 +21,32 @@ import {
   listSchedules,
   revokeElderDeviceBindings,
   setElderAccount,
+  setElderPersona,
 } from "./api";
 import { InviteCard } from "./InviteCard";
 import { describeGroup } from "./schedules";
 
 const MIN_PASSWORD_LENGTH = 8;
 
+/** 金孫的個性選項（2026-08-05）。值必須與後端 `personas.py` 的 id 一致。 */
+const PERSONA_OPTIONS = [
+  {
+    value: "lively_granddaughter",
+    label: strings.elderDetail.personaLively,
+    hint: strings.elderDetail.personaLivelyHint,
+  },
+  {
+    value: "steady_grandson",
+    label: strings.elderDetail.personaSteady,
+    hint: strings.elderDetail.personaSteadyHint,
+  },
+] as const;
+
 export function ElderDetailScreen(props: {
   elderId: string;
   elderName: string;
+  /** 目前的人設，由長輩清單帶進來（與 elderName 同一條路，見 `GuardianApp` 的路由）。 */
+  persona: string;
   onManageSchedules: () => void;
   /** 進每日摘要獨立畫面（W6）。本頁只列得下幾則，切日與分享在那邊。 */
   onOpenSummaries?: () => void;
@@ -70,6 +87,17 @@ export function ElderDetailScreen(props: {
   const [accountMessage, setAccountMessage] = useState("");
   const [accountError, setAccountError] = useState("");
   const [accountBusy, setAccountBusy] = useState(false);
+
+  // ⚠️ 以 props.persona 當初值、之後由本畫面自己持有：儲存成功後不重打
+  // GET /elders（那會連帶重載整頁三支端點）。父層的清單由下一次進入時刷新。
+  const [persona, setPersona] = useState(props.persona);
+  // savedPersona＝後端目前實際存的值。用它（而不是 props.persona）判斷「有沒有
+  // 改動」，儲存成功後按鈕才會正確地變回停用；只看 props 的話按鈕會一直亮著，
+  // 家屬會以為沒存進去而重複按。
+  const [savedPersona, setSavedPersona] = useState(props.persona);
+  const [personaMessage, setPersonaMessage] = useState("");
+  const [personaError, setPersonaError] = useState("");
+  const [personaBusy, setPersonaBusy] = useState(false);
 
   const [inviteCode, setInviteCode] = useState("");
   const [inviteBusy, setInviteBusy] = useState(false);
@@ -152,6 +180,25 @@ export function ElderDetailScreen(props: {
       setAccountError(apiErrorMessage(exc, strings.elderDetail.accountSaveFailed));
     } finally {
       setAccountBusy(false);
+    }
+  }
+
+  async function savePersona() {
+    setPersonaMessage("");
+    setPersonaError("");
+    setPersonaBusy(true);
+    try {
+      const saved = await setElderPersona(elderId, persona, token);
+      setPersona(saved);
+      setSavedPersona(saved);
+      setPersonaMessage(strings.elderDetail.personaSaved);
+    } catch (exc) {
+      if (signOutOn401(exc)) return;
+      // ⚠️ 失敗時**不**把選擇復原成舊值：家屬看得到自己選了什麼，配上錯誤訊息
+      // 就知道要再按一次；靜靜跳回舊值會讓人以為系統擅自改掉了他的選擇。
+      setPersonaError(apiErrorMessage(exc, strings.elderDetail.personaSaveFailed));
+    } finally {
+      setPersonaBusy(false);
     }
   }
 
@@ -260,6 +307,43 @@ export function ElderDetailScreen(props: {
           variant="outline"
           onClick={props.onManageSchedules}
         />
+      </Section>
+
+      <Section title={strings.elderDetail.personaSection}>
+        <p className="text-xs leading-5 text-ink-soft">{strings.elderDetail.personaHelp}</p>
+        {/* 用原生 radio 而非兩顆按鈕：讀螢幕軟體會唸出「二選一、目前選第幾個」，
+            鍵盤也能用方向鍵切換——這兩件事自造按鈕都要重寫一遍。 */}
+        {PERSONA_OPTIONS.map((option) => (
+          <label key={option.value} className="flex min-h-11 items-start gap-2 py-1">
+            <input
+              type="radio"
+              name="persona"
+              className="mt-1"
+              value={option.value}
+              checked={persona === option.value}
+              onChange={() => {
+                // 改了選擇就把上一次的結果清掉——舊的「已經換好了」掛在新選項
+                // 旁邊，家屬會以為新的也存好了（同 editAccountField 的理由）。
+                setPersonaMessage("");
+                setPersonaError("");
+                setPersona(option.value);
+              }}
+            />
+            <span>
+              <span className="block text-sm font-bold text-ink">{option.label}</span>
+              <span className="block text-xs leading-5 text-ink-soft">{option.hint}</span>
+            </span>
+          </label>
+        ))}
+        <Button
+          label={strings.elderDetail.savePersona}
+          variant="outline"
+          onClick={savePersona}
+          busy={personaBusy}
+          disabled={persona === savedPersona}
+        />
+        <NoticeText message={personaMessage} />
+        <ErrorText message={personaError} />
       </Section>
 
       <Section title={strings.elderDetail.accountSection}>
