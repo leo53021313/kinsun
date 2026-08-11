@@ -373,6 +373,11 @@ def build_app() -> FastAPI:
             summaries=summaries,
             # 與 ScheduleMenu 同一個來源：回診提醒的鐘點只有一份設定。
             appointment_hour=settings.appointment_reminder_hour,
+            # 長輩客製化聲音的家屬入口（2026-08-11）。與 VoicePipeline 同進同出：
+            # publisher 為 None＝TTS 非 dgx，客製化聲音本就無從生效，端點會回 503
+            # 而不是讓家屬錄完才發現沒作用。
+            voice_profiles=PgVoiceProfileStore(db) if publisher is not None else None,
+            publisher=publisher,
         ),
         prefix="/api/v1",
     )

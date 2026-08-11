@@ -22,6 +22,7 @@ from kinsun.reports.reminders import ReminderLogStore
 from kinsun.reports.summaries import ConversationSummaryStore
 from kinsun.safety.events import RiskEventStore
 from kinsun.schedules.service import ScheduleService
+from kinsun.voice_profiles.store import VoiceProfileStore
 from kinsun.web.auth import LiffVerifier
 from kinsun.web.ratelimit import RateLimiter, SlidingWindowRateLimiter
 from kinsun.web.routers.admin import create_admin_router
@@ -42,6 +43,7 @@ from kinsun.web.routers.push_tokens import create_push_tokens_router
 from kinsun.web.routers.reports import create_reports_router
 from kinsun.web.routers.schedules import create_schedules_router
 from kinsun.web.routers.sessions import create_sessions_router
+from kinsun.web.routers.voice_profiles import create_voice_profiles_router
 
 __all__ = [
     "create_admin_jobs_router",
@@ -63,6 +65,8 @@ def create_guardian_face_router(
     reminder_logs: ReminderLogStore,
     summaries: ConversationSummaryStore,
     appointment_hour: int,
+    voice_profiles: VoiceProfileStore | None = None,
+    publisher=None,
 ) -> APIRouter:
     """家屬面聚合：長輩／排程／健康報告／每日摘要，共用雙認證與可及範圍守門。
 
@@ -77,6 +81,15 @@ def create_guardian_face_router(
     router = APIRouter()
     router.include_router(
         create_elders_router(accounts=accounts, current_guardian=current_guardian, scope=scope)
+    )
+    router.include_router(
+        create_voice_profiles_router(
+            voice_profiles=voice_profiles,
+            publisher=publisher,
+            current_guardian=current_guardian,
+            scope=scope,
+            clock=clock,
+        )
     )
     router.include_router(
         create_schedules_router(

@@ -85,6 +85,41 @@ class SupabaseAudioPublisher:
             raise AudioPublishError(f"音檔上傳失敗：{exc}") from exc
         return self._create_signed_url(path)
 
+    def upload_voice_reference(self, elder_id: str, audio: bytes, *, content_type: str) -> str:
+        """上傳某位長輩的客製化參考音檔，回傳 bucket 內的**物件路徑**（不是網址）。
+
+        與 `publish` 的三個刻意差異：
+        - **路徑固定為 `voice-refs/<elder_id>`**，不帶日期或亂數。一位長輩只有一組
+          生效聲音（`voice_profiles` 的 PK 就是 elder_id），重錄即覆蓋；散落成多份
+          只會讓「哪一份才是生效的」變成要對照資料庫才知道的事。
+        - **回路徑而非網址**：`voice_profiles.prompt_audio_path` 存路徑，用時才由
+          `signed_url_for` 現簽短效網址（存死的簽章網址會過期，見該方法說明）。
+        - **不受 `cleanup(retention_days)` 影響**：那支只掃 `tts/` 底下的日期資料夾，
+          參考音檔放在 `voice-refs/` 不會被當成過期的回覆音檔掃掉。
+
+        ⚠️ 覆蓋既有物件需要 `x-upsert`，Supabase 預設會對已存在的路徑回 400。
+        """
+        path = f"voice-refs/{elder_id}"
+        upload_url = f"{self._base}/storage/v1/object/{self._bucket}/{path}"
+        try:
+            self._transport.request(
+                "POST",
+                upload_url,
+                data=audio,
+                headers={
+                    "Authorization": f"Bearer {self._key}",
+                    "Content-Type": content_type,
+                    "x-upsert": "true",
+                },
+                timeout=self._timeout,
+            )
+        except TransportError as exc:
+            raise AudioPublishError(f"參考音檔上傳失敗：{exc}") from exc
+        # 覆蓋後舊網址仍指向同一路徑但內容已換，行程內快取會發出舊簽章直到到期——
+        # 對 DGX 端而言那是同一個 URL、可能命中它自己的快取而拿到舊聲音。直接失效。
+        self._voice_url_cache.pop(path, None)
+        return path
+
     def signed_url_for(self, path: str) -> str:
         """為 bucket 內**既有**物件簽一個短效讀取網址（長輩客製化聲音的參考音檔用）。
 

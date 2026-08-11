@@ -70,7 +70,14 @@ class ErrorCode(StrEnum):
     # --- 請求限制 ---
     TOO_MANY_REQUESTS = "too_many_requests"
     AUDIO_TOO_LARGE = "audio_too_large"
+    MISSING_AUDIO = "missing_audio"
     UNSUPPORTED_MEDIA_TYPE = "unsupported_media_type"
+
+    # --- 長輩客製化聲音（2026-08-11） ---
+    # 同意留痕缺漏＝不建立設定檔：這是別人的聲音，沒有人明確同意就不該拿來用。
+    CONSENT_REQUIRED = "consent_required"
+    # 語音服務不可用（本環境未啟用客製化聲音，或參考音檔上傳失敗）。
+    SPEECH_UNAVAILABLE = "speech_unavailable"
 
     # --- 維運 ---
     INTERNAL_TESTING_DISABLED = "internal_testing_disabled"
