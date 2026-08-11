@@ -235,7 +235,7 @@ def _require_api_key(request: Request) -> None:
 
 @app.post("/synthesize")
 async def synthesize(payload: dict, request: Request) -> Response:
-    global _inflight
+    global _inflight, _stuck_workers
     _require_api_key(request)
     # 基本請求驗證（✅ D-26 乙-7）：缺 text 400（原本靜默合成空音）、過長 413。
     text = str(payload.get("text", "")).strip()
@@ -248,7 +248,6 @@ async def synthesize(payload: dict, request: Request) -> Response:
     elder_id = str(payload.get("elder_id", "")).strip()
     prompt_audio_url = str(payload.get("prompt_audio_url", "")).strip()
     prompt_text_override = str(payload.get("prompt_text", "")).strip()
-    global _stuck_workers
     _inflight += 1
     try:
         async with _sem:

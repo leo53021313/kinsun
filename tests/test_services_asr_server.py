@@ -24,7 +24,7 @@ def client(monkeypatch):
 def test_healthz_reports_model_not_loaded(client):
     res = client.get("/healthz")
     assert res.status_code == 200
-    assert res.json() == {"status": "ok", "model_loaded": False}
+    assert res.json() == {"status": "ok", "model_loaded": False, "stuck_workers": 0}
 
 
 def test_transcribe_happy_path_without_key_mode(client):
@@ -187,3 +187,79 @@ def test_silent_audio_still_skips_the_model_entirely(monkeypatch):
 
     monkeypatch.setattr(asr_server, "_get_model", boom)
     assert asr_server._transcribe(b"\x00\x01") == ""
+
+
+# --- 逐請求辨識逾時（2026-08-11，與 services/tts 同一套處置） ---
+
+
+@pytest.fixture()
+def _reset_stuck(monkeypatch):
+    """每個測試從 0 條放生執行緒開始（模組層計數，不重置會互相汙染）。"""
+    monkeypatch.setattr(asr_server, "_stuck_workers", 0)
+
+
+def test_transcribe_times_out_instead_of_holding_the_slot_forever(monkeypatch, _reset_stuck):
+    """模型卡死時要回 504，而不是讓請求永遠掛著。
+
+    ASR 卡死比 TTS 更嚴重：TTS 掛了長輩至少還看得到文字回覆，ASR 掛了長輩連話都
+    送不進去——名額只有 ASR_MAX_CONCURRENCY 個（預設 1），被佔走整個對講機形同斷線。
+    """
+    import time
+
+    monkeypatch.setattr(asr_server, "ASR_TRANSCRIBE_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(asr_server, "_transcribe", lambda audio: time.sleep(5) or "never")
+
+    res = TestClient(asr_server.app).post("/transcribe", content=b"fake-audio")
+
+    assert res.status_code == 504
+    assert res.json()["detail"] == "transcribe_timeout"
+
+
+def test_the_slot_is_released_so_later_requests_still_work(monkeypatch, _reset_stuck):
+    """逾時後名額必須讓出來——這才是這道上限存在的理由。
+
+    只驗「回 504」是不夠的：即使回了 504，若名額沒釋放，下一位長輩照樣送不進去。
+    """
+    import time
+
+    monkeypatch.setattr(asr_server, "ASR_TRANSCRIBE_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(asr_server, "_transcribe", lambda audio: time.sleep(5) or "never")
+    client = TestClient(asr_server.app)
+    assert client.post("/transcribe", content=b"stuck").status_code == 504
+
+    monkeypatch.setattr(asr_server, "_transcribe", lambda audio: "阿公早安")
+    res = client.post("/transcribe", content=b"next-elder")
+
+    assert res.status_code == 200
+    assert res.json() == {"text": "阿公早安"}
+
+
+def test_healthz_reports_degraded_after_a_timeout(monkeypatch, _reset_stuck):
+    """放生的執行緒只能靠重啟回收，故 healthz 要講實話讓維運看得見。"""
+    import time
+
+    client = TestClient(asr_server.app)
+    assert client.get("/healthz").json()["status"] == "ok"
+
+    monkeypatch.setattr(asr_server, "ASR_TRANSCRIBE_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(asr_server, "_transcribe", lambda audio: time.sleep(5) or "never")
+    client.post("/transcribe", content=b"stuck")
+
+    body = client.get("/healthz").json()
+    assert body["status"] == "degraded"
+    assert body["stuck_workers"] == 1
+
+
+def test_ffmpeg_decode_timeout_is_reported_as_a_bad_audio_not_a_server_fault(monkeypatch):
+    """ffmpeg 卡住時終止子行程，並沿用既有的 422 路徑（壞音檔＝呼叫端資料問題）。"""
+    import subprocess
+
+    def fake_run(cmd, **kwargs):
+        assert kwargs["timeout"] == asr_server.ASR_FFMPEG_TIMEOUT_SECONDS
+        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+    monkeypatch.setattr(asr_server.subprocess, "run", fake_run)
+    monkeypatch.setattr(asr_server, "_get_model", lambda: (_ for _ in ()).throw(AssertionError()))
+
+    with pytest.raises(asr_server.AudioDecodeError, match="ffmpeg_timeout"):
+        asr_server._decode_to_mono16k(b"unplayable")
