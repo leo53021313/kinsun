@@ -88,6 +88,44 @@ _stuck_workers = 0
 _voice_cache: dict[str, tuple[str, str]] = {}
 
 
+# CosyVoice 參考音檔的目標格式。16k 單聲道與 ASR 端一致，也是 zero-shot 的常見輸入；
+# 真正的重點不是這兩個數字，而是**不管家屬的裝置錄出什麼，進到模型的都是同一種東西**。
+_VOICE_TARGET_SR = 16000
+
+
+def _normalize_to_wav(audio: bytes, dest_path: str) -> None:
+    """把任意容器的音檔正規化成 16k 單聲道 wav，寫到 dest_path。
+
+    ⚠️ 為什麼非做不可：家屬用瀏覽器錄音，`MediaRecorder` 產出的是 webm/opus，
+    而 CosyVoice 讀參考音檔走 soundfile（libsndfile）——**它讀不了 webm**。
+    不轉檔的話，家屬明明錄好了，合成時卻會在讀檔那一步爆掉。
+
+    ⚠️ 用 `-i pipe:0` 而非暫存檔是刻意的取捨：ASR 端因為 m4a 的 moov atom 在檔尾、
+    pipe 不可 seek 而必須落地暫存檔；這裡的輸入來源是我們自己的 bucket（家屬上傳的
+    原始錄音），格式不受 LINE 那類外部來源限制，而輸出本來就要落地。萬一日後也遇到
+    不可 seek 的輸入，比照 services/asr 改寫暫存檔即可。
+    """
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-v",
+            "error",
+            "-i",
+            "pipe:0",
+            "-ac",
+            "1",
+            "-ar",
+            str(_VOICE_TARGET_SR),
+            dest_path,
+        ],
+        input=audio,
+        capture_output=True,
+        check=True,
+        timeout=TTS_FFMPEG_TIMEOUT_SECONDS,
+    )
+
+
 def _resolve_voice(elder_id: str, prompt_audio_url: str, prompt_text: str) -> tuple[str, str]:
     """依 elder_id 解析客製化參考語音；缺 elder_id 或無法取得時退回全域預設聲音。"""
     if not elder_id:
@@ -102,16 +140,24 @@ def _resolve_voice(elder_id: str, prompt_audio_url: str, prompt_text: str) -> tu
     # Supabase 暫時不通、磁碟寫入失敗）都會讓 /synthesize 回 500 → 應用層退化成純文字，
     # **長輩整輪完全聽不到聲音**，而且每輪重複發生（快取永遠暖不起來）。
     # 客製化聲音失效是缺憾，沒聲音是故障——兩者嚴重度差一級，不該混為一談。
+    #
+    # 正規化同樣包在這裡（2026-08-11）：家屬是用瀏覽器錄的，`MediaRecorder` 產出的是
+    # **webm/opus**，而 CosyVoice 讀檔走 soundfile（libsndfile）——它讀不了 webm，
+    # 直接餵進去會炸。取樣率與聲道數也隨裝置而異。故一律以 ffmpeg 轉成 16k 單聲道 wav。
     try:
         with urllib.request.urlopen(  # noqa: S310 - 內部/簽章 URL
             prompt_audio_url, timeout=TTS_VOICE_DOWNLOAD_TIMEOUT_SECONDS
         ) as resp:
-            with open(local_path, "wb") as fh:
-                fh.write(resp.read())
+            downloaded = resp.read()
+        _normalize_to_wav(downloaded, local_path)
     except Exception:
         # 記到 ERROR：這是「長輩專屬的聲音沒生效」，不是可以忽略的雜訊。
+        # 涵蓋下載與正規化兩種失敗——對長輩而言後果相同（聽到的是預設聲音），
+        # 對維運而言 exc_info 會指出是哪一段。
         logger.error(
-            "客製化參考語音下載失敗，改用全域預設聲音 elder_id=%s", elder_id, exc_info=True
+            "客製化參考語音取得失敗（下載或轉檔），改用全域預設聲音 elder_id=%s",
+            elder_id,
+            exc_info=True,
         )
         return TTS_PROMPT_WAV, TTS_PROMPT_TEXT
     if len(_voice_cache) >= TTS_VOICE_CACHE_SIZE:

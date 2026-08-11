@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -125,6 +127,12 @@ def test_resolve_voice_downloads_once_then_reuses_cache(monkeypatch, tmp_path):
         calls.append(url)
         return _FakeHttpResponse(b"WAVDATA")
 
+        # 轉檔以替身代替：本測試的對象是下載與快取邏輯，不是 ffmpeg
+
+    # （單元測試環境沒有 ffmpeg，真正的正規化另有專門的測試）。
+    monkeypatch.setattr(
+        tts_server, "_normalize_to_wav", lambda audio, dest: pathlib.Path(dest).write_bytes(audio)
+    )
     monkeypatch.setattr(tts_server.urllib.request, "urlopen", fake_urlopen)
 
     wav_path, text = tts_server._resolve_voice("e1", "https://example.test/v.wav", "逐字稿")
@@ -143,6 +151,11 @@ def test_resolve_voice_cache_evicts_oldest_when_full(monkeypatch, tmp_path):
     monkeypatch.setattr(tts_server, "_voice_cache", {})
     monkeypatch.setattr(tts_server, "TTS_VOICE_CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(tts_server, "TTS_VOICE_CACHE_SIZE", 1)
+    # 轉檔以替身代替：本測試的對象是下載與快取邏輯，不是 ffmpeg
+    # （單元測試環境沒有 ffmpeg，真正的正規化另有專門的測試）。
+    monkeypatch.setattr(
+        tts_server, "_normalize_to_wav", lambda audio, dest: pathlib.Path(dest).write_bytes(audio)
+    )
     monkeypatch.setattr(
         tts_server.urllib.request, "urlopen", lambda url, timeout=None: _FakeHttpResponse(b"W")
     )
@@ -191,6 +204,11 @@ def test_resolve_voice_does_not_cache_a_failed_download(monkeypatch, tmp_path):
             raise OSError("暫時失敗")
         return _FakeHttpResponse(b"WAVDATA")
 
+    # 轉檔以替身代替：本測試的對象是下載與快取邏輯，不是 ffmpeg
+    # （單元測試環境沒有 ffmpeg，真正的正規化另有專門的測試）。
+    monkeypatch.setattr(
+        tts_server, "_normalize_to_wav", lambda audio, dest: pathlib.Path(dest).write_bytes(audio)
+    )
     monkeypatch.setattr(tts_server.urllib.request, "urlopen", flaky)
 
     first = tts_server._resolve_voice("e1", "https://x.test/v.wav", "逐字稿")
@@ -299,3 +317,59 @@ def test_voice_download_has_a_timeout(monkeypatch, tmp_path):
     tts_server._resolve_voice("e1", "https://x.test/v.wav", "逐字稿")
 
     assert seen["timeout"] == tts_server.TTS_VOICE_DOWNLOAD_TIMEOUT_SECONDS
+
+
+# --- 參考音檔正規化（2026-08-11） ---
+
+
+def test_reference_audio_is_normalized_to_16k_mono_wav(monkeypatch):
+    """家屬用瀏覽器錄音，MediaRecorder 產出 webm/opus，而 CosyVoice 讀檔走
+    soundfile（libsndfile）——**它讀不了 webm**。不轉檔的話家屬明明錄好了，
+    合成時卻會在讀檔那一步爆掉。取樣率與聲道數也隨裝置而異，一併統一。
+    """
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["kwargs"] = kwargs
+
+    monkeypatch.setattr(tts_server.subprocess, "run", fake_run)
+    tts_server._normalize_to_wav(b"WEBMDATA", "/tmp/out.wav")
+
+    cmd = seen["cmd"]
+    assert cmd[0] == "ffmpeg"
+    assert cmd[-1] == "/tmp/out.wav"
+    assert "-ac" in cmd and cmd[cmd.index("-ac") + 1] == "1", "單聲道"
+    assert "-ar" in cmd and cmd[cmd.index("-ar") + 1] == str(tts_server._VOICE_TARGET_SR)
+    assert seen["kwargs"]["input"] == b"WEBMDATA"
+    assert seen["kwargs"]["check"] is True, "轉檔失敗要拋出來，讓上層退回全域預設聲音"
+    assert seen["kwargs"]["timeout"] == tts_server.TTS_FFMPEG_TIMEOUT_SECONDS
+
+
+def test_a_recording_ffmpeg_cannot_read_falls_back_to_the_global_voice(monkeypatch, tmp_path):
+    """轉檔失敗與下載失敗對長輩的後果相同（聽到預設聲音），故走同一條退路。
+
+    ⚠️ 也不可以入快取：家屬重錄之後要能再試一次。
+    """
+    import subprocess
+
+    monkeypatch.setattr(tts_server, "_voice_cache", {})
+    monkeypatch.setattr(tts_server, "TTS_VOICE_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(tts_server, "TTS_PROMPT_WAV", "/default.wav")
+    monkeypatch.setattr(tts_server, "TTS_PROMPT_TEXT", "預設逐字稿")
+    monkeypatch.setattr(
+        tts_server.urllib.request,
+        "urlopen",
+        lambda url, timeout=None: _FakeHttpResponse(b"NOT-AUDIO"),
+    )
+
+    def boom(audio, dest):
+        raise subprocess.CalledProcessError(1, "ffmpeg")
+
+    monkeypatch.setattr(tts_server, "_normalize_to_wav", boom)
+
+    assert tts_server._resolve_voice("e1", "https://x.test/v.webm", "逐字稿") == (
+        "/default.wav",
+        "預設逐字稿",
+    )
+    assert tts_server._voice_cache == {}, "失敗不可入快取，否則家屬重錄也救不回來"

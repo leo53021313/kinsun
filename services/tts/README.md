@@ -35,8 +35,12 @@
   1. 沒帶 `elder_id` → 沿用全域 `TTS_PROMPT_WAV`／`TTS_PROMPT_TEXT`（與今天行為一致）。
   2. 帶 `elder_id` 且本機已快取該長輩的參考音檔 → 直接用快取，不重新下載。
   3. 帶 `elder_id` 但快取沒有、且同時帶 `prompt_audio_url`／`prompt_text` → 下載一次
-     （標準庫 `urllib.request`，不新增第三方依賴）存進 `TTS_VOICE_CACHE_DIR`，之後同一
-     `elder_id` 重複請求就免下載。
+     （標準庫 `urllib.request`，不新增第三方依賴），**以 ffmpeg 正規化成 16k 單聲道 wav**
+     後存進 `TTS_VOICE_CACHE_DIR`，之後同一 `elder_id` 重複請求就免下載。
+     ⚠️ 正規化非做不可：家屬是用瀏覽器錄音，`MediaRecorder` 產出 webm/opus，而
+     CosyVoice 讀參考音檔走 soundfile（libsndfile）——**它讀不了 webm**。取樣率與
+     聲道數也隨裝置而異，一併統一。轉檔失敗與下載失敗走同一條退路（退回全域預設
+     聲音、記 ERROR、不入快取，家屬重錄能再試）。
   4. 帶 `elder_id` 但快取沒有、也沒帶 `prompt_audio_url` → 退回全域預設聲音（容錯，不炸請求）。
 - 快取為簡單 FIFO（非 LRU），上限 `TTS_VOICE_CACHE_SIZE`，超過時淘汰最舊的一位長輩。
 - 已知限制：`prompt_audio_url` 目前是 Supabase 簽章 URL，會過期；過期後若快取又剛好失效
