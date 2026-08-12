@@ -1,6 +1,6 @@
 # API 設計規範 - 金孫 KinSun
 
-> **版本:** v1.32 | **更新:** 2026-08-12 | **狀態:** ✅ 定稿（整合長輩客製化聲音的家屬入口四支端點、長輩人設 API 與 App transcript／WebSocket 契約；`/synthesize` 加選填 `prompt_version`）
+> **版本:** v1.33 | **更新:** 2026-08-12 | **狀態:** ✅ 定稿（整合長輩客製化聲音的家屬入口四支端點、長輩人設 API 與 App transcript／WebSocket 契約；`/synthesize` 加選填 `prompt_version`；撤銷會真的刪除 bucket 物件）
 > **基準:** as-is（現行 23 端點實證）＋ to-be（/v1 契約）。命名規則以 AGENTS.md 為準。
 > DGX 服務認證與速率限制 → 13_安全循環；`admin api disabled` 503 措辭一併列 13。
 
@@ -258,6 +258,7 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | v1.0 | 2026-07-08 | 初版：D-23～D-29 契約定稿 |
 | v1.1 | 2026-07-17 | turns 補位置三參數（location／latitude／longitude 模糊座標，三者齊備才寫入）；追認 7/12–7/14 已回填而未升版的內容（sessions/all、内測端點、守則端點、錯誤碼中央註冊等） |
 | v1.30 | 2026-08-05 | 人設（D-81）：`GET`／`POST /elders` 回傳新增 `persona`、新增 `PUT /elders/{elder_id}/persona`、新增錯誤碼 `invalid_persona` |
+| v1.33 | 2026-08-12 | **整合期修復（PR #104＋#106 合併）**：`/synthesize` 契約新增選填 `prompt_version`（值＝`voice_profiles.granted_at`）——DGX 端的本機參考音檔快取原本只認 `elder_id`、命中就不看新網址，而重錄走 `PUT` 覆蓋 bucket 內同一個物件路徑，於是**家屬重錄完全不生效**且無任何錯誤訊息，要等 20 位長輩把它擠出快取或服務重啟才會換；`DELETE /elders/{elder_id}/voice-profile` 現在會在寫入 `revoked_at` 之後真的刪掉 bucket 物件（順序不可對調；刪檔失敗不影響 204，撤銷的權威是資料庫那次寫入）。⚠️ DGX 端 TTS 服務需一併更新，否則重錄仍不生效（舊版忽略未知欄位、不會出錯） |
 | v1.32 | 2026-08-11 | 長輩客製化聲音的**家屬入口**：新增 `GET /voice-profile-script`、`PUT`／`GET`／`DELETE /elders/{elder_id}/voice-profile` 四支；新增錯誤碼 `consent_required`（同意留痕必填）與 `speech_unavailable`（功能未啟用或上傳失敗）。在此之前 voice_profiles 只有機制沒有入口——表、管線、DGX 端全部就緒卻沒有任何人能建立一筆設定，「每位長輩可有專屬聲音」實際等於「全系統一個聲音」 |
 | v1.2 | 2026-07-17 | 稱謂欄位（elders.nickname）：POST /elders 收選填 nickname、GET /elders 回傳 nickname、新增 PUT /elders/{elder_id}/profile 補設稱謂 |
 | v1.4 | 2026-07-25 | 新增 `GET /api/v1/admin/news`（話題新聞檢視，D-74 消費端）。 |
