@@ -19,6 +19,10 @@ def _client():
     def ping() -> dict:
         return {"ok": True}
 
+    @app.get("/demo/otto/renderer.html")
+    def renderer() -> str:
+        return "renderer"
+
     return TestClient(app)
 
 
@@ -57,3 +61,23 @@ def test_標頭真的會出現在回應上():
     headers = _client().get("/ping").headers
     for name, value in SECURITY_HEADERS.items():
         assert headers[name] == value
+
+
+def test_只有阿白_renderer_可被同源_demo_嵌入():
+    client = _client()
+
+    renderer_headers = client.get("/demo/otto/renderer.html").headers
+    assert renderer_headers["x-frame-options"] == "SAMEORIGIN"
+    renderer_csp = renderer_headers["content-security-policy"]
+    assert "default-src 'none'" in renderer_csp
+    assert "script-src 'unsafe-inline'" in renderer_csp
+    assert "style-src 'unsafe-inline'" in renderer_csp
+    assert "img-src data:" in renderer_csp
+    assert "frame-ancestors 'self'" in renderer_csp
+    assert "frame-ancestors 'none'" not in renderer_csp
+    assert "connect-src 'self'" not in renderer_csp
+
+    # 一般頁面仍維持 D-57 的全站預設；例外不可擴散到相鄰路徑。
+    ordinary_headers = client.get("/ping").headers
+    assert ordinary_headers["x-frame-options"] == "DENY"
+    assert "frame-ancestors 'none'" in ordinary_headers["content-security-policy"]
