@@ -1,6 +1,6 @@
 # API 設計規範 - 金孫 KinSun
 
-> **版本:** v1.33 | **更新:** 2026-08-12 | **狀態:** ✅ 定稿（整合長輩客製化聲音的家屬入口四支端點、長輩人設 API 與 App transcript／WebSocket 契約；`/synthesize` 加選填 `prompt_version`；撤銷會真的刪除 bucket 物件）
+> **版本:** v1.34 | **更新:** 2026-08-12 | **狀態:** ✅ 定稿（客製化聲音四支端點接上 web 家屬端呼叫端；契約本身未改動）
 > **基準:** as-is（現行 23 端點實證）＋ to-be（/v1 契約）。命名規則以 AGENTS.md 為準。
 > DGX 服務認證與速率限制 → 13_安全循環；`admin api disabled` 503 措辭一併列 13。
 
@@ -140,10 +140,10 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | `POST /api/elders` | `POST /api/v1/elders` | 建長輩＋首綁邀請碼；payload `{name, nickname?}`（✅ 庚-29——LIFF 家屬名改由後端取 ID token 顯示名稱，前端不再自送 guardian_name；nickname＝稱謂選填 ≤50 字，2026-07-17）；列表與建立回應皆含 `nickname` |
 | —（新增） | `PUT /api/v1/elders/{elder_id}/profile` | 家屬補設／更改稱謂（2026-07-17）：payload `{nickname}`（≤50 字，空字串＝清除）；PUT＝upsert；未管理 404 |
 | —（新增） | `PUT /api/v1/elders/{elder_id}/persona` | 家屬更改金孫的說話語氣（D-81，2026-08-05）：payload `{persona}`，值域見 `personas.py`（`lively_granddaughter`／`steady_grandson`）；認不得的值 400 `invalid_persona`；未管理 404。⚠️ 刻意不併進 `/profile`——那支是整份 upsert，漏帶 `nickname` 會把稱謂洗掉 |
-| —（新增） | `GET /api/v1/voice-profile-script` | 家屬錄製參考語音前要照唸的稿子與注意事項（2026-08-11）：回 `{script, tips, rationale}`。**由伺服器下發而非寫死前端**——這份文字同時是 `voice_profiles.prompt_text`（家屬照唸，所以逐字稿不是猜的），分兩邊維護遲早漂移 |
-| —（新增） | `PUT /api/v1/elders/{elder_id}/voice-profile` | 上傳參考音檔，設定或覆蓋這位長輩的專屬聲音（2026-08-11）。body＝**原始音檔 bytes**（同 `/turns` 慣例，非 multipart），`consented_by` 走 query param（body 已被音檔佔滿）。PUT 而非 POST：一位長輩一組生效聲音（PK 即 elder_id），重錄即覆蓋。**`consented_by` 必填**，缺→400 `consent_required`——這是別人的聲音、要被拿去對長輩說話，與 D-13 的 consents 同一把尺；非 audio/* → 415；空 body → 400 `missing_audio`；> 10MB → 413；上傳失敗 → 502 且**不寫設定檔**（寫了會指向不存在的物件，之後每輪靜默退回預設而家屬以為設好了）；功能未啟用（TTS 非 dgx 或缺 Supabase）→ 503 `speech_unavailable`（刻意不讓 router 消失，404 會讓前端以為打錯路徑）；未管理該長輩 → 404 |
-| —（新增） | `GET /api/v1/elders/{elder_id}/voice-profile` | 查有無生效中的客製化聲音（2026-08-11）：回 `{elder_id, has_profile, consented_by?, granted_at?}`。⚠️ **不回音檔也不回可下載網址**——那是長輩家人的聲音樣本，查狀態不需要能把它拿走 |
-| —（新增） | `DELETE /api/v1/elders/{elder_id}/voice-profile` | 撤銷客製化聲音，下一輪起回全域預設（2026-08-11），204。⚠️ 只寫 `revoked_at`、**不刪 bucket 音檔**：撤銷要立即生效，讓它取決於一次資料庫寫入比取決於一次可能失敗的網路請求可靠；實際刪除另由保留政策處理 |
+| —（新增） | `GET /api/v1/voice-profile-script` | 家屬錄製參考語音前要照唸的稿子與注意事項（2026-08-11）：回 `{script, tips, rationale}`。**由伺服器下發而非寫死前端**——這份文字同時是 `voice_profiles.prompt_text`（家屬照唸，所以逐字稿不是猜的），分兩邊維護遲早漂移。**呼叫端：web 家屬端 `VoiceProfileScreen`（2026-08-12 接線）**——在此之前這四支沒有任何呼叫端 |
+| —（新增） | `PUT /api/v1/elders/{elder_id}/voice-profile` | 上傳參考音檔，設定或覆蓋這位長輩的專屬聲音（2026-08-11）。body＝**原始音檔 bytes**（同 `/turns` 慣例，非 multipart），`consented_by` 走 query param（body 已被音檔佔滿）。PUT 而非 POST：一位長輩一組生效聲音（PK 即 elder_id），重錄即覆蓋。**`consented_by` 必填**，缺→400 `consent_required`——這是別人的聲音、要被拿去對長輩說話，與 D-13 的 consents 同一把尺；非 audio/* → 415；空 body → 400 `missing_audio`；> 10MB → 413；上傳失敗 → 502 且**不寫設定檔**（寫了會指向不存在的物件，之後每輪靜默退回預設而家屬以為設好了）；功能未啟用（TTS 非 dgx 或缺 Supabase）→ 503 `speech_unavailable`（刻意不讓 router 消失，404 會讓前端以為打錯路徑）；未管理該長輩 → 404。**呼叫端：web 家屬端 `VoiceProfileScreen`（2026-08-12 接線）**——在此之前這四支沒有任何呼叫端 |
+| —（新增） | `GET /api/v1/elders/{elder_id}/voice-profile` | 查有無生效中的客製化聲音（2026-08-11）：回 `{elder_id, has_profile, consented_by?, granted_at?}`。⚠️ **不回音檔也不回可下載網址**——那是長輩家人的聲音樣本，查狀態不需要能把它拿走。**呼叫端：web 家屬端 `VoiceProfileScreen`（2026-08-12 接線）**——在此之前這四支沒有任何呼叫端 |
+| —（新增） | `DELETE /api/v1/elders/{elder_id}/voice-profile` | 撤銷客製化聲音，下一輪起回全域預設（2026-08-11），204。⚠️ 只寫 `revoked_at`、**不刪 bucket 音檔**：撤銷要立即生效，讓它取決於一次資料庫寫入比取決於一次可能失敗的網路請求可靠；實際刪除另由保留政策處理。**呼叫端：web 家屬端 `VoiceProfileScreen`（2026-08-12 接線）**——在此之前這四支沒有任何呼叫端 |
 | `POST /api/elders/{elder_id}/guardian-invites` | `POST /api/v1/elders/{elder_id}/guardian-invites` | 產家屬邀請碼 |
 | —（D-76 P3 取代） | `GET|POST /api/v1/elders/{elder_id}/schedules`、`PUT|DELETE .../{group_id}` | 統一排程 CRUD；payload `{kind, title, occurrences[], event_date?, event_time?}`，操作單位為 group。⚠️ **`kind=appointment` 且帶 `event_date` 時，`occurrences` 由後端接管、client 送的一律忽略**（D-79，2026-08-01）——見下方「回診提醒由後端推算」 |
 | `GET /api/elders/{elder_id}/health-report` | `GET /api/v1/elders/{elder_id}/health-report` | 聚合單數（規範允許）；✅ D-09 已新增 `GET /api/v1/elders/{elder_id}/daily-summaries`（己-3，2026-07-10：列表資源、`limit` 1–90 預設 30、meta 帶 limit）；`?window_days=1..90` 選填、預設 30（✅ 庚-40） |
@@ -258,6 +258,7 @@ as-is 皆無。速率限制 → 13 循環議；`Idempotency-Key` 現階段 YAGNI
 | v1.0 | 2026-07-08 | 初版：D-23～D-29 契約定稿 |
 | v1.1 | 2026-07-17 | turns 補位置三參數（location／latitude／longitude 模糊座標，三者齊備才寫入）；追認 7/12–7/14 已回填而未升版的內容（sessions/all、内測端點、守則端點、錯誤碼中央註冊等） |
 | v1.30 | 2026-08-05 | 人設（D-81）：`GET`／`POST /elders` 回傳新增 `persona`、新增 `PUT /elders/{elder_id}/persona`、新增錯誤碼 `invalid_persona` |
+| v1.34 | 2026-08-12 | **客製化聲音四支端點接上呼叫端**（web 家屬端 `VoiceProfileScreen`）。**契約一個位元組都沒改**，本次只是把「有 API 沒有入口」補成可用功能——v1.32 補這四支時寫的理由是「在此之前 voice_profiles 只有機制沒有入口」，但那次只補到 HTTP 邊界，四個前端 grep `voice.profile` 零命中，家屬依然建立不出任何一筆設定。連帶後果是 v1.33 修的「家屬重錄不生效」至今無法驗證（沒有畫面能觸發一次重錄），本次補上後才驗得了。前端側的三個契約細節已在測試中釘死：`consented_by` 走 query param、音檔走 body 原始位元組、格式走 Content-Type。 |
 | v1.33 | 2026-08-12 | **整合期修復（PR #104＋#106 合併）**：`/synthesize` 契約新增選填 `prompt_version`（值＝`voice_profiles.granted_at`）——DGX 端的本機參考音檔快取原本只認 `elder_id`、命中就不看新網址，而重錄走 `PUT` 覆蓋 bucket 內同一個物件路徑，於是**家屬重錄完全不生效**且無任何錯誤訊息，要等 20 位長輩把它擠出快取或服務重啟才會換；`DELETE /elders/{elder_id}/voice-profile` 現在會在寫入 `revoked_at` 之後真的刪掉 bucket 物件（順序不可對調；刪檔失敗不影響 204，撤銷的權威是資料庫那次寫入）。⚠️ DGX 端 TTS 服務需一併更新，否則重錄仍不生效（舊版忽略未知欄位、不會出錯） |
 | v1.32 | 2026-08-11 | 長輩客製化聲音的**家屬入口**：新增 `GET /voice-profile-script`、`PUT`／`GET`／`DELETE /elders/{elder_id}/voice-profile` 四支；新增錯誤碼 `consent_required`（同意留痕必填）與 `speech_unavailable`（功能未啟用或上傳失敗）。在此之前 voice_profiles 只有機制沒有入口——表、管線、DGX 端全部就緒卻沒有任何人能建立一筆設定，「每位長輩可有專屬聲音」實際等於「全系統一個聲音」 |
 | v1.2 | 2026-07-17 | 稱謂欄位（elders.nickname）：POST /elders 收選填 nickname、GET /elders 回傳 nickname、新增 PUT /elders/{elder_id}/profile 補設稱謂 |
