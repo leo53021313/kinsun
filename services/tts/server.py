@@ -33,7 +33,8 @@ import subprocess
 import sys
 import tempfile
 import urllib.request
-from contextlib import asynccontextmanager
+import wave
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
@@ -100,30 +101,54 @@ def _normalize_to_wav(audio: bytes, dest_path: str) -> None:
     而 CosyVoice 讀參考音檔走 soundfile（libsndfile）——**它讀不了 webm**。
     不轉檔的話，家屬明明錄好了，合成時卻會在讀檔那一步爆掉。
 
-    ⚠️ 用 `-i pipe:0` 而非暫存檔是刻意的取捨：ASR 端因為 m4a 的 moov atom 在檔尾、
-    pipe 不可 seek 而必須落地暫存檔；這裡的輸入來源是我們自己的 bucket（家屬上傳的
-    原始錄音），格式不受 LINE 那類外部來源限制，而輸出本來就要落地。萬一日後也遇到
-    不可 seek 的輸入，比照 services/asr 改寫暫存檔即可。
+    ⚠️ 輸入一定要落地成**可 seek 的暫存檔**，不能用 `-i pipe:0`（2026-08-12 實測修正）：
+    m4a 的 moov atom（索引）在檔尾，pipe 倒不回去，ffmpeg 會 demux 失敗——
+    但**它以離開碼 0 結束**，於是 `check=True` 攔不到，靜默產出一個只有檔頭、
+    零取樣的 wav。這正是 services/asr 早已解過的同一個問題。
+
+    此處原本的註解推論「輸入來源是我們自己的 bucket，格式不受 LINE 那類外部來源限制」，
+    **那個前提是錯的**：家屬用 iPhone 錄音上傳就是 m4a。實測（DGX，同一個檔案）：
+
+        -i pipe:0      → 離開碼 0，產出 114 bytes（空 wav）
+        -i <暫存檔>    → 離開碼 0，產出 288882 bytes
+
+    ⚠️ 轉完必須檢查真的有取樣：ffmpeg 離開碼 0 不等於輸出可用（如上）。少了這道檢查，
+    空 wav 會被當成轉檔成功、連快取都記下來，一路送到 CosyVoice 才炸成 500，
+    應用層退化成純文字——**長輩整輪完全聽不到聲音，而且每輪重複**。
+    在這裡拋例外，呼叫端的 except 才會把它降級成「改用全域預設聲音」，
+    也就是原本就設計好的那條退路：客製化聲音失效是缺憾，沒聲音是故障。
     """
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-v",
-            "error",
-            "-i",
-            "pipe:0",
-            "-ac",
-            "1",
-            "-ar",
-            str(_VOICE_TARGET_SR),
-            dest_path,
-        ],
-        input=audio,
-        capture_output=True,
-        check=True,
-        timeout=TTS_FFMPEG_TIMEOUT_SECONDS,
-    )
+    with tempfile.NamedTemporaryFile(suffix=".audio", delete=False) as tmp:
+        tmp.write(audio)
+        src_path = tmp.name
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-v",
+                "error",
+                "-i",
+                src_path,
+                "-ac",
+                "1",
+                "-ar",
+                str(_VOICE_TARGET_SR),
+                dest_path,
+            ],
+            capture_output=True,
+            check=True,
+            timeout=TTS_FFMPEG_TIMEOUT_SECONDS,
+        )
+    finally:
+        with suppress(OSError):
+            os.unlink(src_path)
+    # 用標準函式庫的 wave 而非 soundfile：輸出格式是我們自己指定的 pcm wav，wave 讀得動，
+    # 而且它在應用層的測試環境也在（soundfile 只裝在本服務的 venv，用它會讓這裡無法離線測試）。
+    with wave.open(dest_path, "rb") as wav:
+        frames = wav.getnframes()
+    if frames == 0:
+        raise ValueError(f"轉檔後沒有任何取樣（來源 {len(audio)} bytes，可能是檔案損毀或截斷）")
 
 
 def _resolve_voice(elder_id: str, prompt_audio_url: str, prompt_text: str) -> tuple[str, str]:

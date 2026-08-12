@@ -41,6 +41,12 @@
      CosyVoice 讀參考音檔走 soundfile（libsndfile）——**它讀不了 webm**。取樣率與
      聲道數也隨裝置而異，一併統一。轉檔失敗與下載失敗走同一條退路（退回全域預設
      聲音、記 ERROR、不入快取，家屬重錄能再試）。
+     ⚠️ 轉檔的輸入一定要落地成**可 seek 的暫存檔**，且轉完要檢查真的有取樣
+     （2026-08-12 於 demo 站實測修正）：家屬用 iPhone 錄音上傳是 m4a，而 m4a 的
+     moov atom 在檔尾——輸入走 pipe 時 ffmpeg 倒不回去、demux 失敗，**卻以離開碼 0
+     結束**，於是靜默產出一個只有檔頭的空 wav，退路完全不會觸發，空檔一路送到模型
+     才炸成 500 →「該長輩每一輪都完全沒有聲音」。同一個檔案實測：pipe 產出 114 bytes、
+     暫存檔產出 288882 bytes。`services/asr` 早已因 LINE 語音踩過同一個坑。
   4. 帶 `elder_id` 但快取沒有、也沒帶 `prompt_audio_url` → 退回全域預設聲音（容錯，不炸請求）。
 - 快取為簡單 FIFO（非 LRU），上限 `TTS_VOICE_CACHE_SIZE`，超過時淘汰最舊的一位長輩。
 - 已知限制：`prompt_audio_url` 目前是 Supabase 簽章 URL，會過期；過期後若快取又剛好失效
