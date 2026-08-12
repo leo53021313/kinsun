@@ -37,6 +37,7 @@ import { ProfileScreen } from "./ProfileScreen";
 import { RegisterScreen } from "./RegisterScreen";
 import { ReportScreen } from "./ReportScreen";
 import { SchedulesScreen } from "./SchedulesScreen";
+import { VoiceProfileScreen } from "./VoiceProfileScreen";
 import { primaryElderLabel, useGuardianTabsState } from "./guardianTabsContext";
 
 export type GuardianRoute =
@@ -52,6 +53,8 @@ export type GuardianRoute =
   | { name: "schedules"; elderId: string; elderName: string }
   /** 每日摘要獨立畫面（W6）：切日與分享。 */
   | { name: "summary"; elderId: string; elderName: string }
+  /** 家屬錄一段參考語音，長輩往後聽到那個聲音（2026-08-12）。 */
+  | { name: "voiceProfile"; elderId: string; elderName: string }
   /** 改回診時間（W6）。回診有自己的畫面，其餘類型仍在行程管理頁原地編輯。 */
   | { name: "editAppointment"; elderId: string; scheduleId: string };
 
@@ -252,6 +255,13 @@ function GuardianAppBody(props: GuardianAppProps) {
                 elderName: route.elderName,
               })
             }
+            onOpenVoiceProfile={() =>
+              push({
+                name: "voiceProfile",
+                elderId: route.elderId,
+                elderName: route.elderName,
+              })
+            }
             onSendCodeToElder={onSendCodeToElder}
           />
         );
@@ -267,6 +277,8 @@ function GuardianAppBody(props: GuardianAppProps) {
         );
       case "summary":
         return <DailySummaryScreen elderId={route.elderId} />;
+      case "voiceProfile":
+        return <VoiceProfileScreen elderId={route.elderId} elderName={route.elderName} />;
       case "editAppointment":
         return (
           <EditAppointmentScreen

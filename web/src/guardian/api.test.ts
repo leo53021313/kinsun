@@ -13,6 +13,8 @@ import {
   createGuardianInvite,
   createSchedule,
   deleteSchedule,
+  getVoiceProfile,
+  getVoiceProfileScript,
   listElders,
   listNotifications,
   listSchedules,
@@ -20,7 +22,9 @@ import {
   logoutGuardian,
   registerGuardian,
   revokeElderDeviceBindings,
+  revokeVoiceProfile,
   setElderAccount,
+  setVoiceProfile,
   updateSchedule,
 } from "./api";
 
@@ -217,5 +221,50 @@ describe("家屬端 API", () => {
     expect(spy.mock.calls[0][0]).toBe("/api/v1/notifications");
     expect((spy.mock.calls[0][1].headers as Headers).get("Authorization")).toBe("Bearer tok");
     expect(items).toEqual([{ content: "該吃血壓藥囉", created_at: 1 }]);
+  });
+
+  it("取稿子打免認證的固定路徑", async () => {
+    const spy = mockFetch({ script: "阿嬤您好", tips: ["安靜的地方"], rationale: {} });
+    await getVoiceProfileScript();
+    expect(spy.mock.calls[0][0]).toBe("/api/v1/voice-profile-script");
+  });
+
+  it("查客製化聲音狀態用 GET 並帶 token", async () => {
+    const spy = mockFetch({ elder_id: "e1", has_profile: false });
+    await getVoiceProfile("e1", "tok");
+    expect(spy.mock.calls[0][0]).toBe("/api/v1/elders/e1/voice-profile");
+    expect((spy.mock.calls[0][1].headers as Headers).get("Authorization")).toBe("Bearer tok");
+  });
+
+  it("上傳聲音把同意人放 query、音檔放 body、格式放 Content-Type", async () => {
+    // ⚠️ 這三件事各自放錯的症狀都不一樣且都不明顯：同意人放進 body 會拿到
+    // 400 consent_required；音檔沒送會拿到 400 missing_audio；Content-Type
+    // 不是 audio/* 會拿到 415。
+    const spy = mockFetch({ elder_id: "e1", has_profile: true, consented_by: "女兒" });
+    const audio = new Uint8Array([1, 2, 3]).buffer;
+    await setVoiceProfile("e1", audio, "audio/webm;codecs=opus", "女兒", "tok");
+    expect(spy.mock.calls[0][0]).toBe(
+      "/api/v1/elders/e1/voice-profile?consented_by=%E5%A5%B3%E5%85%92",
+    );
+    expect(spy.mock.calls[0][1].method).toBe("PUT");
+    // ⚠️ 一定要斷言 body：2026-07-31 審查發現 postTurn 三條測試都沒斷言它，
+    // 把 `body: audio` 整行刪掉仍然全綠，而長輩的錄音會一個位元組都送不出去。
+    expect(spy.mock.calls[0][1].body).toBe(audio);
+    expect((spy.mock.calls[0][1].headers as Headers).get("Content-Type")).toBe(
+      "audio/webm;codecs=opus",
+    );
+  });
+
+  it("撤銷聲音用 DELETE，204 不解 JSON", async () => {
+    const spy = vi.fn().mockResolvedValue({
+      status: 204,
+      json: async () => {
+        throw new Error("204 不該解 JSON");
+      },
+    });
+    vi.stubGlobal("fetch", spy);
+    await revokeVoiceProfile("e1", "tok");
+    expect(spy.mock.calls[0][0]).toBe("/api/v1/elders/e1/voice-profile");
+    expect(spy.mock.calls[0][1].method).toBe("DELETE");
   });
 });
