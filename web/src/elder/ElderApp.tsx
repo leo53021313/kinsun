@@ -17,14 +17,17 @@ import { strings } from "@/strings";
 import { logoutSession } from "./api";
 import { BindScreen, type ElderCodeDelivery } from "./BindScreen";
 import { LoginScreen } from "./LoginScreen";
+import { HistoryScreen } from "./HistoryScreen";
 import { NotificationsScreen } from "./NotificationsScreen";
+import { clearToday } from "./todayLog";
 import { TalkScreen } from "./TalkScreen";
 
 export type ElderRoute =
   | { name: "bind" }
   | { name: "login" }
   | { name: "talk" }
-  | { name: "notifications" };
+  | { name: "notifications" }
+  | { name: "history" };
 
 /**
  * 返回鍵要說的話，依「現在在哪個畫面」查——長輩端每一句都要告訴他下一步，
@@ -99,6 +102,9 @@ export function ElderApp(props: {
   const loseSession = useCallback(
     (notice: string) => {
       setSignedOutNotice(notice);
+      // 綁定失效（家屬撤回同意或重新產生綁定碼）＝這台裝置不再屬於這位長輩。
+      // 當日逐字只存在本機，換人綁定前必須清掉——與主動登出同一個理由。
+      void clearToday();
       signOut();
     },
     [signOut],
@@ -156,6 +162,7 @@ export function ElderApp(props: {
             unread={unread}
             visible={visible}
             onOpenNotifications={() => stack.push({ name: "notifications" })}
+            onOpenHistory={() => stack.push({ name: "history" })}
             onLogout={() => {
               // 撤伺服器端的 token（✅ 庚-42 長輩自助登出），但**不等它**：撤不掉
               // 也不擋本機登出——網路不通時長輩仍然要能把手機交還給家人。
@@ -167,6 +174,8 @@ export function ElderApp(props: {
               // 因此在 hang 這條路上對不起來。不等它，兩者就一致了：請求照樣送出去，
               // 成不成功都不影響長輩把手機交還給家人。
               void logoutSession(session?.token ?? "").catch(() => undefined);
+              // 當日對話只存在這台裝置。手機要交還給家人了，逐字內容不能留著。
+              void clearToday();
               signOut();
             }}
             // 403＝家屬撤回了同意（token 還在，但閘門不讓這一輪過）。
@@ -177,6 +186,8 @@ export function ElderApp(props: {
             onTokenRevoked={() => loseSession(strings.elderBind.signedOutByGuardian)}
           />
         );
+      case "history":
+        return <HistoryScreen onBack={stack.back} />;
       case "notifications":
         return (
           <NotificationsScreen
@@ -194,7 +205,9 @@ export function ElderApp(props: {
 
   return (
     <div className="flex h-full flex-col">
-      {stack.depth > 1 ? (
+      {/* ⚠️ `history` 例外：它自己畫 60dp 圓形返回鈕的頁首（與對講機頁一致），
+          套上這條共用返回列會變成上下兩條返回。 */}
+      {stack.depth > 1 && stack.current.name !== "history" ? (
         <button
           type="button"
           onClick={stack.back}

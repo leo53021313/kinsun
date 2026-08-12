@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from kinsun.speech.tts import (
@@ -6,6 +8,7 @@ from kinsun.speech.tts import (
     TextBubbleTts,
     TTSError,
     TtsResult,
+    VoiceReference,
     build_tts_client,
 )
 from kinsun.transport import FakeTransport, Response, TransportError
@@ -84,3 +87,38 @@ def test_build_bubble_is_not_queued():
     """文字泡泡沒有 GPU，包了只是多一層執行緒——本機開發與單元測試不該付這個成本。"""
     client = build_tts_client(_StubSettings(backend="bubble", endpoint=""))
     assert not isinstance(client, QueuedTtsClient)
+
+
+def test_dgx_tts_without_voice_sends_only_text():
+    """向下相容：不帶 voice 時，JSON body 只有 text，不含 elder_id 等客製化欄位。"""
+    transport = FakeTransport([Response(200, {"X-Duration-Ms": "1234"}, b"AUDIOBYTES")])
+    client = DgxTtsClient("http://dgx:8002/synthesize", 30.0, transport=transport)
+    client.synthesize("阿公您好")
+    _, _, data, _, _ = transport.calls[0]
+    assert json.loads(data) == {"text": "阿公您好"}
+
+
+def test_dgx_tts_with_voice_includes_reference_fields():
+    """長輩客製化聲音複製（2026-07-30）：帶 voice 時 JSON body 含 elder_id／
+    prompt_audio_url／prompt_text／prompt_version。
+
+    ⚠️ `prompt_version` 不可省（2026-08-12）：DGX 端靠它分辨「家屬重錄過了」，
+    少了它就會一直用第一次下載的那份錄音，而且不會有任何錯誤訊息。
+    """
+    transport = FakeTransport([Response(200, {"X-Duration-Ms": "1234"}, b"AUDIOBYTES")])
+    client = DgxTtsClient("http://dgx:8002/synthesize", 30.0, transport=transport)
+    voice = VoiceReference(
+        elder_id="e1",
+        prompt_audio_url="https://example.test/v.wav",
+        prompt_text="逐字稿",
+        version="1754870400.0",
+    )
+    client.synthesize("阿公您好", voice=voice)
+    _, _, data, _, _ = transport.calls[0]
+    assert json.loads(data) == {
+        "text": "阿公您好",
+        "elder_id": "e1",
+        "prompt_audio_url": "https://example.test/v.wav",
+        "prompt_text": "逐字稿",
+        "prompt_version": "1754870400.0",
+    }

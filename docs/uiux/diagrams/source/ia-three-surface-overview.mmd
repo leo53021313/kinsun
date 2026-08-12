@@ -1,0 +1,27 @@
+---
+title: 三端全景資訊架構
+---
+flowchart TD
+  subgraph L0["Expo App"]
+    L0N0["入口：啟動與角色分流"]
+    L0N1["長輩：綁定、對話、提醒"]
+    L0N0 --> L0N1
+    L0N2["家屬：帳號、長輩、行程、通知"]
+    L0N1 --> L0N2
+  end
+  subgraph L1["LIFF"]
+    L1N0["入口：長輩清單"]
+    L1N1["照護：統一行程"]
+    L1N0 --> L1N1
+    L1N2["報告：健康報告"]
+    L1N1 --> L1N2
+  end
+  L0N2 -.-> L1N0
+  subgraph L2["Admin"]
+    L2N0["監看：總覽、訊息流、長輩"]
+    L2N1["排查：詳情與 trace"]
+    L2N0 --> L2N1
+    L2N2["內容與系統：新聞、排程、RAG"]
+    L2N1 --> L2N2
+  end
+  L1N2 -.-> L2N0

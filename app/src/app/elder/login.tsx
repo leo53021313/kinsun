@@ -6,10 +6,10 @@ import { Button, ErrorText, Field } from "@/components/ui";
 import { ApiError, loginElder } from "@/lib/api";
 import { useSession } from "@/lib/SessionProvider";
 import { strings } from "@/lib/strings";
-import { colors, spacing } from "@/lib/theme";
+import { colors, elder, spacing } from "@/lib/theme";
 
 /** 長輩帳密登入（✅ D-71 己-6）：只管「重登」（換手機／登出後）；
- * 首次使用仍要掃家人給的 QR 完成配對。字級放大、訊息白話。 */
+ * 首次使用仍要掃家人給的方塊圖完成配對。字級放大、訊息白話。 */
 export default function ElderLogin() {
   const router = useRouter();
   const { signIn } = useSession();
@@ -44,7 +44,7 @@ export default function ElderLogin() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <View style={styles.form}>
-        <Text style={styles.hint} maxFontSizeMultiplier={1.4}>
+        <Text style={styles.hint}>
           {strings.elderLogin.hint}
         </Text>
         <Field
@@ -53,10 +53,17 @@ export default function ElderLogin() {
           onChangeText={setPhone}
           keyboardType="phone-pad"
           placeholder="09xxxxxxxx"
+          size="big"
         />
-        <Field label={strings.common.passwordLabel} value={password} onChangeText={setPassword} secureTextEntry />
-        <ErrorText message={error} />
-        <Button label={strings.common.login} onPress={submit} busy={busy} />
+        <Field
+          label={strings.common.passwordLabel}
+          value={password}
+          onChangeText={setPassword}
+          secureTextEntry
+          size="big"
+        />
+        <ErrorText message={error} size="big" />
+        <Button label={strings.common.login} onPress={submit} busy={busy} size="big" />
       </View>
     </KeyboardAvoidingView>
   );
@@ -65,5 +72,5 @@ export default function ElderLogin() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   form: { padding: spacing.l, gap: spacing.m },
-  hint: { fontSize: 18, color: colors.textSoft, lineHeight: 26 },
+  hint: { fontSize: elder.fontMin, color: colors.textSoft, lineHeight: 32 },
 });

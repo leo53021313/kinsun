@@ -122,7 +122,9 @@ def test_summarizer_receives_single_user_transcript():
     assert len(messages) == 1
     assert messages[0].role == "user"
     assert "長輩：今天天氣真好" in messages[0].content
-    assert "金孫：是啊" in messages[0].content
+    # 角色標籤 2026-08-09 由「金孫」改為「阿白」（新視覺人設）。這裡改的是期望值
+    # 而非放寬斷言——標籤本身就是這次要改的行為，模型會照它寫進家屬讀的摘要正文。
+    assert "阿白：是啊" in messages[0].content
 
 
 def test_summary_retries_once_on_llm_error():
@@ -329,3 +331,22 @@ def test_summary_backward_compatible_without_risk_events():
         clock=lambda: NOW,
     )
     assert len(summaries.list_for_elder("u1")) == 1
+
+
+def test_summary_prompt_calls_the_companion_a_bai_not_the_service_name():
+    """摘要是家屬直接讀的文字，角色一律第三人稱「阿白」。
+
+    ⚠️ 這支的洩漏路徑比通道層那兩句更隱蔽：模型讀到的文字稿把 assistant 標成
+    「金孫」、提示詞也說「長輩與『金孫』對話紀錄」，於是它產出的摘要正文會照著
+    寫「金孫今天陪阿公聊了…」——家屬端畫面其他地方都已經改叫阿白，只有摘要
+    這一段是模型現生的，改文案改不到。
+
+    服務名不受影響：家屬端說「金孫會在早上七點產生摘要」講的是服務，那類句子
+    在 strings 那一側，不經過這個提示詞。
+    """
+    from kinsun.reports.summaries import _ROLE_LABELS, _TRANSCRIPT_PROMPT, SUMMARY_PROMPT
+
+    assert _ROLE_LABELS["assistant"] == "阿白"
+    assert "金孫" not in SUMMARY_PROMPT
+    assert "金孫" not in _TRANSCRIPT_PROMPT
+    assert "阿白" in SUMMARY_PROMPT

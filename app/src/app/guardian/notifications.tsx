@@ -1,10 +1,10 @@
-import { useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useState } from "react";
+import { useFocusEffect, useNavigation, usePathname, useRouter } from "expo-router";
+import { useCallback, useEffect, useState } from "react";
 import { FlatList, StyleSheet, Text, View } from "react-native";
 
 import { EmptyHint, ErrorText } from "@/components/ui";
 import { type AppNotification, listNotifications } from "@/lib/api";
-import { saveSeenAt } from "@/lib/notificationsSeen";
+import { loadSeenAt, saveSeenAt } from "@/lib/notificationsSeen";
 import { useSession, useSignOutOnAuthError } from "@/lib/SessionProvider";
 import { strings } from "@/lib/strings";
 import { colors, spacing } from "@/lib/theme";
@@ -13,11 +13,34 @@ import { formatTime } from "kinsun-shared/format";
 /** 家屬通知列表（✅ D-12）：警報／提醒／關懷訊息，最近先；開啟即更新已讀水位。 */
 export default function GuardianNotifications() {
   const router = useRouter();
+  const navigation = useNavigation();
+  const pathname = usePathname();
   const { loading: sessionLoading, session } = useSession();
   const signOutOn401 = useSignOutOnAuthError();
   const [items, setItems] = useState<AppNotification[]>([]);
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
+
+  // Tabs 以 lazy:false 預載本頁；即使使用者還在首頁，也由本頁自己設定未讀徽章。
+  // layout 不讀 session，避免把通知資料責任拉進導航層。
+  useEffect(() => {
+    if (sessionLoading || !session || session.role !== "guardian") return;
+    if (pathname === "/guardian/notifications") return;
+
+    let alive = true;
+    void Promise.all([listNotifications(session.token), loadSeenAt()])
+      .then(([list, seenAt]) => {
+        if (!alive) return;
+        const unreadCount = list.filter((item) => item.created_at > seenAt).length;
+        navigation.setOptions({ tabBarBadge: unreadCount > 0 ? unreadCount : undefined });
+      })
+      .catch(() => {
+        // 徽章是加分資訊；失敗不影響其他 tab，也不覆蓋目前畫面錯誤狀態。
+      });
+    return () => {
+      alive = false;
+    };
+  }, [navigation, pathname, session, sessionLoading]);
 
   useFocusEffect(
     useCallback(() => {
@@ -34,11 +57,13 @@ export default function GuardianNotifications() {
           const list = await listNotifications(session.token);
           if (alive) {
             setItems(list);
+            setError("");
             setLoaded(true);
           }
           if (list.length > 0) {
-            await saveSeenAt(list[0].created_at);
+            await saveSeenAt(Math.max(...list.map((item) => item.created_at)));
           }
+          if (alive) navigation.setOptions({ tabBarBadge: undefined });
         } catch (exc) {
           if (await signOutOn401(exc)) return;
           if (alive) {
@@ -50,7 +75,7 @@ export default function GuardianNotifications() {
       return () => {
         alive = false;
       };
-    }, [router, sessionLoading, session, signOutOn401]),
+    }, [navigation, router, sessionLoading, session, signOutOn401]),
   );
 
   return (

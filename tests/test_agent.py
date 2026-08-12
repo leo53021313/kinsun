@@ -8,6 +8,7 @@ from kinsun import agent as agent_module
 from kinsun.accounts.profile import ElderProfile
 from kinsun.agent import (
     FALLBACK_REPLY,
+    NOT_HEARD_REPLY,
     SYSTEM_PROMPT,
     SYSTEM_TROUBLE_REPLY,
     CareAgent,
@@ -252,6 +253,17 @@ def test_system_prompt_frames_location_as_hint_not_answer():
     assert "他明確在問所在地的天氣，就直接用那個地點，不要多問" in SYSTEM_PROMPT
     assert "不可拿他目前的位置去查" in SYSTEM_PROMPT
     assert "情境沒有附位置時，一律先問" in SYSTEM_PROMPT
+
+
+def test_system_prompt_keeps_identity_in_personas_and_never_gets_angry_at_elder():
+    """身分由 personas.py 決定；共用規則只保留所有人設都必須遵守的界線。"""
+    assert "你是「阿白」" not in SYSTEM_PROMPT
+    assert "你是「金孫」" not in SYSTEM_PROMPT
+    assert "永遠不可對長輩生氣、不耐煩、嫌惡、猜忌或驚慌" in SYSTEM_PROMPT
+    assert NOT_HEARD_REPLY.startswith("我")
+    assert SYSTEM_TROUBLE_REPLY.startswith("我")
+    assert "金孫" not in NOT_HEARD_REPLY
+    assert "金孫" not in SYSTEM_TROUBLE_REPLY
 
 
 def test_system_prompt_keeps_the_ai_honesty_rule():

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="844" viewBox="0 0 320 844" role="img">
+<style>text{font-family:'Microsoft JhengHei','PingFang TC','Noto Sans CJK TC','Noto Sans TC',sans-serif;fill:#202124;}.muted{fill:#5F6368}.label{font-weight:700;letter-spacing:.4px}</style>
+<rect x="0" y="0" width="320" height="25" rx="0" fill="#F1F3F4" stroke="#DADCE0" stroke-width="1"/>
+<text x="14" y="6" font-size="10" font-weight="400" fill="#5F6368" text-anchor="start">安全區域</text>
+<text x="306" y="6" font-size="10" font-weight="400" fill="#5F6368" text-anchor="end">9:41</text>
+<rect x="0" y="25" width="320" height="63" rx="0" fill="#FFFFFF" stroke="#DADCE0" stroke-width="1"/>
+<text x="14" y="40" font-size="23" font-weight="700" fill="#202124" text-anchor="start">陪伴對話</text>
+<text x="14" y="68" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">320px＋大字級檢查</text>
+<text x="306" y="68" font-size="12" font-weight="400" fill="#5F6368" text-anchor="end">長輩</text>
+<rect x="8" y="96" width="304" height="710" rx="6" fill="#F1F3F4" stroke="#9AA0A6" stroke-width="1" stroke-dasharray="7 5"/>
+<text x="14" y="100" font-size="10" font-weight="400" fill="#5F6368" text-anchor="start">可捲動內容</text>
+<text x="14" y="122" font-size="26" font-weight="700" fill="#202124" text-anchor="start">阿金在這裡</text>
+<rect x="14" y="170" width="292" height="84" rx="10" fill="#FFFFFF" stroke="#9AA0A6" stroke-width="2"/>
+<text x="28" y="182" font-size="20" font-weight="700" fill="#202124" text-anchor="start">虛擬形象預留區</text>
+<text x="28" y="212" font-size="17" font-weight="400" fill="#5F6368" text-anchor="start">大字下仍保留辨識空間</text>
+<text x="14" y="266" font-size="20" font-weight="400" fill="#202124" text-anchor="start">按住麥克風說話，或按一下開始、說</text>
+<text x="14" y="295" font-size="20" font-weight="400" fill="#202124" text-anchor="start">完再按一下。</text>
+<circle cx="160.0" cy="396" r="52" fill="#F1F3F4" stroke="#3C4043" stroke-width="4"/>
+<line x1="160.0" y1="370" x2="160.0" y2="404" stroke="#3C4043" stroke-width="5"/>
+<circle cx="160.0" cy="370" r="11" fill="#FFFFFF" stroke="#3C4043" stroke-width="3"/>
+<text x="160.0" y="456" font-size="15" font-weight="700" fill="#202124" text-anchor="middle">按住說話，或按一下開始</text>
+<rect x="14" y="484" width="292" height="68" rx="10" fill="#E6E6E6" stroke="#3C4043" stroke-width="2" stroke-dasharray="7 5"/>
+<text x="26" y="494" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">設計註記</text>
+<text x="26" y="514" font-size="15" font-weight="400" fill="#202124" text-anchor="start">主要文案不截斷；必要時增加捲動</text>
+<text x="14" y="825" font-size="10" font-weight="400" fill="#5F6368" text-anchor="start">底部安全區域</text>
+</svg>

@@ -34,6 +34,12 @@ _TARGET_SR = 16000
 ASR_MODEL_ID = os.environ.get("ASR_MODEL_ID", "MediaTek-Research/Breeze-ASR-26")
 ASR_MAX_CONCURRENCY = int(os.environ.get("ASR_MAX_CONCURRENCY", "1"))
 ASR_MAX_QUEUE = int(os.environ.get("ASR_MAX_QUEUE", "8"))
+# 單一請求的辨識時間上限（秒）。預設寬鬆：長輩可上傳到 ASR_MAX_BYTES 的音檔，
+# 在 GPU 吃緊時解碼＋推論會拉長；這道上限的目的不是控制長輩等多久
+# （那是應用層 ASR_TIMEOUT_SECONDS 的事），而是**不讓卡死的請求永久佔住併發名額**。
+ASR_TRANSCRIBE_TIMEOUT_SECONDS = float(os.environ.get("ASR_TRANSCRIBE_TIMEOUT_SECONDS", "120"))
+# ffmpeg 解碼逾時（秒）：子行程殺得掉，逾時即回收。
+ASR_FFMPEG_TIMEOUT_SECONDS = float(os.environ.get("ASR_FFMPEG_TIMEOUT_SECONDS", "30"))
 # 單請求 body 上限（✅ D-26 乙-7）；預設 10MB 對齊主 API 對講機上限。
 ASR_MAX_BODY_BYTES = int(os.environ.get("ASR_MAX_BODY_BYTES", "10485760"))
 # 共用金鑰（✅ D-56 乙方向丙-10）：設定後驗 X-Api-Key；未設＝內網開發模式不驗。
@@ -65,6 +71,15 @@ ASR_PRELOAD = os.environ.get("ASR_PRELOAD", "0") not in {"0", "false", "no"}
 _model = None
 _sem = asyncio.Semaphore(ASR_MAX_CONCURRENCY)
 _inflight = 0
+# 辨識逾時後「放生」的執行緒數（2026-08-11，與 services/tts 同一套處置）。
+#
+# ⚠️ Python 殺不掉執行緒：辨識跑在 threadpool，逾時只能讓等待的協程放棄、把
+# semaphore 名額讓出來，那條工作者仍在背景跑、仍握著 GPU。逾時**不是完全的復原**。
+#
+# 真正的回收手段只有重啟行程，故累計並在 /healthz 顯示，讓維運看得見「這台需要重啟」。
+# ⚠️ ASR 卡死比 TTS 更嚴重：TTS 掛了長輩至少還看得到文字回覆，ASR 掛了長輩連話都
+# 送不進去——整個對講機形同斷線，而 healthz 先前只看模型載入與否、一路回報 ok。
+_stuck_workers = 0
 
 
 def _get_model():
@@ -116,7 +131,13 @@ def _decode_to_mono16k(audio: bytes):
             ],
             capture_output=True,
             check=True,
+            # 子行程**殺得掉**：逾時會送 SIGKILL 並拋 TimeoutExpired，資源真的回收得掉。
+            # 與上面辨識那道逾時的性質不同（那裡只能讓出名額、殺不掉執行緒）。
+            timeout=ASR_FFMPEG_TIMEOUT_SECONDS,
         )
+    except subprocess.TimeoutExpired as exc:
+        logger.error("ffmpeg 解碼逾時 %.0f 秒，已終止子行程", ASR_FFMPEG_TIMEOUT_SECONDS)
+        raise AudioDecodeError("ffmpeg_timeout") from exc
     except subprocess.CalledProcessError as exc:
         stderr = (exc.stderr or b"").decode("utf-8", errors="replace").strip()
         logger.error("ffmpeg 解碼失敗 exit=%s stderr=%s", exc.returncode, stderr)
@@ -158,7 +179,17 @@ app = FastAPI(title="KinSun ASR (Breeze-ASR-26)", lifespan=lifespan)
 
 @app.get("/healthz")
 async def healthz() -> dict:
-    return {"status": "ok", "model_loaded": _model is not None}
+    """⚠️ `status` 會在有放生執行緒時轉 `degraded`（2026-08-11）。
+
+    先前只回報模型有沒有載入，於是「辨識卡死、併發名額被永久佔走、長輩連話都送不
+    進去」這個狀態下，healthz 依然一路回 ok——監控全綠，對講機卻已形同斷線。
+    放生的執行緒只能靠重啟行程回收，故這裡要講實話。
+    """
+    return {
+        "status": "degraded" if _stuck_workers else "ok",
+        "model_loaded": _model is not None,
+        "stuck_workers": _stuck_workers,
+    }
 
 
 def _require_api_key(request: Request) -> None:
@@ -170,7 +201,7 @@ def _require_api_key(request: Request) -> None:
 
 @app.post("/transcribe")
 async def transcribe(request: Request) -> dict[str, str]:
-    global _inflight
+    global _inflight, _stuck_workers
     _require_api_key(request)
     audio = await request.body()
     # 基本請求驗證（✅ D-26 乙-7）：空 body 400、超大 413，不進模型。
@@ -183,7 +214,26 @@ async def transcribe(request: Request) -> dict[str, str]:
     _inflight += 1
     try:
         async with _sem:
-            text = await run_in_threadpool(_transcribe, audio)
+            # ⚠️ 逾時的意義是「不再等它、把併發名額讓出來」，**不是**中止辨識——
+            # Python 殺不掉執行緒，那條工作者仍在背景跑（見 _stuck_workers）。
+            # 沒有這道上限的話，一次卡死就等於整台服務永久癱瘓：名額只有
+            # ASR_MAX_CONCURRENCY 個（預設 1），被佔走就再也沒人拿得到，
+            # 長輩從此連話都送不進去，而 /healthz 只看模型載入與否、會一路回 ok。
+            try:
+                text = await asyncio.wait_for(
+                    run_in_threadpool(_transcribe, audio),
+                    timeout=ASR_TRANSCRIBE_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                _stuck_workers += 1
+                logger.error(
+                    "辨識逾時 %.0f 秒，已讓出併發名額但該執行緒仍在背景執行"
+                    "（累計放生 %d 條，需重啟行程才能回收）音檔 %d bytes",
+                    ASR_TRANSCRIBE_TIMEOUT_SECONDS,
+                    _stuck_workers,
+                    len(audio),
+                )
+                raise HTTPException(status_code=504, detail="transcribe_timeout") from None
     except AudioDecodeError:
         # 壞音檔是呼叫端資料問題（4xx），不是服務故障（500）；根因已於 decode 記 log。
         raise HTTPException(status_code=422, detail="audio_decode_failed") from None

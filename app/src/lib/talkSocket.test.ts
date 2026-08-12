@@ -184,6 +184,7 @@ describe("talkSocket 重連", () => {
 
 describe("playbackQueue 播放佇列", () => {
   const item = (turnId: string) => ({
+    kind: "reply" as const,
     turnId,
     audioUrl: `${turnId}.m4a`,
     text: turnId,
@@ -239,7 +240,13 @@ describe("playbackQueue 播放佇列", () => {
 });
 
 describe("playAndWait 等一則播完", () => {
-  const item = { turnId: "t1", audioUrl: "a.m4a", text: "好", durationMs: 1000 };
+  const item = {
+    kind: "reply" as const,
+    turnId: "t1",
+    audioUrl: "a.m4a",
+    text: "好",
+    durationMs: 1000,
+  };
 
   function fakePlayer() {
     const listeners: ((s: { didJustFinish: boolean }) => void)[] = [];

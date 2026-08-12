@@ -12,16 +12,19 @@ from kinsun import tracing
 from kinsun.db import Database, _Errors
 from kinsun.llm import LLMError, Message
 
+# 角色叫阿白（2026-08-07 新視覺人設）；「金孫」只留作服務名。這一段的洩漏路徑比
+# 畫面文案隱蔽：摘要正文是模型現生的，它照著文字稿的標籤寫「金孫今天陪阿公聊了…」，
+# 而家屬端畫面其他地方都已經改叫阿白——改 strings 改不到這裡。
 SUMMARY_PROMPT = (
-    "你是協助家屬了解長輩近況的助手。請把使用者提供的長輩與『金孫』對話紀錄，"
+    "你是協助家屬了解長輩近況的助手。請把使用者提供的長輩與『阿白』對話紀錄，"
     "用一兩句溫暖、客觀的台灣繁體中文摘要長輩這天的狀況與情緒。"
     "只根據對話內容，不要編造未提及的事；直接輸出摘要正文，"
     "不要標題、粗體、分隔線或任何 Markdown 符號。"
 )
 
-_ROLE_LABELS = {"user": "長輩", "assistant": "金孫"}
+_ROLE_LABELS = {"user": "長輩", "assistant": "阿白"}
 
-_TRANSCRIPT_PROMPT = "以下是長輩與『金孫』當天的對話紀錄：\n{transcript}\n請依上述要求輸出摘要。"
+_TRANSCRIPT_PROMPT = "以下是長輩與『阿白』當天的對話紀錄：\n{transcript}\n請依上述要求輸出摘要。"
 
 # 生成失敗（空回應、接話）重試次數：實測 2026-07-17 空回應率 39%，重試一次可將
 # 失敗率壓到約 15%；夜間批次逐位長輩執行，再多重試效益遞減。
@@ -35,7 +38,7 @@ def _transcript_message(turns: list[Message]) -> Message:
     「接話」（實測 2026-07-17 回出「心情有沒有比較好？」）或直接回空——它看到
     的是一場進行中的對話，不是一份待摘要的紀錄。文字稿讓它站在旁觀者位置。
     """
-    lines = "\n".join(f"{_ROLE_LABELS.get(m.role, '金孫')}：{m.content}" for m in turns)
+    lines = "\n".join(f"{_ROLE_LABELS.get(m.role, '阿白')}：{m.content}" for m in turns)
     return Message("user", _TRANSCRIPT_PROMPT.format(transcript=lines))
 
 

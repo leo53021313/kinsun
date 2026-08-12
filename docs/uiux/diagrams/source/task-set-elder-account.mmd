@@ -1,0 +1,25 @@
+---
+title: Task Flow 09：家屬替長輩設定帳號
+---
+flowchart TD
+  subgraph L0["前置與輸入"]
+    L0N0["前置：長輩已首次配對"]
+    L0N1["輸入：手機號碼＋密碼"]
+    L0N0 --> L0N1
+  end
+  subgraph L1["步驟與驗證"]
+    L1N0["操作：設定或重設帳密"]
+    L1N1["驗證：電話格式與密碼"]
+    L1N0 --> L1N1
+    L1N2["系統：PUT elder account"]
+    L1N1 --> L1N2
+  end
+  L0N1 -.-> L1N0
+  subgraph L2["條件與回復"]
+    L2N0["成功：提示可供換機重登"]
+    L2N1["失敗：格式或重複帳號"]
+    L2N0 --> L2N1
+    L2N2["回復：修正後重試"]
+    L2N1 --> L2N2
+  end
+  L1N2 -.-> L2N0

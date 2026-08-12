@@ -682,6 +682,28 @@ def test_pipeline_failure_without_voice_still_texts_the_fallback():
     assert r.sent == [FALLBACK_PROMPT]
 
 
+def test_channel_prompts_use_a_bai_first_person_not_the_service_name():
+    """通道層的兩句提示是長輩直接讀到／聽到的，人稱規則與 agent 層同一套。
+
+    ⚠️ 這兩句是新視覺人設改名（2026-08-07）漏掉的地方：六批交接只指名
+    `RAG/app/`，`agent.py` 的 SYSTEM_PROMPT 與兩句回退話術都改成了阿白＋
+    第一人稱，通道層卻還留著「金孫現在聽得懂語音喔，您可以按住麥克風跟我
+    說說話」——同一句話裡先用第三人稱自稱金孫、再用第一人稱說「跟我說」，
+    對長輩而言那是兩個不同的對象。
+
+    「金孫」仍是服務名（`binding/flow.py` 的 LINE 選單「您好，我是金孫」講的是
+    服務本身、提供的也全是帳號管理動作，那句刻意不改）；這裡是角色在跟長輩
+    說話，一律用「我」。
+    """
+    assert "金孫" not in NON_AUDIO_PROMPT
+    assert "金孫" not in BIND_FIRST_PROMPT
+    assert NON_AUDIO_PROMPT.startswith("我")
+    # 兩句都要留住「下一步做什麼」，不可為了改人稱把指示改掉。
+    assert "按住麥克風" in NON_AUDIO_PROMPT
+    assert "邀請碼" in BIND_FIRST_PROMPT
+    assert "設定" in BIND_FIRST_PROMPT
+
+
 # ── 端到端秒數要進得了 Opik（2026-08-08 觀測盤點）──
 #
 # `round_trip_ms` 原本只寫進 Postgres 的 `replies`，Opik 一個字都沒有——想看端到端

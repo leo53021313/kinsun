@@ -80,8 +80,8 @@ describe("長輩端框內導覽", () => {
     );
     renderSignedIn();
     // 一登入就在對講機畫面（見 ElderApp 初始路由）；鈴鐺鍵在 TalkScreen 上。
-    await userEvent.click(await screen.findByRole("button", { name: "看金孫的提醒" }));
-    expect(await screen.findByRole("heading", { name: "金孫的提醒" })).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: "看阿白的提醒" }));
+    expect(await screen.findByRole("heading", { name: "阿白的提醒" })).toBeInTheDocument();
     expect(screen.getByText("該吃降血壓藥囉")).toBeInTheDocument();
 
     // ⚠️ 返回鍵說的是「回去講話」而不是「返回」：長輩端每一句都要告訴他下一步，
@@ -130,7 +130,7 @@ describe("被撤銷的登入", () => {
   /**
    * ⚠️ **全分支審查抓到的 Critical 1**：家屬按下「重新產生長輩綁定碼」之後，後端
    * 先撤 token 再拆綁定，長輩端每一支 API 都回 401。原本長輩端**零個畫面**處理 401
-   * ——對講機顯示「金孫沒聽清楚」、提醒列表顯示「載入失敗，請稍後再試」，重新整理
+   * ——對講機顯示「我沒聽清楚」、提醒列表顯示「載入失敗，請稍後再試」，重新整理
    * 也沒用（token 在 localStorage、初始路由仍是對講機），而家屬手上那組新碼永遠
    * 沒有畫面可以輸入。長輩就此永久卡死在一個看起來很正常的畫面上。
    */
@@ -167,7 +167,7 @@ describe("被撤銷的登入", () => {
       vi.fn().mockResolvedValue(failureResponse(401, "invalid_token", "登入已失效")),
     );
     renderSignedIn();
-    await userEvent.click(await screen.findByRole("button", { name: "看金孫的提醒" }));
+    await userEvent.click(await screen.findByRole("button", { name: "看阿白的提醒" }));
     expect(await screen.findByLabelText("綁定碼")).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent(
       "家人幫您重新設定了，請再掃一次他給的方塊圖，或輸入新的號碼。",

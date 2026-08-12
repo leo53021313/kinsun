@@ -1,0 +1,27 @@
+---
+title: Task Flow 03：新增第一位長輩
+---
+flowchart TD
+  subgraph L0["前置與輸入"]
+    L0N0["前置：Guardian Session"]
+    L0N1["輸入：長輩名稱"]
+    L0N0 --> L0N1
+    L0N2["認知：代辦同意內容"]
+    L0N1 --> L0N2
+  end
+  subgraph L1["步驟與驗證"]
+    L1N0["操作：建立長輩"]
+    L1N1["驗證：名稱非空"]
+    L1N0 --> L1N1
+    L1N2["系統：建立關聯與邀請碼"]
+    L1N1 --> L1N2
+  end
+  L0N2 -.-> L1N0
+  subgraph L2["條件與回復"]
+    L2N0["成功：卡片＋QR／代碼"]
+    L2N1["失敗：API 錯誤"]
+    L2N0 --> L2N1
+    L2N2["回復：保留輸入後重試"]
+    L2N1 --> L2N2
+  end
+  L1N2 -.-> L2N0

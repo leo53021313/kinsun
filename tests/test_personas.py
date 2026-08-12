@@ -61,6 +61,30 @@ def test_tone_never_names_a_tool():
         assert not named, f"人設 {persona_id} 的語氣段落點名了工具：{named}"
 
 
+def test_tone_declares_the_character_name_not_the_service_name():
+    """⭐ 角色叫**阿白**，「金孫」是服務名（2026-08-12 整合 PR #106 時補上）。
+
+    ⚠️ 這條守的是一個「畫面與聲音講不同名字」的缺口，實際發生過：PR #106 把 App 與
+    網頁全部改成阿白、連每日摘要與每晚反思的提示詞都改了，唯獨漏掉本檔——而**這裡
+    才是長輩對話時模型讀到的身分宣告**（`agent.py` 組提示詞的順序是
+    `persona.tone + address_line + SYSTEM_PROMPT + ...`，`agent.py` 的註解也明講
+    「身分宣告不在 SYSTEM_PROMPT，由 personas.py 各人設自帶」）。
+
+    漏掉的後果有三層：長輩問「你是誰」時語音答金孫、畫面卻寫阿白；家屬每日摘要改口
+    叫阿白；每晚反思產出的守則措辭是阿白，卻被**原文注入**這份自稱金孫的提示詞——
+    一份 prompt 兩個名字，模型自稱哪一個沒有保證，而它的自稱會經 TTS 唸給長輩聽。
+
+    人設措辭會被模型當事實複述（見下一條測試的探針結論），所以名字錯了不是小事。
+    """
+    for persona_id in personas.persona_ids():
+        tone = personas.get_persona(persona_id).tone
+        assert "阿白" in tone, f"人設 {persona_id} 沒有宣告角色名「阿白」"
+        assert "金孫" not in tone, (
+            f"人設 {persona_id} 的語氣段落出現服務名「金孫」——那是專案／品牌名，"
+            "不是角色對長輩的自稱"
+        )
+
+
 def test_tone_does_not_claim_to_be_a_real_family_member():
     """人設只管語氣，不得抵觸規則段的「你是 AI，不要假裝是真人或家人」。
 

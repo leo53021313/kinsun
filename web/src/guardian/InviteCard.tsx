@@ -16,6 +16,7 @@ import { useEffect, useState } from "react";
 
 import { strings } from "@/strings";
 import { Button } from "@/ui/Button";
+import { Section } from "@/ui/Section";
 
 export function InviteCard(props: { code: string; onSendToElder?: () => void }) {
   const { code, onSendToElder } = props;
@@ -36,7 +37,10 @@ export function InviteCard(props: { code: string; onSendToElder?: () => void }) 
   }, [code]);
 
   return (
-    <div className="flex flex-col items-center gap-3 rounded-2xl bg-background p-4">
+    <Section inset>
+      {/* Section 只負責「凹一階」的底色與圓角，內層這一格保住原本的置中版面
+          （綁定碼與 QR 圖置中、說明文字靠左）。 */}
+      <div className="flex flex-col items-center gap-3">
       <p className="self-start text-sm text-ink-soft">{strings.guardianHome.inviteHint}</p>
       {/* data-testid（非 role/label）：這串碼本身沒有適合的可及角色可用——它不是
           標題也不是表單欄位，純粹是一段要給 E2E 測試讀取的文字內容
@@ -64,6 +68,7 @@ export function InviteCard(props: { code: string; onSendToElder?: () => void }) 
       {onSendToElder ? (
         <Button label={strings.guardianHome.sendToElder} variant="outline" onClick={onSendToElder} />
       ) : null}
-    </div>
+      </div>
+    </Section>
   );
 }
