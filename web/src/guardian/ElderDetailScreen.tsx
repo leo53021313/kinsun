@@ -51,6 +51,13 @@ export function ElderDetailScreen(props: {
   /** 進每日摘要獨立畫面（W6）。本頁只列得下幾則，切日與分享在那邊。 */
   onOpenSummaries?: () => void;
   /**
+   * 進「金孫的聲音」獨立畫面（2026-08-12）。錄音是一整套有狀態的流程（權限、
+   * 計時、試聽、同意、送出、撤銷），塞進本頁會讓它逼近 800 行上限且職責混雜。
+   *
+   * 選填的理由同 `onOpenSummaries`：不是每個掛載點都推得動畫面，不傳就不畫入口。
+   */
+  onOpenVoiceProfile?: () => void;
+  /**
    * 把重新產生的長輩綁定碼直接送到長輩欄（spec W-15 內測捷徑，接線見
    * `stage/StagePage.tsx`）。不傳的話 `InviteCard` 不畫出「送到長輩的手機」鈕
    * （見該元件 `onSendToElder` 的說明）——獨立測試這支畫面（不透過
@@ -308,6 +315,19 @@ export function ElderDetailScreen(props: {
           onClick={props.onManageSchedules}
         />
       </Section>
+
+      {/* ⚠️ 這一格刻意**不**自己去查目前有沒有設定聲音：本頁已經打三支端點，
+          再加一支只為了顯示一行字，進頁面會更慢。狀態在子畫面裡顯示。 */}
+      {props.onOpenVoiceProfile ? (
+        <Section title={strings.voiceProfile.section}>
+          <p className="text-xs leading-5 text-ink-soft">{strings.voiceProfile.notSetHint}</p>
+          <Button
+            label={strings.voiceProfile.open}
+            variant="outline"
+            onClick={props.onOpenVoiceProfile}
+          />
+        </Section>
+      ) : null}
 
       <Section title={strings.elderDetail.personaSection}>
         <p className="text-xs leading-5 text-ink-soft">{strings.elderDetail.personaHelp}</p>

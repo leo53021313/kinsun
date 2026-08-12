@@ -506,4 +506,21 @@ describe("ElderDetailScreen", () => {
       expect(screen.getByText(CONFIRM_TEXT)).toBeInTheDocument();
     });
   });
+
+  describe("金孫的聲音", () => {
+    it("有入口，點了往上通報由 GuardianApp 推畫面", async () => {
+      mockByPath({});
+      const onOpenVoiceProfile = vi.fn();
+      renderDetail({ onOpenVoiceProfile });
+      await userEvent.click(await screen.findByRole("button", { name: "設定聲音" }));
+      expect(onOpenVoiceProfile).toHaveBeenCalled();
+    });
+
+    it("沒接這個 prop 時整格不出現——舞台等其他掛載點不一定推得動畫面", async () => {
+      mockByPath({});
+      renderDetail();
+      await screen.findByText("金孫的個性");
+      expect(screen.queryByRole("button", { name: "設定聲音" })).not.toBeInTheDocument();
+    });
+  });
 });
