@@ -150,14 +150,21 @@ def create_voice_profiles_router(
 
     @router.delete("/elders/{elder_id}/voice-profile", status_code=204)
     def revoke_voice_profile(elder_id: str, auth: GuardianAuth = Depends(current_guardian)) -> None:
-        """撤銷客製化聲音，下一輪起回到全域預設的金孫聲音。
+        """撤銷客製化聲音，下一輪起回到全域預設聲音。
 
-        ⚠️ 只寫 `revoked_at`、不刪 bucket 裡的音檔：撤銷要能立即生效（下一輪就回
-        預設聲音），而刪檔是可能失敗的外部呼叫。讓「聲音不再被使用」取決於一次
-        資料庫寫入，比取決於一次網路請求可靠。實際刪除另由保留政策處理。
+        ⚠️ **順序不可對調**：先寫 `revoked_at`（撤銷是否生效的唯一權威），成功之後才
+        去刪 bucket 裡的音檔。讓「聲音不再被使用」取決於一次資料庫寫入，比取決於一次
+        可能失敗的網路請求可靠——資料庫寫失敗就整支 500、家屬會重試；反過來做的話，
+        檔案刪了但撤銷沒寫進去，`resolve_voice` 仍會拿它去簽網址，變成每輪下載失敗。
+
+        ⚠️ 刪檔失敗**不影響**本端點回 204：那時聲音已經停用了（設定檔查不到），
+        回錯誤只會讓家屬以為沒撤銷成功。孤兒物件記 warning，見
+        `delete_voice_reference`。這些是長輩家人的聲紋，不能只標記停用就永遠留著
+        ——`cleanup(retention_days)` 掃不到 `voice-refs/`。
         """
         scope.assert_manages(auth, elder_id)
         _require_enabled()
         voice_profiles.revoke(elder_id, revoked_at=clock().timestamp())
+        publisher.delete_voice_reference(elder_id)
 
     return router

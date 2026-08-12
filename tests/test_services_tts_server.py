@@ -73,8 +73,8 @@ def test_synthesize_passes_elder_voice_fields_through(client, monkeypatch):
     會轉交給 _resolve_voice 解析出實際要用的參考音檔／逐字稿。"""
     calls = []
 
-    def fake_resolve_voice(elder_id, prompt_audio_url, prompt_text):
-        calls.append((elder_id, prompt_audio_url, prompt_text))
+    def fake_resolve_voice(elder_id, prompt_audio_url, prompt_text, prompt_version):
+        calls.append((elder_id, prompt_audio_url, prompt_text, prompt_version))
         return "/cached/e1.wav", "客製逐字稿"
 
     monkeypatch.setattr(tts_server, "_resolve_voice", fake_resolve_voice)
@@ -85,10 +85,26 @@ def test_synthesize_passes_elder_voice_fields_through(client, monkeypatch):
             "elder_id": "e1",
             "prompt_audio_url": "https://example.test/e1.wav",
             "prompt_text": "客製逐字稿",
+            "prompt_version": "1000.0",
         },
     )
     assert res.status_code == 200
-    assert calls == [("e1", "https://example.test/e1.wav", "客製逐字稿")]
+    # 版本一併轉交（2026-08-12）：漏掉它，家屬重錄之後這裡照樣命中舊快取。
+    assert calls == [("e1", "https://example.test/e1.wav", "客製逐字稿", "1000.0")]
+
+
+def test_synthesize_without_prompt_version_stays_backward_compatible(client, monkeypatch):
+    """舊呼叫端不帶 prompt_version 時當空字串，行為與加入本欄位前相同。"""
+    calls = []
+
+    def fake_resolve_voice(elder_id, prompt_audio_url, prompt_text, prompt_version):
+        calls.append(prompt_version)
+        return "/cached/e1.wav", "客製逐字稿"
+
+    monkeypatch.setattr(tts_server, "_resolve_voice", fake_resolve_voice)
+    res = client.post("/synthesize", json={"text": "哈囉", "elder_id": "e1"})
+    assert res.status_code == 200
+    assert calls == [""]
 
 
 class _FakeHttpResponse:
@@ -164,6 +180,113 @@ def test_resolve_voice_cache_evicts_oldest_when_full(monkeypatch, tmp_path):
     tts_server._resolve_voice("e2", "https://example.test/e2.wav", "e2 逐字稿")
     assert "e1" not in tts_server._voice_cache
     assert "e2" in tts_server._voice_cache
+
+
+def test_resolve_voice_redownloads_when_the_family_re_records(monkeypatch, tmp_path):
+    """家屬重錄後必須換成新錄音（2026-08-12）。
+
+    ⚠️ 這是本檔最容易寫錯的一條，錯法是只斷言「有回傳路徑」。快取原本只認 elder_id，
+    命中就直接回傳、看都不看新的 `prompt_audio_url`——於是家屬重錄、`PUT` 覆蓋了
+    bucket 同一個物件路徑，應用層也換發了簽章網址，DGX 端卻仍然拿舊檔案合成。
+    症狀是「重錄完全沒有變化、也沒有任何錯誤訊息」，家屬只會以為自己操作錯了，
+    而唯一的復原方式是等 20 位長輩把它擠出快取、或重啟整個 TTS 服務。
+
+    版本取自 `voice_profiles.granted_at`（每次 `save` 都會換一個值），所以
+    「重錄過」與「沒重錄」在這一層是分得出來的。
+    """
+    monkeypatch.setattr(tts_server, "_voice_cache", {})
+    monkeypatch.setattr(tts_server, "TTS_VOICE_CACHE_DIR", str(tmp_path))
+    downloads = []
+
+    def fake_urlopen(url, timeout=None):
+        downloads.append(url)
+        return _FakeHttpResponse(b"NEW" if "v2" in url else b"OLD")
+
+    monkeypatch.setattr(
+        tts_server, "_normalize_to_wav", lambda audio, dest: pathlib.Path(dest).write_bytes(audio)
+    )
+    monkeypatch.setattr(tts_server.urllib.request, "urlopen", fake_urlopen)
+
+    tts_server._resolve_voice("e1", "https://example.test/v1.wav", "逐字稿", "1000.0")
+    assert (tmp_path / "voice-e1.wav").read_bytes() == b"OLD"
+    assert len(downloads) == 1
+
+    # 家屬重錄：granted_at 換了值，即便物件路徑相同也必須重新抓。
+    wav_path, text = tts_server._resolve_voice(
+        "e1", "https://example.test/v2.wav", "逐字稿", "2000.0"
+    )
+    assert len(downloads) == 2, "版本換了卻沒重新下載＝家屬重錄不生效"
+    assert pathlib.Path(wav_path).read_bytes() == b"NEW"
+    assert text == "逐字稿"
+
+    # 版本沒變就不該重抓——重錄是少見動作，不可為它讓每一輪都多付一次下載。
+    tts_server._resolve_voice("e1", "https://example.test/v2.wav", "逐字稿", "2000.0")
+    assert len(downloads) == 2
+
+
+def test_resolve_voice_evicting_the_cache_also_removes_the_local_file(monkeypatch, tmp_path):
+    """淘汰快取時一併刪掉本機檔案（2026-08-12）。
+
+    這些是長輩家人的聲音樣本，不是可以無限期堆在暫存目錄的中介檔；而且淘汰後
+    那個檔案再也不會被讀到，留著只是佔磁碟與擴大外洩面。
+    """
+    monkeypatch.setattr(tts_server, "_voice_cache", {})
+    monkeypatch.setattr(tts_server, "TTS_VOICE_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(tts_server, "TTS_VOICE_CACHE_SIZE", 1)
+    monkeypatch.setattr(
+        tts_server, "_normalize_to_wav", lambda audio, dest: pathlib.Path(dest).write_bytes(audio)
+    )
+    monkeypatch.setattr(
+        tts_server.urllib.request, "urlopen", lambda url, timeout=None: _FakeHttpResponse(b"W")
+    )
+
+    tts_server._resolve_voice("e1", "https://example.test/e1.wav", "e1 逐字稿", "1")
+    assert (tmp_path / "voice-e1.wav").exists()
+    tts_server._resolve_voice("e2", "https://example.test/e2.wav", "e2 逐字稿", "1")
+    assert not (tmp_path / "voice-e1.wav").exists(), "被淘汰的聲音樣本不該留在磁碟上"
+
+
+def test_resolve_voice_rejects_an_elder_id_that_is_not_a_plain_identifier(monkeypatch, tmp_path):
+    """`elder_id` 直接參與檔案路徑，格式不合就退回全域預設（2026-08-12）。
+
+    這個值來自 JSON body。正式環境有 `TTS_API_KEY` 擋著，但預設是「未設＝內網開發
+    模式不驗」，而它會被組進 `os.path.join(TTS_VOICE_CACHE_DIR, f"voice-{elder_id}.wav")`
+    ——含 `..` 或 `/` 就寫得出快取目錄之外。業務主鍵本來就是 uuid，收窄不影響正常使用。
+    """
+    monkeypatch.setattr(tts_server, "_voice_cache", {})
+    monkeypatch.setattr(tts_server, "TTS_VOICE_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(tts_server, "TTS_PROMPT_WAV", "/default.wav")
+    monkeypatch.setattr(tts_server, "TTS_PROMPT_TEXT", "預設逐字稿")
+
+    def must_not_download(_url, timeout=None):
+        raise AssertionError("elder_id 不合法時不該連外下載")
+
+    monkeypatch.setattr(tts_server.urllib.request, "urlopen", must_not_download)
+
+    for bad in ("../../etc/passwd", "a/b", "e1 ", "x" * 65, "e1;rm"):
+        assert tts_server._resolve_voice(bad, "https://example.test/v.wav", "逐字稿", "1") == (
+            "/default.wav",
+            "預設逐字稿",
+        ), f"{bad!r} 不該被當成合法的 elder_id"
+    assert tts_server._voice_cache == {}
+
+
+def test_resolve_voice_rejects_a_non_http_reference_url(monkeypatch, tmp_path):
+    """參考音檔網址只接受 http(s)：`urlopen` 也吃得下 `file://`（2026-08-12）。"""
+    monkeypatch.setattr(tts_server, "_voice_cache", {})
+    monkeypatch.setattr(tts_server, "TTS_VOICE_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(tts_server, "TTS_PROMPT_WAV", "/default.wav")
+    monkeypatch.setattr(tts_server, "TTS_PROMPT_TEXT", "預設逐字稿")
+
+    def must_not_download(_url, timeout=None):
+        raise AssertionError("非 http(s) 網址不該送進 urlopen")
+
+    monkeypatch.setattr(tts_server.urllib.request, "urlopen", must_not_download)
+
+    assert tts_server._resolve_voice("e1", "file:///etc/passwd", "逐字稿", "1") == (
+        "/default.wav",
+        "預設逐字稿",
+    )
 
 
 def test_resolve_voice_falls_back_when_download_fails(monkeypatch, tmp_path):

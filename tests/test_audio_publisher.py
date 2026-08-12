@@ -211,3 +211,35 @@ def test_signed_url_for_caches_per_path():
 
     assert len(transport.calls) == 2
     assert transport.calls[1][1].endswith("/voice-refs/e2.wav")
+
+
+def test_delete_voice_reference_removes_the_object_and_drops_the_cached_url():
+    """撤銷客製化聲音要真的把聲音樣本刪掉（2026-08-12）。
+
+    這是長輩家人的聲紋，不是一般的回覆音檔——`cleanup(retention_days)` 只掃 `tts/`
+    底下的日期資料夾，`voice-refs/` 不在它的範圍內，沒有這支就等於「家屬按了撤銷、
+    檔案永遠留著」。
+    """
+    transport = FakeTransport([Response(200, {}, b"{}")])
+    publisher = _publisher(transport)
+    publisher._voice_url_cache["voice-refs/e1"] = ("https://stale.test/x", _NOW + timedelta(1))
+
+    publisher.delete_voice_reference("e1")
+
+    method, url, data, _headers, _timeout = transport.calls[0]
+    assert method == "DELETE"
+    assert url == "https://proj.supabase.co/storage/v1/object/tts-audio"
+    assert json.loads(data) == {"paths": ["voice-refs/e1"]}
+    # 簽章快取一併清掉，否則撤銷後那個網址在效期內仍然簽得出來、指向剛被刪的物件。
+    assert publisher._voice_url_cache == {}
+
+
+def test_delete_voice_reference_failing_does_not_raise():
+    """刪不掉只記警告：撤銷的權威是資料庫那筆 `revoked_at`，不是這次網路呼叫。
+
+    反過來設計（刪檔失敗就讓撤銷失敗）會讓家屬按了撤銷卻收到錯誤，而聲音其實
+    已經停用了——那比留一個孤兒檔案更糟。
+    """
+    transport = FakeTransport([TransportError("boom")])
+    publisher = _publisher(transport)
+    publisher.delete_voice_reference("e1")  # 不可拋

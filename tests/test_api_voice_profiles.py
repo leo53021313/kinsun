@@ -46,6 +46,7 @@ class _SpyPublisher:
 
     def __init__(self, boom=False):
         self.uploads: list[tuple[str, bytes, str]] = []
+        self.deleted: list[str] = []
         self._boom = boom
 
     def upload_voice_reference(self, elder_id, audio, *, content_type):
@@ -53,6 +54,9 @@ class _SpyPublisher:
             raise AudioPublishError("Supabase 不通")
         self.uploads.append((elder_id, audio, content_type))
         return f"voice-refs/{elder_id}"
+
+    def delete_voice_reference(self, elder_id):
+        self.deleted.append(elder_id)
 
 
 def _accounts():
@@ -302,6 +306,26 @@ def test_revoking_falls_back_to_the_global_voice(setup):
 
     assert res.status_code == 204
     assert profiles.get_active(elder_id) is None
+
+
+def test_revoking_also_deletes_the_stored_recording(setup):
+    """撤銷要連 bucket 裡的聲音樣本一起刪掉（2026-08-12）。
+
+    只標記停用的話，那段錄音會永遠留在 bucket——`cleanup(retention_days)` 只掃
+    `tts/` 底下的日期資料夾，`voice-refs/` 不在它的範圍內。這是長輩家人的聲紋，
+    家屬按下撤銷的意思是「不要再留著」，不是「先藏起來」。
+    """
+    client, elder_id, _profiles, publisher = setup
+    client.put(
+        f"/api/v1/elders/{elder_id}/voice-profile",
+        params={"consented_by": "孫子"},
+        headers={**AUTH, **AUDIO},
+        content=b"RECORDING",
+    )
+
+    client.delete(f"/api/v1/elders/{elder_id}/voice-profile", headers=AUTH)
+
+    assert publisher.deleted == [elder_id]
 
 
 def test_endpoints_return_503_when_the_feature_is_not_enabled():

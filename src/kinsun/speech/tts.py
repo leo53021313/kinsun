@@ -47,6 +47,14 @@ class VoiceReference:
     elder_id: str
     prompt_audio_url: str
     prompt_text: str
+    # 這份參考語音的版本（2026-08-12）。DGX 端把下載回來的音檔快取在本機、只認
+    # elder_id，於是家屬重錄之後——`PUT` 覆蓋 bucket 內同一個物件路徑、應用層也換發了
+    # 簽章網址——DGX 端仍然拿舊檔案合成，直到快取被擠掉或服務重啟。**過程中不會有任何
+    # 錯誤訊息**，家屬只會覺得「我明明重錄了怎麼沒變」。
+    #
+    # ⚠️ 值取自 `voice_profiles.granted_at`（每次 `save` 都換值），**不可**改用簽章網址：
+    # 那個網址每小時換發一次，拿它當版本等於每小時強制重新下載，本機快取形同虛設。
+    version: str = ""
 
 
 class TTSClient(Protocol):
@@ -82,6 +90,8 @@ class DgxTtsClient:
             payload["elder_id"] = voice.elder_id
             payload["prompt_audio_url"] = voice.prompt_audio_url
             payload["prompt_text"] = voice.prompt_text
+            # 少了它，DGX 端就分不出「家屬重錄過了」，見 VoiceReference.version。
+            payload["prompt_version"] = voice.version
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         headers = {"Content-Type": "application/json"}
         if self._api_key:  # 共用金鑰（✅ D-56 丙-10）；未設＝內網開發模式

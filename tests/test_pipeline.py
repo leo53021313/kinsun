@@ -1,5 +1,6 @@
 import threading
 import time
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -760,8 +761,36 @@ def test_pipeline_with_voice_profile_passes_reference():
             elder_id="e1",
             prompt_audio_url="https://signed.test/voice-refs/e1.wav?token=abc",
             prompt_text="午安，我是小明。",
+            version="1000.0",
         )
     ]
+
+
+def test_pipeline_voice_version_changes_when_the_family_re_records():
+    """重錄要換版本（2026-08-12）：`granted_at` 每次 `save` 都換值，DGX 端據此重抓。
+
+    ⚠️ 版本必須取自設定檔本身，不可用簽章網址——那個網址每小時換發一次，拿它當版本
+    會讓 DGX 端每小時重下載一次，等於白費本機快取。
+    """
+    profiles = FakeVoiceProfileStore()
+    original = VoiceProfile(
+        elder_id="e1",
+        prompt_audio_path="voice-refs/e1.wav",
+        prompt_text="午安，我是小明。",
+        consented_by="孫子小明本人同意",
+        granted_at=1000.0,
+    )
+    profiles.save(original)
+    pipeline = _voice_pipeline(profiles)
+    before = pipeline.resolve_voice("e1")
+
+    # 家屬重錄：物件路徑相同（PK 是 elder_id，重錄即覆蓋），只有 granted_at 換了。
+    profiles.save(replace(original, granted_at=2000.0))
+    after = pipeline.resolve_voice("e1")
+
+    assert before is not None and after is not None
+    assert after.prompt_audio_url == before.prompt_audio_url, "本測試要驗的是路徑相同時的行為"
+    assert after.version != before.version, "重錄後版本沒變＝DGX 端會繼續用舊錄音"
 
 
 def test_pipeline_requires_a_signer_when_voice_profiles_is_given():
