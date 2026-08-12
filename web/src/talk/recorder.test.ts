@@ -9,6 +9,8 @@ class FakeMediaRecorder {
   ondataavailable: ((event: { data: Blob }) => void) | null = null;
   onstop: (() => void) | null = null;
   state = "inactive";
+  /** 真的 MediaRecorder 會在 start() 之後給出實際採用的容器格式。 */
+  mimeType = "audio/webm;codecs=opus";
 
   constructor(public stream: unknown) {
     FakeMediaRecorder.lastInstance = this;
@@ -181,6 +183,33 @@ describe("createRecorder", () => {
     const bytes = await stopPromise;
     expect(bytes).toBeInstanceOf(ArrayBuffer);
     expect(stop).toHaveBeenCalled();
+  });
+
+  it("錄完之後仍取得得到錄音的容器格式——stop() 會把 Blob 的 type 丟掉", async () => {
+    stubBrowser();
+    const recorder = createRecorder();
+    await recorder.start();
+    await recorder.stop();
+    // ⚠️ 在 stop() **之後**問：呼叫端（客製化聲音上傳）要拿它當 Content-Type，
+    // 而那一定發生在停止之後；stop() 內部會把 recorder 參考清成 null。
+    expect(recorder.mimeType()).toBe("audio/webm;codecs=opus");
+  });
+
+  it("瀏覽器沒回報格式時退回 audio/webm，不送出空的 Content-Type", async () => {
+    // 後端檢查 content-type.startsWith("audio/")，空字串會拿到 415。
+    class SilentMediaRecorder extends FakeMediaRecorder {
+      mimeType = "";
+    }
+    vi.stubGlobal("MediaRecorder", SilentMediaRecorder);
+    vi.stubGlobal("navigator", {
+      mediaDevices: {
+        getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop: vi.fn() }] }),
+      },
+    });
+    const recorder = createRecorder();
+    await recorder.start();
+    await recorder.stop();
+    expect(recorder.mimeType()).toBe("audio/webm");
   });
 });
 
