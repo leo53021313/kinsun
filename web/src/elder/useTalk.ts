@@ -41,7 +41,12 @@ import {
 import { postTurn as postTurnApi, type ElderPlace } from "./api";
 import { currentPlace as currentPlaceApi } from "./location";
 
-export type AvatarState = "idle" | "listening" | "thinking" | "speaking";
+/**
+ * 對講機的視覺狀態。`error` 於 W3b 補上——新視覺的狀態帶與角色光暈是五態，
+ * 少了它，連線出問題時畫面會顯示錯誤文字但阿白仍是一副「準備好了」的樣子。
+ * 名稱與 App 的 `TalkVisualState`、renderer bridge 的 `OttoVisualState` 一致。
+ */
+export type AvatarState = "idle" | "listening" | "thinking" | "speaking" | "error";
 
 /**
  * 長按門檻（毫秒）。App 靠 `Pressable` 的 `delayLongPress` 預設值，網頁沒有
@@ -163,6 +168,13 @@ export function useTalk(options: {
   }));
 
   const [avatar, setAvatar] = useState<AvatarState>("idle");
+  /**
+   * 這一輪 ASR 認出來的長輩原話（W4：「之前聊過的」的「您說」那一行）。
+   *
+   * ⚠️ 舊版後端不送 `transcript`，此時維持空字串。呼叫端據此決定**不寫**
+   * 那一筆紀錄——寧可少一則，也不要讓長輩看到一句他沒講過的話。
+   */
+  const [transcript, setTranscript] = useState("");
   const [replyText, setReplyText] = useState(strings.talk.idleHint);
   const [micReady, setMicReady] = useState(false);
 
@@ -526,7 +538,10 @@ export function useTalk(options: {
           // 錯誤訊息照顯示（長輩需要知道），但收音中不動 avatar。
           setReplyText(frame.text);
           if (canTakeOverScreen) {
-            setAvatarBoth("idle");
+            // W3b 起進 error 態而非直接回待機：狀態帶與角色光暈要一起變成
+            // 「連線不太穩」，否則畫面上只有一行紅字、阿白仍是待機的樣子。
+            // 下一次 pressIn 會把它帶回 listening，不需要另外清。
+            setAvatarBoth("error");
           }
           return;
         }
@@ -557,6 +572,11 @@ export function useTalk(options: {
         if (canTakeOverSubtitle && frame.text) {
           setReplyText(frame.text);
         }
+        // 逐字稿只跟著 `reply` 走：`ack` 是安撫話、`chunk` 是同一輪的續段，兩者都
+        // 不帶新的長輩原話，跟著設會把它清成空字串。
+        if (frame.type === "reply" && canTakeOverSubtitle) {
+          setTranscript(typeof frame.transcript === "string" ? frame.transcript : "");
+        }
         // ⚠️ 續段直送（2026-08-01）的 `chunk` 訊框刻意**不**另開分支：它與
         // `ack`／`reply` 共用同一組欄位（`turn_id`／`audio_url`／`text`／
         // `duration_ms`），這段既有的通用推播邏輯結構上就完整涵蓋了它——
@@ -581,7 +601,7 @@ export function useTalk(options: {
           });
         } else if (frame.type === "reply" && canTakeOverScreen) {
           // ⚠️ 這一輪有字沒有聲音（TTS 掛掉、或音檔落地失敗——`talkSocket` 刻意
-          // 仍把訊框交出來，字幕照樣有用）。不回到待機的話，畫面永遠停在「金孫
+          // 仍把訊框交出來，字幕照樣有用）。不回到待機的話，畫面永遠停在「我
           // 想一下…」而麥克風鍵一直是停用的，長輩從此按不動。`ack` 不在此列：
           // 那只是安撫話，真正的回覆還在路上。
           setAvatarBoth("idle");
@@ -849,5 +869,5 @@ export function useTalk(options: {
     }
   }, [stopAndSend]);
 
-  return { avatar, replyText, micReady, pressIn, pressOut };
+  return { avatar, replyText, transcript, micReady, pressIn, pressOut };
 }

@@ -219,6 +219,13 @@ def test_the_slot_is_released_so_later_requests_still_work(monkeypatch, _reset_s
     """逾時後名額必須讓出來——這才是這道上限存在的理由。
 
     只驗「回 504」是不夠的：即使回了 504，若名額沒釋放，下一位長輩照樣送不進去。
+
+    ⚠️ 第二個請求**必須先把逾時放寬**（2026-08-12 整合時修掉的偶發紅字）：那 0.05 秒
+    是給第一個請求用的，若原樣留著，第二個請求也吃同一道預算——它本身瞬間就回，但
+    跑完整套測試時執行緒池被前面幾條「刻意放生的 5 秒睡眠」佔著（那是設計，Python
+    殺不掉執行緒），光是排到就可能超過 50ms，於是這裡拿到 504、CI 隨機轉紅。
+    實測佐證：把第二個 `_transcribe` 改成睡 60ms，這條就穩定失敗。
+    本測試要驗的是「名額有沒有讓出來」，不是「第二個請求有多快」。
     """
     import time
 
@@ -227,6 +234,7 @@ def test_the_slot_is_released_so_later_requests_still_work(monkeypatch, _reset_s
     client = TestClient(asr_server.app)
     assert client.post("/transcribe", content=b"stuck").status_code == 504
 
+    monkeypatch.setattr(asr_server, "ASR_TRANSCRIBE_TIMEOUT_SECONDS", 30.0)
     monkeypatch.setattr(asr_server, "_transcribe", lambda audio: "阿公早安")
     res = client.post("/transcribe", content=b"next-elder")
 

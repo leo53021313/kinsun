@@ -384,6 +384,11 @@ def test_the_slot_is_released_so_later_requests_still_work(monkeypatch, _reset_s
     assert client.post("/synthesize", json={"text": "會卡住的那句"}).status_code == 504
 
     # 換成正常的合成：名額若沒讓出來，這一句會再度逾時（或永遠等待）。
+    # ⚠️ 逾時要一併放寬（同 test_services_asr_server 的那條，2026-08-12）：0.05 秒是
+    # 給上面那個卡死請求用的，留著會讓這個瞬間就回的請求也吃同一道預算——跑完整套
+    # 測試時執行緒池被前面幾條刻意放生的 5 秒睡眠佔著，光是排到就可能超過 50ms。
+    # 這裡要驗的是名額有沒有讓出來，不是第二個請求有多快。
+    monkeypatch.setattr(tts_server, "TTS_SYNTH_TIMEOUT_SECONDS", 30.0)
     monkeypatch.setattr(tts_server, "_synthesize", lambda *_a: (b"ok-m4a", 900))
     res = client.post("/synthesize", json={"text": "後續的長輩"})
 

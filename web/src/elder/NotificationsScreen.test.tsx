@@ -54,7 +54,7 @@ describe("NotificationsScreen（長輩版）", () => {
     // 「目前沒有通知」對長輩太生硬，也沒告訴他接下來會怎樣。
     renderScreen([]);
     expect(
-      await screen.findByText("現在沒有要提醒您的事。時間到了金孫會跟您說。"),
+      await screen.findByText("現在沒有要提醒您的事。時間到了我會跟您說。"),
     ).toBeInTheDocument();
   });
 
@@ -84,7 +84,7 @@ describe("NotificationsScreen（長輩版）", () => {
     // `display_name` 對齊。
     localStorage.setItem("kinsun_web_seen_at_elder:王阿嬤", "1754000000");
     renderScreen([]);
-    await screen.findByText("現在沒有要提醒您的事。時間到了金孫會跟您說。");
+    await screen.findByText("現在沒有要提醒您的事。時間到了我會跟您說。");
     expect(loadSeenAt("elder")).toBe(1754000000);
   });
 
@@ -125,11 +125,11 @@ describe("NotificationsScreen（長輩版）", () => {
     );
     expect(await screen.findByText("載入中…")).toBeInTheDocument();
     expect(
-      screen.queryByText("現在沒有要提醒您的事。時間到了金孫會跟您說。"),
+      screen.queryByText("現在沒有要提醒您的事。時間到了我會跟您說。"),
     ).not.toBeInTheDocument();
     resolveFetch({ status: 200, json: async () => envelope([]) });
     expect(
-      await screen.findByText("現在沒有要提醒您的事。時間到了金孫會跟您說。"),
+      await screen.findByText("現在沒有要提醒您的事。時間到了我會跟您說。"),
     ).toBeInTheDocument();
   });
 
@@ -172,7 +172,7 @@ describe("NotificationsScreen（長輩版）", () => {
     );
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(
-      screen.queryByText("現在沒有要提醒您的事。時間到了金孫會跟您說。"),
+      screen.queryByText("現在沒有要提醒您的事。時間到了我會跟您說。"),
     ).not.toBeInTheDocument();
   });
 

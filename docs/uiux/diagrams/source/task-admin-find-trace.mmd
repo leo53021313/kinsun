@@ -1,0 +1,25 @@
+---
+title: Task Flow 10：由異常指標找到失敗 trace
+---
+flowchart TD
+  subgraph L0["前置與輸入"]
+    L0N0["前置：有效 Admin Key"]
+    L0N1["輸入：告警時間與階段"]
+    L0N0 --> L0N1
+  end
+  subgraph L1["步驟與驗證"]
+    L1N0["操作：總覽→訊息或長輩"]
+    L1N1["操作：時間軸→trace"]
+    L1N0 --> L1N1
+    L1N2["驗證：對照時間與 trace id"]
+    L1N1 --> L1N2
+  end
+  L0N1 -.-> L1N0
+  subgraph L2["條件與回復"]
+    L2N0["成功：定位首個失敗階段"]
+    L2N1["失敗：缺資料或載入失敗"]
+    L2N0 --> L2N1
+    L2N2["回復：換輪次、重整或交付工程"]
+    L2N1 --> L2N2
+  end
+  L1N2 -.-> L2N0
