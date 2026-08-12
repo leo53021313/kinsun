@@ -1,10 +1,13 @@
 """基本安全標頭 middleware（✅ D-57，丙-9）。
 
-全站統一掛：HSTS（對外恆經 ngrok HTTPS）、nosniff、禁 iframe、
+全站統一掛：HSTS（對外恆經 ngrok HTTPS）、nosniff、預設禁 iframe、
 不外洩 Referrer；CSP 以 self 為主，放寬四處——style 內聯（React 的
 style 屬性）、media https:（admin 回放 Supabase 簽章音檔）、media blob:
 與 script wasm（網頁版前端的語音播放與 QR 掃碼，2026-07-30）。
 admin 金鑰存 localStorage 的既有風險由 CSP 補防（D-57 決議）。
+
+唯一例外是網頁版阿白的離線 renderer：`/demo/otto/renderer.html` 只允許被
+同源頁面嵌入。其 iframe 仍以 `sandbox="allow-scripts"` 隔離，不取得同源權限。
 """
 
 from __future__ import annotations
@@ -34,11 +37,46 @@ SECURITY_HEADERS: dict[str, str] = {
     "Content-Security-Policy": _CSP,
 }
 
+_DEMO_RENDERER_PATH = "/demo/otto/renderer.html"
+_DEMO_RENDERER_CSP = (
+    "default-src 'none'; "
+    "img-src data:; "
+    "style-src 'unsafe-inline'; "
+    # renderer 是產生後的單一離線 HTML，白名單腳本都內嵌在檔案裡。不可沿用
+    # 全站的 script-src 'self'：HTTP header 與 HTML meta CSP 會取交集，結果是
+    # 內嵌腳本全被瀏覽器擋掉、iframe 永遠停在 opacity-0。
+    "script-src 'unsafe-inline'; "
+    "frame-ancestors 'self'"
+)
+_DEMO_RENDERER_HEADERS = {
+    **SECURITY_HEADERS,
+    "X-Frame-Options": "SAMEORIGIN",
+    "Content-Security-Policy": _DEMO_RENDERER_CSP,
+}
+
 
 def install_security_headers(app: FastAPI) -> None:
     @app.middleware("http")
     async def _add_security_headers(request, call_next):
         response = await call_next(request)
-        for name, value in SECURITY_HEADERS.items():
+        # 阿白 renderer 是全站唯一需要被嵌入的文件。精確比對檔案路徑，避免把
+        # `/demo/`、API 或其他靜態資產一起放寬成可被 iframe 包住。
+        #
+        # ⚠️ **必須用 `scope["path"]`，不可用 `request.url.path`。** 後者是
+        # Starlette 拿 scope 重組成完整網址字串、再以 `urlsplit` 切一次的結果，
+        # 於是 `#` 之後會被當成片段丟掉——`/demo/otto/renderer.html%23a/b` 的
+        # `request.url.path` 是 `/demo/otto/renderer.html`（比對命中、掛上放寬的
+        # 標頭），但路由實際依據的 `scope["path"]` 是
+        # `/demo/otto/renderer.html#a/b`，靜態檔找不到而回退成**單頁應用殼**。
+        # 結果就是 index.html 帶著 `SAMEORIGIN`＋`frame-ancestors 'self'` 出去，
+        # 正是本段註解宣稱不會發生的事（2026-08-12 審查以真 uvicorn 往返重現，
+        # `%3F` 是同一機制的另一半）。判斷用的路徑必須與決定回應內容的路徑是
+        # 同一個，而那個是 `scope["path"]`。
+        headers = (
+            _DEMO_RENDERER_HEADERS
+            if request.scope["path"] == _DEMO_RENDERER_PATH
+            else SECURITY_HEADERS
+        )
+        for name, value in headers.items():
             response.headers.setdefault(name, value)
         return response
