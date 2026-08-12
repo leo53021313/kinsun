@@ -62,9 +62,7 @@ def install_security_headers(app: FastAPI) -> None:
         # 阿白 renderer 是全站唯一需要被嵌入的文件。精確比對檔案路徑，避免把
         # `/demo/`、API 或其他靜態資產一起放寬成可被 iframe 包住。
         headers = (
-            _DEMO_RENDERER_HEADERS
-            if request.url.path == _DEMO_RENDERER_PATH
-            else SECURITY_HEADERS
+            _DEMO_RENDERER_HEADERS if request.url.path == _DEMO_RENDERER_PATH else SECURITY_HEADERS
         )
         for name, value in headers.items():
             response.headers.setdefault(name, value)
