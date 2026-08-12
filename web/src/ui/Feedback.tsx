@@ -9,8 +9,15 @@ export function ErrorText(props: { message: string; size?: "normal" | "big" }) {
   // （22px）下限——五種綁定錯誤＋六種相機錯誤那十一句「告訴他下一步做什麼」的
   // 話，全部曾經以全畫面最小字級呈現。加 `size` prop 而非全域放大：家屬端（沿用
   // 預設 `"normal"`）不該被連帶放大。
+  // ⚠️ 顏色用 `danger-text`（#B33C3C）不是 `danger`（#D95D5D）：後者對白底只有
+  // 3.7:1，鐵律 15 明定它只能用於邊界與圖示，紅色文字要用深一階才過 4.5:1。
   return (
-    <p role="alert" className={size === "big" ? "text-elder-min text-danger" : "text-sm text-danger"}>
+    <p
+      role="alert"
+      className={
+        size === "big" ? "text-elder-min text-danger-text" : "text-sm text-danger-text"
+      }
+    >
       {message}
     </p>
   );

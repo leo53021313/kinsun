@@ -3,7 +3,7 @@ import { useRouter } from "expo-router";
 import { useRef, useState } from "react";
 import { StyleSheet, Text, TextInput, View } from "react-native";
 
-import { Button } from "@/components/ui";
+import { Button, ErrorText } from "@/components/ui";
 import { ApiError, bindElderDevice } from "@/lib/api";
 import { useSession } from "@/lib/SessionProvider";
 import { strings } from "@/lib/strings";
@@ -16,7 +16,7 @@ const BIND_ERRORS: Record<string, string> = {
   too_many_attempts: strings.elderBind.tooManyAttempts,
 };
 
-/** 長輩綁定：掃家人給的 QR（✅ D-54 丁-3）或輸入綁定碼，一次就好，之後永久登入。 */
+/** 長輩綁定：掃家人給的方塊圖（✅ D-54 丁-3）或輸入綁定碼，一次就好，之後永久登入。 */
 export default function ElderBind() {
   const router = useRouter();
   const { signIn } = useSession();
@@ -79,7 +79,12 @@ export default function ElderBind() {
           barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
           onBarcodeScanned={({ data }) => onScanned(data)}
         />
-        <Button label={strings.elderBind.switchToManual} variant="outline" onPress={() => setScanning(false)} />
+        <Button
+          label={strings.elderBind.switchToManual}
+          variant="outline"
+          size="big"
+          onPress={() => setScanning(false)}
+        />
       </View>
     );
   }
@@ -87,7 +92,13 @@ export default function ElderBind() {
   return (
     <View style={styles.container}>
       <Text style={styles.hint}>{strings.elderBind.hint}</Text>
-      <Button label={strings.elderBind.scanQr} size="big" onPress={startScan} disabled={busy} />
+      <Button
+        label={strings.elderBind.scanQr}
+        variant="outline"
+        size="big"
+        onPress={startScan}
+        disabled={busy}
+      />
       <TextInput
         style={styles.codeInput}
         value={code}
@@ -97,7 +108,14 @@ export default function ElderBind() {
         placeholder={strings.elderBind.codePlaceholder}
         placeholderTextColor={colors.textSoft}
       />
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {/* 用共用 ErrorText 而非自建樣式：它已經是「顏色＋圖示＋文字」三重編碼
+          （規則 6），文字色也已經是深一階的 dangerText（規則 15）。這裡原本自己
+          寫 `color: colors.danger`，對淡紫底只有 3.41:1。 */}
+      {error ? (
+        <View style={styles.errorRow}>
+          <ErrorText message={error} size="big" />
+        </View>
+      ) : null}
       <Button
         label={strings.elderBind.start}
         size="big"
@@ -109,6 +127,7 @@ export default function ElderBind() {
       <Button
         label={strings.elderBind.loginLink}
         variant="outline"
+        size="big"
         onPress={() => router.push("/elder/login")}
         disabled={busy}
       />
@@ -137,5 +156,5 @@ const styles = StyleSheet.create({
     color: colors.text,
     letterSpacing: 2,
   },
-  error: { fontSize: elder.fontMin, color: colors.danger, textAlign: "center" },
+  errorRow: { alignSelf: "center" },
 });

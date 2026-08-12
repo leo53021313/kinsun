@@ -135,7 +135,7 @@ function StageBody() {
   const [prefilledCode, setPrefilledCode] = useState<ElderCodeDelivery | undefined>(undefined);
   const sendSeqRef = useRef(0);
 
-  // ⚠️ 審查發現的 Critical：長輩欄按下「掃描 QR 碼」後，若在窄螢幕切到
+  // ⚠️ 審查發現的 Critical：長輩欄按下「掃描方塊圖」後，若在窄螢幕切到
   // 「家屬端」頁籤，非活動欄只是被 CSS `hidden` 蓋住——元件仍掛著，
   // `MediaStream` 軌道與 `display:none` 無關，相機會一直開到分頁關閉為止。
   // 把「這一欄現在看得到嗎」算出來往下傳，讓 `BindScreen` 自己決定要不要

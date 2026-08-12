@@ -24,7 +24,7 @@ export function RoleSwitcher() {
       await switchTo(target);
       router.replace(target === "elder" ? "/elder/talk" : "/guardian/home");
     } else {
-      router.push(target === "elder" ? "/elder/bind" : "/guardian/login");
+      router.push(target === "elder" ? "/elder/bind" : "/auth/guardian-login");
     }
   }
 

@@ -2,30 +2,126 @@
  * 設計 token（Tailwind v4 的 @theme）。
  *
  * 值與 app/src/lib/theme.ts 完全相同——docs/dev/12 §3 載明那一組是三端視覺基準。
- * 改這裡等於改品牌色，請連同 app 端一起考慮（app 已凍結，但值分岔會讓截圖與
- * 實機看起來是兩個產品）。
+ * 這條不變式現在**由 theme.test.ts 直接比對 app 端原始碼**把關，不再只是註解上的
+ * 宣稱：2026-08 新視覺改版時 app 端整組換成靛藍暖黃，web 端沒跟上而沒有任何測試會
+ * 紅，就是因為當時只測 token 名字存不存在。改品牌色請改 app 端那一份，這裡跟著改。
  *
  * 命名與 app 端略有出入之處：text／textSoft／border 在 Tailwind 底下會與內建
  * 工具類撞名（text-* 是字級、border-* 是框線寬度），故改為 ink／ink-soft／line。
+ * 這是唯一允許的分岔，值仍必須相同。
  */
 
 @import "tailwindcss";
 
 @theme {
-  --color-background: #FFF9F0;
+  /* ── 色票（2026-08 新視覺：靛藍 × 暖黃）───────────────────────────────── */
+  --color-background: #F5F5FD;
+  --color-background-warm-top: #FFF9EC;
   --color-surface: #FFFFFF;
-  --color-primary: #C2410C;
-  --color-primary-pressed: #9A3412;
-  --color-ink: #1C1917;
-  --color-ink-soft: #57534E;
-  --color-line: #E7E5E4;
-  --color-danger: #B91C1C;
-  --color-success: #15803D;
+  --color-primary: #4D50A2;
+  --color-primary-pressed: #2F3273;
+  /* 暖黃是每頁唯一主要行動，一律配深靛藍字（--color-ink），不用白字。 */
+  --color-action: #F9DF77;
+  --color-action-pressed: #F3D45F;
+  --color-ink: #25285F;
+  --color-ink-soft: #6B6D88;
+  --color-line: #E4E5F2;
+  --color-success: #44B89A;
+  --color-success-text: #1E7A64;
+  --color-warning: #E99A58;
+  --color-warning-text: #7A5E12;
+  /* danger 只用於邊界與圖示（3.7:1，非文字元件達標）；紅色文字一律用
+     --color-danger-text，白字徽章底用 --color-danger-badge。 */
+  --color-danger: #D95D5D;
+  --color-danger-text: #B33C3C;
+  --color-danger-badge: #C64848;
 
   /* 長輩端適老化字級（✅ D-48）。家屬端沿用 Tailwind 內建級距。 */
   --text-elder-min: 22px;
   --text-elder-big: 30px;
   --text-elder-huge: 40px;
+
+  /* ── 圓角（app 端 radius）─────────────────────────────────────────────── */
+  --radius-card: 24px;
+  --radius-control: 16px;
+  --radius-pill: 999px;
+}
+
+/*
+ * 以下不放進 @theme：Tailwind v4 只為已知命名空間（--color-*／--text-*／
+ * --radius-* 等）產生工具類，其餘會被當成無用的自訂屬性。這些值要用
+ * `var()` 或任意值語法（例如 `bg-[var(--talk-idle-pill)]`）取用，放在 :root
+ * 語意才對，也避免讓人誤以為存在 `bg-talk-idle-glow` 這種工具類。
+ */
+:root {
+  /* ── 第一層｜系統態：驅動角色光暈與狀態帶 ─────────────────────────────
+     沿用 app 端 talkState 的五個名稱，狀態機不動。
+     ⚠️ web 端的 AvatarState 目前只有四態（elder/useTalk.ts 沒有 error），
+        token 先備齊五態，畫面層補第五態時才不必回頭改這裡。 */
+  --talk-idle-glow: rgba(249, 223, 119, 0.78);
+  --talk-idle-pill: #FDF6DE;
+  --talk-idle-ink: #7A5E12;
+
+  --talk-listening-glow: rgba(77, 80, 162, 0.34);
+  --talk-listening-pill: #2F3273;
+  --talk-listening-ink: #FFFFFF;
+
+  --talk-thinking-glow: rgba(233, 154, 88, 0.30);
+  --talk-thinking-pill: #FDF0E4;
+  --talk-thinking-ink: #B87333;
+
+  --talk-speaking-glow: rgba(68, 184, 154, 0.36);
+  --talk-speaking-pill: #EAF7F3;
+  --talk-speaking-ink: #1E7A64;
+
+  --talk-error-glow: rgba(217, 93, 93, 0.28);
+  --talk-error-pill: #FDF0F0;
+  --talk-error-ink: #B33C3C;
+
+  /* ── 角色插槽：直式 684 × 980 素材，主舞台固定，永不縮放或位移 ───────── */
+  --avatar-stage-w: 209px;
+  --avatar-stage-h: 300px;
+  --avatar-stage-top: 140px;
+  --avatar-header-w: 34px;
+  --avatar-header-h: 48px;
+  --avatar-dimmed-opacity: 0.68; /* 僅 error 狀態 */
+
+  /* ── 長輩端尺寸 ──────────────────────────────────────────────────────
+     ⚠️ 這幾個以前刻意寫成任意值（TalkScreen 舊註解：「單一元件的尺寸，不是
+        跨端共用的品牌值」）。新視覺把它們收進了 app 端 theme.ts 的 elder，
+        成為三端共用的核准值，故一併升格為 token 並由 theme.test.ts 比對。 */
+  --size-elder-page-padding: 21px;
+  --size-elder-talk-button: 132px; /* 主要態 */
+  --size-elder-talk-button-small: 72px; /* 阿白說話時的次要態 */
+  --size-elder-round-button: 60px; /* 頁首圓鈕（之前聊過的、鈴鐺、返回） */
+
+  /* ── 動畫時長（app 端 motion，easing 一律 ease-out）─────────────────── */
+  --motion-press: 120ms; /* 按下回饋（縮放 0.98） */
+  --motion-state: 200ms; /* 卡片淡入、狀態帶換色 */
+  --motion-layout: 240ms; /* 頁面轉場、回話展開／收合、主鍵縮放 */
+  --motion-chart: 300ms;
+
+  /* ── 陰影（app 端 elevation）──────────────────────────────────────────
+     CSS 這端可以直接用字串，不必像 RN 拆成五個屬性。 */
+  --elevation-row: 0 2px 8px rgba(47, 50, 115, 0.04);
+  --elevation-card: 0 8px 24px rgba(47, 50, 115, 0.05);
+  --elevation-overlay: 0 12px 32px rgba(47, 50, 115, 0.08);
+  --elevation-action: 0 8px 20px rgba(214, 168, 32, 0.28);
+  /* 內容層蓋在角色前面時用雙向陰影，邊界才清楚。 */
+  --elevation-sheet: 0 10px 28px rgba(47, 50, 115, 0.07), 0 -6px 18px rgba(47, 50, 115, 0.04);
+}
+
+/*
+ * 長輩端的暖光漸層（app 端 elderGradient）。app 用 expo-linear-gradient，
+ * web 直接用 CSS 漸層，停駐點與色序完全一致。
+ */
+.elder-gradient {
+  background-image: linear-gradient(
+    to bottom,
+    var(--color-background-warm-top) 0%,
+    #F8F5FC 44%,
+    var(--color-background) 100%
+  );
 }
 
 /*

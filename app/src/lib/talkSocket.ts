@@ -272,6 +272,8 @@ export function createTalkSocket(options: TalkSocketOptions) {
 }
 
 export type PlaybackItem = {
+  /** 安撫語音播完仍在等待答案；正式回覆播完才可回到待機。 */
+  kind: "ack" | "reply";
   turnId: string;
   audioUrl: string;
   text: string;

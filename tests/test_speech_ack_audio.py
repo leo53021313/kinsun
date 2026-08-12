@@ -23,7 +23,7 @@ class _FakeTts:
         self._fail_on = fail_on or set()
         self._audio = audio
 
-    def synthesize(self, text: str) -> TtsResult:
+    def synthesize(self, text: str, *, voice=None) -> TtsResult:
         self.calls.append(text)
         self.priorities.append(current_tts_priority())
         if text in self._fail_on:
@@ -260,9 +260,9 @@ def test_clip_for_text_never_synthesises_on_the_calling_thread():
     threads: list[threading.Thread] = []
 
     class _ThreadRecordingTts(_FakeTts):
-        def synthesize(self, text: str) -> TtsResult:
+        def synthesize(self, text: str, *, voice=None) -> TtsResult:
             threads.append(threading.current_thread())
-            return super().synthesize(text)
+            return super().synthesize(text, voice=voice)
 
     cache = AckAudioCache(
         _ThreadRecordingTts(), _FakePublisher(), signed_url_ttl_seconds=86400.0, clock=_Clock()

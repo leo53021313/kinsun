@@ -1,0 +1,29 @@
+---
+title: User Flow 06：403 綁定失效與重新綁定
+---
+flowchart TD
+  subgraph L0["失效"]
+    L0N0["起點：送出語音"]
+    L0N1["系統：回傳 403"]
+    L0N0 --> L0N1
+    L0N2["畫面：應說明綁定已失效"]
+    L0N1 --> L0N2
+  end
+  subgraph L1["清理"]
+    L1N0["系統：清除 Elder Session"]
+    L1N1["決策：是否已有帳密？"]
+    L1N0 --> L1N1
+    L1N2["畫面：角色或回復入口"]
+    L1N1 --> L1N2
+  end
+  L0N2 -.-> L1N0
+  subgraph L2["回復"]
+    L2N0["操作：帳密重新登入"]
+    L2N1["或：取得新綁定碼"]
+    L2N0 --> L2N1
+    L2N2["成功：回到對話"]
+    L2N1 --> L2N2
+    L2N3["離開：聯絡家屬稍後處理"]
+    L2N2 --> L2N3
+  end
+  L1N2 -.-> L2N0

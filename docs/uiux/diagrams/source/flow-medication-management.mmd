@@ -1,0 +1,31 @@
+---
+title: User Flow 10：統一行程的用藥型提醒
+---
+flowchart TD
+  subgraph L0["選擇操作"]
+    L0N0["起點：全部行程"]
+    L0N1["類型：選吃藥"]
+    L0N0 --> L0N1
+    L0N2["操作：內容＋時段"]
+    L0N1 --> L0N2
+  end
+  subgraph L1["驗證"]
+    L1N0["決策：內容與時間有效？"]
+    L1N1["系統：POST 或 PUT schedules"]
+    L1N0 --> L1N1
+    L1N2["刪除：先顯示確認框"]
+    L1N1 --> L1N2
+  end
+  L0N2 -.-> L1N0
+  subgraph L2["結果"]
+    L2N0["成功：重載清單"]
+    L2N1["空狀態：尚無用藥"]
+    L2N0 --> L2N1
+    L2N2["錯誤：顯示 API 人話"]
+    L2N1 --> L2N2
+    L2N3["回復：修正或重試"]
+    L2N2 --> L2N3
+    L2N4["取消：離開表單"]
+    L2N3 --> L2N4
+  end
+  L1N2 -.-> L2N0

@@ -135,3 +135,21 @@ describe("PhoneFrame", () => {
     expect(screen.getByText("9:41")).toBeInTheDocument();
   });
 });
+
+it("螢幕尺寸是 iPhone 17／17 Pro 的實際視埠（402 × 874）", () => {
+  // 原本是 aspect-[9/19.5] 配 max-w-[380px] 的通用直式比例——那不是任何一支真機
+  // 的尺寸。改成真實視埠之後，框裡量到的位置就是長輩手機上量到的位置；「一屏
+  // 不捲」要成立與否完全取決於畫面有多高，量錯了整條規則就驗不了。
+  render(
+    <PhoneFrame title="長輩的手機" os="ios">
+      <p>內容</p>
+    </PhoneFrame>,
+  );
+  const frame = screen.getByTestId("phone-frame");
+  expect(frame.style.width).toBe("402px");
+  expect(frame.style.aspectRatio).toBe("402 / 874");
+  // 邊框必須是 outline 不是 border：border-box 下 border 會從 402 裡面吃掉，
+  // 螢幕實際只剩 382，量出來的位置全部偏移。
+  expect(frame.className).toContain("outline-[10px]");
+  expect(frame.className).not.toContain("border-[10px]");
+});

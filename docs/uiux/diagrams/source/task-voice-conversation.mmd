@@ -1,0 +1,27 @@
+---
+title: Task Flow 01：完成一次語音對話
+---
+flowchart TD
+  subgraph L0["前置與輸入"]
+    L0N0["前置：有效 Elder Session"]
+    L0N1["前置：麥克風權限"]
+    L0N0 --> L0N1
+    L0N2["輸入：語音＋可選定位"]
+    L0N1 --> L0N2
+  end
+  subgraph L1["步驟與驗證"]
+    L1N0["操作：按住放開或短按兩次"]
+    L1N1["驗證：音檔可上傳"]
+    L1N0 --> L1N1
+    L1N2["系統：ASR、風險、Agent、TTS"]
+    L1N1 --> L1N2
+  end
+  L0N2 -.-> L1N0
+  subgraph L2["條件與回復"]
+    L2N0["成功：播放並顯示回覆"]
+    L2N1["失敗：權限、網路、403"]
+    L2N0 --> L2N1
+    L2N2["回復：設定、重試或重綁"]
+    L2N1 --> L2N2
+  end
+  L1N2 -.-> L2N0

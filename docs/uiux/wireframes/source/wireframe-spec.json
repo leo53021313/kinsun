@@ -1,0 +1,900 @@
+{
+  "schema_version": "1.0",
+  "assets": [
+    {
+      "id": "app-launch-session",
+      "title": "啟動與 Session 判斷",
+      "role": "長輩＋家屬",
+      "screen": "/",
+      "state": "載入並自動導向",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|正在準備金孫", "L|讀取這台手機的登入狀態", "T|請稍候，完成後會自動帶你到正確畫面。", "N|不得閃現角色頁或空白內容"]
+    },
+    {
+      "id": "app-role-selection",
+      "title": "選擇使用身分",
+      "role": "長輩＋家屬",
+      "screen": "/role",
+      "state": "無 Session",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|今天要用哪個身分？", "C|我是長輩|第一次使用可掃描家屬提供的 QR Code", "C|我是家屬|管理長輩、用藥、回診與通知", "N|兩個選項皆須有至少 48pt 點擊範圍"],
+      "primary": "我是長輩"
+    },
+    {
+      "id": "app-elder-bind-qr",
+      "title": "長輩裝置綁定",
+      "role": "長輩",
+      "screen": "/elder/bind",
+      "state": "QR 掃描",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|請掃描家屬手機上的 QR Code", "P|金孫需要使用相機掃描綁定碼。", "C|相機預覽區|將 QR Code 放進框框內", "B|改用手動輸入", "N|權限對話框只在使用者理解目的後出現"],
+      "primary": "開始掃描"
+    },
+    {
+      "id": "app-elder-login",
+      "title": "長輩帳密重新登入",
+      "role": "長輩",
+      "screen": "/elder/login",
+      "state": "已完成首次配對",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|用帳號回到金孫", "T|只有曾經完成綁定的長輩可以使用。", "F|手機號碼|例如 0912345678", "F|密碼|請輸入家屬設定的密碼", "B|還沒綁定？改用 QR Code", "N|鍵盤升起後主要按鈕仍須可見"],
+      "primary": "登入",
+      "keyboard": true
+    },
+    {
+      "id": "app-elder-talk-idle",
+      "title": "陪伴對話",
+      "role": "長輩",
+      "screen": "/elder/talk",
+      "state": "Idle",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|阿金在這裡", "B|金孫的提醒|56dp 鈴鐺；未讀以數字 badge＋可存取名稱表達", "C|A-Kin 角色區|正式 App 使用靜態插畫；本張仍以低保真區塊表示", "S|準備好了|按住說話，或按一下開始、說完再按一下", "M|按住說話，或按一下開始", "N|104dp 主按鈕；觸覺與音效不可作唯一回饋"]
+    },
+    {
+      "id": "app-elder-notifications",
+      "title": "金孫的提醒",
+      "role": "長輩",
+      "screen": "/elder/notifications",
+      "state": "有提醒",
+      "width": 390,
+      "height": 844,
+      "blocks": ["B|回去講話|56dp 返回操作", "H|金孫的提醒", "C|記得吃降血壓藥。|今天 08:00", "C|下午三點要回診。|昨天 15:00", "N|只使用現有 content＋created_at；不虛構種類、嚴重度或單筆已讀"],
+      "primary": "回去講話"
+    },
+    {
+      "id": "app-guardian-login",
+      "title": "家屬登入",
+      "role": "家屬",
+      "screen": "/guardian/login",
+      "state": "預設",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|歡迎回來", "F|電子郵件|name@example.com", "F|密碼|請輸入密碼", "B|還沒有帳號？立即註冊", "N|錯誤必須說明可修正的下一步"],
+      "primary": "登入",
+      "keyboard": true
+    },
+    {
+      "id": "app-guardian-register",
+      "title": "家屬註冊",
+      "role": "家屬",
+      "screen": "/guardian/register",
+      "state": "預設",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|建立家屬帳號", "F|姓名|例如 王小明", "F|電子郵件|name@example.com", "F|密碼|請設定安全密碼", "T|建立帳號代表你同意依照照護用途使用資料。", "B|已有帳號？返回登入"],
+      "primary": "建立帳號",
+      "keyboard": true
+    },
+    {
+      "id": "app-guardian-home-one",
+      "title": "家屬首頁",
+      "role": "家屬",
+      "screen": "/guardian/home",
+      "state": "一位長輩",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|我的長輩", "C|林阿嬤|最近更新：今天 08:30", "B|查看通知", "F|新增長輩名稱|例如 林阿嬤", "T|建立前請確認已向長輩說明資料使用方式。", "N|長輩卡片為主要導覽入口"],
+      "primary": "新增長輩"
+    },
+    {
+      "id": "app-guardian-elder-detail-normal",
+      "title": "長輩照護詳情",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id",
+      "state": "正常資料",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|林阿嬤", "C|近 30 天健康報告|需留意 1 件；提醒 3 件", "C|最新每日摘要|今天心情平穩，提到昨晚睡得較少。", "C|用藥 2 筆|早上、晚餐後", "C|回診 1 筆|7 月 30 日 09:30", "B|邀請另一位家屬", "N|不得顯示完整逐字對話"],
+      "primary": "管理照護資料"
+    },
+    {
+      "id": "app-guardian-medications-data",
+      "title": "行程管理（吃藥類型）",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id/schedules",
+      "state": "吃藥類型／有資料",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|行程管理", "C|全部行程|血壓藥（早上）；心臟科回診（7 月 30 日）", "C|提醒類型|◉ 吃藥　○ 回診　○ 其他", "F|提醒內容|輸入藥品名稱", "C|提醒時段|早上／中午／晚上／睡前", "N|類型 Radio 與時段 Chip 各自至少 48pt"],
+      "primary": "新增提醒"
+    },
+    {
+      "id": "app-guardian-appointments-data",
+      "title": "行程管理（回診類型）",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id/schedules",
+      "state": "回診類型／有資料",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|行程管理", "C|全部行程|心臟科回診（7 月 30 日）；血壓藥（早上）", "C|提醒類型|○ 吃藥　◉ 回診　○ 其他", "F|提醒內容|例如 心臟科回診 林口長庚", "F|回診日期|2026-07-30 10:30（時間可省略）", "N|日期與時間格式需有可讀範例"],
+      "primary": "新增提醒"
+    },
+    {
+      "id": "app-guardian-notifications-critical",
+      "title": "通知",
+      "role": "家屬",
+      "screen": "/guardian/notifications",
+      "state": "危急事件（概念提案）",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|最新通知", "E|林阿嬤提到頭很暈，請盡快聯絡確認。", "R|今天 08:42｜尚未讀|危急程度需用文字與圖示共同表達", "C|下一步|聯絡長輩；若情況緊急請立即求助", "N|現有 API 沒有種類、嚴重度或後端已讀欄位"],
+      "primary": "返回首頁",
+      "status": "待通知契約決策"
+    },
+
+    {
+      "id": "liff-elders",
+      "title": "LIFF 長輩清單",
+      "role": "家屬",
+      "screen": "/liff/",
+      "state": "結構稿",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|我的長輩", "C|林阿嬤|行程／健康報告", "C|陳阿公|行程／健康報告", "F|新增長輩|輸入長輩姓名", "N|凍結維運；保留樹狀返回與清楚載入狀態"],
+      "primary": "新增長輩"
+    },
+    {
+      "id": "liff-medications",
+      "title": "LIFF 行程管理（吃藥類型）",
+      "role": "家屬",
+      "screen": "/liff/elders/:id/schedules",
+      "state": "吃藥類型結構稿",
+      "width": 390,
+      "height": 844,
+      "blocks": ["B|← 返回長輩清單", "H|林阿嬤的行程", "C|類型|吃藥／回診／其他", "C|血壓藥|早上", "F|提醒內容|輸入藥名", "C|提醒時段|早上／中午／晚上／睡前", "N|補上送出中、錯誤與刪除確認"],
+      "primary": "儲存行程"
+    },
+    {
+      "id": "liff-appointments",
+      "title": "LIFF 行程管理（回診類型）",
+      "role": "家屬",
+      "screen": "/liff/elders/:id/schedules",
+      "state": "回診類型結構稿",
+      "width": 390,
+      "height": 844,
+      "blocks": ["B|← 返回長輩清單", "H|林阿嬤的行程", "C|類型|吃藥／回診／其他", "C|心臟內科|7 月 30 日 09:30", "F|提醒內容|例如 心臟內科", "F|回診日期|2026-07-30 09:30", "N|不可只以按鈕停用表示驗證錯誤"],
+      "primary": "儲存行程"
+    },
+    {
+      "id": "liff-health-report",
+      "title": "LIFF 健康報告",
+      "role": "家屬",
+      "screen": "/liff/elders/:id/health-report",
+      "state": "結構稿",
+      "width": 390,
+      "height": 844,
+      "blocks": ["B|← 返回長輩清單", "H|林阿嬤的健康報告", "C|近 30 天需留意|頭暈事件 1 件", "C|提醒紀錄|用藥提醒 2 件", "T|報告不包含完整逐字對話。", "N|空狀態與錯誤狀態須各自提供下一步"],
+      "primary": "返回長輩清單"
+    },
+
+    {
+      "id": "admin-overview",
+      "title": "總覽",
+      "role": "維運人員",
+      "screen": "/admin/",
+      "state": "正常資料",
+      "width": 1440,
+      "height": 1024,
+      "template": "overview",
+      "active_nav": "總覽",
+      "blocks": ["C|今日對話輪次|1,248 次", "C|危急事件|12 件", "C|端到端 P95|4.2 秒", "C|24 小時趨勢|依小時顯示輪次", "C|階段統計|ASR、RAG、LLM、TTS、回覆", "E|保守分級告警|近 60 分鐘達門檻"]
+    },
+    {
+      "id": "admin-messages",
+      "title": "訊息流",
+      "role": "維運人員",
+      "screen": "/admin/messages",
+      "state": "即時輪詢",
+      "width": 1440,
+      "height": 1024,
+      "template": "list",
+      "active_nav": "訊息流",
+      "blocks": ["R|08:42 林阿嬤｜inbound|使用者訊息與 trace id", "R|08:42 金孫｜outbound|系統回覆與延遲", "R|08:40 陳阿公｜inbound|可由 trace id 進入排查", "C|載入更早訊息|使用 before 游標", "E|連線中斷|保留既有資料並提示重試"]
+    },
+    {
+      "id": "admin-elders",
+      "title": "長輩清單",
+      "role": "維運人員",
+      "screen": "/admin/elders",
+      "state": "正常資料",
+      "width": 1440,
+      "height": 1024,
+      "template": "list",
+      "active_nav": "長輩",
+      "blocks": ["R|林阿嬤|最近活動 08:42｜今日 12 輪", "R|陳阿公|最近活動 08:30｜今日 4 輪", "R|王伯伯|最近活動 昨天｜今日 0 輪", "C|空清單|清楚區分尚未載入與真的沒有資料"]
+    },
+    {
+      "id": "admin-elder-detail",
+      "title": "長輩詳情",
+      "role": "維運人員",
+      "screen": "/admin/elders/:elderId",
+      "state": "五分頁",
+      "width": 1440,
+      "height": 1024,
+      "template": "detail",
+      "active_nav": "長輩",
+      "blocks": ["C|時間軸|依日期查看輪次與事件", "C|提醒設定|用藥、回診與送達紀錄", "C|記憶與摘要|長期記憶與每日摘要", "C|帳號與綁定|家屬、裝置、邀請與同意", "C|危急通知|風險事件與送達狀態", "N|分頁需 tab 語意與鍵盤方向鍵"]
+    },
+    {
+      "id": "admin-trace-detail",
+      "title": "Trace 詳情",
+      "role": "維運人員",
+      "screen": "/admin/traces/:traceId",
+      "state": "部分階段失敗",
+      "width": 1440,
+      "height": 1024,
+      "template": "trace",
+      "active_nav": "訊息流",
+      "blocks": ["C|Webhook|收到時間與通道", "C|ASR|狀態、逐字稿與延遲", "E|RAG|逾時；顯示第一個失敗", "C|風險判定|等級與理由", "C|LLM|模型、token、延遲", "C|TTS 與回覆|音訊與送達結果"]
+    },
+    {
+      "id": "admin-news",
+      "title": "話題新聞",
+      "role": "維運人員",
+      "screen": "/admin/news",
+      "state": "近 7 天資料",
+      "width": 1440,
+      "height": 1024,
+      "template": "list",
+      "active_nav": "新聞",
+      "blocks": ["C|範圍|近 1／3／7／14／30 天", "C|標題|高齡健康新知；點擊開原文", "C|來源與時間|衛福部｜2026-07-30", "C|網址|顯示安全可辨識的外部連結", "N|空狀態與載入失敗分開；原文連結有清楚名稱"]
+    },
+    {
+      "id": "admin-system",
+      "title": "系統",
+      "role": "維運人員",
+      "screen": "/admin/system",
+      "state": "排程與 RAG",
+      "width": 1440,
+      "height": 1024,
+      "template": "system",
+      "active_nav": "系統",
+      "blocks": ["C|提醒排程|cron 與上次執行時間", "C|每日摘要|cron 與上次執行時間", "C|RAG Worker|目前 active release", "C|RAG 資料狀態|文件與 chunk 數", "C|內測手動執行|僅 internal testing 顯示", "E|服務警告|顯示可行下一步"]
+    },
+    {
+      "id": "admin-key-entry",
+      "title": "管理員金鑰",
+      "role": "維運人員",
+      "screen": "/admin/*",
+      "state": "尚未認證／401 回復",
+      "width": 1440,
+      "height": 1024,
+      "template": "auth",
+      "active_nav": "",
+      "blocks": ["F|管理員金鑰|輸入由團隊安全提供的金鑰", "T|金鑰只保存在這個瀏覽器。", "E|驗證失敗|請確認金鑰或聯絡管理者", "N|輸入欄需可見 label；提供清除金鑰入口"]
+    },
+
+    {
+      "id": "app-elder-talk-permission-request",
+      "title": "陪伴對話",
+      "role": "長輩",
+      "screen": "/elder/talk",
+      "state": "首次進入／權限請求",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|先準備好說話功能", "T|麥克風用來聽見你說的話；定位只有在需要協助時提供附近資訊。", "P|允許「金孫」使用麥克風？", "N|先請必要的麥克風；定位另一步且可拒絕"]
+    },
+    {
+      "id": "app-elder-talk-listening",
+      "title": "陪伴對話",
+      "role": "長輩",
+      "screen": "/elder/talk",
+      "state": "Listening",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|我正在聽", "C|虛擬形象預留區|以動作與文字共同表達錄音中", "S|正在錄音|短按後再按一下；按住時放開送出", "M|依目前手勢完成送出", "N|兩種模式各有明確文字、音效與觸覺回饋"]
+    },
+    {
+      "id": "app-elder-talk-thinking",
+      "title": "陪伴對話",
+      "role": "長輩",
+      "screen": "/elder/talk",
+      "state": "Thinking",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|我聽到了", "C|A-Kin 狀態區|不使用快速閃爍", "L|正在想怎麼回答你", "T|安撫語音播完仍留在這個狀態，直到正式回覆抵達。", "N|按鈕暫停用並向 Screen Reader 公告狀態"]
+    },
+    {
+      "id": "app-elder-talk-speaking",
+      "title": "陪伴對話",
+      "role": "長輩",
+      "screen": "/elder/talk",
+      "state": "Speaking",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|阿金正在回答", "C|虛擬形象預留區|說話狀態不只靠顏色", "C|回覆內容|今天記得慢慢起身，如果還是頭暈就請家人陪你。", "S|正在播放語音|也可以直接閱讀文字", "N|語音不是唯一資訊來源"]
+    },
+    {
+      "id": "app-elder-talk-long-reply",
+      "title": "陪伴對話",
+      "role": "長輩",
+      "screen": "/elder/talk",
+      "state": "長回覆可捲動",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|阿金的回答", "T|你剛才提到最近晚上比較不好睡，也常常起床上廁所。今天先把水分分散到白天補充，睡前不要一次喝太多。", "T|如果連續幾天都睡不好，或起身時覺得暈，記得告訴家人，一起安排看醫師。", "T|你可以再按住或短按麥克風，告訴我現在的感覺。", "N|文字區可捲動；麥克風與安全區域固定"]
+    },
+    {
+      "id": "app-elder-talk-mic-denied",
+      "title": "陪伴對話",
+      "role": "長輩",
+      "screen": "/elder/talk",
+      "state": "麥克風權限拒絕",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|目前聽不到你說話", "E|麥克風權限尚未開啟。請到手機設定允許「金孫」使用麥克風。", "C|步驟 1|點選「開啟手機設定」", "C|步驟 2|找到麥克風並開啟", "B|稍後再試", "N|現況缺少設定／重試 CTA"],
+      "primary": "開啟手機設定"
+    },
+    {
+      "id": "app-elder-talk-location-denied",
+      "title": "陪伴對話",
+      "role": "長輩",
+      "screen": "/elder/talk",
+      "state": "定位拒絕但可繼續",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|可以繼續聊天", "S|沒有開啟定位|你仍然可以按住或短按麥克風說話", "T|只有需要提供附近資訊時，定位才會有幫助。", "M|按住說話，或按一下開始", "B|了解定位用途", "N|定位不是阻擋核心對話的條件"]
+    },
+    {
+      "id": "app-elder-talk-network-error",
+      "title": "陪伴對話",
+      "role": "長輩",
+      "screen": "/elder/talk",
+      "state": "無網路／送出失敗",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|金孫沒聽清楚", "E|再說一次好嗎？", "C|A-Kin 錯誤狀態|高對比狀態帶＋文字，不顯示成準備好了", "B|重新錄一次", "N|現況不保留錄音；使用者以麥克風重新說一次"],
+      "primary": "重新錄一次",
+      "status": "已實作"
+    },
+    {
+      "id": "app-elder-talk-error-403",
+      "title": "陪伴對話",
+      "role": "長輩",
+      "screen": "/elder/talk",
+      "state": "403 綁定失效",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|這台手機需要重新連結", "E|原本的綁定已失效，請請家屬提供新的 QR Code 或綁定碼。", "C|如果有帳號|也可以使用手機號碼與密碼登入", "B|用帳號登入", "N|訊息要在清除 Session 後仍可被看見"],
+      "primary": "重新綁定"
+    },
+    {
+      "id": "app-elder-talk-internal-testing",
+      "title": "陪伴對話",
+      "role": "長輩",
+      "screen": "/elder/talk",
+      "state": "內測權限狀態列",
+      "width": 390,
+      "height": 844,
+      "blocks": ["S|內測資訊｜麥克風：允許｜定位：拒絕", "H|阿金在這裡", "C|虛擬形象預留區|一般使用者不顯示內測技術列", "M|按住說話，或按一下開始", "N|內測列文字不可隨系統字級無限制縮小"]
+    },
+
+    {
+      "id": "app-elder-bind-manual",
+      "title": "長輩裝置綁定",
+      "role": "長輩",
+      "screen": "/elder/bind",
+      "state": "手動輸入",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|輸入家屬提供的綁定碼", "F|綁定碼|例如 123456", "T|請家屬在自己的手機上打開新增長輩後的代碼。", "B|改用相機掃描", "N|鍵盤不可遮住送出與錯誤訊息"],
+      "primary": "完成綁定",
+      "keyboard": true
+    },
+    {
+      "id": "app-elder-bind-camera-denied",
+      "title": "長輩裝置綁定",
+      "role": "長輩",
+      "screen": "/elder/bind",
+      "state": "無相機權限",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|目前不能使用相機", "E|相機權限沒有開啟。你可以改用手動輸入，不會卡在這裡。", "B|開啟手機設定", "T|家屬提供的數字代碼也可以完成綁定。", "N|主要回復路徑應是較簡單的手動輸入"],
+      "primary": "改用手動輸入"
+    },
+    {
+      "id": "app-elder-bind-invalid",
+      "title": "長輩裝置綁定",
+      "role": "長輩",
+      "screen": "/elder/bind",
+      "state": "綁定碼無效",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|這個綁定碼不正確", "E|請確認每一個數字，或請家屬重新顯示 QR Code。", "F|綁定碼|12 34 5", "B|重新掃描 QR Code", "N|錯誤與欄位相鄰，並保留原輸入"],
+      "primary": "再試一次",
+      "keyboard": true
+    },
+    {
+      "id": "app-elder-bind-expired",
+      "title": "長輩裝置綁定",
+      "role": "長輩",
+      "screen": "/elder/bind",
+      "state": "綁定碼過期",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|這個綁定碼已經過期", "E|請家屬重新產生一組新的綁定碼。", "C|請家屬操作|長輩詳情 → 產生綁定碼", "B|我拿到新代碼了", "N|不要只顯示技術錯誤碼 expired_code"],
+      "primary": "輸入新代碼"
+    },
+    {
+      "id": "app-elder-bind-success",
+      "title": "長輩裝置綁定",
+      "role": "長輩",
+      "screen": "/elder/bind",
+      "state": "綁定成功",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|完成了！", "S|這台手機已經連上林阿嬤的金孫", "T|接下來可以按住麥克風，或按一下開始說話。", "C|下一步|系統會先詢問麥克風權限", "N|現況立即導頁；提案保留可感知的成功回饋"],
+      "primary": "開始聊天",
+      "status": "互動提案"
+    },
+
+    {
+      "id": "app-guardian-home-loading",
+      "title": "家屬首頁",
+      "role": "家屬",
+      "screen": "/guardian/home",
+      "state": "Loading",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|我的長輩", "L|正在載入長輩清單", "L|正在確認未讀通知", "N|不得先閃現「尚無長輩」"]
+    },
+    {
+      "id": "app-guardian-home-empty",
+      "title": "家屬首頁",
+      "role": "家屬",
+      "screen": "/guardian/home",
+      "state": "尚無長輩",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|先新增一位長輩", "T|建立後會得到 QR Code 和綁定碼，協助長輩連上這台手機。", "F|長輩姓名|例如 林阿嬤", "T|建立前，請先向長輩說明對話記錄與每日摘要用途。", "N|空狀態直接銜接主要任務"],
+      "primary": "新增第一位長輩"
+    },
+    {
+      "id": "app-guardian-home-multiple",
+      "title": "家屬首頁",
+      "role": "家屬",
+      "screen": "/guardian/home",
+      "state": "多位長輩",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|我的長輩", "C|林阿嬤|今天 08:30 更新", "C|陳阿公|昨天 19:10 更新", "C|王伯伯|3 天前更新", "B|查看全部通知", "N|卡片需可辨認且不以最後更新色彩單獨表意"],
+      "primary": "新增長輩"
+    },
+    {
+      "id": "app-guardian-home-unread",
+      "title": "家屬首頁",
+      "role": "家屬",
+      "screen": "/guardian/home",
+      "state": "有未讀通知",
+      "width": 390,
+      "height": 844,
+      "blocks": ["E|有 2 則新通知|最近一則：今天 08:42", "H|我的長輩", "R|林阿嬤｜有新事件|今天 08:42", "C|陳阿公|昨天 19:10 更新", "N|未讀目前由本機時間水位判斷"],
+      "primary": "查看新通知"
+    },
+    {
+      "id": "app-guardian-home-binding-code",
+      "title": "家屬首頁",
+      "role": "家屬",
+      "screen": "/guardian/home",
+      "state": "新增後顯示綁定碼與 QR",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|已新增林阿嬤", "Q|請讓長輩掃描", "C|手動綁定碼|638 214｜有效期限依後端規則", "B|複製綁定碼", "T|請在長輩手機選「我是長輩」後開始綁定。", "N|不在截圖或歷史列表長期暴露一次性代碼"],
+      "primary": "完成"
+    },
+
+    {
+      "id": "app-guardian-elder-detail-loading",
+      "title": "長輩照護詳情",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id",
+      "state": "Loading",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|林阿嬤", "L|正在載入健康報告", "L|正在載入每日摘要", "L|正在載入用藥與回診", "N|各區可以獨立載入，不必全部一起阻塞"]
+    },
+    {
+      "id": "app-guardian-elder-detail-no-summary",
+      "title": "長輩照護詳情",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id",
+      "state": "沒有摘要",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|林阿嬤", "C|健康報告|近 30 天沒有需留意事件", "C|每日摘要|目前還沒有摘要", "T|有完成對話後，系統會依排程產生每日摘要。", "N|不把無摘要誤解為系統錯誤"],
+      "primary": "查看照護資料"
+    },
+    {
+      "id": "app-guardian-elder-detail-empty-care",
+      "title": "長輩照護詳情",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id",
+      "state": "沒有用藥或回診",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|林阿嬤", "C|用藥|目前沒有用藥資料", "B|新增第一筆用藥", "C|回診|目前沒有回診安排", "B|新增第一筆回診", "N|兩個空狀態各自提供直接下一步"],
+      "primary": "新增照護資料"
+    },
+    {
+      "id": "app-guardian-elder-detail-new-event",
+      "title": "長輩照護詳情",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id",
+      "state": "有新事件",
+      "width": 390,
+      "height": 844,
+      "blocks": ["E|新事件｜今天 08:42|林阿嬤提到頭很暈，請盡快確認。", "H|林阿嬤", "C|近 30 天健康報告|需留意 1 件", "C|最新每日摘要|昨晚睡眠較少", "N|新事件需文字標記，不只靠色彩"],
+      "primary": "查看事件與下一步",
+      "status": "待通知契約決策"
+    },
+    {
+      "id": "app-guardian-elder-detail-api-error",
+      "title": "長輩照護詳情",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id",
+      "state": "API 失敗",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|林阿嬤", "E|暫時無法載入健康報告。請檢查網路後再試一次。", "C|已載入的每日摘要|今天心情平穩。", "C|用藥與回診|保留已成功取得的區塊", "N|現況 Promise.all 可能整頁一起失敗"],
+      "primary": "重新載入失敗區塊",
+      "status": "互動提案"
+    },
+    {
+      "id": "app-guardian-elder-detail-invite",
+      "title": "邀請其他家屬",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id",
+      "state": "邀請家屬",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|邀請家人一起照護", "T|受邀家屬可以查看摘要、健康報告、用藥與回診，但不能查看完整逐字對話。", "C|家屬邀請碼|FK8-2QP｜一次性使用", "B|複製邀請碼", "N|需說明權限範圍與安全分享方式"],
+      "primary": "完成"
+    },
+    {
+      "id": "app-guardian-elder-detail-account",
+      "title": "長輩登入帳密",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id",
+      "state": "長輩帳號代辦",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|替林阿嬤設定登入帳密", "T|帳密只用於已完成首次綁定後的換機或重新登入。", "F|手機號碼|例如 0912345678", "F|新密碼|設定後請安全告知長輩", "E|重新設定會取代舊密碼|確認長輩知道新密碼", "N|不得把密碼以明文長期顯示"],
+      "primary": "設定帳密",
+      "keyboard": true
+    },
+
+    {
+      "id": "app-guardian-medications-empty",
+      "title": "行程管理（吃藥類型）",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id/schedules",
+      "state": "空清單",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|行程管理", "T|目前沒有任何提醒。新增後可協助安排。", "C|吃藥類型需要|提醒內容＋至少一個時段", "N|空狀態直接解釋下一步"],
+      "primary": "新增第一筆用藥"
+    },
+    {
+      "id": "app-guardian-medications-create",
+      "title": "行程管理（吃藥類型）",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id/schedules",
+      "state": "新增表單",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|新增提醒", "C|提醒類型|◉ 吃藥　○ 回診　○ 其他", "F|提醒內容|例如 血壓藥", "C|提醒時段|□ 早上　□ 中午　□ 晚上　□ 睡前", "B|取消", "N|選取狀態以勾選與文字共同表達"],
+      "primary": "儲存用藥",
+      "keyboard": true
+    },
+    {
+      "id": "app-guardian-medications-edit",
+      "title": "行程管理（吃藥類型）",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id/schedules",
+      "state": "編輯表單",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|編輯提醒", "C|提醒類型|◉ 吃藥　○ 回診　○ 其他", "F|提醒內容|血壓藥", "C|提醒時段|☑ 早上　□ 中午　□ 晚上　□ 睡前", "B|取消編輯", "N|目前實作要求重新填提醒時間"],
+      "primary": "儲存變更",
+      "keyboard": true
+    },
+    {
+      "id": "app-guardian-medications-validation",
+      "title": "行程管理（吃藥類型）",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id/schedules",
+      "state": "表單驗證失敗",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|新增提醒", "E|請填寫提醒時間，格式請照欄位下方範例。", "F|提醒內容|尚未填寫", "C|提醒時段|尚未選擇", "N|錯誤摘要與欄位內提示都可被 Screen Reader 讀取"],
+      "primary": "檢查後儲存",
+      "keyboard": true
+    },
+    {
+      "id": "app-guardian-medications-delete",
+      "title": "行程管理（吃藥類型）",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id/schedules",
+      "state": "刪除確認",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|行程管理", "C|血壓藥|早上", "D|確定要刪除「血壓藥」嗎？刪除後將不再提醒。", "N|取消為安全預設；確認按鈕需明確寫「刪除」"]
+    },
+    {
+      "id": "app-guardian-medications-error",
+      "title": "行程管理（吃藥類型）",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id/schedules",
+      "state": "API 錯誤",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|行程管理", "E|目前無法儲存提醒。你的輸入已保留，請確認網路後再試。", "F|提醒內容|血壓藥", "C|提醒時段|☑ 早上", "B|取消並保留原資料", "N|不要在錯誤後清空表單"],
+      "primary": "再試一次"
+    },
+
+    {
+      "id": "app-guardian-appointments-empty",
+      "title": "行程管理（回診類型）",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id/schedules",
+      "state": "空清單",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|行程管理", "T|目前沒有任何提醒。新增後可協助家人記得時間。", "C|回診類型需要|提醒內容＋日期，時間可省略", "N|空狀態直接解釋下一步"],
+      "primary": "新增第一筆回診"
+    },
+    {
+      "id": "app-guardian-appointments-create",
+      "title": "行程管理（回診類型）",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id/schedules",
+      "state": "新增表單",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|新增提醒", "C|提醒類型|○ 吃藥　◉ 回診　○ 其他", "F|提醒內容|例如 心臟內科", "F|回診日期|2026-07-30 09:30", "B|取消", "N|輸入範例須有可理解格式"],
+      "primary": "儲存回診",
+      "keyboard": true
+    },
+    {
+      "id": "app-guardian-appointments-edit",
+      "title": "行程管理（回診類型）",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id/schedules",
+      "state": "編輯表單",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|編輯提醒", "C|提醒類型|○ 吃藥　◉ 回診　○ 其他", "F|提醒內容|心臟內科", "F|回診日期|2026-07-30 09:30", "B|取消編輯", "N|修改後需重新填一次提醒時間"],
+      "primary": "儲存變更",
+      "keyboard": true
+    },
+    {
+      "id": "app-guardian-appointments-validation",
+      "title": "行程管理（回診類型）",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id/schedules",
+      "state": "表單驗證失敗",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|新增提醒", "E|請填寫提醒時間，格式請照欄位下方範例。", "F|提醒內容|心臟內科", "F|回診日期|2026/07/20（格式錯誤）", "N|不可只停用送出按鈕而不解釋原因"],
+      "primary": "重新選擇日期"
+    },
+    {
+      "id": "app-guardian-appointments-delete",
+      "title": "行程管理（回診類型）",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id/schedules",
+      "state": "刪除確認",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|行程管理", "C|心臟內科|7 月 30 日 上午 9:30", "D|確定要刪除「心臟內科」嗎？相關提醒也會停止。", "N|把影響範圍寫進確認訊息"]
+    },
+    {
+      "id": "app-guardian-appointments-error",
+      "title": "行程管理（回診類型）",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id/schedules",
+      "state": "API 錯誤",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|行程管理", "E|目前無法儲存提醒。你的輸入已保留，請確認網路後再試。", "F|提醒內容|心臟內科", "F|回診日期|2026-07-30 09:30", "B|取消並保留原資料", "N|錯誤後焦點移到錯誤摘要"],
+      "primary": "再試一次"
+    },
+
+    {
+      "id": "app-guardian-notifications-loading",
+      "title": "通知",
+      "role": "家屬",
+      "screen": "/guardian/notifications",
+      "state": "Loading",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|最新通知", "L|正在載入通知", "L|正在確認本機已讀水位", "N|不得先顯示空清單"]
+    },
+    {
+      "id": "app-guardian-notifications-empty",
+      "title": "通知",
+      "role": "家屬",
+      "screen": "/guardian/notifications",
+      "state": "空狀態",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|目前沒有通知", "T|有需要留意的事件或提醒時，會出現在這裡。", "C|仍可查看|各長輩的每日摘要與健康報告", "N|不要使用「一切正常」作醫療保證"],
+      "primary": "返回首頁"
+    },
+    {
+      "id": "app-guardian-notifications-reminder",
+      "title": "通知",
+      "role": "家屬",
+      "screen": "/guardian/notifications",
+      "state": "提醒事件（概念提案）",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|最新通知", "R|提醒｜今天 18:00|林阿嬤晚餐後用藥時間到了", "C|相關長輩|林阿嬤", "T|提醒與危急事件需使用不同文字標籤。", "N|現有通知型別只有 content 與 created_at"],
+      "primary": "返回首頁",
+      "status": "待通知契約決策"
+    },
+    {
+      "id": "app-guardian-notifications-read-state",
+      "title": "通知",
+      "role": "家屬",
+      "screen": "/guardian/notifications",
+      "state": "已讀／未讀表現（概念提案）",
+      "width": 390,
+      "height": 844,
+      "blocks": ["H|最新通知", "R|尚未讀｜今天 08:42|林阿嬤提到頭很暈", "C|已讀｜昨天 18:00|晚餐後用藥提醒", "T|現況只以本機時間水位推算，後端沒有單筆已讀狀態。", "N|文字標籤與點狀符號共同表達"],
+      "primary": "返回首頁",
+      "status": "待通知契約決策"
+    },
+
+    {
+      "id": "app-elder-talk-large-type-320",
+      "title": "陪伴對話",
+      "role": "長輩",
+      "screen": "/elder/talk",
+      "state": "320px＋大字級檢查",
+      "width": 320,
+      "height": 844,
+      "large_type": true,
+      "blocks": ["H|阿金在這裡", "C|虛擬形象預留區|大字下仍保留辨識空間", "T|按住麥克風說話，或按一下開始、說完再按一下。", "M|按住說話，或按一下開始", "N|主要文案不截斷；必要時增加捲動"]
+    },
+    {
+      "id": "app-elder-bind-large-type-320",
+      "title": "長輩裝置綁定",
+      "role": "長輩",
+      "screen": "/elder/bind",
+      "state": "320px＋大字級檢查",
+      "width": 320,
+      "height": 844,
+      "large_type": true,
+      "blocks": ["H|輸入家屬提供的綁定碼", "F|綁定碼|例如 123456", "T|也可以請家屬重新顯示 QR Code。", "B|改用相機掃描", "N|錯誤訊息與主要 CTA 不得被鍵盤截斷"],
+      "primary": "完成綁定"
+    }
+  ],
+  "contact_sheets": [
+    {
+      "id": "contact-elder-app",
+      "title": "Contact Sheet：長輩 App",
+      "role": "長輩",
+      "asset_ids": [
+        "app-role-selection",
+        "app-elder-bind-qr",
+        "app-elder-bind-manual",
+        "app-elder-login",
+        "app-elder-talk-idle",
+        "app-elder-talk-listening",
+        "app-elder-talk-thinking",
+        "app-elder-talk-speaking",
+        "app-elder-notifications",
+        "app-elder-talk-large-type-320",
+        "app-elder-bind-large-type-320"
+      ]
+    },
+    {
+      "id": "contact-guardian-app",
+      "title": "Contact Sheet：家屬 App",
+      "role": "家屬",
+      "asset_ids": [
+        "app-guardian-login",
+        "app-guardian-register",
+        "app-guardian-home-one",
+        "app-guardian-home-multiple",
+        "app-guardian-elder-detail-normal",
+        "app-guardian-medications-data",
+        "app-guardian-appointments-data",
+        "app-guardian-notifications-critical"
+      ]
+    },
+    {
+      "id": "contact-liff",
+      "title": "Contact Sheet：LIFF",
+      "role": "家屬",
+      "asset_ids": [
+        "liff-elders",
+        "liff-medications",
+        "liff-appointments",
+        "liff-health-report"
+      ]
+    },
+    {
+      "id": "contact-admin",
+      "title": "Contact Sheet：Admin",
+      "role": "維運人員",
+      "asset_ids": [
+        "admin-key-entry",
+        "admin-overview",
+        "admin-messages",
+        "admin-elders",
+        "admin-elder-detail",
+        "admin-trace-detail",
+        "admin-news",
+        "admin-system"
+      ]
+    },
+    {
+      "id": "contact-key-states",
+      "title": "Contact Sheet：關鍵狀態",
+      "role": "全角色",
+      "asset_ids": [
+        "app-elder-talk-permission-request",
+        "app-elder-talk-listening",
+        "app-elder-talk-thinking",
+        "app-elder-talk-speaking",
+        "app-elder-talk-long-reply",
+        "app-elder-talk-location-denied",
+        "app-elder-bind-success",
+        "app-guardian-home-unread",
+        "app-guardian-home-binding-code",
+        "app-guardian-elder-detail-new-event",
+        "app-guardian-elder-detail-invite",
+        "app-guardian-elder-detail-account"
+      ]
+    },
+    {
+      "id": "contact-errors-empty",
+      "title": "Contact Sheet：錯誤與空狀態",
+      "role": "全角色",
+      "asset_ids": [
+        "app-elder-talk-mic-denied",
+        "app-elder-talk-network-error",
+        "app-elder-talk-error-403",
+        "app-elder-bind-camera-denied",
+        "app-elder-bind-invalid",
+        "app-elder-bind-expired",
+        "app-guardian-home-empty",
+        "app-guardian-elder-detail-api-error",
+        "app-guardian-medications-empty",
+        "app-guardian-medications-validation",
+        "app-guardian-medications-delete",
+        "app-guardian-appointments-empty",
+        "app-guardian-appointments-validation",
+        "app-guardian-appointments-delete",
+        "app-guardian-notifications-empty"
+      ]
+    }
+  ]
+}

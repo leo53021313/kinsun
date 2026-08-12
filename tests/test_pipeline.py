@@ -1,5 +1,6 @@
 import threading
 import time
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -17,7 +18,9 @@ from kinsun.safety.detector import RiskDetector
 from kinsun.safety.moderation import AbuseCategory, AbuseModerator, ModerationResult, reply_for
 from kinsun.safety.tiers import FAILSAFE_EVENT_REASON, RiskAssessment, RiskTier
 from kinsun.speech.asr import MockAsrClient
-from kinsun.speech.tts import TextBubbleTts, TTSError, TtsResult
+from kinsun.speech.tts import TextBubbleTts, TTSError, TtsResult, VoiceReference
+from kinsun.voice_profiles.models import VoiceProfile
+from kinsun.voice_profiles.store import FakeVoiceProfileStore
 from tests.fakes import FakeReminderLogStore, FakeRiskEventStore, FakeTraceStore
 
 
@@ -179,7 +182,7 @@ def test_pipeline_record_failure_does_not_break():
 
 
 class _BoomTts:
-    def synthesize(self, text):
+    def synthesize(self, text, *, voice=None):
         raise TTSError("tts down")
 
 
@@ -231,7 +234,7 @@ class BoomLLM:
 
 
 class BoomTts:
-    def synthesize(self, text: str) -> TtsResult:
+    def synthesize(self, text: str, *, voice=None) -> TtsResult:
         raise TTSError("合成失敗")
 
 
@@ -324,7 +327,7 @@ def test_pipeline_records_tts_degradation_and_still_replies_text():
 
 
 class _NonTtsErrorTts:
-    def synthesize(self, text):
+    def synthesize(self, text, *, voice=None):
         raise RuntimeError("unexpected")
 
 
@@ -702,6 +705,143 @@ def test_pipeline_process_text_unchanged_when_tracing_disabled():
     assert traces.llm_calls  # 自建觀測（業務視角）照常記錄
 
 
+class SpyTts:
+    """記錄每次呼叫收到的 voice 參數，供斷言長輩客製化聲音複製有無正確傳入。"""
+
+    def __init__(self) -> None:
+        self.voices: list[VoiceReference | None] = []
+
+    def synthesize(self, text: str, *, voice: VoiceReference | None = None) -> TtsResult:
+        self.voices.append(voice)
+        return TtsResult(text=text, audio=b"AUDIO")
+
+
+def _voice_pipeline(voice_profiles=None, sign_voice_url=None):
+    """設定檔存的是物件路徑，簽章函式預設為「路徑加個前綴當網址」的假實作。"""
+    if voice_profiles is not None and sign_voice_url is None:
+        sign_voice_url = lambda path: f"https://signed.test/{path}?token=abc"  # noqa: E731
+    return VoicePipeline(
+        asr=MockAsrClient("阿公早安"),
+        agent=CareAgent(EchoLLM(), NullSession()),
+        tts=SpyTts(),
+        detector=StubDetector(RiskTier.L0),
+        notifier=SpyNotifier(),
+        risk_events=FakeRiskEventStore(),
+        voice_profiles=voice_profiles,
+        sign_voice_url=sign_voice_url,
+    )
+
+
+def test_pipeline_without_voice_profiles_passes_none():
+    """未設定 voice_profiles（預設 None）：所有長輩沿用 DGX 端全域預設聲音。"""
+    pipeline = _voice_pipeline()
+    tts = pipeline._tts
+    pipeline.process(b"\x00", elder_id="e1")
+    assert tts.voices == [None]
+
+
+def test_pipeline_with_voice_profile_passes_reference():
+    """長輩客製化聲音複製（2026-07-30）：elder 有生效中的設定檔時，TTS 收到對應的
+    VoiceReference——且**存的路徑已被簽成網址**（2026-08-01）。"""
+    profiles = FakeVoiceProfileStore()
+    profiles.save(
+        VoiceProfile(
+            elder_id="e1",
+            prompt_audio_path="voice-refs/e1.wav",
+            prompt_text="午安，我是小明。",
+            consented_by="孫子小明本人同意",
+            granted_at=1000.0,
+        )
+    )
+    pipeline = _voice_pipeline(profiles)
+    tts = pipeline._tts
+    pipeline.process(b"\x00", elder_id="e1")
+    assert tts.voices == [
+        VoiceReference(
+            elder_id="e1",
+            prompt_audio_url="https://signed.test/voice-refs/e1.wav?token=abc",
+            prompt_text="午安，我是小明。",
+            version="1000.0",
+        )
+    ]
+
+
+def test_pipeline_voice_version_changes_when_the_family_re_records():
+    """重錄要換版本（2026-08-12）：`granted_at` 每次 `save` 都換值，DGX 端據此重抓。
+
+    ⚠️ 版本必須取自設定檔本身，不可用簽章網址——那個網址每小時換發一次，拿它當版本
+    會讓 DGX 端每小時重下載一次，等於白費本機快取。
+    """
+    profiles = FakeVoiceProfileStore()
+    original = VoiceProfile(
+        elder_id="e1",
+        prompt_audio_path="voice-refs/e1.wav",
+        prompt_text="午安，我是小明。",
+        consented_by="孫子小明本人同意",
+        granted_at=1000.0,
+    )
+    profiles.save(original)
+    pipeline = _voice_pipeline(profiles)
+    before = pipeline.resolve_voice("e1")
+
+    # 家屬重錄：物件路徑相同（PK 是 elder_id，重錄即覆蓋），只有 granted_at 換了。
+    profiles.save(replace(original, granted_at=2000.0))
+    after = pipeline.resolve_voice("e1")
+
+    assert before is not None and after is not None
+    assert after.prompt_audio_url == before.prompt_audio_url, "本測試要驗的是路徑相同時的行為"
+    assert after.version != before.version, "重錄後版本沒變＝DGX 端會繼續用舊錄音"
+
+
+def test_pipeline_requires_a_signer_when_voice_profiles_is_given():
+    """接線防呆（2026-08-01）：只給 store 不給簽章函式時，建構當下就要炸。
+
+    放它過去的話 resolve_voice 只能回 None——「設定檔明明存在、聲音卻沒換」且全程
+    沒有錯誤訊息，正是這個功能最難查的失效模式。
+    """
+    with pytest.raises(ValueError, match="sign_voice_url"):
+        VoicePipeline(
+            asr=MockAsrClient("阿公早安"),
+            agent=CareAgent(EchoLLM(), NullSession()),
+            tts=SpyTts(),
+            detector=StubDetector(RiskTier.L0),
+            notifier=SpyNotifier(),
+            risk_events=FakeRiskEventStore(),
+            voice_profiles=FakeVoiceProfileStore(),
+        )
+
+
+def test_pipeline_falls_back_to_default_voice_when_signing_fails():
+    """簽章失敗（Supabase 不通等）只犧牲客製化聲音，不讓整輪沒聲音。"""
+    profiles = FakeVoiceProfileStore()
+    profiles.save(
+        VoiceProfile(
+            elder_id="e1",
+            prompt_audio_path="voice-refs/e1.wav",
+            prompt_text="午安，我是小明。",
+            consented_by="孫子小明本人同意",
+            granted_at=1000.0,
+        )
+    )
+
+    def boom(_path: str) -> str:
+        raise RuntimeError("Supabase 暫時不通")
+
+    pipeline = _voice_pipeline(profiles, sign_voice_url=boom)
+    tts = pipeline._tts
+    result = pipeline.process(b"\x00", elder_id="e1")
+    assert tts.voices == [None]  # 退回全域預設聲音
+    assert result.audio is not None  # 但這一輪仍然有聲音
+
+
+def test_pipeline_with_voice_profiles_but_no_profile_for_elder_passes_none():
+    """設定了 voice_profiles，但這位長輩沒有客製化設定檔：沿用全域預設聲音。"""
+    pipeline = _voice_pipeline(FakeVoiceProfileStore())
+    tts = pipeline._tts
+    pipeline.process(b"\x00", elder_id="e1")
+    assert tts.voices == [None]
+
+
 class _SlowSession:
     """assemble 固定睡 delay 秒的會話替身，供管線層驗證情境組裝有沒有先行啟動。"""
 
@@ -800,7 +940,7 @@ class _SpyTts:
     def __init__(self) -> None:
         self.spoken: list[str] = []
 
-    def synthesize(self, text: str) -> TtsResult:
+    def synthesize(self, text: str, *, voice=None) -> TtsResult:
         self.spoken.append(text)
         return TtsResult(text=text, audio=b"AUDIO", duration_ms=1000)
 
@@ -1457,3 +1597,28 @@ def test_pipeline_without_the_dependency_passes_no_context():
     detector = _ContextSpyDetector()
     _pipeline(detector, SpyNotifier()).process(b"\x00", elder_id="u1")
     assert detector.recent == []
+
+
+def test_pipeline_rejects_a_url_stored_where_a_path_belongs():
+    """舊資料護欄：欄位改名時只改名不轉值，殘留的網址要吼出來而不是靜默失效。
+
+    拿網址去簽會組出 .../object/sign/<bucket>/https://... 而 404，接著退回預設聲音——
+    長輩的專屬聲音就這樣消失且沒人知道。
+    """
+    profiles = FakeVoiceProfileStore()
+    profiles.save(
+        VoiceProfile(
+            elder_id="e1",
+            prompt_audio_path="https://proj.supabase.co/storage/v1/object/sign/b/x.wav?token=t",
+            prompt_text="午安，我是小明。",
+            consented_by="孫子小明本人同意",
+            granted_at=1000.0,
+        )
+    )
+    signed = []
+    pipeline = _voice_pipeline(profiles, sign_voice_url=lambda p: signed.append(p) or "x")
+    tts = pipeline._tts
+    pipeline.process(b"\x00", elder_id="e1")
+
+    assert tts.voices == [None], "應退回全域預設聲音"
+    assert signed == [], "不該拿網址去簽"

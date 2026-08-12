@@ -132,6 +132,20 @@ jobs:
         run: npm test
         working-directory: app
 
+      # 阿白角色的三道一致性閘門（2026-08-12 接進 CI）。它在 PR #106 就寫好了，卻
+      # 沒有任何自動流程會跑到——只有人記得手動下 `npm run bear:check` 才會執行，
+      # 而它守的三件事都是「壞掉不會有編譯錯誤、只有長輩看得出來」那一類：
+      #   1. 兩份 renderer.html 產物（app/assets 與 web/public，各 3MB）與來源一致
+      #      ——兩端打包器各要一份，來源只有一份，漂掉的症狀是「App 的阿白跟網頁的
+      #      阿白動作不一樣」。
+      #   2. `theme.ts` 的 emotionPolicy.blocked 與 renderer 的 BLOCKED_EMOTIONS
+      #      是同一份——那是接手指示第 10 條、CRITICAL 等級，擋的是「長輩罵阿白時
+      #      阿白生氣」。寫錯不會有任何症狀，直到那一刻。
+      #   3. 人設措辭與離線邊界。
+      - name: 阿白角色一致性閘門
+        run: npm run bear:check
+        working-directory: app
+
   web:
     runs-on: ubuntu-latest
     steps:

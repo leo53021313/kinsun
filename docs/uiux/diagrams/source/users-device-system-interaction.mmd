@@ -1,0 +1,27 @@
+---
+title: 使用者、裝置與系統互動圖
+---
+flowchart TD
+  subgraph L0["人與裝置"]
+    L0N0["長輩：手機 App＋麥克風"]
+    L0N1["家屬：手機 App 或 LIFF"]
+    L0N0 --> L0N1
+    L0N2["維運：桌機瀏覽器"]
+    L0N1 --> L0N2
+  end
+  subgraph L1["前端邊界"]
+    L1N0["Expo App：Bearer Session"]
+    L1N1["LIFF：LINE idToken"]
+    L1N0 --> L1N1
+    L1N2["Admin：X-Admin-Key"]
+    L1N1 --> L1N2
+  end
+  L0N2 -.-> L1N0
+  subgraph L2["Kinsun 服務"]
+    L2N0["API：統一信封回應"]
+    L2N1["對話：WS、ASR、風險、Agent、TTS"]
+    L2N0 --> L2N1
+    L2N2["資料：摘要、統一行程、通知"]
+    L2N1 --> L2N2
+  end
+  L1N2 -.-> L2N0

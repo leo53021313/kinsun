@@ -11,7 +11,7 @@ import type { PhoneOs } from "@/stage/PhoneFrame";
  * 鈴鐺的用途說明。`elderNotifications.bell` 與 `bellWithUnread` 都要用到它，
  * 抽成常數而非兩處各寫一次同樣的字面值——兩處寫死的話，改一處就會漂。
  */
-const ELDER_BELL_LABEL = "看金孫的提醒";
+const ELDER_BELL_LABEL = "看阿白的提醒";
 
 /**
  * 家屬首頁通知鈕的用途說明。`guardianHome.notify` 與 `notifyWithUnread` 都要
@@ -23,6 +23,7 @@ export const strings = {
   common: {
     loading: "載入中…",
     loadFailed: "載入失敗，請稍後再試。",
+    retry: "再試一次",
     connectionFailed: "連線失敗，請稍後再試。",
     saveFailed: "儲存失敗，請稍後再試。",
     deleteFailed: "刪除失敗，請稍後再試。",
@@ -41,6 +42,23 @@ export const strings = {
     passwordPlaceholder: "至少 8 碼",
     emailLabel: "Email",
     emailPlaceholder: "you@example.com",
+  },
+  // 家屬端五項導覽（W5）。用字取自 app/src/lib/strings.ts 的 guardianTabs。
+  guardianTabs: {
+    home: "首頁",
+    report: "報告",
+    add: "新增提醒",
+    addA11y: "新增用藥或回診提醒",
+    notifications: "通知",
+    /**
+     * ⚠️ 這是**讀不到當前長輩稱呼時的退路**，不是最終顯示值。
+     *
+     * 設計稿上這一項寫的是長輩的稱呼（「阿公」），寫死在多位長輩時一定會錯。
+     * 實際顯示由 `GuardianTabsProvider` 的 `primaryElder` 決定，這個字串只在
+     * 還沒載入或家屬名下還沒有長輩時頂著。App 那份 strings 沒有寫這段註記，
+     * 導致看到裸的「阿公」會誤以為是寫死的（已列在驗收報告）。
+     */
+    profileFallback: "阿公",
   },
   gate: {
     brand: "金孫",
@@ -149,11 +167,15 @@ export const strings = {
     accountSaved: "已設定完成。長輩手機用這組號碼＋密碼登入一次就會一直記住。",
     accountSaveFailed: "設定失敗，請稍後再試。",
     inviteFailed: "產生邀請碼失敗",
+    // 進長輩詳情那顆鈕的字。web 沒有 `nav` 區塊（畫面切換是元件狀態、不進網址列），
+    // 用字沿用 App 的 `strings.nav.elderDetail`。
+    openDetail: "長輩詳情",
+    viewDailySummaries: "查看每日摘要",
     healthReportSection: "健康報告（近 30 天）",
     noRiskEvents: "沒有危急事件，一切平安。",
     remindersCount: (count: number) => `近 30 天提醒 ${count} 則`,
     dailySummarySection: "每日摘要",
-    noSummaries: "還沒有摘要——長輩與金孫聊過天後，隔天早上就會出現。",
+    noSummaries: "還沒有摘要——長輩與阿白聊過天後，隔天早上就會出現。",
     noSchedules: "還沒有任何提醒，點下方「管理行程」新增。",
     manageSchedules: "管理行程",
     personaSection: "金孫的個性",
@@ -182,13 +204,13 @@ export const strings = {
     // 把長輩登出、一個不會。
     bindingWarning:
       "注意：一產生新碼，長輩目前手機上的金孫就會被登出，他要用新碼重綁一次才能" +
-      "再跟金孫說話。只是想邀請另一位家屬看資料的話，請用下面的「產生家屬邀請碼」。",
+      "再跟阿白說話。只是想邀請另一位家屬看資料的話，請用下面的「產生家屬邀請碼」。",
     regenerateBinding: "重新產生長輩綁定碼",
     // ⚠️ 確認列講**後果**、不講動作：「確定要重新產生嗎」只是把按鈕字樣抄一遍，
     // 家屬看了還是不知道自己要換掉什麼。刪一筆排程都要二次確認了，這個會把長輩
     // 手機上的金孫直接登出的操作更需要——而且他按下去的當下，長輩可能正在講話。
     confirmRegenerateBinding:
-      "長輩手機上的金孫會馬上被登出，他要用新的綁定碼重綁一次才能再跟金孫說話。確定要換嗎？",
+      "長輩手機上的金孫會馬上被登出，他要用新的綁定碼重綁一次才能再跟阿白說話。確定要換嗎？",
     confirmRegenerateBindingButton: "確定換新碼",
     bindingFailed: "重新產生綁定碼失敗，請稍後再試。",
     inviteSection: "邀請其他家屬",
@@ -224,7 +246,7 @@ export const strings = {
   },
   notifications: {
     title: "通知",
-    empty: "目前沒有通知。金孫有事會第一時間放在這裡。",
+    empty: "目前沒有通知。阿白有事會第一時間放在這裡。",
   },
   // 長輩端文案逐字沿用 app/src/lib/strings.ts 的既有措辭：口語敘述一律用
   // 「號碼」「方塊圖」，比「通知」「綁定」更白話；`codePlaceholder`（輸入框
@@ -241,6 +263,35 @@ export const strings = {
   // `cameraInsecureOrigin`／`cameraNoSignal`（P3 Task 7，對應 `talk/qrScanner.ts`
   // 的 `QrScannerError` 六種分類——App 端走 `expo-camera` 原生殼，沒有這麼細的
   // 瀏覽器相機錯誤分類）。
+  // 每日摘要獨立畫面（W6）。用字取自 app/src/lib/strings.ts。
+  //
+  // ⚠️ 後端的 `DailySummary` 只有 `{date, content, created_at}` 三個欄位。設計稿那個
+  // 三層結構（原話照登／阿白注意到的／四個事實數字）**沒有對應欄位**——App 那批
+  // 已經核對過真實型別並照做，web 一樣。要做三層版本得後端先拆結構。
+  dailySummary: {
+    section: "這一天",
+    prevDay: "看前一天",
+    nextDay: "看後一天",
+    disclaimer: "這是阿白整理的摘要，不是長輩的原話。",
+    share: "傳這份摘要給家人",
+    shareFailed: "無法開啟分享面板，請稍後再試。",
+    copied: "摘要已複製，可以直接貼給家人。",
+  },
+  // 改回診時間（W6）。只送現有 ScheduleInput 真正支援的日期與時間。
+  //
+  // ⚠️ `driver`（誰帶長輩去）與 `notify_elder`（讓阿白告訴長輩改了）兩個控制項
+  // **不做**：`ScheduleInput` 沒有這兩個欄位，後端也沒有。交付稿把它們畫進去了，
+  // 但那是設計稿與真實契約的矛盾，不是實作漏做。
+  editAppointment: {
+    whenLabel: "新的日期與時間",
+    whenHint: "改完記得也跟醫院改掛號——阿白不會幫您打電話。",
+    invalidWhen: "請用「西元年-月-日 時:分」填寫，時間可以省略。",
+    notFound: "找不到這筆回診行程，可能已被刪除。",
+    savedEffect: "存檔後，後續提醒會改用新的時間；阿白不會替您聯絡醫院改掛號。",
+    save: "存起來",
+    deleteThis: "刪除這個行程",
+    deleteConfirm: (title: string) => `確定要刪除「${title}」嗎？刪掉之後提醒就不會再響。`,
+  },
   elderBind: {
     inviteNotFound: "找不到這組號碼，請跟家人再確認一次。",
     inviteUsed: "這組號碼已經用過了，請家人重新產生一組。",
@@ -263,7 +314,9 @@ export const strings = {
     scanHint: "把家人給的方塊圖對準框框",
     switchToManual: "改用輸入號碼",
     hint: "掃描家人給的方塊圖，或輸入號碼",
-    scanQr: "掃描 QR 碼",
+    // ⚠️ 規則 5：長輩端 QR 一律叫「方塊圖」。同一段的 `scanHint`／`hint` 都已經
+    // 是方塊圖了，只有這顆按鈕漏掉——而它正是長輩最先看到、最可能按的那一個。
+    scanQr: "掃描方塊圖",
     codeLabel: "綁定碼",
     codePlaceholder: "綁定碼",
     start: "開始使用",
@@ -281,7 +334,7 @@ export const strings = {
     signedOutByGuardian: "家人幫您重新設定了，請再掃一次他給的方塊圖，或輸入新的號碼。",
   },
   elderLogin: {
-    notPaired: "這支手機還沒跟家人配對過，請先請家人給您綁定圖（QR）掃描一次。",
+    notPaired: "這支手機還沒跟家人配對過，請先請家人給您方塊圖掃描一次。",
     wrongCredentials: "號碼或密碼不對，可以請家人幫忙確認。",
     hint: "輸入家人幫您設定的手機號碼和密碼，登入一次就會一直記住。",
     phoneLabel: "手機號碼",
@@ -291,12 +344,12 @@ export const strings = {
   },
   talk: {
     idleHint: "按住下面的麥克風說話，或按一下開始、說完再按一下",
-    fallback: "金孫沒聽清楚，再說一次好嗎？",
-    micPermission: "需要麥克風權限才能跟金孫說話，請到設定開啟。",
-    listening: "金孫在聽…",
-    listeningTapHint: "金孫在聽…說完再按一下",
-    thinking: "金孫想一下…",
-    // ⚠️ **`thinkingAfterSkipped`（「上一個問題就先跳過了，金孫想一下…」）已於
+    fallback: "我沒聽清楚，再說一次好嗎？",
+    micPermission: "需要麥克風權限才能跟阿白說話，請到設定開啟。",
+    listening: "我在聽…",
+    listeningTapHint: "我在聽…說完再按一下",
+    thinking: "我想一下…",
+    // ⚠️ **`thinkingAfterSkipped`（「上一個問題就先跳過了，我想一下…」）已於
     // 2026-08-01 移除**：專案裁決推翻「一律丟棄」、改回補播（長輩插嘴照樣打斷，
     // 但前一題的答案等他講完之後補播，見 `elder/useTalk.ts` 的
     // `deferredTurnsRef`）。既然那一句話會被補播，「跳過了」就是假話——一句與
@@ -324,7 +377,7 @@ export const strings = {
     // 上限 > 1 時，排隊名次 1 的人前面其實還有好幾輪正在跑、只是不在佇列裡
     // （見 channels/app/ws.py 與 06_API設計規範 §5 的既有裁決）。故不報「前面
     // 還有幾位」，改講排隊名次本身。
-    queued: (position: number) => `金孫正在跟別人說話，您排第 ${position} 位…`,
+    queued: (position: number) => `我還在忙，您現在排第 ${position} 位，輪到就馬上回您。`,
     micUnsupported: "這個瀏覽器不能錄音，請換 Chrome、Safari 或 Firefox。",
     // ⚠️ 麥克風拿不到有好幾種成因，長輩要做的下一步完全不同（P3 Task 8 補齊，
     // 對應 `talk/recorder.ts::MicrophoneProbeResult` 的六種結果）。一律講「請到
@@ -337,26 +390,67 @@ export const strings = {
     // `elderBind.cameraInsecureOrigin` 一致。
     micInsecureOrigin: "這個網址不能錄音，請改用家人給您、開頭是 https 的網址。",
     // 權限有了、但這一次就是打不開（裝置忙、系統把麥克風收走）。與
-    // `fallback`（「金孫沒聽清楚」）刻意分開：錄音根本沒開始，說「沒聽清楚」
+    // `fallback`（「我沒聽清楚」）刻意分開：錄音根本沒開始，說「沒聽清楚」
     // 會讓長輩以為是自己講得不夠大聲，於是一次比一次更用力喊。
     micStartFailed: "麥克風打不開，請再按一次試試看。",
     // 送出了、卻等不到任何回應（連線斷在半路、後端那一輪掉了）。⚠️ 沒有這條
-    // 保險的話，畫面會永遠停在「金孫想一下…」而麥克風鍵一直是停用的——長輩
+    // 保險的話，畫面會永遠停在「我想一下…」而麥克風鍵一直是停用的——長輩
     // 從此按不動，也不知道發生什麼事。
-    noAnswer: "金孫這次沒有回話，再說一次好嗎？",
+    noAnswer: "我這次沒有回話，再說一次好嗎？",
     // 虛擬形象的可讀說明（讀螢幕軟體會唸出來；畫面上只有一個表情符號）。
-    avatar: {
-      idle: "金孫現在在等您說話",
-      listening: "金孫現在在聽",
-      thinking: "金孫現在在想",
-      speaking: "金孫現在在說話",
+    // 狀態帶：系統在描述角色，用第三人稱（用字取自 app/src/lib/strings.ts）。
+    status: {
+      idle: "準備好了",
+      listening: "正在聽你說",
+      thinking: "想一下喔",
+      speaking: "阿白正在說話",
+      error: "連線不太穩",
     },
+    // 狀態副標：阿白自述，用第一人稱。
+    statusSub: {
+      idle: "我在這裡等您",
+      listening: "說完放開就好",
+      thinking: "馬上就好",
+      speaking: "聽完再按一下就好",
+      error: "我暫時聽不到您說話",
+    },
+    actions: {
+      start: "按住說話，或按一下開始",
+      listening: "說完再按一下",
+      thinking: "正在想",
+      // 阿白說話時主鍵縮成 72，標籤換成這句
+      waitWhileSpeaking: "等阿白說完，再按這裡",
+      error: "再按一下重新說",
+    },
+    // 回話收合後的單行摘要前綴
+    collapsedPrefix: "剛才阿白說：",
+    // 角色舞台的名稱（iframe title）。
+    //
+    // ⚠️ W3b 起狀態改由狀態帶的**可見文字**說出來（與 app 一致），舞台本身成為
+    // 裝飾。原本那組 `avatar.*` aria-label（「阿白現在在聽」…）因此移除：留著會
+    // 變成沒人用的死字串，而且同一個狀態有兩套說法，改了一邊沒改另一邊就會不一致。
+    // 可見文字也比 aria-label 好——看得見的人與聽的人拿到同一份資訊。
+    companionTitle: "阿白在這裡",
     confirmLogoutButton: "確定登出",
   },
   // 長輩看的提醒（X-01，2026-07-29）：用詞比家屬版更白話，不用「通知」這個詞。
+  // 長輩端當日對話（W4）。只留當天，跟隨短期記憶的界線。
+  //
+  // ⚠️ 沒有 `replay`（「再聽一次」）：依 2026-08-07 使用者選項 1，尚無可持久化的
+  // 音檔識別與重新合成契約前不渲染那顆鈕。App 那側把文案鍵留著備用，web 這側
+  // 刻意不加——沒有呼叫端的字串就是死字串。
+  elderHistory: {
+    title: "之前聊過的",
+    entryButton: "之前聊過的",
+    youSaid: "您說：",
+    bearSaid: "阿白說：",
+    empty: "今天還沒聊過。按下面的麥克風跟我說說話吧。",
+    footnote: "只留今天的，明天就換新的了。",
+    back: "回去講話",
+  },
   elderNotifications: {
-    title: "金孫的提醒",
-    empty: "現在沒有要提醒您的事。時間到了金孫會跟您說。",
+    title: "阿白的提醒",
+    empty: "現在沒有要提醒您的事。時間到了我會跟您說。",
     // ⚠️ 不可以借用 `common.loadFailed`（「載入失敗，請稍後再試。」）：長輩看完那句
     // 話，仍然不知道今天到底有沒有藥要吃——而「錯誤取代空狀態」這條不變量的目的就是
     // 不讓他推論「今天沒事」。這句話要替他排除那個推論，並告訴他還可以問誰。
