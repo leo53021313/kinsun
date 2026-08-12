@@ -542,9 +542,9 @@ describe("時序", () => {
     });
     await act(async () => {});
     expect(h.player.played).not.toContain("https://cdn.example/answer.m4a");
-    // 也不可以把畫面從「金孫在聽…」搶走——長輩還在講話。
+    // 也不可以把畫面從「我在聽…」搶走——長輩還在講話。
     expect(h.view.result.current.avatar).toBe("listening");
-    expect(h.view.result.current.replyText).toBe("金孫在聽…");
+    expect(h.view.result.current.replyText).toBe("我在聽…");
   });
 
   it("收音期間抵達的回覆等他講完之後補播，音檔不可以被回收掉", async () => {
@@ -1319,7 +1319,7 @@ describe("下行訊框", () => {
     h.socket.open();
     h.socket.emit({ type: "queued", turn_id: "t1", position: 2 });
     await waitFor(() =>
-      expect(h.view.result.current.replyText).toBe("金孫正在跟別人說話，您排第 2 位…"),
+      expect(h.view.result.current.replyText).toBe("我還在忙，您現在排第 2 位，輪到就馬上回您。"),
     );
   });
 
@@ -1336,10 +1336,17 @@ describe("下行訊框", () => {
     expect(h.view.result.current.avatar).toBe("thinking");
     h.socket.emit({ type: "error", turn_id: "t1", text: "金孫有點忙，等一下再說好嗎" });
     await waitFor(() => expect(h.view.result.current.replyText).toBe("金孫有點忙，等一下再說好嗎"));
-    expect(h.view.result.current.avatar).toBe("idle");
+    // W3b 起 WS 錯誤訊框進 error 態而非直接回待機：狀態帶與角色光暈要一起變成
+    // 「連線不太穩」，否則畫面上只有一行紅字、阿白仍是待機的樣子。改的是期望值
+    // 不是放寬斷言——這條驗的「長輩可以再講一次」由麥克風鍵未被停用守著（error
+    // 不在 `disabled` 的條件裡），下一次 pressIn 會把狀態帶回 listening。
+    //
+    // ⚠️ 只有這一條改：HTTP 降級路徑（401／403／429／麥克風打不開）走的是另一段
+    // 程式碼，仍然回待機，本檔其餘七處 `toBe("idle")` 都不動。
+    expect(h.view.result.current.avatar).toBe("error");
   });
 
-  it("回覆只有字沒有聲音時也要回到待機，不可停在「金孫想一下…」", async () => {
+  it("回覆只有字沒有聲音時也要回到待機，不可停在「我想一下…」", async () => {
     // ⚠️ TTS 服務掛掉（開場的運營狀態頁自己就有這一種降級：「回答只會顯示文字」）
     // 或音檔落地失敗時，reply 訊框的 audio_url 是空的。只看 audio_url 決定要不要
     // 播、卻不管沒有音檔的情形，畫面會永遠停在「金孫想一下…」而麥克風鍵一直是
@@ -1369,7 +1376,7 @@ describe("等不到回話的保險", () => {
       vi.advanceTimersByTime(80_000);
     });
     expect(h.view.result.current.avatar).toBe("idle");
-    expect(h.view.result.current.replyText).toBe("金孫這次沒有回話，再說一次好嗎？");
+    expect(h.view.result.current.replyText).toBe("我這次沒有回話，再說一次好嗎？");
   });
 
   it("排隊訊框會讓保險重新起算，排隊中的長輩不可被自己的保險打斷", async () => {
@@ -1417,10 +1424,10 @@ describe("降級與失敗", () => {
     await waitFor(() => expect(h.view.result.current.avatar).toBe("idle"));
     expect(h.postTurn).not.toHaveBeenCalled();
     expect(h.socket.sent.some((item) => item instanceof ArrayBuffer)).toBe(false);
-    expect(h.view.result.current.replyText).toBe("金孫沒聽清楚，再說一次好嗎？");
+    expect(h.view.result.current.replyText).toBe("我沒聽清楚，再說一次好嗎？");
   });
 
-  it("金孫還在想的時候又按下去，不會再開一次錄音", async () => {
+  it("阿白還在想的時候又按下去，不會再開一次錄音", async () => {
     // 畫面上麥克風鍵這時是停用的，但停用只是瀏覽器層的第一道防線——`useTalk`
     // 自己也要守住。開了第二次錄音的話，第一輪的回覆回來時長輩正在講第二句，
     // 金孫的聲音會被錄進去。
@@ -1483,7 +1490,7 @@ describe("降級與失敗", () => {
   });
 
   it.each([
-    ["denied", "需要麥克風權限才能跟金孫說話，請到設定開啟。"],
+    ["denied", "需要麥克風權限才能跟阿白說話，請到設定開啟。"],
     ["not-found", "這台裝置沒有麥克風，請換一台有麥克風的手機或平板。"],
     ["in-use", "麥克風正被別的畫面用著，請把其他在錄音或講電話的畫面關掉再試一次。"],
     ["insecure-origin", "這個網址不能錄音，請改用家人給您、開頭是 https 的網址。"],
@@ -1506,11 +1513,11 @@ describe("降級與失敗", () => {
   });
 
   it.each([
-    [503, "too_many_requests", "金孫還在忙前面那幾句，等一下下再跟您說好嗎？"],
-    [429, "too_many_requests", "金孫還在忙前面那幾句，等一下下再跟您說好嗎？"],
+    [503, "too_many_requests", "我還在忙前面那幾句，等一下下再跟您說好嗎？"],
+    [429, "too_many_requests", "我還在忙前面那幾句，等一下下再跟您說好嗎？"],
     [413, "audio_too_large", "音檔太大，請縮短錄音再試一次"],
   ])("POST 降級路徑吃到 %s 時，長輩看到的是後端那句人話", async (status, code, message) => {
-    // ⚠️ **全分支審查抓到的 Important 1**：這幾句全部被收斂成「金孫沒聽清楚，再說
+    // ⚠️ **全分支審查抓到的 Important 1**：這幾句全部被收斂成「我沒聽清楚，再說
     // 一次好嗎？」。失效情境：GPU 滿載、長連線又剛好連不上 → 長輩講一句 → 503 →
     // 他看到「沒聽清楚」→ **更大聲再講一次** → 又一輪打進已經滿載的閘門。閘門存在
     // 的理由就是避免這件事，而降級路徑親手製造它。
@@ -1533,15 +1540,15 @@ describe("降級與失敗", () => {
     await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
     await holdAndRelease(h);
     await waitFor(() =>
-      expect(h.view.result.current.replyText).toBe("金孫沒聽清楚，再說一次好嗎？"),
+      expect(h.view.result.current.replyText).toBe("我沒聽清楚，再說一次好嗎？"),
     );
   });
 
-  it("token 被撤銷（401）時通知呼叫端，不可以只說「金孫沒聽清楚」", async () => {
+  it("token 被撤銷（401）時通知呼叫端，不可以只說「我沒聽清楚」", async () => {
     // ⚠️ **全分支審查抓到的 Critical 1**：家屬按下「重新產生長輩綁定碼」時，後端
     // `accounts/service.py::revoke_elder_device` 是**先**撤 token **再**拆綁定，
     // 於是 `turns.py::current_elder` 在認證那一步就回 401，永遠走不到後面那個 403。
-    // 只接 403 的話，長輩每按一次麥克風都只看到「金孫沒聽清楚，再說一次好嗎？」，
+    // 只接 403 的話，長輩每按一次麥克風都只看到「我沒聽清楚，再說一次好嗎？」，
     // 他就一次比一次更大聲地再講一遍；重新整理也沒用（token 在 localStorage、
     // 初始路由仍是對講機），而家屬手上那組新碼永遠沒有畫面可以輸入。
     const h = setup();

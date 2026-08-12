@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="844" viewBox="0 0 390 844" role="img">
+<style>text{font-family:'Microsoft JhengHei','PingFang TC','Noto Sans CJK TC','Noto Sans TC',sans-serif;fill:#202124;}.muted{fill:#5F6368}.label{font-weight:700;letter-spacing:.4px}</style>
+<rect x="0" y="0" width="390" height="25" rx="0" fill="#F1F3F4" stroke="#DADCE0" stroke-width="1"/>
+<text x="18" y="6" font-size="10" font-weight="400" fill="#5F6368" text-anchor="start">安全區域</text>
+<text x="372" y="6" font-size="10" font-weight="400" fill="#5F6368" text-anchor="end">9:41</text>
+<rect x="0" y="25" width="390" height="63" rx="0" fill="#FFFFFF" stroke="#DADCE0" stroke-width="1"/>
+<text x="18" y="40" font-size="20" font-weight="700" fill="#202124" text-anchor="start">陪伴對話</text>
+<text x="18" y="68" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">麥克風權限拒絕</text>
+<text x="372" y="68" font-size="12" font-weight="400" fill="#5F6368" text-anchor="end">長輩</text>
+<rect x="8" y="96" width="374" height="644" rx="6" fill="#F1F3F4" stroke="#9AA0A6" stroke-width="1" stroke-dasharray="7 5"/>
+<text x="18" y="100" font-size="10" font-weight="400" fill="#5F6368" text-anchor="start">可捲動內容</text>
+<text x="18" y="122" font-size="22" font-weight="700" fill="#202124" text-anchor="start">目前聽不到你說話</text>
+<rect x="18" y="162" width="354" height="68" rx="10" fill="#D8D8D8" stroke="#3C4043" stroke-width="2"/>
+<text x="30" y="172" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">錯誤與下一步</text>
+<text x="30" y="192" font-size="15" font-weight="400" fill="#202124" text-anchor="start">麥克風權限尚未開啟。請到手機設定允許「金孫」</text>
+<text x="30" y="212" font-size="15" font-weight="400" fill="#202124" text-anchor="start">使用麥克風。</text>
+<rect x="18" y="242" width="354" height="84" rx="10" fill="#FFFFFF" stroke="#9AA0A6" stroke-width="2"/>
+<text x="32" y="254" font-size="16" font-weight="700" fill="#202124" text-anchor="start">步驟 1</text>
+<text x="32" y="284" font-size="14" font-weight="400" fill="#5F6368" text-anchor="start">點選「開啟手機設定」</text>
+<rect x="18" y="338" width="354" height="84" rx="10" fill="#FFFFFF" stroke="#9AA0A6" stroke-width="2"/>
+<text x="32" y="350" font-size="16" font-weight="700" fill="#202124" text-anchor="start">步驟 2</text>
+<text x="32" y="380" font-size="14" font-weight="400" fill="#5F6368" text-anchor="start">找到麥克風並開啟</text>
+<rect x="18" y="434" width="354" height="48" rx="10" fill="#FFFFFF" stroke="#3C4043" stroke-width="2"/>
+<text x="195.0" y="448" font-size="16" font-weight="700" fill="#202124" text-anchor="middle">稍後再試</text>
+<rect x="18" y="494" width="354" height="68" rx="10" fill="#E6E6E6" stroke="#3C4043" stroke-width="2" stroke-dasharray="7 5"/>
+<text x="30" y="504" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">設計註記</text>
+<text x="30" y="524" font-size="15" font-weight="400" fill="#202124" text-anchor="start">現況缺少設定／重試 CTA</text>
+<rect x="0" y="748" width="390" height="96" rx="0" fill="#FFFFFF" stroke="#DADCE0" stroke-width="1"/>
+<text x="18" y="754" font-size="10" font-weight="400" fill="#5F6368" text-anchor="start">固定操作區／底部安全區域</text>
+<rect x="18" y="778" width="354" height="48" rx="12" fill="#3C4043" stroke="#3C4043" stroke-width="2"/>
+<text x="195.0" y="793" font-size="17" font-weight="700" fill="#FFFFFF" text-anchor="middle">開啟手機設定</text>
+</svg>

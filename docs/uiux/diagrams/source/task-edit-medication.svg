@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="680" viewBox="0 0 1200 680" role="img">
+<style>text{font-family:'Microsoft JhengHei','PingFang TC','Noto Sans CJK TC','Noto Sans TC',sans-serif;fill:#202124;}.muted{fill:#5F6368}.label{font-weight:700;letter-spacing:.4px}</style>
+<text x="48" y="40" font-size="30" font-weight="700" fill="#202124" text-anchor="start">Task Flow 06：編輯一筆行程</text>
+<text x="48" y="78" font-size="15" font-weight="400" fill="#5F6368" text-anchor="start">Task Flow｜已實作｜一圖一問</text>
+<line x1="48" y1="105" x2="1152" y2="105" stroke="#3C4043" stroke-width="2"/>
+<rect x="48.0" y="130" width="354.6666666666667" height="46" rx="10" fill="#3C4043" stroke="#3C4043" stroke-width="2"/>
+<text x="64.0" y="143" font-size="17" font-weight="700" fill="#FFFFFF" text-anchor="start">前置與輸入</text>
+<rect x="48.0" y="195" width="354.6666666666667" height="72" rx="10" fill="#F1F3F4" stroke="#9AA0A6" stroke-width="2"/>
+<text x="61.0" y="205" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">前置</text>
+<text x="61.0" y="226" font-size="15" font-weight="400" fill="#202124" text-anchor="start">已有行程 group</text>
+<line x1="225.33333333333334" y1="267" x2="225.33333333333334" y2="286" stroke="#9AA0A6" stroke-width="2"/>
+<polygon points="225.33333333333334,286 219.33333333333334,276 231.33333333333334,276" fill="#9AA0A6"/>
+<rect x="48.0" y="291" width="354.6666666666667" height="72" rx="10" fill="#F1F3F4" stroke="#9AA0A6" stroke-width="2"/>
+<text x="61.0" y="301" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">輸入</text>
+<text x="61.0" y="322" font-size="15" font-weight="400" fill="#202124" text-anchor="start">修改類型、內容或時間</text>
+<line x1="402.6666666666667" y1="153" x2="422.6666666666667" y2="153" stroke="#9AA0A6" stroke-width="2" stroke-dasharray="7 5"/>
+<polygon points="422.6666666666667,153 412.6666666666667,147 412.6666666666667,159" fill="#9AA0A6"/>
+<rect x="422.6666666666667" y="130" width="354.6666666666667" height="46" rx="10" fill="#3C4043" stroke="#3C4043" stroke-width="2"/>
+<text x="438.6666666666667" y="143" font-size="17" font-weight="700" fill="#FFFFFF" text-anchor="start">步驟與驗證</text>
+<rect x="422.6666666666667" y="195" width="354.6666666666667" height="72" rx="10" fill="#F1F3F4" stroke="#9AA0A6" stroke-width="2"/>
+<text x="435.6666666666667" y="205" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">操作</text>
+<text x="435.6666666666667" y="226" font-size="15" font-weight="400" fill="#202124" text-anchor="start">選擇編輯</text>
+<line x1="600.0" y1="267" x2="600.0" y2="286" stroke="#9AA0A6" stroke-width="2"/>
+<polygon points="600.0,286 594.0,276 606.0,276" fill="#9AA0A6"/>
+<rect x="422.6666666666667" y="291" width="354.6666666666667" height="72" rx="10" fill="#F1F3F4" stroke="#9AA0A6" stroke-width="2"/>
+<text x="435.6666666666667" y="301" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">驗證</text>
+<text x="435.6666666666667" y="322" font-size="15" font-weight="400" fill="#202124" text-anchor="start">內容與時間有效</text>
+<line x1="600.0" y1="363" x2="600.0" y2="382" stroke="#9AA0A6" stroke-width="2"/>
+<polygon points="600.0,382 594.0,372 606.0,372" fill="#9AA0A6"/>
+<rect x="422.6666666666667" y="387" width="354.6666666666667" height="72" rx="10" fill="#F1F3F4" stroke="#9AA0A6" stroke-width="2"/>
+<text x="435.6666666666667" y="397" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">系統</text>
+<text x="435.6666666666667" y="418" font-size="15" font-weight="400" fill="#202124" text-anchor="start">PUT schedule</text>
+<line x1="777.3333333333334" y1="153" x2="797.3333333333334" y2="153" stroke="#9AA0A6" stroke-width="2" stroke-dasharray="7 5"/>
+<polygon points="797.3333333333334,153 787.3333333333334,147 787.3333333333334,159" fill="#9AA0A6"/>
+<rect x="797.3333333333334" y="130" width="354.66666666666663" height="46" rx="10" fill="#3C4043" stroke="#3C4043" stroke-width="2"/>
+<text x="813.3333333333334" y="143" font-size="17" font-weight="700" fill="#FFFFFF" text-anchor="start">條件與回復</text>
+<rect x="797.3333333333334" y="195" width="354.66666666666663" height="72" rx="10" fill="#F1F3F4" stroke="#9AA0A6" stroke-width="2"/>
+<text x="810.3333333333334" y="205" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">成功</text>
+<text x="810.3333333333334" y="226" font-size="15" font-weight="400" fill="#202124" text-anchor="start">清單更新</text>
+<line x1="974.6666666666667" y1="267" x2="974.6666666666667" y2="286" stroke="#9AA0A6" stroke-width="2"/>
+<polygon points="974.6666666666667,286 968.6666666666667,276 980.6666666666667,276" fill="#9AA0A6"/>
+<rect x="797.3333333333334" y="291" width="354.66666666666663" height="72" rx="10" fill="#F1F3F4" stroke="#9AA0A6" stroke-width="2"/>
+<text x="810.3333333333334" y="301" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">失敗</text>
+<text x="810.3333333333334" y="322" font-size="15" font-weight="400" fill="#202124" text-anchor="start">API 拒絕</text>
+<line x1="974.6666666666667" y1="363" x2="974.6666666666667" y2="382" stroke="#9AA0A6" stroke-width="2"/>
+<polygon points="974.6666666666667,382 968.6666666666667,372 980.6666666666667,372" fill="#9AA0A6"/>
+<rect x="797.3333333333334" y="387" width="354.66666666666663" height="72" rx="10" fill="#F1F3F4" stroke="#9AA0A6" stroke-width="2"/>
+<text x="810.3333333333334" y="397" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">回復</text>
+<text x="810.3333333333334" y="418" font-size="15" font-weight="400" fill="#202124" text-anchor="start">修正、重試或取消</text>
+<text x="1152" y="652" font-size="13" font-weight="400" fill="#5F6368" text-anchor="end">灰階架構圖；短標籤呈現關係，完整規格見對應 Markdown。</text>
+</svg>

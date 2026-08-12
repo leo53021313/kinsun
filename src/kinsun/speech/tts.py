@@ -40,14 +40,31 @@ class TtsResult:
     chunk_count: int = 0
 
 
+@dataclass(frozen=True)
+class VoiceReference:
+    """長輩的客製化參考語音（聲音克隆用）；未提供則沿用 DGX 端全域預設聲音。"""
+
+    elder_id: str
+    prompt_audio_url: str
+    prompt_text: str
+    # 這份參考語音的版本（2026-08-12）。DGX 端把下載回來的音檔快取在本機、只認
+    # elder_id，於是家屬重錄之後——`PUT` 覆蓋 bucket 內同一個物件路徑、應用層也換發了
+    # 簽章網址——DGX 端仍然拿舊檔案合成，直到快取被擠掉或服務重啟。**過程中不會有任何
+    # 錯誤訊息**，家屬只會覺得「我明明重錄了怎麼沒變」。
+    #
+    # ⚠️ 值取自 `voice_profiles.granted_at`（每次 `save` 都換值），**不可**改用簽章網址：
+    # 那個網址每小時換發一次，拿它當版本等於每小時強制重新下載，本機快取形同虛設。
+    version: str = ""
+
+
 class TTSClient(Protocol):
-    def synthesize(self, text: str) -> TtsResult: ...
+    def synthesize(self, text: str, *, voice: VoiceReference | None = None) -> TtsResult: ...
 
 
 class TextBubbleTts:
     """placeholder：回文字泡泡，不產音檔（audio=None）。"""
 
-    def synthesize(self, text: str) -> TtsResult:
+    def synthesize(self, text: str, *, voice: VoiceReference | None = None) -> TtsResult:
         return TtsResult(text=text, audio=None)
 
 
@@ -67,8 +84,15 @@ class DgxTtsClient:
         self._api_key = api_key
         self._transport = transport or HttpxTransport()
 
-    def synthesize(self, text: str) -> TtsResult:
-        body = json.dumps({"text": text}, ensure_ascii=False).encode("utf-8")
+    def synthesize(self, text: str, *, voice: VoiceReference | None = None) -> TtsResult:
+        payload: dict[str, str] = {"text": text}
+        if voice is not None:
+            payload["elder_id"] = voice.elder_id
+            payload["prompt_audio_url"] = voice.prompt_audio_url
+            payload["prompt_text"] = voice.prompt_text
+            # 少了它，DGX 端就分不出「家屬重錄過了」，見 VoiceReference.version。
+            payload["prompt_version"] = voice.version
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         headers = {"Content-Type": "application/json"}
         if self._api_key:  # 共用金鑰（✅ D-56 丙-10）；未設＝內網開發模式
             headers["X-Api-Key"] = self._api_key
@@ -165,15 +189,17 @@ class QueuedTtsClient:
         self._worker = threading.Thread(target=self._loop, name="kinsun-tts", daemon=True)
         self._worker.start()
 
-    def synthesize(self, text: str) -> TtsResult:
+    def synthesize(self, text: str, *, voice: VoiceReference | None = None) -> TtsResult:
         if self._closed:  # 關機後仍有人要合成：就地執行，不要靜默丟掉長輩的回覆。
-            return self._inner.synthesize(text)
+            return self._inner.synthesize(text, voice=voice)
         future: Future = Future()
         # worker 接手的訊號：把「排隊等」與「GPU 在算」切開的那一刀（見下方兩個
         # 等待函式的說明）。
         picked_up = threading.Event()
         # 優先權在**提交當下**取值：worker 執行緒沒有呼叫端的 context。
-        self._queue.put((int(current_tts_priority()), next(self._seq), text, future, picked_up))
+        self._queue.put(
+            (int(current_tts_priority()), next(self._seq), text, voice, future, picked_up)
+        )
         self._wait_in_queue(picked_up)
         return self._wait_for_synthesis(future)
 
@@ -196,7 +222,7 @@ class QueuedTtsClient:
 
     def _loop(self) -> None:
         while True:
-            _priority_value, _seq, text, future, picked_up = self._queue.get()
+            _priority_value, _seq, text, voice, future, picked_up = self._queue.get()
             try:
                 if future is None:  # 收工訊號
                     return
@@ -204,7 +230,7 @@ class QueuedTtsClient:
                     # ⚠️ 必須在呼叫 inner **之前**放行排隊那一格，否則兩格會一樣長，
                     # 拆開就失去意義。
                     picked_up.set()
-                    future.set_result(self._inner.synthesize(text))
+                    future.set_result(self._inner.synthesize(text, voice=voice))
             except BaseException as exc:  # noqa: BLE001 - 原樣交回呼叫端
                 future.set_exception(exc)
             finally:
@@ -223,7 +249,10 @@ class QueuedTtsClient:
             self._closed = True
         self._queue.join()
         # 收工訊號用最低優先權，確保排在所有已排隊的工作之後。
-        self._queue.put((int(TtsPriority.PREWARM) + 1, next(self._seq), "", None, None))
+        # ⚠️ 元數必須與 `synthesize` 放進去的那個 tuple 一致（text／voice／future／
+        # picked_up 四項）：`_loop` 是無條件解包，少一個欄位就在關機時炸在解包那行，
+        # 而不是走到底下「future 為 None＝收工」的判斷。
+        self._queue.put((int(TtsPriority.PREWARM) + 1, next(self._seq), "", None, None, None))
         self._worker.join(timeout=5)
 
 

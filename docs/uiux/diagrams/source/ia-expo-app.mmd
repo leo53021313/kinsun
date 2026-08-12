@@ -1,0 +1,27 @@
+---
+title: Expo App 資訊架構
+---
+flowchart TD
+  subgraph L0["共用入口"]
+    L0N0["啟動：讀取雙 Session slot"]
+    L0N1["角色：長輩或家屬"]
+    L0N0 --> L0N1
+    L0N2["切換：內測 RoleSwitcher"]
+    L0N1 --> L0N2
+  end
+  subgraph L1["長輩支線"]
+    L1N0["綁定：QR 或手動碼"]
+    L1N1["對話：雙手勢＋WS 五態"]
+    L1N0 --> L1N1
+    L1N2["提醒：鈴鐺與本機水位"]
+    L1N1 --> L1N2
+  end
+  L0N2 -.-> L1N0
+  subgraph L2["家屬支線"]
+    L2N0["帳號：登入／註冊"]
+    L2N1["首頁：長輩列表＋通知"]
+    L2N0 --> L2N1
+    L2N2["詳情：摘要、報告、行程"]
+    L2N1 --> L2N2
+  end
+  L1N2 -.-> L2N0

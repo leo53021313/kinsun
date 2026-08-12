@@ -5,9 +5,11 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { Button } from "./Button";
+import { Chip } from "./Chip";
 import { EmptyHint, ErrorText, NoticeText } from "./Feedback";
 import { Field } from "./Field";
 import { Section } from "./Section";
+import { StatusPill } from "./StatusPill";
 
 describe("Button", () => {
   it("按下去會呼叫 onClick", async () => {
@@ -63,9 +65,13 @@ describe("Field", () => {
     expect(label).not.toHaveClass("text-sm");
   });
 
-  it("size 預設（家屬端）標籤維持原本的 text-sm，不被連帶放大", () => {
+  it("size 預設（家屬端）標籤維持家屬端字級，不被連帶放大", () => {
+    // 意圖不變（家屬端不隨長輩端放大），但代理值換了：新視覺把欄位標籤定為
+    // 16px、顏色由 textSoft 改成 text——它是欄位標籤不是說明文字。
     render(<Field label="長輩稱呼" value="" onChange={vi.fn()} />);
-    expect(screen.getByText("長輩稱呼")).toHaveClass("text-sm");
+    const label = screen.getByText("長輩稱呼");
+    expect(label).toHaveClass("text-base");
+    expect(label).not.toHaveClass("text-elder-min");
   });
 
   it("同一個畫面上的兩個欄位拿到不同的 id", () => {
@@ -146,5 +152,159 @@ describe("Section", () => {
     );
     expect(screen.getByRole("heading", { name: "新增長輩" })).toBeInTheDocument();
     expect(screen.getByText("內容")).toBeInTheDocument();
+  });
+});
+
+
+describe("Button 新視覺（W2）", () => {
+  it("主鍵是暖黃膠囊配深靛藍字，不是白字", () => {
+    // 鐵律 14：暖黃 #F9DF77 是每頁唯一主要行動，配深靛藍字 #25285F，不配白字。
+    // 舊版是 bg-primary + text-white（磚橘底白字），整個換掉。
+    render(<Button label="建立長輩檔案" onClick={vi.fn()} />);
+    const button = screen.getByRole("button");
+    expect(button).toHaveClass("bg-action");
+    expect(button).toHaveClass("text-ink");
+    expect(button).not.toHaveClass("text-white");
+    expect(button).toHaveClass("rounded-pill");
+  });
+
+  it("四個 variant 各自的樣式", () => {
+    const { rerender } = render(<Button label="送出" onClick={vi.fn()} variant="outline" />);
+    expect(screen.getByRole("button")).toHaveClass("border-primary");
+    rerender(<Button label="送出" onClick={vi.fn()} variant="subtle" />);
+    expect(screen.getByRole("button")).toHaveClass("bg-background");
+    rerender(<Button label="刪除" onClick={vi.fn()} variant="danger" />);
+    expect(screen.getByRole("button")).toHaveClass("border-danger");
+    // 破壞性動作的文字用深一階的 dangerText，才過 4.5:1（鐵律 15）。
+    expect(screen.getByRole("button")).toHaveClass("text-danger-text");
+  });
+
+  it("最小高度：一般 56px、big 84px", () => {
+    const { rerender } = render(<Button label="送出" onClick={vi.fn()} />);
+    expect(screen.getByRole("button")).toHaveClass("min-h-14");
+    rerender(<Button label="送出" onClick={vi.fn()} size="big" />);
+    expect(screen.getByRole("button")).toHaveClass("min-h-21");
+  });
+
+  it("送出中仍看得到動作名稱，不會只剩一個點點", () => {
+    // 舊版 busy 時把 label 換成「…」，長輩與家屬都不知道剛才按的是什麼。
+    render(<Button label="建立長輩檔案" onClick={vi.fn()} busy />);
+    expect(screen.getByRole("button", { name: /建立長輩檔案/ })).toBeInTheDocument();
+  });
+
+  it("鍵盤聚焦看得到描邊（2px 靛藍＋2px 外偏移）", () => {
+    render(<Button label="送出" onClick={vi.fn()} />);
+    const button = screen.getByRole("button");
+    expect(button.className).toContain("focus-visible:outline-2");
+    expect(button.className).toContain("focus-visible:outline-offset-2");
+    expect(button.className).toContain("focus-visible:outline-primary");
+  });
+});
+
+describe("Field hint（W2）", () => {
+  it("有 hint 時顯示範例說明", () => {
+    render(
+      <Field label="長輩稱呼" value="" onChange={vi.fn()} hint="例如：阿公" />,
+    );
+    expect(screen.getByText("例如：阿公")).toBeInTheDocument();
+  });
+
+  it("沒有 hint 就不畫", () => {
+    render(<Field label="長輩稱呼" value="" onChange={vi.fn()} />);
+    expect(screen.queryByText(/例如/)).not.toBeInTheDocument();
+  });
+});
+
+describe("Section inset（W2）", () => {
+  it("卡片是圓角 24 加柔和陰影", () => {
+    const { container } = render(
+      <Section title="新增長輩">
+        <p>內容</p>
+      </Section>,
+    );
+    const section = container.querySelector("section")!;
+    expect(section).toHaveClass("rounded-card");
+    expect(section.className).toContain("shadow-");
+  });
+
+  it("inset 是「凹一階」的內嵌區塊：淡底、無邊框、圓角小一階、無陰影", () => {
+    const { container } = render(
+      <Section inset>
+        <p>綁定碼</p>
+      </Section>,
+    );
+    const section = container.querySelector("section")!;
+    expect(section).toHaveClass("bg-background");
+    expect(section).toHaveClass("rounded-control");
+    expect(section).not.toHaveClass("rounded-card");
+  });
+
+  it("沒有標題時不畫 heading", () => {
+    render(
+      <Section inset>
+        <p>綁定碼</p>
+      </Section>,
+    );
+    expect(screen.queryByRole("heading")).not.toBeInTheDocument();
+  });
+});
+
+describe("ErrorText 的紅色（W2）", () => {
+  it("紅色文字用深一階的 dangerText，不用只能當邊界的 danger", () => {
+    // 鐵律 15：danger #D95D5D 只用於邊界與圖示（3.7:1），紅色文字要用
+    // dangerText #B33C3C 才過 4.5:1。
+    render(<ErrorText message="帳號或密碼不對，請再試一次。" />);
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveClass("text-danger-text");
+    expect(alert).not.toHaveClass("text-danger");
+  });
+});
+
+describe("StatusPill（W2 新增）", () => {
+  it("三重編碼：圖示、底色與文字同時在", () => {
+    // 鐵律 6：狀態一律顏色＋圖示＋文字，拿掉顏色仍讀得懂。
+    render(
+      <StatusPill tone="done" label="已完成" icon={<span data-testid="icon">✓</span>} />,
+    );
+    expect(screen.getByText("已完成")).toBeInTheDocument();
+    expect(screen.getByTestId("icon")).toBeInTheDocument();
+  });
+
+  it("五個 tone 都給得出配色", () => {
+    const tones = ["done", "pending", "overdue", "critical", "info"] as const;
+    for (const tone of tones) {
+      const { container, unmount } = render(
+        <StatusPill tone={tone} label="狀態" icon={<span>i</span>} />,
+      );
+      const pill = container.firstElementChild as HTMLElement;
+      expect(pill.style.backgroundColor).not.toBe("");
+      unmount();
+    }
+  });
+});
+
+describe("Chip（W2 新增）", () => {
+  it("觸控高度硬下限 48px", () => {
+    // 09 §1.4 的待修項：原本的內嵌 Chip 高度不足 48dp。
+    render(<Chip label="早上" selected={false} onClick={vi.fn()} />);
+    expect(screen.getByRole("checkbox")).toHaveClass("min-h-12");
+  });
+
+  it("選取狀態用 aria-checked 揭露，不是 aria-selected", () => {
+    // radio 與 checkbox 兩種 role 在 ARIA 都用 aria-checked；aria-selected 是
+    // option／tab／gridcell 用的，讀螢幕軟體不會把它當勾選狀態播報。
+    const { rerender } = render(
+      <Chip label="早上" selected onClick={vi.fn()} role="checkbox" />,
+    );
+    expect(screen.getByRole("checkbox")).toHaveAttribute("aria-checked", "true");
+    rerender(<Chip label="吃藥" selected={false} onClick={vi.fn()} role="radio" />);
+    expect(screen.getByRole("radio")).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("點下去會回報", async () => {
+    const onClick = vi.fn();
+    render(<Chip label="早上" selected={false} onClick={onClick} />);
+    await userEvent.click(screen.getByRole("checkbox"));
+    expect(onClick).toHaveBeenCalledOnce();
   });
 });

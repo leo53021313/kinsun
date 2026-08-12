@@ -1,0 +1,35 @@
+---
+title: Admin 資訊架構
+---
+flowchart TD
+  subgraph L0["第一層導航"]
+    L0N0["總覽：指標與告警"]
+    L0N1["訊息流：即時訊息"]
+    L0N0 --> L0N1
+    L0N2["長輩：清單與搜尋"]
+    L0N1 --> L0N2
+    L0N3["新聞：已擷取話題"]
+    L0N2 --> L0N3
+    L0N4["系統：排程與 RAG"]
+    L0N3 --> L0N4
+  end
+  subgraph L1["長輩詳情"]
+    L1N0["時間軸：單日事件"]
+    L1N1["提醒：用藥、回診、送達"]
+    L1N0 --> L1N1
+    L1N2["記憶：長期記憶與摘要"]
+    L1N1 --> L1N2
+    L1N3["帳號：綁定與家屬"]
+    L1N2 --> L1N3
+    L1N4["危急：通知送達"]
+    L1N3 --> L1N4
+  end
+  L0N4 -.-> L1N0
+  subgraph L2["排查深層"]
+    L2N0["Trace：Webhook 與 ASR"]
+    L2N1["Trace：RAG、LLM、風險"]
+    L2N0 --> L2N1
+    L2N2["Trace：TTS 與回覆"]
+    L2N1 --> L2N2
+  end
+  L1N4 -.-> L2N0

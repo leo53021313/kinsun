@@ -33,7 +33,7 @@ class _RecordingTts:
         self.max_in_flight = 0
         self._lock = threading.Lock()
 
-    def synthesize(self, text: str) -> TtsResult:
+    def synthesize(self, text: str, *, voice=None) -> TtsResult:
         with self._lock:
             self.in_flight += 1
             self.max_in_flight = max(self.max_in_flight, self.in_flight)
@@ -139,7 +139,7 @@ def test_inner_errors_reach_the_caller():
     """合成失敗必須原樣傳回呼叫端——`_synthesize` 靠 TTSError 決定退化為純文字。"""
 
     class _Failing:
-        def synthesize(self, text: str) -> TtsResult:
+        def synthesize(self, text: str, *, voice=None) -> TtsResult:
             raise TTSError("DGX TTS 呼叫失敗：假的")
 
     client = QueuedTtsClient(_Failing())
@@ -278,7 +278,7 @@ def test_inner_errors_still_reach_the_caller_with_spans_split():
     """拆成兩段之後，例外仍要原樣傳回呼叫端——不可被排隊那一段吞掉。"""
 
     class _Boom:
-        def synthesize(self, text: str) -> TtsResult:
+        def synthesize(self, text: str, *, voice=None) -> TtsResult:
             raise TTSError("壞了")
 
     client = QueuedTtsClient(_Boom())

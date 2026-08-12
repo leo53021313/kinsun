@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="844" viewBox="0 0 390 844" role="img">
+<style>text{font-family:'Microsoft JhengHei','PingFang TC','Noto Sans CJK TC','Noto Sans TC',sans-serif;fill:#202124;}.muted{fill:#5F6368}.label{font-weight:700;letter-spacing:.4px}</style>
+<rect x="0" y="0" width="390" height="25" rx="0" fill="#F1F3F4" stroke="#DADCE0" stroke-width="1"/>
+<text x="18" y="6" font-size="10" font-weight="400" fill="#5F6368" text-anchor="start">安全區域</text>
+<text x="372" y="6" font-size="10" font-weight="400" fill="#5F6368" text-anchor="end">9:41</text>
+<rect x="0" y="25" width="390" height="63" rx="0" fill="#FFFFFF" stroke="#DADCE0" stroke-width="1"/>
+<text x="18" y="40" font-size="20" font-weight="700" fill="#202124" text-anchor="start">LIFF 健康報告</text>
+<text x="18" y="68" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">結構稿</text>
+<text x="372" y="68" font-size="12" font-weight="400" fill="#5F6368" text-anchor="end">家屬</text>
+<rect x="8" y="96" width="374" height="644" rx="6" fill="#F1F3F4" stroke="#9AA0A6" stroke-width="1" stroke-dasharray="7 5"/>
+<text x="18" y="100" font-size="10" font-weight="400" fill="#5F6368" text-anchor="start">可捲動內容</text>
+<rect x="18" y="122" width="354" height="48" rx="10" fill="#FFFFFF" stroke="#3C4043" stroke-width="2"/>
+<text x="195.0" y="136" font-size="16" font-weight="700" fill="#202124" text-anchor="middle">← 返回長輩清單</text>
+<text x="18" y="182" font-size="22" font-weight="700" fill="#202124" text-anchor="start">林阿嬤的健康報告</text>
+<rect x="18" y="222" width="354" height="84" rx="10" fill="#FFFFFF" stroke="#9AA0A6" stroke-width="2"/>
+<text x="32" y="234" font-size="16" font-weight="700" fill="#202124" text-anchor="start">近 30 天需留意</text>
+<text x="32" y="264" font-size="14" font-weight="400" fill="#5F6368" text-anchor="start">頭暈事件 1 件</text>
+<rect x="18" y="318" width="354" height="84" rx="10" fill="#FFFFFF" stroke="#9AA0A6" stroke-width="2"/>
+<text x="32" y="330" font-size="16" font-weight="700" fill="#202124" text-anchor="start">提醒紀錄</text>
+<text x="32" y="360" font-size="14" font-weight="400" fill="#5F6368" text-anchor="start">用藥提醒 2 件</text>
+<text x="18" y="414" font-size="16" font-weight="400" fill="#202124" text-anchor="start">報告不包含完整逐字對話。</text>
+<rect x="18" y="447" width="354" height="68" rx="10" fill="#E6E6E6" stroke="#3C4043" stroke-width="2" stroke-dasharray="7 5"/>
+<text x="30" y="457" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">設計註記</text>
+<text x="30" y="477" font-size="15" font-weight="400" fill="#202124" text-anchor="start">空狀態與錯誤狀態須各自提供下一步</text>
+<rect x="0" y="748" width="390" height="96" rx="0" fill="#FFFFFF" stroke="#DADCE0" stroke-width="1"/>
+<text x="18" y="754" font-size="10" font-weight="400" fill="#5F6368" text-anchor="start">固定操作區／底部安全區域</text>
+<rect x="18" y="778" width="354" height="48" rx="12" fill="#3C4043" stroke="#3C4043" stroke-width="2"/>
+<text x="195.0" y="793" font-size="17" font-weight="700" fill="#FFFFFF" text-anchor="middle">返回長輩清單</text>
+</svg>

@@ -5,31 +5,56 @@ import {
   useAudioPlayer,
   useAudioRecorder,
 } from "expo-audio";
+import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as Haptics from "expo-haptics";
 import * as Location from "expo-location";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ArrowClockwiseIcon } from "phosphor-react-native/src/icons/ArrowClockwise";
+import { CaretDownIcon } from "phosphor-react-native/src/icons/CaretDown";
+import { ChatCircleDotsIcon } from "phosphor-react-native/src/icons/ChatCircleDots";
+import { CheckCircleIcon } from "phosphor-react-native/src/icons/CheckCircle";
+import { SignOutIcon } from "phosphor-react-native/src/icons/SignOut";
+import { SpeakerHighIcon } from "phosphor-react-native/src/icons/SpeakerHigh";
+import { WaveformIcon } from "phosphor-react-native/src/icons/Waveform";
+import { WifiSlashIcon } from "phosphor-react-native/src/icons/WifiSlash";
+import {
+  Alert,
+  Animated,
+  Easing,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { AvatarPlaceholder, type AvatarState } from "@/components/AvatarPlaceholder";
+import { BearStage, type BearSystemState } from "@/components/BearStage";
 import { BellIcon } from "@/components/BellIcon";
 import { MicIcon } from "@/components/MicIcon";
 import { RoleSwitcher } from "@/components/RoleSwitcher";
 import {
   ApiError,
-  getTurnChunk,
   listElderNotifications,
   logoutSession,
   postTurn,
 } from "@/lib/api";
-import type { TurnChunk } from "@/lib/api";
 import { type ElderPlace, currentPlace } from "@/lib/location";
 import { loadSeenAt } from "@/lib/notificationsSeen";
+import type { OttoSpeechCue } from "@/lib/ottoBridge";
 import { purgeReplyAudio, writeReplyAudio } from "@/lib/replyAudio";
 import { useSession } from "@/lib/SessionProvider";
 import { strings } from "@/lib/strings";
 import { createTalkGesture } from "@/lib/talkGesture";
+import {
+  getTalkPresentation,
+  getTalkSocketFrameArrivalState,
+  getTalkSocketPlaybackCompletionState,
+  type ListeningMode,
+  type TalkVisualState,
+} from "@/lib/talkPresentation";
 import {
   createPlaybackQueue,
   createTalkSocket,
@@ -37,40 +62,60 @@ import {
   type PlaybackItem,
   type TalkFrame,
 } from "@/lib/talkSocket";
-import { colors, elder, spacing } from "@/lib/theme";
+import {
+  applyReplyContentFrame,
+  collapsedReplySummary,
+  firstReplyAudioText,
+  hasPlayableReplyAudio,
+  shouldScrollTalkContent,
+} from "@/lib/talkReplyPresentation";
+import { appendTurn, clearToday } from "@/lib/todayLog";
+import { colors, elder, elderGradient, motion, spacing, talkState } from "@/lib/theme";
 
-/**
- * 分段播放的進度（2026-07-26 延遲優化）。
- *
- * 伺服器只先合成回覆的第一句就送出（TTS 是 0.9 秒固定成本＋每字 0.10 秒，整段合成
- * 完才送會讓長輩等 5～8 秒），其餘由這裡逐段取來接著播。`digest` 綁定是哪一輪的
- * 回覆——長輩若在播放中又講了一句，伺服器會回 409，續播就此停止。
- */
-type ChunkQueue = {
-  digest: string;
-  token: string;
-  total: number;
-  /** 下一個「要去取」的段號（第 0 段已隨回合回應拿到）。 */
-  nextIndex: number;
-  /** 已在背景取的下一段；一邊播這段、一邊取下一段，才不會段與段之間卡住。 */
-  pending: Promise<TurnChunk | null> | null;
+type QueuedTalkFrame = { type: "queued"; turn_id: string; position: number };
+type ChunkTalkFrame = {
+  type: "chunk";
+  turn_id: string;
+  index: number;
+  text: string;
+  audio_url: string;
+  duration_ms: number;
+  is_last: boolean;
+};
+type RuntimeTalkFrame = TalkFrame | QueuedTalkFrame | ChunkTalkFrame;
+
+type TurnDraft = {
+  transcript: string;
+  reply: string;
+  pendingAudio: number;
+  finalReceived: boolean;
+  logged: boolean;
 };
 
 /**
- * 對講機：兩種說話方式（2026-07-25）→ 金孫回覆（文字放大＋自動播放語音）。
+ * 對講機：兩種說話方式（2026-07-25）→ 阿白回覆（文字放大＋自動播放語音）。
  * - 按住說話：按住聆聽、放開送出。
  * - 短按切換：按一下開始聆聽、說完再按一下送出。
  */
 export default function ElderTalk() {
   const router = useRouter();
+  const { fontScale, height: windowHeight } = useWindowDimensions();
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const player = useAudioPlayer();
   // 結束提示音（✅ D-48 丁-2）：放開後播一聲確認「送出了」。起始不再播提示音——iOS 上
   // 播放會把音訊工作階段切到播放類別、與錄音相衝，導致錄音在約 0.6 秒被靜默中斷
   // （2026-07-18 診斷），起始改以觸覺＋畫面提示代替。
   const stopBeep = useAudioPlayer(require("@/assets/sounds/record-stop.wav"));
-  const [avatar, setAvatar] = useState<AvatarState>("idle");
+  const [avatar, setAvatar] = useState<BearSystemState>("idle");
+  const [listeningMode, setListeningMode] = useState<ListeningMode | null>(null);
   const [replyText, setReplyText] = useState<string>(strings.talk.idleHint);
+  const [transcriptText, setTranscriptText] = useState("");
+  const [collapsed, setCollapsed] = useState(false);
+  // 後端尚未回傳回應情緒；先保留呈現層接點，不讓它影響五個系統態。
+  const [replyEmotion] = useState<string | null>(null);
+  // 每一段實際開始播放時才更新；Otto 依 text＋durationMs 對嘴，同一句重播也會
+  // 因 key 不同而重新播放。這個 state 只服務呈現層，不新增 TalkVisualState。
+  const [speechCue, setSpeechCue] = useState<OttoSpeechCue | null>(null);
   const [micReady, setMicReady] = useState(false);
   // 未讀提醒數（X-01，2026-07-29）：比已讀水位新的提醒數；載入失敗保持 0，
   // 對講機主功能不受影響——鈴鐺是加分項，不可讓它擋住長輩說話。
@@ -85,10 +130,6 @@ export default function ElderTalk() {
   const gestureRef = useRef(createTalkGesture());
   // 這一輪開錄流程的 promise：停止前先 await，消除「pressOut 跑在 record() 完成前」的競態。
   const startPromiseRef = useRef<Promise<boolean>>(Promise.resolve(false));
-  // 分段播放佇列（2026-07-26 延遲優化）：伺服器只先合成第一句就送出，其餘逐段取。
-  // 用 ref 而非 state——它的變動不該觸發重繪，而且 playbackStatusUpdate 的回呼要讀到
-  // 最新值（state 會被閉包鎖在註冊當下的那一版）。
-  const queueRef = useRef<ChunkQueue | null>(null);
   // 對講機長連線（spec 2026-07-28）：後端在模型決定要查東西時會先送一則安撫話，
   // 答案好了再送第二則。連不上時 stopAndSend 自動退回 POST /turns（降級路徑仍在）。
   const socketRef = useRef<ReturnType<typeof createTalkSocket> | null>(null);
@@ -96,8 +137,71 @@ export default function ElderTalk() {
   // 播放佇列：一輪會有兩則語音（安撫話、答案），長輩連問兩件事時還會交錯回來。
   // 聲音是線性的，同時播長輩什麼都聽不懂——故一次只播一則、先到先播。
   const playQueueRef = useRef<ReturnType<typeof createPlaybackQueue> | null>(null);
+  // 共用播放器也負責 POST 回覆與後續分段；記住是否正由 WebSocket 佇列播放，
+  // 才不會共用 didJustFinish 監聽把安撫語音誤判成整輪回答結束。
+  const socketPlaybackRef = useRef<PlaybackItem | null>(null);
+  const playbackTurnRef = useRef(new WeakMap<PlaybackItem, string>());
+  const turnDraftsRef = useRef(new Map<string, TurnDraft>());
+  const latestReplyTurnRef = useRef<string | null>(null);
+  const postPlaybackTurnRef = useRef<string | null>(null);
+  const postSequenceRef = useRef(0);
+  const speechSequenceRef = useRef(0);
+  const [speakingProgress] = useState(() => new Animated.Value(0));
+  const [collapsedProgress] = useState(() => new Animated.Value(0));
 
   const { loading: sessionLoading, session, signOut, internalTesting } = useSession();
+
+  useEffect(() => {
+    Animated.timing(speakingProgress, {
+      toValue: avatar === "speaking" ? 1 : 0,
+      duration: motion.layout,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [avatar, speakingProgress]);
+
+  useEffect(() => {
+    Animated.timing(collapsedProgress, {
+      toValue: collapsed ? 1 : 0,
+      duration: motion.layout,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [collapsed, collapsedProgress]);
+
+  function turnDraft(turnId: string): TurnDraft {
+    const existing = turnDraftsRef.current.get(turnId);
+    if (existing) return existing;
+    const created: TurnDraft = {
+      transcript: "",
+      reply: "",
+      pendingAudio: 0,
+      finalReceived: false,
+      logged: false,
+    };
+    turnDraftsRef.current.set(turnId, created);
+    return created;
+  }
+
+  function finishTurnIfReady(turnId: string): boolean {
+    const draft = turnDraftsRef.current.get(turnId);
+    if (!draft || draft.logged || !draft.finalReceived || draft.pendingAudio > 0) {
+      return false;
+    }
+    draft.logged = true;
+    if (latestReplyTurnRef.current === turnId) {
+      setCollapsed(true);
+    }
+    // 舊版伺服器若沒有 transcript 就不偽造「您說」；升級後成功回合兩欄都必定有值。
+    if (draft.transcript.trim() && draft.reply.trim()) {
+      void appendTurn({
+        at: Date.now(),
+        said: draft.transcript,
+        reply: draft.reply,
+      });
+    }
+    return true;
+  }
 
   // 未讀提醒數（X-01）：用 useFocusEffect 而非 useEffect——從提醒頁返回時要重算，
   // 否則長輩看完提醒回來，鈴鐺上的紅點還掛著。
@@ -149,6 +253,7 @@ export default function ElderTalk() {
         setLocationGranted(locationPermission.granted);
         if (!micPermission.granted) {
           setReplyText(strings.talk.micPermission);
+          setAvatar("error");
         }
       }
     })();
@@ -162,16 +267,53 @@ export default function ElderTalk() {
     if (sessionLoading || !session || session.role !== "elder") {
       return;
     }
+    const turnDrafts = turnDraftsRef.current;
+    const failedTurnIds = new Set<string>();
     const queue = createPlaybackQueue(async (item: PlaybackItem) => {
+      if (failedTurnIds.delete(item.turnId)) {
+        return;
+      }
+      socketPlaybackRef.current = item;
+      speechSequenceRef.current += 1;
+      setSpeechCue({
+        key: `${item.turnId}:${item.kind}:${speechSequenceRef.current}`,
+        text: item.text,
+        durationMs: item.durationMs,
+      });
       setAvatar("speaking");
       // 等 didJustFinish 事件，時長只當保險（見 playAndWait 的 docstring）：
       // 「音檔多長」不等於「播完了」——載入、緩衝、音訊工作階段被錄音搶走都會讓
       // 實際播放時間長於時長，估短了下一則會蓋掉還在講的這一則。
-      const outcome = await playAndWait(player, item);
+      const outcome = await playAndWait(player, item).finally(() => {
+        if (socketPlaybackRef.current === item) {
+          socketPlaybackRef.current = null;
+        }
+      });
       if (outcome === "timeout") {
         // 事件沒來就靠保險放行了。留 log 而不是靜默——真的常發生的話，代表音訊
         // 工作階段有問題，那是另一個要查的東西。
         console.warn("[talk] 播放結束事件沒來，靠保險逾時放行", item.turnId);
+      }
+      if (failedTurnIds.delete(item.turnId)) {
+        return;
+      }
+      const answerTurnId = playbackTurnRef.current.get(item);
+      if (answerTurnId) {
+        const draft = turnDraftsRef.current.get(answerTurnId);
+        if (draft) {
+          draft.pendingAudio = Math.max(0, draft.pendingAudio - 1);
+          finishTurnIfReady(answerTurnId);
+        }
+      }
+      const draft = turnDraftsRef.current.get(item.turnId);
+      const nextState = getTalkSocketPlaybackCompletionState(
+        item.kind,
+        Boolean(draft && (draft.pendingAudio > 0 || !draft.finalReceived)),
+      );
+      if (nextState !== null) {
+        // 長輩可能在播放中已開始下一輪，或同輪收到 error；只收尾本次 speaking，
+        // 不覆蓋較新的 listening／thinking／error 狀態。
+        setAvatar((current) => (current === "speaking" ? nextState : current));
       }
     });
     playQueueRef.current = queue;
@@ -186,35 +328,86 @@ export default function ElderTalk() {
       // Supabase→取簽章→App 再下載」兩趟網路。socket 只負責協定，寫檔由這裡注入
       // ——見 replyAudio.ts 說明為什麼不讓 talkSocket 自己 import 檔案系統。
       writeAudio: writeReplyAudio,
-      onFrame: (frame: TalkFrame) => {
+      onFrame: (rawFrame: TalkFrame) => {
+        // talkSocket 維持既有三態型別；後端已上線的 queued／chunk 與本批新增 transcript
+        // 在呈現層做相容擴充，不去改動受測狀態機檔。
+        const frame = rawFrame as RuntimeTalkFrame;
         if (frame.type === "error") {
+          failedTurnIds.add(frame.turn_id);
+          turnDraftsRef.current.delete(frame.turn_id);
           setReplyText(frame.text);
-          setAvatar("idle");
+          setCollapsed(false);
+          setAvatar("error");
+          setListeningMode(null);
           return;
         }
-        setReplyText(frame.text);
-        if (frame.type === "reply") {
-          // 上一輪的續播就此作廢（同 POST 路徑的處理）。
-          queueRef.current = null;
-          if (frame.chunk_count > 1 && frame.reply_digest) {
-            const chunks: ChunkQueue = {
-              digest: frame.reply_digest,
-              token: session.token,
-              total: frame.chunk_count,
-              nextIndex: 1,
-              pending: null,
-            };
-            queueRef.current = chunks;
-            prefetchNext(chunks);
-          }
+        if (frame.type === "queued") {
+          setReplyText(strings.talk.queued(frame.position));
+          setCollapsed(false);
+          setAvatar("thinking");
+          setListeningMode(null);
+          return;
         }
-        if (frame.audio_url) {
-          queue.push({
+
+        if (frame.type === "reply") {
+          const draft = turnDraft(frame.turn_id);
+          const transcript = (frame as typeof frame & { transcript?: unknown }).transcript;
+          draft.transcript = typeof transcript === "string" ? transcript : "";
+          const content = applyReplyContentFrame(draft, frame);
+          draft.reply = content.reply;
+          draft.finalReceived = content.finalReceived;
+          latestReplyTurnRef.current = frame.turn_id;
+          setTranscriptText(draft.transcript);
+          setReplyText(draft.reply);
+          // 第一段一抵達就展開；不等後面續段合成完成。
+          setCollapsed(false);
+        } else if (frame.type === "chunk") {
+          const draft = turnDraft(frame.turn_id);
+          const content = applyReplyContentFrame(draft, frame);
+          draft.reply = content.reply;
+          draft.finalReceived = content.finalReceived;
+          if (latestReplyTurnRef.current === frame.turn_id && frame.text) {
+            setCollapsed(false);
+          }
+        } else {
+          setReplyText(frame.text);
+        }
+
+        const playbackKind = frame.type === "ack" ? "ack" : "reply";
+        // 續段失敗或根本沒有第二段時，後端會送 text=""／is_last=true 的空音檔
+        // 終止訊框。它只負責結束協定，不能送進播放器，否則會平白多等一次逾時。
+        const hasPlayableAudio = hasPlayableReplyAudio(frame);
+        if (hasPlayableAudio) {
+          const item: PlaybackItem = {
+            kind: playbackKind,
             turnId: frame.turn_id,
             audioUrl: frame.audio_url,
-            text: frame.text,
+            text:
+              frame.type === "reply"
+                ? firstReplyAudioText(frame.text, frame.chunk_count)
+                : frame.text,
             durationMs: frame.duration_ms ?? 0,
-          });
+          };
+          if (playbackKind === "reply") {
+            turnDraft(frame.turn_id).pendingAudio += 1;
+            playbackTurnRef.current.set(item, frame.turn_id);
+          }
+          queue.push(item);
+        } else if (frame.type === "ack" || frame.type === "reply") {
+          const arrivalState = getTalkSocketFrameArrivalState(
+            frame.type,
+            false,
+          );
+          // TTS 可降級成純文字（audio_url=""）；沒有播放完成事件可收尾，需在這裡
+          // 直接離開 thinking，否則長輩會永遠看到「想一下喔」且麥克風維持停用。
+          if (arrivalState !== null) setAvatar(arrivalState);
+        }
+        const finished =
+          playbackKind === "reply" ? finishTurnIfReady(frame.turn_id) : false;
+        // 最後一段若是純文字或空白終止訊框，不會有播放完成事件替它收尾。
+        // 只在目前沒有別輪音檔正在播時離開 speaking，避免舊輪終止訊框蓋掉新輪。
+        if (finished && frame.type === "chunk" && socketPlaybackRef.current === null) {
+          setAvatar((current) => (current === "speaking" ? "idle" : current));
         }
       },
     });
@@ -223,8 +416,11 @@ export default function ElderTalk() {
       socket.close();
       socketRef.current = null;
       playQueueRef.current = null;
+      socketPlaybackRef.current = null;
+      turnDrafts.clear();
+      latestReplyTurnRef.current = null;
     };
-    // player 與 prefetchNext 在本元件生命週期內恆定，不列入相依以免重建連線。
+    // player 在本元件生命週期內恆定，不列入相依以免重建連線。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionLoading, session]);
 
@@ -236,8 +432,9 @@ export default function ElderTalk() {
     try {
       // 觸覺回饋（✅ D-48 丁-2）：長輩按住有「開始了」的體感；失敗不影響錄音。
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
-      // ⚠️ 按下去就是要講話：不清空還沒播的，金孫的聲音會被錄進去。
+      // ⚠️ 按下去就是要講話：不清空還沒播的，阿白的聲音會被錄進去。
       playQueueRef.current?.clear();
+      postPlaybackTurnRef.current = null;
       player.pause();
       // 錄音前重新宣告錄音模式：上一輪 TTS 回覆播放會把音訊工作階段留在播放類別，
       // 不重設就直接 record() 會收不到聲音（iOS AVAudioSession 類別衝突，2026-07-18 診斷）。
@@ -248,11 +445,15 @@ export default function ElderTalk() {
       // 通常已經好了。權限已於進畫面時取得，這裡不會再跳對話框。currentPlace 永不拋，不需 catch。
       placeRef.current = currentPlace();
       setAvatar("listening");
+      setListeningMode("pressing");
+      setTranscriptText("");
+      setCollapsed(false);
       setReplyText(strings.talk.listening);
       return true;
     } catch {
       setReplyText(strings.talk.fallback);
-      setAvatar("idle");
+      setAvatar("error");
+      setListeningMode(null);
       return false;
     }
   }
@@ -266,6 +467,7 @@ export default function ElderTalk() {
     }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
     setAvatar("thinking");
+    setListeningMode(null);
     setReplyText(strings.talk.thinking);
     try {
       await recorder.stop();
@@ -286,36 +488,42 @@ export default function ElderTalk() {
         return;
       }
       const reply = await postTurn(uri, session?.token ?? "", place);
+      postSequenceRef.current += 1;
+      const turnId = `post:${Date.now()}:${postSequenceRef.current}`;
+      const draft = turnDraft(turnId);
+      draft.transcript = reply.transcript;
+      draft.reply = reply.text;
+      draft.finalReceived = true;
+      latestReplyTurnRef.current = turnId;
+      setTranscriptText(reply.transcript);
       setReplyText(reply.text);
-      // 上一輪的續播就此作廢：advanceQueue 以物件識別比對，舊佇列的取回會自行退場。
-      queueRef.current = null;
+      setCollapsed(false);
       if (reply.audio_url) {
+        draft.pendingAudio = 1;
+        postPlaybackTurnRef.current = turnId;
+        speechSequenceRef.current += 1;
+        setSpeechCue({
+          key: `post:reply:${speechSequenceRef.current}`,
+          text: reply.text,
+          durationMs: reply.duration_ms ?? 0,
+        });
         setAvatar("speaking");
-        if (reply.chunk_count > 1 && reply.reply_digest) {
-          const queue: ChunkQueue = {
-            digest: reply.reply_digest,
-            token: session?.token ?? "",
-            total: reply.chunk_count,
-            nextIndex: 1,
-            pending: null,
-          };
-          queueRef.current = queue;
-          // 第一段還在播的時候就去取第二段——不先取，段與段之間會空掉一整個合成的時間。
-          prefetchNext(queue);
-        }
         player.replace({ uri: reply.audio_url });
         player.play();
       } else {
         setAvatar("idle");
+        finishTurnIfReady(turnId);
       }
     } catch (exc) {
       if (exc instanceof ApiError && exc.status === 403) {
         setReplyText(strings.talk.bindingLost);
+        await clearToday();
         await signOut();
       } else {
         setReplyText(strings.talk.fallback);
       }
-      setAvatar("idle");
+      setAvatar(exc instanceof ApiError && exc.status === 403 ? "idle" : "error");
+      setListeningMode(null);
     }
   }
 
@@ -327,6 +535,7 @@ export default function ElderTalk() {
         if (!started) {
           // 開錄失敗或被擋下：手勢復位，下一次按壓重新開始。
           gestureRef.current.reset();
+          setListeningMode(null);
         }
         return started;
       });
@@ -344,56 +553,27 @@ export default function ElderTalk() {
       // 失敗時保留 startRecording 已顯示的錯誤訊息。
       void startPromiseRef.current.then((started) => {
         if (started) {
+          setListeningMode("tap");
           setReplyText(strings.talk.listeningTapHint);
         }
       });
     }
   }
 
-  /** 背景取下一段；取不到（409／網路／合成失敗）就記成 null，播完這段即收工。 */
-  function prefetchNext(queue: ChunkQueue) {
-    if (queue.nextIndex >= queue.total) {
-      queue.pending = null;
-      return;
-    }
-    const index = queue.nextIndex;
-    queue.nextIndex += 1;
-    queue.pending = getTurnChunk(index, queue.digest, queue.token).catch(() => null);
-  }
-
-  /** 這一段播完了：接上已在背景取好的下一段；沒有下一段就回到待機。 */
-  async function advanceQueue() {
-    const queue = queueRef.current;
-    if (!queue?.pending) {
-      queueRef.current = null;
-      setAvatar("idle");
-      return;
-    }
-    const chunk = await queue.pending;
-    // 等待期間長輩又講了一句：這一輪已作廢，交給新的那一輪，不可以插播。
-    if (queueRef.current !== queue) {
-      return;
-    }
-    if (!chunk?.audio_url) {
-      queueRef.current = null;
-      setAvatar("idle");
-      return;
-    }
-    prefetchNext(queue);
-    player.replace({ uri: chunk.audio_url });
-    player.play();
-  }
-
-  // 一段播完就接下一段；沒有下一段才回到待機表情。
+  // POST 降級路徑不分段；音檔播完即完成這輪並寫入本機今日紀錄。
   useEffect(() => {
     const sub = player.addListener("playbackStatusUpdate", (status) => {
-      if (status.didJustFinish) {
-        void advanceQueue();
-      }
+      if (!status.didJustFinish || socketPlaybackRef.current !== null) return;
+      const turnId = postPlaybackTurnRef.current;
+      if (!turnId) return;
+      postPlaybackTurnRef.current = null;
+      const draft = turnDraftsRef.current.get(turnId);
+      if (draft) draft.pendingAudio = Math.max(0, draft.pendingAudio - 1);
+      finishTurnIfReady(turnId);
+      setAvatar((current) => (current === "speaking" ? "idle" : current));
     });
     return () => sub.remove();
-    // advanceQueue 只讀 ref 與 player，不需要進相依陣列（進了會每次重繪都重掛監聽）。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // 回呼只讀 ref 與 player，不需要進相依陣列（進了會每次重繪都重掛監聽）。
   }, [player]);
 
   function confirmLogout() {
@@ -405,6 +585,7 @@ export default function ElderTalk() {
         onPress: async () => {
           // 先撤伺服器端 token（✅ 庚-42 長輩自助登出）；離線也不擋本機登出。
           await logoutSession(session?.token ?? "").catch(() => undefined);
+          await clearToday();
           await signOut();
           router.replace("/role");
         },
@@ -412,131 +593,486 @@ export default function ElderTalk() {
     ]);
   }
 
-  return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.topRow}>
-        <RoleSwitcher />
-        <View style={styles.topActions}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={
-              unreadCount > 0
-                ? `${strings.elderNotifications.bell}，${unreadCount} 則新的`
-                : strings.elderNotifications.bell
-            }
-            onPress={() => router.push("/elder/notifications")}
-            style={styles.bellButton}
-          >
-            <BellIcon size={30} />
-            {unreadCount > 0 ? (
-              <View style={styles.bellBadge}>
-                <Text style={styles.bellBadgeText} maxFontSizeMultiplier={1.3}>
-                  {unreadCount > 9 ? "9+" : unreadCount}
-                </Text>
-              </View>
-            ) : null}
-          </Pressable>
-          <Pressable accessibilityRole="button" onPress={confirmLogout} style={styles.logoutButton}>
-            <Text style={styles.logoutText} maxFontSizeMultiplier={1.6}>
-              {strings.talk.logout}
-            </Text>
-          </Pressable>
+  const presentation = getTalkPresentation(avatar, listeningMode);
+  const isSpeaking = avatar === "speaking";
+  const contentScrollable = shouldScrollTalkContent(fontScale);
+  const summary = collapsedReplySummary(strings.talk.collapsedPrefix, replyText);
+  const contentBottom = speakingProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [226, 120],
+  });
+  const talkButtonSize = speakingProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [elder.talkButton, elder.talkButtonSmall],
+  });
+  const talkButtonRadius = speakingProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [elder.talkButton / 2, elder.talkButtonSmall / 2],
+  });
+  const replyCardMaxHeight = collapsedProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [contentScrollable ? Math.min(360, windowHeight * 0.44) : 280, 72],
+  });
+  const actionLabel = isSpeaking
+    ? strings.talk.actions.waitWhileSpeaking
+    : presentation.actionLabel;
+
+  const expandedReply = (
+    <>
+      <View style={styles.statusRow}>
+        <View
+          style={[
+            styles.statusIcon,
+            avatar === "listening" ? styles.statusIconOnDark : null,
+            avatar !== "listening"
+              ? { backgroundColor: talkState[avatar].pill }
+              : null,
+          ]}
+        >
+          <TalkStatusIcon state={avatar} />
         </View>
+        <Text
+          selectable
+          style={[styles.statusLabel, { color: talkState[avatar].ink }]}
+          testID="talk-status-label"
+        >
+          {presentation.statusLabel}
+        </Text>
       </View>
-      {internalTesting ? (
-        <Text style={styles.debugPermissions} maxFontSizeMultiplier={1.2}>
-          {`${strings.talk.debugMicLabel}：${micReady ? strings.talk.debugGranted : strings.talk.debugDenied}　${strings.talk.debugLocationLabel}：${locationGranted ? strings.talk.debugGranted : strings.talk.debugDenied}`}
+      {transcriptText ? (
+        <Text selectable style={styles.saidText} testID="talk-transcript">
+          {`${strings.elderHistory.youSaid}${transcriptText}`}
         </Text>
       ) : null}
-      <View style={styles.avatarZone}>
-        <AvatarPlaceholder state={avatar} />
-      </View>
-      <ScrollView
-        style={styles.replyZone}
-        contentContainerStyle={styles.replyContent}
-        showsVerticalScrollIndicator
-      >
-        <Text style={styles.replyText} maxFontSizeMultiplier={2}>
-          {replyText}
-        </Text>
-      </ScrollView>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={strings.talk.pressToTalk}
-        onPressIn={handlePressIn}
-        // 長按門檻採 Pressable 預設 delayLongPress（500ms）：達標＝按住說話、放開送出。
-        onLongPress={() => gestureRef.current.longPress()}
-        onPressOut={handlePressOut}
-        disabled={!micReady || avatar === "thinking"}
-        style={({ pressed }) => [
-          styles.talkButton,
-          pressed || avatar === "listening" ? styles.talkButtonActive : null,
-          !micReady || avatar === "thinking" ? styles.talkButtonDisabled : null,
+      <Text
+        selectable
+        style={[
+          styles.replyText,
+          avatar === "listening" ? styles.replyTextOnDark : null,
         ]}
       >
-        <MicIcon size={52} />
-      </Pressable>
+        {transcriptText ? `${strings.elderHistory.bearSaid}${replyText}` : replyText}
+      </Text>
+    </>
+  );
+
+  return (
+    <SafeAreaView edges={["bottom"]} style={styles.container}>
+      <LinearGradient
+        colors={[...elderGradient.colors]}
+        locations={[...elderGradient.locations]}
+        pointerEvents="none"
+        style={StyleSheet.absoluteFillObject}
+      />
+
+      <View style={styles.header}>
+        <Pressable
+          accessibilityLabel={strings.elderHistory.entryButton}
+          accessibilityRole="button"
+          onPress={() => router.push("/elder/history")}
+          style={({ pressed }) => [styles.roundButton, pressed ? styles.roundButtonPressed : null]}
+          testID="talk-history-button"
+        >
+          <ChatCircleDotsIcon color={colors.primary} size={30} weight="bold" />
+        </Pressable>
+        <Text selectable style={styles.brand}>
+          {strings.role.brand}
+        </Text>
+        <View style={styles.headerSpacer} />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={
+            unreadCount > 0
+              ? `${strings.elderNotifications.bell}，${unreadCount} 則新的`
+              : strings.elderNotifications.bell
+          }
+          onPress={() => router.push("/elder/notifications")}
+          style={({ pressed }) => [styles.roundButton, pressed ? styles.roundButtonPressed : null]}
+        >
+          <BellIcon color={colors.primary} size={30} />
+          {unreadCount > 0 ? (
+            <View style={styles.bellBadge}>
+              <Text style={styles.bellBadgeText}>
+                {unreadCount > 9 ? "9+" : unreadCount}
+              </Text>
+            </View>
+          ) : null}
+        </Pressable>
+        <Pressable
+          accessibilityLabel={strings.talk.logout}
+          accessibilityRole="button"
+          onPress={confirmLogout}
+          style={({ pressed }) => [styles.roundButton, pressed ? styles.roundButtonPressed : null]}
+        >
+          <SignOutIcon color={colors.danger} size={28} weight="bold" />
+        </Pressable>
+      </View>
+
+      <BearStage
+        emotion={replyEmotion}
+        speechCue={speechCue}
+        systemState={avatar}
+      />
+
+      {internalTesting ? (
+        <View style={styles.internalTesting}>
+          <RoleSwitcher />
+          <Text selectable style={styles.debugPermissions}>
+            {`${strings.talk.debugMicLabel}：${micReady ? strings.talk.debugGranted : strings.talk.debugDenied}　${strings.talk.debugLocationLabel}：${locationGranted ? strings.talk.debugGranted : strings.talk.debugDenied}`}
+          </Text>
+        </View>
+      ) : null}
+
+      <Animated.View
+        style={[
+          styles.contentLayer,
+          {
+            bottom: contentBottom,
+            maxHeight: contentScrollable ? Math.min(390, windowHeight * 0.48) : 370,
+          },
+        ]}
+      >
+        <Animated.View
+          accessibilityLabel={`${presentation.statusLabel}。${transcriptText ? `${strings.elderHistory.youSaid}${transcriptText}。` : ""}${replyText}`}
+          accessibilityLiveRegion={avatar === "error" ? "assertive" : "polite"}
+          accessible
+          style={[
+            styles.replyCard,
+            avatar === "listening" ? styles.replyCardListening : null,
+            avatar === "error" ? styles.replyCardError : null,
+            { maxHeight: replyCardMaxHeight },
+          ]}
+          testID="talk-reply-card"
+        >
+          <Pressable
+            accessibilityHint={collapsed ? "打開完整回答" : undefined}
+            accessibilityRole={collapsed ? "button" : undefined}
+            disabled={!collapsed}
+            onPress={() => setCollapsed(false)}
+            style={styles.replyCardPressable}
+          >
+            {collapsed ? (
+              <View style={styles.collapsedRow}>
+                <ChatCircleDotsIcon color={colors.primary} size={28} weight="bold" />
+                <Text numberOfLines={1} selectable style={styles.collapsedText}>
+                  {summary}
+                </Text>
+                <CaretDownIcon color={colors.textSoft} size={26} weight="bold" />
+              </View>
+            ) : contentScrollable ? (
+              <ScrollView
+                contentContainerStyle={styles.expandedContent}
+                nestedScrollEnabled
+                showsVerticalScrollIndicator
+                style={styles.replyScroll}
+              >
+                {expandedReply}
+              </ScrollView>
+            ) : (
+              <View style={styles.expandedContent}>{expandedReply}</View>
+            )}
+          </Pressable>
+        </Animated.View>
+
+        {collapsed ? (
+          <View
+            style={[styles.statusBand, { backgroundColor: talkState[avatar].pill }]}
+            testID="talk-status-band"
+          >
+            <View style={[styles.statusIcon, styles.statusIconCompact]}>
+              <TalkStatusIcon state={avatar} />
+            </View>
+            <View style={styles.statusCopy}>
+              <Text selectable style={[styles.statusLabel, { color: talkState[avatar].ink }]}>
+                {presentation.statusLabel}
+              </Text>
+              <Text selectable style={[styles.statusSub, { color: talkState[avatar].ink }]}>
+                {strings.talk.statusSub[avatar]}
+              </Text>
+            </View>
+          </View>
+        ) : null}
+      </Animated.View>
+
+      <View style={[styles.voiceAction, isSpeaking ? styles.voiceActionSpeaking : null]}>
+        <Animated.View
+          style={[
+            styles.talkButtonFrame,
+            {
+              width: talkButtonSize,
+              height: talkButtonSize,
+              borderRadius: talkButtonRadius,
+              backgroundColor: speakingProgress.interpolate({
+                inputRange: [0, 1],
+                outputRange: [colors.action, "#FDF6DE"],
+              }),
+            },
+          ]}
+        >
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={strings.talk.pressToTalk}
+            accessibilityState={{
+              busy: avatar === "thinking",
+              disabled: !micReady || avatar === "thinking",
+            }}
+            onPressIn={handlePressIn}
+            // 長按門檻採 Pressable 預設 delayLongPress（500ms）：達標＝按住說話、放開送出。
+            onLongPress={() => {
+              gestureRef.current.longPress();
+              setListeningMode("hold");
+            }}
+            onPressOut={handlePressOut}
+            disabled={!micReady || avatar === "thinking"}
+            style={({ pressed }) => [
+              styles.talkButton,
+              pressed || avatar === "listening" ? styles.talkButtonActive : null,
+              !micReady || avatar === "thinking" ? styles.talkButtonDisabled : null,
+            ]}
+            testID="talk-button"
+          >
+            <MicIcon color={isSpeaking ? colors.warningText : colors.text} size={isSpeaking ? 34 : 60} />
+          </Pressable>
+        </Animated.View>
+        <Text
+          selectable
+          style={[styles.actionLabel, isSpeaking ? styles.actionLabelSpeaking : null]}
+          testID="talk-action-label"
+        >
+          {actionLabel}
+        </Text>
+      </View>
     </SafeAreaView>
   );
+}
+
+function TalkStatusIcon(props: { state: TalkVisualState }) {
+  const color = talkState[props.state].ink;
+  const iconProps = { color, size: 32, weight: "bold" as const };
+  if (props.state === "listening") {
+    return <WaveformIcon {...iconProps} />;
+  }
+  if (props.state === "thinking") {
+    return <ArrowClockwiseIcon {...iconProps} />;
+  }
+  if (props.state === "speaking") {
+    return <SpeakerHighIcon {...iconProps} />;
+  }
+  if (props.state === "error") {
+    return <WifiSlashIcon {...iconProps} />;
+  }
+  return <CheckCircleIcon {...iconProps} />;
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
-    padding: spacing.l,
-    gap: spacing.l,
+    overflow: "hidden",
   },
-  topRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  topActions: { flexDirection: "row", alignItems: "center", gap: spacing.s },
-  // 鈴鐺 56dp：長輩手指粗、又常戴老花，48dp 的最小可觸控目標對他們仍偏小。
-  bellButton: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+  header: {
+    position: "absolute",
+    top: 66,
+    left: elder.pagePadding,
+    right: elder.pagePadding,
+    zIndex: 4,
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.surface,
+    gap: 10,
+  },
+  brand: {
+    color: colors.primaryPressed,
+    fontSize: elder.fontMin,
+    fontWeight: "900",
+    letterSpacing: 1.3,
+    lineHeight: 28,
+  },
+  headerSpacer: { flex: 1 },
+  roundButton: {
+    width: elder.roundButton,
+    height: elder.roundButton,
     borderWidth: 1,
     borderColor: colors.border,
+    borderRadius: elder.roundButton / 2,
+    backgroundColor: colors.surface,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: colors.primaryPressed,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  roundButtonPressed: {
+    transform: [{ scale: 0.98 }],
+    shadowOpacity: 0.04,
   },
   bellBadge: {
     position: "absolute",
-    top: 4,
-    right: 4,
-    minWidth: 22,
-    height: 22,
-    borderRadius: 11,
+    top: 2,
+    right: 2,
+    minWidth: 32,
+    height: 32,
+    borderRadius: 16,
     paddingHorizontal: 5,
-    backgroundColor: colors.danger,
+    backgroundColor: colors.dangerBadge,
     alignItems: "center",
     justifyContent: "center",
   },
-  bellBadgeText: { color: "#FFFFFF", fontSize: 13, fontWeight: "700" },
-  debugPermissions: { fontSize: 13, color: colors.textSoft, textAlign: "center" },
-  logoutButton: { paddingVertical: 8, paddingHorizontal: spacing.m, minHeight: 48, justifyContent: "center" },
-  logoutText: { fontSize: 16, color: colors.textSoft },
-  avatarZone: { alignItems: "center", marginTop: spacing.xl },
-  // 回覆改可捲動（2026-07-18）：短回覆置中、長回覆或大系統字級可上滑看完整，字級不縮。
-  replyZone: { flex: 1 },
-  replyContent: { flexGrow: 1, justifyContent: "center", paddingVertical: spacing.s },
+  bellBadgeText: { color: "#FFFFFF", fontSize: elder.fontMin, fontWeight: "700" },
+  internalTesting: {
+    position: "absolute",
+    top: 130,
+    left: elder.pagePadding,
+    right: elder.pagePadding,
+    zIndex: 5,
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  debugPermissions: { fontSize: elder.fontMin, color: colors.textSoft, textAlign: "center" },
+  contentLayer: {
+    position: "absolute",
+    left: elder.pagePadding,
+    right: elder.pagePadding,
+    zIndex: 2,
+    gap: spacing.s,
+  },
+  replyCard: {
+    width: "100%",
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 24,
+    backgroundColor: colors.surface,
+    overflow: "hidden",
+    shadowColor: colors.primaryPressed,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.08,
+    shadowRadius: 28,
+    elevation: 4,
+  },
+  replyCardListening: {
+    borderColor: colors.primaryPressed,
+    backgroundColor: talkState.listening.pill,
+  },
+  replyCardError: { borderColor: colors.danger },
+  replyCardPressable: { width: "100%" },
+  expandedContent: { padding: 18, gap: 10 },
+  replyScroll: { maxHeight: 330 },
+  statusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  statusIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  statusIconOnDark: { backgroundColor: "rgba(255,255,255,0.16)" },
+  statusIconCompact: { backgroundColor: "transparent" },
+  statusLabel: {
+    flexShrink: 1,
+    fontSize: 26,
+    fontWeight: "900",
+    lineHeight: 32,
+  },
+  saidText: {
+    color: colors.textSoft,
+    fontSize: elder.fontMin,
+    fontWeight: "700",
+    lineHeight: 31,
+  },
   replyText: {
-    fontSize: elder.fontBig,
-    lineHeight: elder.fontBig * 1.4,
     color: colors.text,
-    textAlign: "center",
-    fontWeight: "600",
+    fontSize: 24,
+    fontWeight: "700",
+    lineHeight: 35,
   },
-  // 圓形麥克風主鍵（2026-07-18）：取代整條大按鈕，讓出垂直空間給回覆；仍是超大觸控目標。
+  replyTextOnDark: { color: "#FFFFFF" },
+  collapsedRow: {
+    minHeight: 70,
+    paddingHorizontal: 18,
+    shadowColor: colors.primaryPressed,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  collapsedText: {
+    flex: 1,
+    color: colors.text,
+    fontSize: elder.fontMin,
+    fontWeight: "700",
+    lineHeight: 31,
+  },
+  statusBand: {
+    minHeight: 76,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 24,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  statusCopy: { flex: 1 },
+  statusSub: {
+    flex: 1,
+    fontSize: elder.fontMin,
+    fontWeight: "700",
+    lineHeight: 29,
+  },
+  voiceAction: {
+    position: "absolute",
+    left: elder.pagePadding,
+    right: elder.pagePadding,
+    bottom: 40,
+    zIndex: 3,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  voiceActionSpeaking: { flexDirection: "row", gap: 14 },
+  talkButtonFrame: {
+    flexShrink: 0,
+    shadowColor: "#D6A820",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.28,
+    shadowRadius: 20,
+    elevation: 5,
+    overflow: "hidden",
+  },
   talkButton: {
-    width: 104,
-    height: 104,
-    borderRadius: 52,
-    backgroundColor: colors.primary,
-    alignSelf: "center",
+    width: "100%",
+    height: "100%",
+    borderWidth: 0,
+    borderRadius: 999,
+    backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
   },
-  talkButtonActive: { backgroundColor: colors.primaryPressed },
-  talkButtonDisabled: { opacity: 0.5 },
+  talkButtonActive: {
+    backgroundColor: "rgba(243,212,95,0.55)",
+    transform: [{ scale: 0.98 }],
+  },
+  talkButtonDisabled: { opacity: 0.7 },
+  actionLabel: {
+    maxWidth: 330,
+    color: colors.text,
+    fontSize: 26,
+    fontWeight: "900",
+    letterSpacing: 0.65,
+    lineHeight: 31,
+    textAlign: "center",
+  },
+  actionLabelSpeaking: {
+    maxWidth: 220,
+    color: colors.textSoft,
+    fontSize: elder.fontMin,
+    lineHeight: 30,
+    textAlign: "left",
+  },
 });

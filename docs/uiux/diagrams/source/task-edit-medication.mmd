@@ -1,0 +1,25 @@
+---
+title: Task Flow 06：編輯一筆行程
+---
+flowchart TD
+  subgraph L0["前置與輸入"]
+    L0N0["前置：已有行程 group"]
+    L0N1["輸入：修改類型、內容或時間"]
+    L0N0 --> L0N1
+  end
+  subgraph L1["步驟與驗證"]
+    L1N0["操作：選擇編輯"]
+    L1N1["驗證：內容與時間有效"]
+    L1N0 --> L1N1
+    L1N2["系統：PUT schedule"]
+    L1N1 --> L1N2
+  end
+  L0N1 -.-> L1N0
+  subgraph L2["條件與回復"]
+    L2N0["成功：清單更新"]
+    L2N1["失敗：API 拒絕"]
+    L2N0 --> L2N1
+    L2N2["回復：修正、重試或取消"]
+    L2N1 --> L2N2
+  end
+  L1N2 -.-> L2N0

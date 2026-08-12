@@ -60,7 +60,7 @@ class _NullNotifier:
 class _VoiceTts:
     """回帶音檔的 TTS（觸發語音回覆路徑）。"""
 
-    def synthesize(self, text: str) -> TtsResult:
+    def synthesize(self, text: str, *, voice=None) -> TtsResult:
         return TtsResult(text=text, audio=b"fake-m4a", duration_ms=1200)
 
 
@@ -135,6 +135,7 @@ def test_turn_replies_text_and_voice():
     assert res.status_code == 201
     body = res.json()["data"]
     assert body["text"] == "你說的是：阿公早安"
+    assert body["transcript"] == "阿公早安"
     assert body["audio_url"] == "https://cdn.example/reply.m4a"
     assert body["duration_ms"] == 1200
 
@@ -146,6 +147,7 @@ def test_turn_degrades_to_text_without_audio():
     assert res.status_code == 201
     body = res.json()["data"]
     assert body["text"] == "你說的是：阿公早安"
+    assert body["transcript"] == "阿公早安"
     assert body["audio_url"] == ""
 
 
@@ -441,6 +443,8 @@ def test_容量閘門滿載且排隊逾時時回_503_而不是裸_429_或靜默�
         assert body["error"]["code"] == "too_many_requests"
         # 是人話不是狀態碼，且與 WS 路徑同一句「還在忙」——不是管線一般性失敗的文案。
         assert "還在忙" in body["error"]["message"]
+        assert body["error"]["message"].startswith("我")
+        assert "金孫" not in body["error"]["message"]
 
         asr.release.set()
         t.join(5.0)

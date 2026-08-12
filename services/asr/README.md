@@ -9,12 +9,37 @@
 | 路徑 | `POST /transcribe` |
 | 請求 | body 為**原始音檔 bytes**（`Content-Type` 由呼叫端帶入，如 `audio/m4a`；容器不拘） |
 | 回應 | JSON `{"text": "<繁體國語漢字>"}` |
-| 健康檢查 | `GET /healthz` → `{"status": "ok", "model_loaded": <bool>}` |
+| 健康檢查 | `GET /healthz` → `{"status": "ok"｜"degraded", "model_loaded": <bool>, "stuck_workers": <int>}`；`degraded`＝有辨識逾時後放生的執行緒，需重啟行程回收 |
 | 過載 | 等候請求數超過 `ASR_MAX_CONCURRENCY + ASR_MAX_QUEUE` → 回 503 |
+| 逾時 | 辨識超過 `ASR_TRANSCRIBE_TIMEOUT_SECONDS` → 回 504（`transcribe_timeout`） |
 | 解碼失敗 | 音檔無法解碼（ffmpeg 失敗或 0 樣本）→ 回 422（`audio_decode_failed`），ffmpeg stderr 記入服務 log 供查根因 |
 | 純靜音 | 峰值低於 `ASR_SILENCE_PEAK` → 直接回 `{"text": ""}`、不進模型（Whisper 對靜音會幻覺出重複語句） |
 | 辨識語言 | 由 `ASR_LANGUAGE`（預設 `zh`）**釘死**，不做自動偵測——語言槽留空會讓近無聲音檔的偵測結果變成垃圾、解碼跑進重複迴圈（見下方「為什麼一定要釘語言」） |
 | 呼叫端 | [`kinsun.speech.asr.DgxAsrClient`](../../src/kinsun/speech/asr.py) |
+
+## 逾時與降級（2026-08-11）
+
+`ASR_MAX_CONCURRENCY` 預設為 1（只有一顆 GPU），意即**任何一個卡死的請求都會佔走
+唯一的併發名額**，之後所有長輩都拿不到——**連話都送不進去**，整個對講機形同斷線，
+且不會自行恢復。⚠️ 這比 TTS 卡死更嚴重：TTS 掛了長輩至少還看得到文字回覆。
+
+兩處逾時，性質**刻意不同**：
+
+| 位置 | 逾時後 | 資源真的回收嗎 |
+|---|---|---|
+| ffmpeg 解碼 | 子行程被 SIGKILL，沿用既有 422（壞音檔）路徑 | ✅ 完全回收 |
+| **模型辨識** | 讓出併發名額、回 504 | ⚠️ **執行緒仍在背景跑** |
+
+⚠️ 模型辨識那道不是完全的復原：辨識跑在 threadpool，Python 殺不掉執行緒——逾時只能
+讓等待的協程放棄、把名額讓出來。故每次逾時累加 `stuck_workers`，`/healthz` 轉
+`degraded`：放生的執行緒只能靠**重啟行程**回收，維運需要看得見。先前 healthz 只回報
+模型載入與否，於是服務癱瘓時它依然回 `ok`，監控全綠、長輩卻已經說不上話。
+
+`ASR_TRANSCRIBE_TIMEOUT_SECONDS` 預設 120 秒刻意寬鬆：長輩可上傳到 `ASR_MAX_BODY_BYTES`
+的音檔，GPU 吃緊時解碼加推論會拉長。長輩那端另有自己的上限（應用層
+`ASR_TIMEOUT_SECONDS`）；這裡的目的不是控制長輩等多久，而是不讓卡死的請求永久佔住名額。
+
+與 `services/tts` 為同一套處置，兩支服務的行為刻意保持一致。
 
 ## 部署（DGX）
 
@@ -37,6 +62,8 @@ pipeline——因為 HF 內建的 `ffmpeg_read` 是把 bytes 灌進 ffmpeg `stdi
 | `ASR_MODEL_ID` | `MediaTek-Research/Breeze-ASR-26` | 覆寫模型 id |
 | `ASR_MAX_CONCURRENCY` | `1` | 同時處理的辨識請求數（threadpool + semaphore） |
 | `ASR_MAX_QUEUE` | `8` | 等候佇列上限，超過回 503（`overloaded`） |
+| `ASR_TRANSCRIBE_TIMEOUT_SECONDS` | `120` | 單一請求的辨識上限；逾時回 504 並讓出併發名額（見「逾時與降級」） |
+| `ASR_FFMPEG_TIMEOUT_SECONDS` | `30` | ffmpeg 解碼逾時（子行程，殺得掉），逾時視為壞音檔回 422 |
 | `ASR_API_KEY` | 空 | 共用金鑰（✅ D-56）：設定後驗 `X-Api-Key`（錯誤回 401）；留空＝內網不驗 |
 | `ASR_MAX_BODY_BYTES` | `10485760` | 單請求 body 上限（bytes）；超過回 413、空 body 回 400（✅ D-26） |
 | `ASR_PRELOAD` | `0` | 設 `1` 於服務啟動（lifespan）即載入模型。⚠️ **`scripts/kinsun.sh` 啟動時一律帶 `1`**（2026-08-07 起，見 docs/dev/14 §1「GPU 模型預熱」）——預設 0 是給沒有 GPU 的開發機用的，正式機延遲載入等於讓長輩的第一句話去撞 CUDA OOM |
@@ -100,4 +127,5 @@ ASR_ENDPOINT=http://<dgx-host>:8001/transcribe
 - [x] 確認音檔格式與前處理（取樣率、聲道、`m4a`／`wav`）——服務自行以 ffmpeg 解成 16k 單聲道陣列（見上），已實機驗證 m4a 可正確辨識。
 - [x] 鎖定 `torch`／`transformers` 在 aarch64 + CUDA 的版本（`requirements.txt`：torch 2.12.1+cu130、transformers 5.x）。
 - [x] 加上併發與健康檢查（`GET /healthz`）——已於程式碼實作（threadpool + semaphore + 佇列上限 503）。
-- [ ] 服務端逐請求 timeout（目前僅呼叫端 `DgxAsrClient` 有 urlopen 逾時）。
+- [x] 服務端逐請求 timeout（2026-08-11）：辨識與 ffmpeg 解碼各有上限，逾時讓出併發名額；
+      辨識的執行緒殺不掉，故累計 `stuck_workers` 並由 `/healthz` 回報 `degraded`（見「逾時與降級」）。
