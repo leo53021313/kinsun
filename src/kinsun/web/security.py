@@ -61,8 +61,21 @@ def install_security_headers(app: FastAPI) -> None:
         response = await call_next(request)
         # 阿白 renderer 是全站唯一需要被嵌入的文件。精確比對檔案路徑，避免把
         # `/demo/`、API 或其他靜態資產一起放寬成可被 iframe 包住。
+        #
+        # ⚠️ **必須用 `scope["path"]`，不可用 `request.url.path`。** 後者是
+        # Starlette 拿 scope 重組成完整網址字串、再以 `urlsplit` 切一次的結果，
+        # 於是 `#` 之後會被當成片段丟掉——`/demo/otto/renderer.html%23a/b` 的
+        # `request.url.path` 是 `/demo/otto/renderer.html`（比對命中、掛上放寬的
+        # 標頭），但路由實際依據的 `scope["path"]` 是
+        # `/demo/otto/renderer.html#a/b`，靜態檔找不到而回退成**單頁應用殼**。
+        # 結果就是 index.html 帶著 `SAMEORIGIN`＋`frame-ancestors 'self'` 出去，
+        # 正是本段註解宣稱不會發生的事（2026-08-12 審查以真 uvicorn 往返重現，
+        # `%3F` 是同一機制的另一半）。判斷用的路徑必須與決定回應內容的路徑是
+        # 同一個，而那個是 `scope["path"]`。
         headers = (
-            _DEMO_RENDERER_HEADERS if request.url.path == _DEMO_RENDERER_PATH else SECURITY_HEADERS
+            _DEMO_RENDERER_HEADERS
+            if request.scope["path"] == _DEMO_RENDERER_PATH
+            else SECURITY_HEADERS
         )
         for name, value in headers.items():
             response.headers.setdefault(name, value)
