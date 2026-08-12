@@ -2,6 +2,10 @@
  * 完整旅程：註冊家屬 → 建立長輩 → 取得綁定碼 → 長輩端配對 → 家屬設提醒 →
  * 提醒出現在行程清單。
  *
+ * 另有一條不寫資料庫的阿白 renderer 回歸測試：靜態檔仍經真正的
+ * FastAPI `/demo` 路徑下載，只攔截與角色載入無關的 API。這條要同時證明
+ * HTTP 標頭允許同源 iframe、renderer 有送出 ready，以及 SVG 真的掛載完成。
+ *
  * ⚠️ **這裡驗的是家屬欄的行程清單，不是長輩欄的通知橫幅**：`app_notifications`
  * 只由排程觸發寫入，建立排程本身不會產生通知，而 `useNotificationFeed` 的
  * `shownUpTo` 一律從 0 起跳（第一輪只重建基準、不補播）——結構上這一步做不到
@@ -104,4 +108,65 @@ test("服務停機時不讓人進去", async ({ page }) => {
   await page.goto("/demo/");
   await expect(page.getByText("服務目前無法使用")).toBeVisible();
   await expect(page.getByRole("button", { name: "開始使用" })).toBeDisabled();
+});
+
+test("FastAPI 正式路徑會載入並顯示阿白 renderer", async ({ page }) => {
+  // 這條只驗 renderer 的正式靜態路徑，不寫入後端。用內測 session 讓畫面
+  // 直接進對講機；初始腳本也會在 sandbox iframe 執行，故必須限定頂層視窗，
+  // 否則 iframe 沒有 allow-same-origin，讀 localStorage 會被瀏覽器拒絕。
+  await page.addInitScript(() => {
+    if (window.top !== window) return;
+    localStorage.setItem(
+      "kinsun_web_session_elder",
+      JSON.stringify({ role: "elder", token: "e2e-renderer-token", display_name: "E2E 阿嬤" }),
+    );
+  });
+  await page.route("**/api/v1/demo-status", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        success: true,
+        data: {
+          overall: "available",
+          components: {
+            database: "ok",
+            asr: "ok",
+            tts: "ok",
+            llm: "ok",
+            scheduler: "ok",
+          },
+        },
+        error: null,
+        meta: null,
+      }),
+    }),
+  );
+  await page.route("**/api/v1/elder-notifications", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ success: true, data: [], error: null, meta: null }),
+    }),
+  );
+
+  // 不攔截 renderer 請求：它必須真的經過 FastAPI security middleware。
+  const rendererResponsePromise = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/demo/otto/renderer.html",
+  );
+  await page.goto("/demo/stage");
+  const rendererResponse = await rendererResponsePromise;
+
+  expect(rendererResponse.status()).toBe(200);
+  const headers = rendererResponse.headers();
+  expect(headers["x-frame-options"]).toBe("SAMEORIGIN");
+  expect(headers["content-security-policy"]).toContain("frame-ancestors 'self'");
+  expect(headers["content-security-policy"]).toContain("script-src 'unsafe-inline'");
+
+  const elder = page.getByRole("region", { name: "長輩的手機" });
+  const rendererFrame = elder.locator('iframe[title="阿白在這裡"]');
+  await expect(rendererFrame).toHaveCSS("opacity", "1");
+  await expect(
+    page.frameLocator('iframe[title="阿白在這裡"]').locator("#petMount > svg"),
+  ).toHaveCount(1);
 });

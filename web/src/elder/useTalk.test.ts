@@ -111,6 +111,10 @@ function makeRecorder(
           );
         },
         isRecording: () => recording,
+        // 長輩端不讀這個值（`postTurn` 寫死 audio/m4a，後端 ASR 交給 ffmpeg 嗅探
+        // 容器），但它是 `Recorder` 的一員，假物件要對齊型別。真正會用到它的是
+        // 家屬端的客製化聲音上傳（2026-08-12）。
+        mimeType: () => "audio/webm",
       };
     },
   };

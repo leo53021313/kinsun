@@ -15,6 +15,8 @@ import type {
   HealthReport,
   ScheduleGroup,
   ScheduleInput,
+  VoiceProfileScript,
+  VoiceProfileStatus,
 } from "kinsun-shared/types";
 
 import { request, requestWithMeta } from "@/api";
@@ -192,4 +194,50 @@ export async function setElderAccount(
 
 export function listNotifications(token: string): Promise<AppNotification[]> {
   return request("/api/v1/notifications", { token });
+}
+
+// --- 長輩客製化聲音（2026-08-12）：家屬錄一段參考語音，長輩往後聽到那個聲音 ---
+
+/**
+ * 取家屬要照唸的稿子與注意事項。
+ *
+ * 不帶 token 是刻意的：後端這支沒有認證依賴（稿子本身不是機密），多送一個標頭
+ * 只會讓「這支到底要不要登入」在前後端各有一種說法。
+ */
+export function getVoiceProfileScript(): Promise<VoiceProfileScript> {
+  return request("/api/v1/voice-profile-script");
+}
+
+/** 查這位長輩目前有沒有生效中的客製化聲音。⚠️ 後端不回音檔，也不回可下載網址。 */
+export function getVoiceProfile(elderId: string, token: string): Promise<VoiceProfileStatus> {
+  return request(`/api/v1/elders/${elderId}/voice-profile`, { token });
+}
+
+/**
+ * 上傳參考音檔，設定或覆蓋這位長輩的專屬聲音。
+ *
+ * ⚠️ 三樣東西各有各的位置，放錯的症狀都不一樣：音檔是**原始位元組**放 body
+ * （不是 multipart）、`consented_by` 走 **query param**（body 已被音檔佔滿）、
+ * 格式走 **Content-Type**（後端據此擋掉非音檔，且它會成為 Supabase 上物件的
+ * 中繼資料）。
+ */
+export function setVoiceProfile(
+  elderId: string,
+  audio: ArrayBuffer,
+  mimeType: string,
+  consentedBy: string,
+  token: string,
+): Promise<VoiceProfileStatus> {
+  const query = new URLSearchParams({ consented_by: consentedBy }).toString();
+  return request(`/api/v1/elders/${elderId}/voice-profile?${query}`, {
+    method: "PUT",
+    body: audio,
+    headers: { "Content-Type": mimeType },
+    token,
+  });
+}
+
+/** 撤銷客製化聲音，下一輪起回到全域預設聲音。 */
+export function revokeVoiceProfile(elderId: string, token: string): Promise<void> {
+  return request(`/api/v1/elders/${elderId}/voice-profile`, { method: "DELETE", token });
 }

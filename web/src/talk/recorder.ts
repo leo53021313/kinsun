@@ -17,6 +17,18 @@ export type Recorder = {
   /** 停止並取回錄到的位元組；沒在錄音時回 null。 */
   stop: () => Promise<ArrayBuffer | null>;
   isRecording: () => boolean;
+  /**
+   * 這段錄音的容器格式，如 `audio/webm;codecs=opus`（Chrome／Firefox）或
+   * `audio/mp4`（Safari）。
+   *
+   * ⚠️ **`stop()` 之後仍然讀得到**：呼叫端要拿它當上傳的 Content-Type，而那一定
+   * 發生在停止之後。`stop()` 會把內部的 `recorder` 清成 null，所以格式另存一份。
+   *
+   * ⚠️ 為什麼不改成讓 `stop()` 一起回傳：那會動到 `stop` 的回傳型別，波及長輩
+   * 對講機（`useTalk.ts`）這條正在運作的關鍵路徑。新增一個讀取器是加法，
+   * 既有呼叫端一行都不用改。
+   */
+  mimeType: () => string;
 };
 
 /**
@@ -47,6 +59,9 @@ export function createRecorder(deps: RecorderDeps = {}): Recorder {
   let recorder: MediaRecorder | null = null;
   let stream: MediaStream | null = null;
   let chunks: Blob[] = [];
+  // ⚠️ 與 `recorder` 分開存：`stop()` 會把 `recorder` 清成 null，而呼叫端正是在
+  // 停止之後才需要這個值（拿去當上傳的 Content-Type）。下一次 `start()` 覆蓋它。
+  let recordedMimeType = "";
   // 重入保護：`recorder` 只在 `await getUserMedia` 之後才賦值，等待權限的
   // 整個窗口裡 `isRecording()` 回 false，呼叫端就算檢查也擋不住重入——第二次
   // `start()` 會覆蓋 `stream`／`recorder` 變數，讓第一顆 `MediaStream` 的軌道
@@ -69,6 +84,8 @@ export function createRecorder(deps: RecorderDeps = {}): Recorder {
           }
         };
         recorder.start();
+        // 依規格 `MediaRecorder.mimeType` 在 `start()` 之後才保證是實際採用的值。
+        recordedMimeType = recorder.mimeType ?? "";
         return true;
       } catch {
         // 權限被拒或瀏覽器不支援都走這裡。⚠️ 不擲出去——擲出去的話長輩端整個
@@ -83,6 +100,7 @@ export function createRecorder(deps: RecorderDeps = {}): Recorder {
         stream?.getTracks().forEach((track) => track.stop());
         stream = null;
         recorder = null;
+        recordedMimeType = "";
         return false;
       } finally {
         starting = false;
@@ -139,6 +157,14 @@ export function createRecorder(deps: RecorderDeps = {}): Recorder {
 
     isRecording() {
       return recorder !== null;
+    },
+
+    mimeType() {
+      // 後端檢查 `content-type.startsWith("audio/")`，空字串或怪值一律 415。
+      // 極少數瀏覽器不回報格式，退回最常見的容器——DGX 端一律以 ffmpeg 嗅探
+      // 實際內容轉檔（`services/tts/server.py::_normalize_to_wav`），標錯只影響
+      // bucket 上的中繼資料，不影響合成結果。
+      return recordedMimeType.startsWith("audio/") ? recordedMimeType : "audio/webm";
     },
   };
 }
