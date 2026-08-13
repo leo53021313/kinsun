@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1024" viewBox="0 0 1440 1024" role="img">
+<style>text{font-family:'Microsoft JhengHei','PingFang TC','Noto Sans CJK TC','Noto Sans TC',sans-serif;fill:#202124;}.muted{fill:#5F6368}.label{font-weight:700;letter-spacing:.4px}</style>
+<rect x="0" y="0" width="1440" height="86" rx="0" fill="#FFFFFF" stroke="#3C4043" stroke-width="2"/>
+<text x="54" y="25" font-size="26" font-weight="700" fill="#202124" text-anchor="start">Kinsun 內部維運</text>
+<rect x="460" y="20" width="126" height="44" rx="10" fill="#F1F3F4" stroke="#9AA0A6" stroke-width="2"/>
+<text x="523" y="34" font-size="16" font-weight="400" fill="#202124" text-anchor="middle">總覽</text>
+<rect x="610" y="20" width="126" height="44" rx="10" fill="#F1F3F4" stroke="#9AA0A6" stroke-width="2"/>
+<text x="673" y="34" font-size="16" font-weight="400" fill="#202124" text-anchor="middle">訊息流</text>
+<rect x="760" y="20" width="126" height="44" rx="10" fill="#F1F3F4" stroke="#9AA0A6" stroke-width="2"/>
+<text x="823" y="34" font-size="16" font-weight="400" fill="#202124" text-anchor="middle">長輩</text>
+<rect x="910" y="20" width="126" height="44" rx="10" fill="#3C4043" stroke="#9AA0A6" stroke-width="2"/>
+<text x="973" y="34" font-size="16" font-weight="700" fill="#FFFFFF" text-anchor="middle">系統</text>
+<text x="1386" y="32" font-size="14" font-weight="400" fill="#5F6368" text-anchor="end">X-Admin-Key</text>
+<text x="58" y="120" font-size="30" font-weight="700" fill="#202124" text-anchor="start">系統</text>
+<text x="58" y="160" font-size="15" font-weight="400" fill="#5F6368" text-anchor="start">排程與 RAG｜1440 × 1024｜結構型線框</text>
+<rect x="58.0" y="205" width="426.6666666666667" height="142" rx="10" fill="#FFFFFF" stroke="#9AA0A6" stroke-width="2"/>
+<text x="76.0" y="219" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">區塊</text>
+<text x="76.0" y="247" font-size="19" font-weight="700" fill="#202124" text-anchor="start">提醒排程</text>
+<text x="76.0" y="301" font-size="14" font-weight="400" fill="#5F6368" text-anchor="start">cron 與上次執行時間</text>
+<rect x="506.6666666666667" y="205" width="426.6666666666667" height="142" rx="10" fill="#FFFFFF" stroke="#9AA0A6" stroke-width="2"/>
+<text x="524.6666666666667" y="219" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">區塊</text>
+<text x="524.6666666666667" y="247" font-size="19" font-weight="700" fill="#202124" text-anchor="start">每日摘要</text>
+<text x="524.6666666666667" y="301" font-size="14" font-weight="400" fill="#5F6368" text-anchor="start">cron 與上次執行時間</text>
+<rect x="955.3333333333334" y="205" width="426.66666666666663" height="142" rx="10" fill="#FFFFFF" stroke="#9AA0A6" stroke-width="2"/>
+<text x="973.3333333333334" y="219" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">區塊</text>
+<text x="973.3333333333334" y="247" font-size="19" font-weight="700" fill="#202124" text-anchor="start">RAG Worker</text>
+<text x="973.3333333333334" y="301" font-size="14" font-weight="400" fill="#5F6368" text-anchor="start">目前 active release</text>
+<rect x="58.0" y="373" width="426.6666666666667" height="142" rx="10" fill="#FFFFFF" stroke="#9AA0A6" stroke-width="2"/>
+<text x="76.0" y="387" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">區塊</text>
+<text x="76.0" y="415" font-size="19" font-weight="700" fill="#202124" text-anchor="start">RAG 資料狀態</text>
+<text x="76.0" y="469" font-size="14" font-weight="400" fill="#5F6368" text-anchor="start">文件與 chunk 數</text>
+<rect x="506.6666666666667" y="373" width="426.6666666666667" height="142" rx="10" fill="#FFFFFF" stroke="#9AA0A6" stroke-width="2"/>
+<text x="524.6666666666667" y="387" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">區塊</text>
+<text x="524.6666666666667" y="415" font-size="19" font-weight="700" fill="#202124" text-anchor="start">內測手動執行</text>
+<text x="524.6666666666667" y="469" font-size="14" font-weight="400" fill="#5F6368" text-anchor="start">僅 internal testing 顯示</text>
+<rect x="955.3333333333334" y="373" width="426.66666666666663" height="142" rx="10" fill="#FFFFFF" stroke="#9AA0A6" stroke-width="2"/>
+<text x="973.3333333333334" y="387" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">錯誤</text>
+<text x="973.3333333333334" y="415" font-size="19" font-weight="700" fill="#202124" text-anchor="start">服務警告</text>
+<text x="973.3333333333334" y="469" font-size="14" font-weight="400" fill="#5F6368" text-anchor="start">顯示可行下一步</text>
+<text x="1382" y="994" font-size="14" font-weight="400" fill="#5F6368" text-anchor="end">主要區域可捲動；鍵盤焦點依 DOM 順序移動。</text>
+</svg>

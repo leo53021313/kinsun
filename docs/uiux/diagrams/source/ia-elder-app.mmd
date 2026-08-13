@@ -1,0 +1,27 @@
+---
+title: 長輩端資訊架構
+---
+flowchart TD
+  subgraph L0["未建立 Session"]
+    L0N0["角色選擇：我是長輩"]
+    L0N1["首次使用：裝置綁定"]
+    L0N0 --> L0N1
+    L0N2["已配對：帳密重新登入"]
+    L0N1 --> L0N2
+  end
+  subgraph L1["已建立 Session"]
+    L1N0["權限：麥克風必要、定位可選"]
+    L1N1["核心：按住放開或短按兩次"]
+    L1N0 --> L1N1
+    L1N2["回饋：聽取與閱讀回覆"]
+    L1N1 --> L1N2
+  end
+  L0N2 -.-> L1N0
+  subgraph L2["回復"]
+    L2N0["權限拒絕：提供下一步"]
+    L2N1["送出失敗：保留可重試狀態"]
+    L2N0 --> L2N1
+    L2N2["403：清除 Session 並重新綁定"]
+    L2N1 --> L2N2
+  end
+  L1N2 -.-> L2N0

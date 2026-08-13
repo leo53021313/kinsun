@@ -7,7 +7,7 @@ import { type AppNotification, listElderNotifications } from "@/lib/api";
 import { saveSeenAt } from "@/lib/notificationsSeen";
 import { useSession, useSignOutOnAuthError } from "@/lib/SessionProvider";
 import { strings } from "@/lib/strings";
-import { colors, spacing } from "@/lib/theme";
+import { colors, elder, spacing } from "@/lib/theme";
 import { formatTime } from "kinsun-shared/format";
 
 /** 長輩的提醒列表（X-01，2026-07-29）：用藥／回診提醒與主動關懷，最近先。
@@ -64,14 +64,16 @@ export default function ElderNotifications() {
         data={items}
         keyExtractor={(n) => `${n.created_at}-${n.content}`}
         contentContainerStyle={styles.list}
-        ListHeaderComponent={<ErrorText message={error} />}
-        ListEmptyComponent={loaded ? <EmptyHint text={strings.elderNotifications.empty} /> : null}
+        ListHeaderComponent={<ErrorText message={error} size="big" />}
+        ListEmptyComponent={
+          loaded ? <EmptyHint text={strings.elderNotifications.empty} size="big" /> : null
+        }
         renderItem={({ item }) => (
           <View style={styles.row}>
-            <Text style={styles.time} maxFontSizeMultiplier={1.6}>
+            <Text style={styles.time}>
               {formatTime(item.created_at)}
             </Text>
-            <Text style={styles.content} maxFontSizeMultiplier={2}>
+            <Text style={styles.content}>
               {item.content}
             </Text>
           </View>
@@ -83,7 +85,7 @@ export default function ElderNotifications() {
         onPress={() => router.back()}
         style={styles.backButton}
       >
-        <Text style={styles.backText} maxFontSizeMultiplier={1.6}>
+        <Text style={styles.backText}>
           {strings.elderNotifications.back}
         </Text>
       </Pressable>
@@ -102,8 +104,8 @@ const styles = StyleSheet.create({
     padding: spacing.l,
     gap: spacing.xs,
   },
-  time: { fontSize: 15, color: colors.textSoft },
-  content: { fontSize: 21, color: colors.text, lineHeight: 32 },
+  time: { fontSize: elder.fontMin, color: colors.textSoft },
+  content: { fontSize: elder.fontMin, color: colors.text, lineHeight: 34 },
   backButton: {
     margin: spacing.l,
     minHeight: 56,
@@ -114,5 +116,5 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  backText: { fontSize: 19, color: colors.text },
+  backText: { fontSize: elder.fontMin, color: colors.text },
 });

@@ -741,4 +741,8 @@ class VoicePipeline:
             elder_id=profile.elder_id,
             prompt_audio_url=url,
             prompt_text=profile.prompt_text,
+            # 版本＝`granted_at`（2026-08-12）：家屬重錄時 `save` 會換一個新值，而物件
+            # 路徑固定是 `voice-refs/<elder_id>`、重錄前後完全相同。DGX 端的本機快取
+            # 只認 elder_id，沒有這個值就分不出重錄過沒有，會一直用第一次下載的錄音。
+            version=str(profile.granted_at),
         )

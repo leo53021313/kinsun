@@ -32,6 +32,14 @@ export type TalkFrame =
       duration_ms: number | null;
       chunk_count: number;
       reply_digest: string;
+      /**
+       * 這一輪 ASR 認出來的長輩原話。後端在 2026-08-07 為三條成功回應補上，
+       * 供長輩本人在「之前聊過的」看到真實的「您說」。
+       *
+       * ⚠️ 選填：舊版後端沒有這個欄位。**沒有就不要偽造「您說」**——寧可少一則
+       * 紀錄，也不要讓長輩看到一句他沒講過的話。
+       */
+      transcript?: string;
     }
   | { type: "error"; turn_id: string; text: string }
   | {

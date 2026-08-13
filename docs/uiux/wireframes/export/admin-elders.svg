@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1024" viewBox="0 0 1440 1024" role="img">
+<style>text{font-family:'Microsoft JhengHei','PingFang TC','Noto Sans CJK TC','Noto Sans TC',sans-serif;fill:#202124;}.muted{fill:#5F6368}.label{font-weight:700;letter-spacing:.4px}</style>
+<rect x="0" y="0" width="1440" height="86" rx="0" fill="#FFFFFF" stroke="#3C4043" stroke-width="2"/>
+<text x="54" y="25" font-size="26" font-weight="700" fill="#202124" text-anchor="start">Kinsun 內部維運</text>
+<rect x="460" y="20" width="126" height="44" rx="10" fill="#F1F3F4" stroke="#9AA0A6" stroke-width="2"/>
+<text x="523" y="34" font-size="16" font-weight="400" fill="#202124" text-anchor="middle">總覽</text>
+<rect x="610" y="20" width="126" height="44" rx="10" fill="#F1F3F4" stroke="#9AA0A6" stroke-width="2"/>
+<text x="673" y="34" font-size="16" font-weight="400" fill="#202124" text-anchor="middle">訊息流</text>
+<rect x="760" y="20" width="126" height="44" rx="10" fill="#3C4043" stroke="#9AA0A6" stroke-width="2"/>
+<text x="823" y="34" font-size="16" font-weight="700" fill="#FFFFFF" text-anchor="middle">長輩</text>
+<rect x="910" y="20" width="126" height="44" rx="10" fill="#F1F3F4" stroke="#9AA0A6" stroke-width="2"/>
+<text x="973" y="34" font-size="16" font-weight="400" fill="#202124" text-anchor="middle">系統</text>
+<text x="1386" y="32" font-size="14" font-weight="400" fill="#5F6368" text-anchor="end">X-Admin-Key</text>
+<text x="58" y="120" font-size="30" font-weight="700" fill="#202124" text-anchor="start">長輩清單</text>
+<text x="58" y="160" font-size="15" font-weight="400" fill="#5F6368" text-anchor="start">正常資料｜1440 × 1024｜結構型線框</text>
+<rect x="58.0" y="205" width="651.0" height="142" rx="10" fill="#FFFFFF" stroke="#9AA0A6" stroke-width="2"/>
+<text x="76.0" y="219" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">資料列</text>
+<text x="76.0" y="247" font-size="19" font-weight="700" fill="#202124" text-anchor="start">林阿嬤</text>
+<text x="76.0" y="301" font-size="14" font-weight="400" fill="#5F6368" text-anchor="start">最近活動 08:42｜今日 12 輪</text>
+<rect x="731.0" y="205" width="651.0" height="142" rx="10" fill="#FFFFFF" stroke="#9AA0A6" stroke-width="2"/>
+<text x="749.0" y="219" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">資料列</text>
+<text x="749.0" y="247" font-size="19" font-weight="700" fill="#202124" text-anchor="start">陳阿公</text>
+<text x="749.0" y="301" font-size="14" font-weight="400" fill="#5F6368" text-anchor="start">最近活動 08:30｜今日 4 輪</text>
+<rect x="58.0" y="373" width="651.0" height="142" rx="10" fill="#FFFFFF" stroke="#9AA0A6" stroke-width="2"/>
+<text x="76.0" y="387" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">資料列</text>
+<text x="76.0" y="415" font-size="19" font-weight="700" fill="#202124" text-anchor="start">王伯伯</text>
+<text x="76.0" y="469" font-size="14" font-weight="400" fill="#5F6368" text-anchor="start">最近活動 昨天｜今日 0 輪</text>
+<rect x="731.0" y="373" width="651.0" height="142" rx="10" fill="#FFFFFF" stroke="#9AA0A6" stroke-width="2"/>
+<text x="749.0" y="387" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">區塊</text>
+<text x="749.0" y="415" font-size="19" font-weight="700" fill="#202124" text-anchor="start">空清單</text>
+<text x="749.0" y="469" font-size="14" font-weight="400" fill="#5F6368" text-anchor="start">清楚區分尚未載入與真的沒有資料</text>
+<text x="1382" y="994" font-size="14" font-weight="400" fill="#5F6368" text-anchor="end">主要區域可捲動；鍵盤焦點依 DOM 順序移動。</text>
+</svg>

@@ -21,7 +21,8 @@ export default function RoleScreen() {
         <Button
           label={strings.role.iAmGuardian}
           variant="outline"
-          onPress={() => router.push("/guardian/login")}
+          size="big"
+          onPress={() => router.push("/auth/guardian-login")}
         />
       </View>
     </View>
@@ -42,6 +43,6 @@ const styles = StyleSheet.create({
     color: colors.primary,
     textAlign: "center",
   },
-  slogan: { fontSize: 18, color: colors.textSoft, textAlign: "center" },
+  slogan: { fontSize: elder.fontMin, color: colors.textSoft, textAlign: "center" },
   buttons: { marginTop: spacing.xl, gap: spacing.l },
 });

@@ -1,0 +1,29 @@
+---
+title: User Flow 01：App 啟動與角色分流
+---
+flowchart TD
+  subgraph L0["進入"]
+    L0N0["起點：開啟 App"]
+    L0N1["畫面：啟動載入"]
+    L0N0 --> L0N1
+    L0N2["系統：讀取 Active Session"]
+    L0N1 --> L0N2
+  end
+  subgraph L1["決策"]
+    L1N0["決策：有長輩 Session？"]
+    L1N1["決策：有家屬 Session？"]
+    L1N0 --> L1N1
+    L1N2["空狀態：無 Session"]
+    L1N1 --> L1N2
+  end
+  L0N2 -.-> L1N0
+  subgraph L2["結果與回復"]
+    L2N0["成功：導向長輩對話"]
+    L2N1["成功：導向家屬首頁"]
+    L2N0 --> L2N1
+    L2N2["回復：角色選擇"]
+    L2N1 --> L2N2
+    L2N3["離開：關閉 App"]
+    L2N2 --> L2N3
+  end
+  L1N2 -.-> L2N0

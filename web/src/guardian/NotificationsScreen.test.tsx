@@ -52,7 +52,7 @@ describe("NotificationsScreen", () => {
   it("沒有通知時顯示引導文字", async () => {
     renderScreen([]);
     expect(
-      await screen.findByText("目前沒有通知。金孫有事會第一時間放在這裡。"),
+      await screen.findByText("目前沒有通知。阿白有事會第一時間放在這裡。"),
     ).toBeInTheDocument();
   });
 
@@ -81,7 +81,7 @@ describe("NotificationsScreen", () => {
     // `display_name` 對齊。
     localStorage.setItem("kinsun_web_seen_at_guardian:兒子", "1754000000");
     renderScreen([]);
-    await screen.findByText("目前沒有通知。金孫有事會第一時間放在這裡。");
+    await screen.findByText("目前沒有通知。阿白有事會第一時間放在這裡。");
     expect(loadSeenAt("guardian")).toBe(1754000000);
   });
 
@@ -102,11 +102,11 @@ describe("NotificationsScreen", () => {
     );
     expect(await screen.findByText("載入中…")).toBeInTheDocument();
     expect(
-      screen.queryByText("目前沒有通知。金孫有事會第一時間放在這裡。"),
+      screen.queryByText("目前沒有通知。阿白有事會第一時間放在這裡。"),
     ).not.toBeInTheDocument();
     resolveFetch({ status: 200, json: async () => envelope([]) });
     expect(
-      await screen.findByText("目前沒有通知。金孫有事會第一時間放在這裡。"),
+      await screen.findByText("目前沒有通知。阿白有事會第一時間放在這裡。"),
     ).toBeInTheDocument();
   });
 
@@ -130,7 +130,7 @@ describe("NotificationsScreen", () => {
     spy.mockRestore();
   });
 
-  it("載入失敗時顯示錯誤，不會同時謊稱『金孫有事會第一時間放在這裡』", async () => {
+  it("載入失敗時顯示錯誤，不會同時謊稱『阿白有事會第一時間放在這裡』", async () => {
     // ⚠️ 這一條守住的是「錯誤取代空狀態」而非「錯誤與空狀態並列」：連不上後端
     // 時若同時顯示這句保證，等於對家屬做了一個假承諾——這個產品的價值主張就是
     // 「長輩出事你會第一時間知道」，此刻我們根本沒查到任何東西。
@@ -149,7 +149,7 @@ describe("NotificationsScreen", () => {
     );
     expect(await screen.findByText("載入失敗，請稍後再試。")).toBeInTheDocument();
     expect(
-      screen.queryByText("目前沒有通知。金孫有事會第一時間放在這裡。"),
+      screen.queryByText("目前沒有通知。阿白有事會第一時間放在這裡。"),
     ).not.toBeInTheDocument();
   });
 });

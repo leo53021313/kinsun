@@ -1,0 +1,25 @@
+---
+title: Task Flow 02：完成裝置綁定
+---
+flowchart TD
+  subgraph L0["前置與輸入"]
+    L0N0["前置：家屬已產生有效碼"]
+    L0N1["輸入：QR 或手動碼"]
+    L0N0 --> L0N1
+  end
+  subgraph L1["步驟與驗證"]
+    L1N0["操作：掃描或輸入"]
+    L1N1["驗證：格式、期限、使用狀態"]
+    L1N0 --> L1N1
+    L1N2["系統：建立裝置 Session"]
+    L1N1 --> L1N2
+  end
+  L0N1 -.-> L1N0
+  subgraph L2["條件與回復"]
+    L2N0["成功：進入對話"]
+    L2N1["失敗：無效、過期、已使用"]
+    L2N0 --> L2N1
+    L2N2["回復：家屬重產或改手動"]
+    L2N1 --> L2N2
+  end
+  L1N2 -.-> L2N0

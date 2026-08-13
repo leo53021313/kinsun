@@ -37,7 +37,7 @@ function deleteCalls(spy: ReturnType<typeof vi.fn>): number {
 }
 
 const CONFIRM_TEXT =
-  "長輩手機上的金孫會馬上被登出，他要用新的綁定碼重綁一次才能再跟金孫說話。確定要換嗎？";
+  "長輩手機上的金孫會馬上被登出，他要用新的綁定碼重綁一次才能再跟阿白說話。確定要換嗎？";
 
 /**
  * 依請求路徑回不同的狀態碼與內容——用來驗證三支端點其中一支失敗時，其餘兩支
@@ -479,7 +479,7 @@ describe("ElderDetailScreen", () => {
       expect(
         await screen.findByText(
           "注意：一產生新碼，長輩目前手機上的金孫就會被登出，他要用新碼重綁一次才能" +
-            "再跟金孫說話。只是想邀請另一位家屬看資料的話，請用下面的「產生家屬邀請碼」。",
+            "再跟阿白說話。只是想邀請另一位家屬看資料的話，請用下面的「產生家屬邀請碼」。",
         ),
       ).toBeInTheDocument();
     });
@@ -504,6 +504,23 @@ describe("ElderDetailScreen", () => {
       );
       // 失敗時確認列留著，家屬可以直接再按一次；收掉的話他得從頭再點一遍。
       expect(screen.getByText(CONFIRM_TEXT)).toBeInTheDocument();
+    });
+  });
+
+  describe("金孫的聲音", () => {
+    it("有入口，點了往上通報由 GuardianApp 推畫面", async () => {
+      mockByPath({});
+      const onOpenVoiceProfile = vi.fn();
+      renderDetail({ onOpenVoiceProfile });
+      await userEvent.click(await screen.findByRole("button", { name: "設定聲音" }));
+      expect(onOpenVoiceProfile).toHaveBeenCalled();
+    });
+
+    it("沒接這個 prop 時整格不出現——舞台等其他掛載點不一定推得動畫面", async () => {
+      mockByPath({});
+      renderDetail();
+      await screen.findByText("金孫的個性");
+      expect(screen.queryByRole("button", { name: "設定聲音" })).not.toBeInTheDocument();
     });
   });
 });

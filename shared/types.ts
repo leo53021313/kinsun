@@ -63,13 +63,45 @@ export type AppNotification = {
   severity?: NotificationSeverity;
 };
 
+// --- 長輩客製化聲音（家屬錄一段參考語音，2026-08-12 接上前端） ---
+
+/**
+ * 家屬錄音前要照唸的稿子與注意事項。
+ *
+ * ⚠️ **由伺服器下發，前端不得寫死**：這份文字同時是 `voice_profiles.prompt_text`
+ * （CosyVoice zero-shot 要「參考音檔＋逐字稿」成對輸入），兩邊各存一份遲早漂移，
+ * 而漂移的症狀是合成品質靜默變差、沒有任何錯誤訊息。
+ */
+export type VoiceProfileScript = {
+  script: string;
+  tips: string[];
+  /** 這份稿子為什麼長這樣；後台／說明用，畫面不一定顯示。 */
+  rationale: Record<string, string>;
+};
+
+/**
+ * 這位長輩目前的客製化聲音狀態。
+ *
+ * ⚠️ 後端刻意**不回音檔也不回可下載網址**（那是長輩家人的聲音樣本）。因此送出
+ * 之後就再也無法聽到錄了什麼——這正是送出前一定要能試聽的原因。
+ */
+export type VoiceProfileStatus = {
+  elder_id: string;
+  has_profile: boolean;
+  consented_by?: string;
+  /** epoch 秒。 */
+  granted_at?: number;
+};
+
 // --- App 認證 ---
 export type GuardianSession = { guardian_id: string; name: string; token: string };
 export type ElderSession = { elder_id: string; name: string; token: string };
 export type TurnReply = {
+  /** ASR 辨識出的長輩原話；只回到長輩自己的裝置，不提供給家屬端清單。 */
+  transcript: string;
   text: string;
   audio_url: string;
-  /** 回覆音檔時長；目前三端零消費，保留給虛擬形象動畫對嘴（階段 5 後）。 */
+  /** 回覆音檔時長；Expo App 會與當段文字一起送給阿白 renderer 做 viseme 對嘴。 */
   duration_ms: number | null;
   /**
    * 分段串流（2026-07-26 延遲優化）：整段回覆被切成幾段。

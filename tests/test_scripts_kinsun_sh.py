@@ -12,7 +12,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import shlex
+import shutil
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -21,6 +24,23 @@ from pathlib import Path
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "kinsun.sh"
+
+
+def _bash_executable() -> str:
+    """回傳可執行專案 Linux 腳本的 Bash；Windows 優先使用 Git Bash。"""
+    if os.name == "nt":
+        git = shutil.which("git")
+        if git is None:
+            pytest.skip("Windows 需要 Git Bash 才能驗證 scripts/kinsun.sh")
+        bash = Path(git).resolve().parents[1] / "bin" / "bash.exe"
+        if not bash.is_file():
+            pytest.skip("找不到目前 Git 安裝所附的 bash.exe")
+        return str(bash)
+
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("找不到 bash，無法驗證 scripts/kinsun.sh")
+    return bash
 
 
 def _matched(pattern: str) -> str:
@@ -70,18 +90,19 @@ def _wait_model_warm(port: int, run_dir: Path, *, alive: bool, timeout: int = 4)
 
     `alive` 決定要不要寫一個指向存活程序的 PID 檔——`is_running` 只看那個檔。
     """
+    script_path = shlex.quote(SCRIPT.as_posix())
+    run_path = shlex.quote(run_dir.as_posix())
     script = f"""
-      source {SCRIPT} --help >/dev/null 2>&1
-      RUN_DIR={run_dir}
-      LOG_DIR={run_dir}
+      source {script_path} --help >/dev/null 2>&1
+      RUN_DIR={run_path}
+      LOG_DIR={run_path}
       {'echo $$ > "$RUN_DIR/asr.pid"' if alive else ""}
       _wait_model_warm asr {port}
     """
     return subprocess.run(
-        ["bash", "-c", script],
+        [_bash_executable(), "-c", script],
         env={"PATH": "/usr/bin:/bin", "KINSUN_WARMUP_TIMEOUT": str(timeout)},
         capture_output=True,
-        text=True,
     ).returncode
 
 

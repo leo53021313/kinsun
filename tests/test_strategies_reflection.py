@@ -471,9 +471,28 @@ def test_a_non_address_rule_mentioning_a_title_is_untouched():
     assert [r.content for r in rows] == ["他愛聊以前當阿公帶孫的事"]
 
 
-def test_the_prompt_tells_the_model_kinsuns_own_words_are_not_evidence():
+def test_the_prompt_tells_the_model_the_companions_own_words_are_not_evidence():
     """程式防線擋得住，但先在 prompt 講清楚可以少掉一堆無謂的候選。"""
-    assert "金孫自己用過的稱呼不算" in REFLECTION_PROMPT
+    assert "阿白自己用過的稱呼不算" in REFLECTION_PROMPT
+
+
+def test_the_prompt_calls_the_companion_a_bai_so_it_matches_the_system_prompt():
+    """反思產出的守則會被注入 agent 的 system prompt，兩份必須用同一個角色名。
+
+    ⚠️ 這是新視覺人設改名（2026-08-07）的漏網之魚：`agent.py` 的 SYSTEM_PROMPT
+    開頭是「你是『阿白』」，而反思這一支的提示詞仍寫「你是『金孫』」。反思產出的
+    守則是一句話、會原文注入 system prompt，於是一份 prompt 裡同時出現兩個名字
+    ——模型自稱哪一個沒有保證，而它的自稱會經 TTS 唸給長輩聽。
+
+    「金孫」是服務名，本檔的提示詞從頭到尾談的都是角色該怎麼跟長輩相處，不該
+    出現服務名。
+    """
+    assert "你是「阿白」" in REFLECTION_PROMPT
+    assert "金孫" not in REFLECTION_PROMPT
+    # 文字稿的 assistant 標籤同樣是模型歸納稱謂的來源，必須同名。
+    from kinsun.strategies.reflection import _ROLE_LABELS
+
+    assert _ROLE_LABELS["assistant"] == "阿白"
 
 
 def _sent_turns(reflector: FakeReflector) -> list[str]:

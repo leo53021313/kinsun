@@ -1,0 +1,35 @@
+---
+title: User Flow 14：Session 過期／認證失敗回復
+---
+flowchart TD
+  subgraph L0["Expo App"]
+    L0N0["起點：受保護 API 回 401"]
+    L0N1["系統：清目前角色 Session"]
+    L0N0 --> L0N1
+    L0N2["畫面：導回登入／角色"]
+    L0N1 --> L0N2
+    L0N3["回復：重新驗證"]
+    L0N2 --> L0N3
+  end
+  subgraph L1["LIFF"]
+    L1N0["起點：idToken 或初始化失敗"]
+    L1N1["畫面：顯示錯誤"]
+    L1N0 --> L1N1
+    L1N2["回復：重新開啟 LIFF"]
+    L1N1 --> L1N2
+    L1N3["取消：離開 LINE 頁面"]
+    L1N2 --> L1N3
+  end
+  L0N3 -.-> L1N0
+  subgraph L2["Admin"]
+    L2N0["起點：API 回 401"]
+    L2N1["系統：清 X-Admin-Key"]
+    L2N0 --> L2N1
+    L2N2["畫面：金鑰輸入"]
+    L2N1 --> L2N2
+    L2N3["回復：重新輸入"]
+    L2N2 --> L2N3
+    L2N4["離開：關閉後台"]
+    L2N3 --> L2N4
+  end
+  L1N3 -.-> L2N0

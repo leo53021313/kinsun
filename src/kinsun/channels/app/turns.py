@@ -31,6 +31,7 @@ from kinsun.channels.app.inbound_audio import start_inbound_upload
 from kinsun.channels.app.ws import _BUSY_REPLY, _DEFAULT_TURN_CONCURRENCY
 from kinsun.channels.inbound import InboundMessage, dispatch
 from kinsun.locations.store import ElderLocation, is_valid_coordinate, is_valid_place
+from kinsun.turn_context import transcript_listener
 from kinsun.web.envelope import ok
 from kinsun.web.errors import ErrorCode
 from kinsun.web.routers.deps import strip_bearer
@@ -51,6 +52,7 @@ class _TurnCollector:
     """收集 dispatch 的回覆：文字與（若有）公開音檔 URL。"""
 
     def __init__(self) -> None:
+        self.transcript = ""
         self.text = ""
         self.audio_url = ""
         self.duration_ms: int | None = None
@@ -63,6 +65,9 @@ class _TurnCollector:
         self.duration_ms = duration_ms
         if text:
             self.text = text
+
+    def record_transcript(self, text: str) -> None:
+        self.transcript = text
 
 
 def create_app_turns_router(
@@ -235,17 +240,19 @@ def create_app_turns_router(
             audio_url="",
             received_at=received_at,
         )
-        outcome = dispatch(
-            msg,
-            pipeline=pipeline,
-            binding=_NullBinding(),
-            gate=gate,
-            voice=voice,
-            traces=traces,
-            elder_id=elder_id,  # 入口已解析並複核同意，dispatch 不再重查（✅ 庚-12）
-        )
+        with transcript_listener(collector.record_transcript):
+            outcome = dispatch(
+                msg,
+                pipeline=pipeline,
+                binding=_NullBinding(),
+                gate=gate,
+                voice=voice,
+                traces=traces,
+                elder_id=elder_id,  # 入口已解析並複核同意，dispatch 不再重查（✅ 庚-12）
+            )
         chunk_count = outcome.chunk_count if outcome else 0
         return {
+            "transcript": collector.transcript,
             "text": collector.text,
             "audio_url": collector.audio_url,
             "duration_ms": collector.duration_ms,

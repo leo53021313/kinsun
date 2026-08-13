@@ -1,0 +1,27 @@
+---
+title: 頁面與 API 對應圖
+---
+flowchart TD
+  subgraph L0["身分與 Session"]
+    L0N0["頁面：註冊、登入、綁定"]
+    L0N1["API：guardian／elder sessions"]
+    L0N0 --> L0N1
+    L0N2["API：device-bindings"]
+    L0N1 --> L0N2
+  end
+  subgraph L1["照護"]
+    L1N0["頁面：長輩、統一行程"]
+    L1N1["API：elders／schedules"]
+    L1N0 --> L1N1
+    L1N2["API：reports／notifications"]
+    L1N1 --> L1N2
+  end
+  L0N2 -.-> L1N0
+  subgraph L2["觀測"]
+    L2N0["頁面：總覽、訊息、詳情"]
+    L2N1["API：admin overview／messages"]
+    L2N0 --> L2N1
+    L2N2["API：timeline／traces／jobs"]
+    L2N1 --> L2N2
+  end
+  L1N2 -.-> L2N0

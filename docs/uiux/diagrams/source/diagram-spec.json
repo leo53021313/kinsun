@@ -1,0 +1,579 @@
+{
+  "schema_version": "1.0",
+  "assets": [
+    {
+      "id": "users-role-relationship",
+      "title": "使用者角色關係圖",
+      "type": "user-model",
+      "role": "全角色",
+      "screen": "跨端",
+      "section": "使用者與情境",
+      "related_document": "docs/uiux/01-users-and-scenarios.md",
+      "evidence": "已決議＋待研究",
+      "lanes": [
+        {"name": "長輩", "items": ["目標｜完成語音對話", "關係｜接受家屬協助綁定", "隱私｜不向家屬開放逐字稿"]},
+        {"name": "家屬", "items": ["目標｜建立與管理長輩", "照護｜查看摘要、報告、通知", "協作｜邀請其他家屬"]},
+        {"name": "維運人員", "items": ["目標｜監看系統健康", "排查｜由異常走到 trace", "權限｜內測可見對話內容"]}
+      ]
+    },
+    {
+      "id": "users-device-system-interaction",
+      "title": "使用者、裝置與系統互動圖",
+      "type": "user-model",
+      "role": "全角色",
+      "screen": "跨端",
+      "section": "使用者與情境",
+      "related_document": "docs/uiux/01-users-and-scenarios.md",
+      "evidence": "已實作",
+      "lanes": [
+        {"name": "人與裝置", "items": ["長輩｜手機 App＋麥克風", "家屬｜手機 App 或 LIFF", "維運｜桌機瀏覽器"]},
+        {"name": "前端邊界", "items": ["Expo App｜Bearer Session", "LIFF｜LINE idToken", "Admin｜X-Admin-Key"]},
+        {"name": "Kinsun 服務", "items": ["API｜統一信封回應", "對話｜WS、ASR、風險、Agent、TTS", "資料｜摘要、統一行程、通知"]}
+      ]
+    },
+    {
+      "id": "users-feature-permission-matrix",
+      "title": "角色 × 功能 × 權限矩陣",
+      "type": "user-model",
+      "role": "全角色",
+      "screen": "跨端",
+      "section": "使用者與情境",
+      "related_document": "docs/uiux/01-users-and-scenarios.md",
+      "evidence": "已決議",
+      "lanes": [
+        {"name": "長輩可做", "items": ["對話｜自己的語音輪次", "帳號｜綁定或帳密重登", "限制｜不管理照護資料"]},
+        {"name": "家屬可做", "items": ["照護｜摘要、報告、統一行程", "帳號｜邀請與長輩帳密代辦", "限制｜不可看完整逐字稿"]},
+        {"name": "維運可做", "items": ["觀測｜訊息、時間軸、trace", "排程｜檢查與內測觸發", "限制｜共用金鑰尚無細分權限"]}
+      ]
+    },
+
+    {
+      "id": "ia-three-surface-overview",
+      "title": "三端全景資訊架構",
+      "type": "information-architecture",
+      "role": "全角色",
+      "screen": "跨端",
+      "section": "資訊架構",
+      "related_document": "docs/uiux/02-information-architecture.md",
+      "evidence": "已實作",
+      "lanes": [
+        {"name": "Expo App", "items": ["入口｜啟動與角色分流", "長輩｜綁定、對話、提醒", "家屬｜帳號、長輩、行程、通知"]},
+        {"name": "LIFF", "items": ["入口｜長輩清單", "照護｜統一行程", "報告｜健康報告"]},
+        {"name": "Admin", "items": ["監看｜總覽、訊息流、長輩", "排查｜詳情與 trace", "內容與系統｜新聞、排程、RAG"]}
+      ]
+    },
+    {
+      "id": "ia-expo-app",
+      "title": "Expo App 資訊架構",
+      "type": "information-architecture",
+      "role": "長輩＋家屬",
+      "screen": "Expo App",
+      "section": "資訊架構",
+      "related_document": "docs/uiux/02-information-architecture.md",
+      "evidence": "已實作",
+      "lanes": [
+        {"name": "共用入口", "items": ["啟動｜讀取雙 Session slot", "角色｜長輩或家屬", "切換｜內測 RoleSwitcher"]},
+        {"name": "長輩支線", "items": ["綁定｜QR 或手動碼", "對話｜雙手勢＋WS 五態", "提醒｜鈴鐺與本機水位"]},
+        {"name": "家屬支線", "items": ["帳號｜登入／註冊", "首頁｜長輩列表＋通知", "詳情｜摘要、報告、行程"]}
+      ]
+    },
+    {
+      "id": "ia-elder-app",
+      "title": "長輩端資訊架構",
+      "type": "information-architecture",
+      "role": "長輩",
+      "screen": "Expo App",
+      "section": "資訊架構",
+      "related_document": "docs/uiux/02-information-architecture.md",
+      "evidence": "已實作",
+      "lanes": [
+        {"name": "未建立 Session", "items": ["角色選擇｜我是長輩", "首次使用｜裝置綁定", "已配對｜帳密重新登入"]},
+        {"name": "已建立 Session", "items": ["權限｜麥克風必要、定位可選", "核心｜按住放開或短按兩次", "回饋｜聽取與閱讀回覆"]},
+        {"name": "回復", "items": ["權限拒絕｜提供下一步", "送出失敗｜保留可重試狀態", "403｜清除 Session 並重新綁定"]}
+      ]
+    },
+    {
+      "id": "ia-guardian-app",
+      "title": "家屬端資訊架構",
+      "type": "information-architecture",
+      "role": "家屬",
+      "screen": "Expo App",
+      "section": "資訊架構",
+      "related_document": "docs/uiux/02-information-architecture.md",
+      "evidence": "已實作＋提案",
+      "lanes": [
+        {"name": "帳號與首頁", "items": ["登入／註冊｜取得 Guardian Session", "首頁｜長輩列表", "通知｜本機已讀水位"]},
+        {"name": "長輩詳情", "items": ["概況｜健康報告＋每日摘要", "照護｜統一行程入口", "協作｜邀請家屬"]},
+        {"name": "管理", "items": ["行程｜吃藥、回診、其他", "表單｜清單＋同頁編輯", "帳號｜設定長輩重登帳密"]}
+      ]
+    },
+    {
+      "id": "ia-liff",
+      "title": "LIFF 資訊架構",
+      "type": "information-architecture",
+      "role": "家屬",
+      "screen": "LIFF",
+      "section": "資訊架構",
+      "related_document": "docs/uiux/02-information-architecture.md",
+      "evidence": "已實作（凍結維運）",
+      "lanes": [
+        {"name": "入口", "items": ["初始化｜取得 LINE idToken", "清單｜查看與新增長輩"]},
+        {"name": "照護管理", "items": ["統一行程｜吃藥、回診、其他", "操作｜新增、編輯、刪除"]},
+        {"name": "報告", "items": ["健康報告｜危急與提醒", "返回｜回長輩清單"]}
+      ]
+    },
+    {
+      "id": "ia-admin",
+      "title": "Admin 資訊架構",
+      "type": "information-architecture",
+      "role": "維運人員",
+      "screen": "Admin",
+      "section": "資訊架構",
+      "related_document": "docs/uiux/02-information-architecture.md",
+      "evidence": "已實作",
+      "lanes": [
+        {"name": "第一層導航", "items": ["總覽｜指標與告警", "訊息流｜即時訊息", "長輩｜清單與搜尋", "新聞｜已擷取話題", "系統｜排程與 RAG"]},
+        {"name": "長輩詳情", "items": ["時間軸｜單日事件", "提醒｜用藥、回診、送達", "記憶｜長期記憶與摘要", "帳號｜綁定與家屬", "危急｜通知送達"]},
+        {"name": "排查深層", "items": ["Trace｜Webhook 與 ASR", "Trace｜RAG、LLM、風險", "Trace｜TTS 與回覆"]}
+      ]
+    },
+    {
+      "id": "ia-page-api-mapping",
+      "title": "頁面與 API 對應圖",
+      "type": "information-architecture",
+      "role": "全角色",
+      "screen": "跨端",
+      "section": "資訊架構",
+      "related_document": "docs/uiux/02-information-architecture.md",
+      "evidence": "已實作",
+      "lanes": [
+        {"name": "身分與 Session", "items": ["頁面｜註冊、登入、綁定", "API｜guardian／elder sessions", "API｜device-bindings"]},
+        {"name": "照護", "items": ["頁面｜長輩、統一行程", "API｜elders／schedules", "API｜reports／notifications"]},
+        {"name": "觀測", "items": ["頁面｜總覽、訊息、詳情", "API｜admin overview／messages", "API｜timeline／traces／jobs"]}
+      ]
+    },
+    {
+      "id": "ia-auth-boundaries",
+      "title": "角色與認證邊界圖",
+      "type": "information-architecture",
+      "role": "全角色",
+      "screen": "跨端",
+      "section": "資訊架構",
+      "related_document": "docs/uiux/02-information-architecture.md",
+      "evidence": "已實作＋已決議",
+      "lanes": [
+        {"name": "Expo App", "items": ["長輩｜Bearer Elder Session", "家屬｜Bearer Guardian Session", "401｜清除目前 Session", "403｜長輩重新配對"]},
+        {"name": "LIFF", "items": ["家屬｜LINE idToken", "範圍｜僅可及長輩", "失敗｜初始化或 API 錯誤"]},
+        {"name": "Admin", "items": ["維運｜X-Admin-Key", "401｜清除本機金鑰", "風險｜尚無人員別分權稽核"]}
+      ]
+    },
+
+    {
+      "id": "journey-elder-first-conversation",
+      "title": "Journey A：長輩第一次使用到成功對話",
+      "type": "journey-map",
+      "role": "長輩",
+      "screen": "Expo App",
+      "section": "使用者旅程",
+      "related_document": "docs/uiux/03-user-journey-maps.md",
+      "evidence": "已實作＋待研究",
+      "lanes": [
+        {"name": "準備與綁定", "items": ["家屬｜準備裝置", "長輩｜選擇身分", "畫面｜掃 QR 或輸入碼"]},
+        {"name": "權限與對話", "items": ["系統｜請求麥克風與定位", "長輩｜選擇按住或短按", "系統｜辨識並等待回覆"]},
+        {"name": "結果與回復", "items": ["回饋｜聽到且看見回答", "失敗｜權限或網路錯誤", "換機｜帳密重登或重綁"]}
+      ]
+    },
+    {
+      "id": "journey-guardian-care",
+      "title": "Journey B：家屬建立長輩並掌握照護狀況",
+      "type": "journey-map",
+      "role": "家屬",
+      "screen": "Expo App",
+      "section": "使用者旅程",
+      "related_document": "docs/uiux/03-user-journey-maps.md",
+      "evidence": "已實作＋待研究",
+      "lanes": [
+        {"name": "建立關係", "items": ["帳號｜註冊或登入", "長輩｜新增資料", "綁定｜產生 QR／代碼"]},
+        {"name": "日常照護", "items": ["首頁｜查看長輩", "詳情｜摘要與健康報告", "管理｜統一行程"]},
+        {"name": "事件處理", "items": ["通知｜發現危急事件", "判讀｜確認嚴重程度", "行動｜聯絡長輩或求助"]}
+      ]
+    },
+    {
+      "id": "journey-admin-triage",
+      "title": "Journey C：維運人員定位異常",
+      "type": "journey-map",
+      "role": "維運人員",
+      "screen": "Admin",
+      "section": "使用者旅程",
+      "related_document": "docs/uiux/03-user-journey-maps.md",
+      "evidence": "已實作＋待研究",
+      "lanes": [
+        {"name": "偵測", "items": ["總覽｜看到異常指標", "訊息流｜縮小時間範圍", "長輩清單｜定位對象"]},
+        {"name": "追查", "items": ["時間軸｜找到異常輪次", "Trace｜檢查各階段", "判讀｜找出第一個失敗"]},
+        {"name": "處理", "items": ["分類｜資料、模型或通道", "行動｜重試或交付工程", "紀錄｜目前無正式處理註記介面"]}
+      ]
+    },
+
+    {
+      "id": "flow-app-start-role-routing",
+      "title": "User Flow 01：App 啟動與角色分流",
+      "type": "user-flow",
+      "role": "長輩＋家屬",
+      "screen": "/、/role",
+      "section": "User Flow",
+      "related_document": "docs/uiux/04-user-flows.md",
+      "evidence": "已實作",
+      "lanes": [
+        {"name": "進入", "items": ["起點｜開啟 App", "畫面｜啟動載入", "系統｜讀取 Active Session"]},
+        {"name": "決策", "items": ["決策｜有長輩 Session？", "決策｜有家屬 Session？", "空狀態｜無 Session"]},
+        {"name": "結果與回復", "items": ["成功｜導向長輩對話", "成功｜導向家屬首頁", "回復｜角色選擇", "離開｜關閉 App"]}
+      ]
+    },
+    {
+      "id": "flow-elder-binding",
+      "title": "User Flow 02：長輩 QR／手動碼綁定",
+      "type": "user-flow",
+      "role": "長輩",
+      "screen": "/elder/bind",
+      "section": "User Flow",
+      "related_document": "docs/uiux/04-user-flows.md",
+      "evidence": "已實作",
+      "lanes": [
+        {"name": "操作", "items": ["起點｜選擇長輩", "畫面｜綁定方式", "操作｜掃 QR 或輸入碼"]},
+        {"name": "系統", "items": ["決策｜相機已允許？", "系統｜送出綁定碼", "決策｜代碼有效？"]},
+        {"name": "結果", "items": ["成功｜儲存 Session", "錯誤｜無效／過期／已使用", "回復｜改手動或重取碼", "取消｜回角色頁"]}
+      ]
+    },
+    {
+      "id": "flow-elder-password-login",
+      "title": "User Flow 03：長輩帳密重新登入",
+      "type": "user-flow",
+      "role": "長輩",
+      "screen": "/elder/login",
+      "section": "User Flow",
+      "related_document": "docs/uiux/04-user-flows.md",
+      "evidence": "已實作",
+      "lanes": [
+        {"name": "輸入", "items": ["起點｜選擇已配對重登", "畫面｜手機號碼與密碼", "操作｜送出登入"]},
+        {"name": "驗證", "items": ["系統｜正規化電話", "決策｜帳密有效？", "決策｜裝置已配對？"]},
+        {"name": "結果", "items": ["成功｜進入語音對話", "錯誤｜帳密錯誤", "錯誤｜403 未配對", "回復｜前往綁定", "取消｜回角色頁"]}
+      ]
+    },
+    {
+      "id": "flow-elder-voice-turn",
+      "title": "User Flow 04：長輩語音對話完整流程",
+      "type": "user-flow",
+      "role": "長輩",
+      "screen": "/elder/talk",
+      "section": "User Flow",
+      "related_document": "docs/uiux/04-user-flows.md",
+      "evidence": "已實作",
+      "lanes": [
+        {"name": "錄音", "items": ["起點｜Idle", "操作｜按住或短按麥克風", "系統｜觸覺與音效開始", "操作｜放開或再按一次停止"]},
+        {"name": "處理", "items": ["畫面｜Listening", "系統｜WS 上傳音訊與可選定位", "畫面｜Thinking", "決策｜ack／reply／error？"]},
+        {"name": "結果", "items": ["ack｜Speaking 後回 Thinking", "reply｜最後一段後回 Idle", "純文字 reply｜抵達即回 Idle", "error｜高對比 Error", "降級｜POST turns", "回復｜再次使用麥克風"]}
+      ]
+    },
+    {
+      "id": "flow-permission-denied",
+      "title": "User Flow 05：麥克風或定位權限遭拒",
+      "type": "user-flow",
+      "role": "長輩",
+      "screen": "/elder/talk",
+      "section": "User Flow",
+      "related_document": "docs/uiux/04-user-flows.md",
+      "evidence": "已實作＋提案",
+      "lanes": [
+        {"name": "請求", "items": ["起點｜首次進入對話", "系統｜先請麥克風", "系統｜再請定位"]},
+        {"name": "決策", "items": ["決策｜麥克風允許？", "錯誤｜拒絕則不能錄音", "決策｜定位允許？", "空狀態｜拒絕仍可對話"]},
+        {"name": "回復", "items": ["回復｜開啟系統設定", "回復｜重新檢查權限", "成功｜麥克風可用", "取消｜稍後再試或登出"]}
+      ]
+    },
+    {
+      "id": "flow-elder-403-rebind",
+      "title": "User Flow 06：403 綁定失效與重新綁定",
+      "type": "user-flow",
+      "role": "長輩",
+      "screen": "/elder/talk → /role",
+      "section": "User Flow",
+      "related_document": "docs/uiux/04-user-flows.md",
+      "evidence": "已實作＋提案",
+      "lanes": [
+        {"name": "失效", "items": ["起點｜送出語音", "系統｜回傳 403", "畫面｜應說明綁定已失效"]},
+        {"name": "清理", "items": ["系統｜清除 Elder Session", "決策｜是否已有帳密？", "畫面｜角色或回復入口"]},
+        {"name": "回復", "items": ["操作｜帳密重新登入", "或｜取得新綁定碼", "成功｜回到對話", "離開｜聯絡家屬稍後處理"]}
+      ]
+    },
+    {
+      "id": "flow-guardian-auth",
+      "title": "User Flow 07：家屬註冊與登入",
+      "type": "user-flow",
+      "role": "家屬",
+      "screen": "/guardian/login、/guardian/register",
+      "section": "User Flow",
+      "related_document": "docs/uiux/04-user-flows.md",
+      "evidence": "已實作",
+      "lanes": [
+        {"name": "選擇", "items": ["起點｜選擇家屬", "決策｜已有帳號？", "畫面｜登入或註冊"]},
+        {"name": "驗證", "items": ["操作｜輸入資料", "系統｜驗證欄位與帳密", "錯誤｜繁中 API 訊息"]},
+        {"name": "結果", "items": ["成功｜儲存 Guardian Session", "畫面｜家屬首頁", "回復｜修正輸入", "取消｜回角色頁"]}
+      ]
+    },
+    {
+      "id": "flow-guardian-create-elder",
+      "title": "User Flow 08：家屬新增長輩",
+      "type": "user-flow",
+      "role": "家屬",
+      "screen": "/guardian/home",
+      "section": "User Flow",
+      "related_document": "docs/uiux/04-user-flows.md",
+      "evidence": "已實作",
+      "lanes": [
+        {"name": "建立", "items": ["起點｜家屬首頁", "操作｜輸入長輩名稱", "認知｜閱讀代辦同意", "操作｜建立長輩"]},
+        {"name": "系統", "items": ["系統｜建立長輩與關聯", "系統｜回傳邀請碼", "決策｜建立成功？"]},
+        {"name": "結果", "items": ["成功｜顯示代碼與 QR", "操作｜複製或協助掃描", "錯誤｜保留輸入並可重試", "取消｜留在首頁"]}
+      ]
+    },
+    {
+      "id": "flow-guardian-view-care",
+      "title": "User Flow 09：查看每日摘要與健康報告",
+      "type": "user-flow",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id",
+      "section": "User Flow",
+      "related_document": "docs/uiux/04-user-flows.md",
+      "evidence": "已實作",
+      "lanes": [
+        {"name": "導覽", "items": ["起點｜家屬首頁", "操作｜選擇長輩", "畫面｜長輩詳情載入"]},
+        {"name": "資料", "items": ["系統｜並行取得報告與摘要", "決策｜有危急／提醒？", "決策｜有每日摘要？"]},
+        {"name": "結果", "items": ["成功｜分區閱讀", "空狀態｜尚無事件或摘要", "錯誤｜提示重新整理", "離開｜回首頁或進管理"]}
+      ]
+    },
+    {
+      "id": "flow-medication-management",
+      "title": "User Flow 10：統一行程的用藥型提醒",
+      "type": "user-flow",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id/schedules",
+      "section": "User Flow",
+      "related_document": "docs/uiux/04-user-flows.md",
+      "evidence": "已實作",
+      "lanes": [
+        {"name": "選擇操作", "items": ["起點｜全部行程", "類型｜選吃藥", "操作｜內容＋時段"]},
+        {"name": "驗證", "items": ["決策｜內容與時間有效？", "系統｜POST 或 PUT schedules", "刪除｜先顯示確認框"]},
+        {"name": "結果", "items": ["成功｜重載清單", "空狀態｜尚無用藥", "錯誤｜顯示 API 人話", "回復｜修正或重試", "取消｜離開表單"]}
+      ]
+    },
+    {
+      "id": "flow-appointment-management",
+      "title": "User Flow 11：統一行程的回診型提醒",
+      "type": "user-flow",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id/schedules",
+      "section": "User Flow",
+      "related_document": "docs/uiux/04-user-flows.md",
+      "evidence": "已實作",
+      "lanes": [
+        {"name": "選擇操作", "items": ["起點｜全部行程", "類型｜選回診", "操作｜日期時間＋內容"]},
+        {"name": "驗證", "items": ["決策｜日期時間格式有效？", "系統｜POST 或 PUT schedules", "刪除｜先顯示確認框"]},
+        {"name": "結果", "items": ["成功｜重載清單", "空狀態｜尚無回診", "錯誤｜顯示 API 人話", "回復｜修正或重試", "取消｜離開表單"]}
+      ]
+    },
+    {
+      "id": "flow-notification-watermark",
+      "title": "User Flow 12：查看通知與更新已讀水位",
+      "type": "user-flow",
+      "role": "長輩＋家屬",
+      "screen": "/elder/notifications｜/guardian/notifications",
+      "section": "User Flow",
+      "related_document": "docs/uiux/04-user-flows.md",
+      "evidence": "已實作＋待決策",
+      "lanes": [
+        {"name": "入口", "items": ["家屬｜首頁未讀提示", "長輩｜對講機鈴鐺", "系統｜依角色取得通知清單"]},
+        {"name": "顯示", "items": ["決策｜有通知？", "空狀態｜目前沒有通知", "畫面｜時間＋內容", "限制｜API 無種類與後端已讀"]},
+        {"name": "水位", "items": ["系統｜以最新時間更新本機水位", "成功｜回首頁不再顯示舊未讀", "錯誤｜保留舊水位可重試", "離開｜返回首頁"]}
+      ]
+    },
+    {
+      "id": "flow-admin-incident-triage",
+      "title": "User Flow 13：Admin 異常排查",
+      "type": "user-flow",
+      "role": "維運人員",
+      "screen": "Admin",
+      "section": "User Flow",
+      "related_document": "docs/uiux/04-user-flows.md",
+      "evidence": "已實作",
+      "lanes": [
+        {"name": "偵測", "items": ["起點｜總覽輪詢", "決策｜出現告警或錯誤？", "操作｜進訊息流或長輩"]},
+        {"name": "定位", "items": ["畫面｜單日時間軸", "操作｜開啟 trace", "系統｜載入各階段資料"]},
+        {"name": "結果", "items": ["成功｜找到第一個失敗階段", "空狀態｜階段沒有資料", "錯誤｜載入失敗請重整", "回復｜改查其他輪次", "離開｜回總覽"]}
+      ]
+    },
+    {
+      "id": "flow-session-expiry",
+      "title": "User Flow 14：Session 過期／認證失敗回復",
+      "type": "user-flow",
+      "role": "全角色",
+      "screen": "跨端",
+      "section": "User Flow",
+      "related_document": "docs/uiux/04-user-flows.md",
+      "evidence": "已實作＋提案",
+      "lanes": [
+        {"name": "Expo App", "items": ["起點｜受保護 API 回 401", "系統｜清目前角色 Session", "畫面｜導回登入／角色", "回復｜重新驗證"]},
+        {"name": "LIFF", "items": ["起點｜idToken 或初始化失敗", "畫面｜顯示錯誤", "回復｜重新開啟 LIFF", "取消｜離開 LINE 頁面"]},
+        {"name": "Admin", "items": ["起點｜API 回 401", "系統｜清 X-Admin-Key", "畫面｜金鑰輸入", "回復｜重新輸入", "離開｜關閉後台"]}
+      ]
+    },
+
+    {
+      "id": "task-voice-conversation",
+      "title": "Task Flow 01：完成一次語音對話",
+      "type": "task-flow",
+      "role": "長輩",
+      "screen": "/elder/talk",
+      "section": "Task Flow",
+      "related_document": "docs/uiux/05-task-flows.md",
+      "evidence": "已實作",
+      "lanes": [
+        {"name": "前置與輸入", "items": ["前置｜有效 Elder Session", "前置｜麥克風權限", "輸入｜語音＋可選定位"]},
+        {"name": "步驟與驗證", "items": ["操作｜按住放開或短按兩次", "驗證｜音檔可上傳", "系統｜ASR、風險、Agent、TTS"]},
+        {"name": "條件與回復", "items": ["成功｜播放並顯示回覆", "失敗｜權限、網路、403", "回復｜設定、重試或重綁"]}
+      ]
+    },
+    {
+      "id": "task-device-binding",
+      "title": "Task Flow 02：完成裝置綁定",
+      "type": "task-flow",
+      "role": "長輩＋家屬",
+      "screen": "/elder/bind",
+      "section": "Task Flow",
+      "related_document": "docs/uiux/05-task-flows.md",
+      "evidence": "已實作",
+      "lanes": [
+        {"name": "前置與輸入", "items": ["前置｜家屬已產生有效碼", "輸入｜QR 或手動碼"]},
+        {"name": "步驟與驗證", "items": ["操作｜掃描或輸入", "驗證｜格式、期限、使用狀態", "系統｜建立裝置 Session"]},
+        {"name": "條件與回復", "items": ["成功｜進入對話", "失敗｜無效、過期、已使用", "回復｜家屬重產或改手動"]}
+      ]
+    },
+    {
+      "id": "task-create-first-elder",
+      "title": "Task Flow 03：新增第一位長輩",
+      "type": "task-flow",
+      "role": "家屬",
+      "screen": "/guardian/home",
+      "section": "Task Flow",
+      "related_document": "docs/uiux/05-task-flows.md",
+      "evidence": "已實作",
+      "lanes": [
+        {"name": "前置與輸入", "items": ["前置｜Guardian Session", "輸入｜長輩名稱", "認知｜代辦同意內容"]},
+        {"name": "步驟與驗證", "items": ["操作｜建立長輩", "驗證｜名稱非空", "系統｜建立關聯與邀請碼"]},
+        {"name": "條件與回復", "items": ["成功｜卡片＋QR／代碼", "失敗｜API 錯誤", "回復｜保留輸入後重試"]}
+      ]
+    },
+    {
+      "id": "task-view-critical-notification",
+      "title": "Task Flow 04：查看最新危急通知",
+      "type": "task-flow",
+      "role": "家屬",
+      "screen": "/guardian/notifications",
+      "section": "Task Flow",
+      "related_document": "docs/uiux/05-task-flows.md",
+      "evidence": "已實作＋待決策",
+      "lanes": [
+        {"name": "前置與輸入", "items": ["前置｜有 App 通知", "入口｜首頁未讀提示"]},
+        {"name": "步驟與驗證", "items": ["操作｜開啟通知清單", "系統｜新到舊排序", "限制｜型別契約不足"]},
+        {"name": "條件與回復", "items": ["成功｜讀取最新內容", "空狀態｜沒有通知", "失敗｜載入錯誤", "回復｜重試或聯絡長輩"]}
+      ]
+    },
+    {
+      "id": "task-add-medication",
+      "title": "Task Flow 05：新增一筆用藥型行程",
+      "type": "task-flow",
+      "role": "家屬",
+      "screen": "統一行程管理",
+      "section": "Task Flow",
+      "related_document": "docs/uiux/05-task-flows.md",
+      "evidence": "已實作",
+      "lanes": [
+        {"name": "前置與輸入", "items": ["前置｜可及該長輩", "輸入｜藥名＋至少一個時段"]},
+        {"name": "步驟與驗證", "items": ["操作｜選吃藥並填表", "驗證｜內容與時段完整", "系統｜POST schedule"]},
+        {"name": "條件與回復", "items": ["成功｜清單出現新項目", "失敗｜400 或網路錯誤", "回復｜保留資料並修正"]}
+      ]
+    },
+    {
+      "id": "task-edit-medication",
+      "title": "Task Flow 06：編輯一筆行程",
+      "type": "task-flow",
+      "role": "家屬",
+      "screen": "統一行程管理",
+      "section": "Task Flow",
+      "related_document": "docs/uiux/05-task-flows.md",
+      "evidence": "已實作",
+      "lanes": [
+        {"name": "前置與輸入", "items": ["前置｜已有行程 group", "輸入｜修改類型、內容或時間"]},
+        {"name": "步驟與驗證", "items": ["操作｜選擇編輯", "驗證｜內容與時間有效", "系統｜PUT schedule"]},
+        {"name": "條件與回復", "items": ["成功｜清單更新", "失敗｜API 拒絕", "回復｜修正、重試或取消"]}
+      ]
+    },
+    {
+      "id": "task-add-appointment",
+      "title": "Task Flow 07：新增一筆回診型行程",
+      "type": "task-flow",
+      "role": "家屬",
+      "screen": "統一行程管理",
+      "section": "Task Flow",
+      "related_document": "docs/uiux/05-task-flows.md",
+      "evidence": "已實作",
+      "lanes": [
+        {"name": "前置與輸入", "items": ["前置｜可及該長輩", "輸入｜日期時間＋說明"]},
+        {"name": "步驟與驗證", "items": ["操作｜選回診並填表", "驗證｜日期與時間格式有效", "系統｜POST schedule"]},
+        {"name": "條件與回復", "items": ["成功｜清單出現新項目", "失敗｜日期或 API 錯誤", "回復｜調整時間再送出"]}
+      ]
+    },
+    {
+      "id": "task-invite-guardian",
+      "title": "Task Flow 08：邀請另一位家屬",
+      "type": "task-flow",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id",
+      "section": "Task Flow",
+      "related_document": "docs/uiux/05-task-flows.md",
+      "evidence": "已實作",
+      "lanes": [
+        {"name": "前置與輸入", "items": ["前置｜已連結長輩", "輸入｜要求產生邀請碼"]},
+        {"name": "步驟與驗證", "items": ["操作｜產生家屬邀請", "系統｜建立一次性邀請碼", "操作｜複製並安全分享"]},
+        {"name": "條件與回復", "items": ["成功｜顯示邀請碼", "失敗｜API 錯誤", "回復｜重新產生", "中斷｜不在畫面留完整紀錄"]}
+      ]
+    },
+    {
+      "id": "task-set-elder-account",
+      "title": "Task Flow 09：家屬替長輩設定帳號",
+      "type": "task-flow",
+      "role": "家屬",
+      "screen": "/guardian/elder/:id",
+      "section": "Task Flow",
+      "related_document": "docs/uiux/05-task-flows.md",
+      "evidence": "已實作",
+      "lanes": [
+        {"name": "前置與輸入", "items": ["前置｜長輩已首次配對", "輸入｜手機號碼＋密碼"]},
+        {"name": "步驟與驗證", "items": ["操作｜設定或重設帳密", "驗證｜電話格式與密碼", "系統｜PUT elder account"]},
+        {"name": "條件與回復", "items": ["成功｜提示可供換機重登", "失敗｜格式或重複帳號", "回復｜修正後重試"]}
+      ]
+    },
+    {
+      "id": "task-admin-find-trace",
+      "title": "Task Flow 10：由異常指標找到失敗 trace",
+      "type": "task-flow",
+      "role": "維運人員",
+      "screen": "Admin",
+      "section": "Task Flow",
+      "related_document": "docs/uiux/05-task-flows.md",
+      "evidence": "已實作",
+      "lanes": [
+        {"name": "前置與輸入", "items": ["前置｜有效 Admin Key", "輸入｜告警時間與階段"]},
+        {"name": "步驟與驗證", "items": ["操作｜總覽→訊息或長輩", "操作｜時間軸→trace", "驗證｜對照時間與 trace id"]},
+        {"name": "條件與回復", "items": ["成功｜定位首個失敗階段", "失敗｜缺資料或載入失敗", "回復｜換輪次、重整或交付工程"]}
+      ]
+    }
+  ]
+}

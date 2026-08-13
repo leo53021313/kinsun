@@ -29,6 +29,7 @@ import hmac
 import io
 import logging
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -85,13 +86,24 @@ _inflight = 0
 # 真正的回收手段只有重啟行程。故把它累計起來並在 /healthz 顯示：讓維運看得見
 # 「這台需要重啟了」，而不是像現在這樣——服務癱瘓、healthz 照樣回 ok、沒人知道。
 _stuck_workers = 0
-# elder_id -> (本機 wav 路徑, 逐字稿)；簡單 FIFO 上限淘汰，不需要真正的 LRU。
-_voice_cache: dict[str, tuple[str, str]] = {}
+# elder_id -> (本機 wav 路徑, 逐字稿, 版本)；簡單 FIFO 上限淘汰，不需要真正的 LRU。
+# 版本用來認出「家屬重錄過了」，見 `_resolve_voice`。
+_voice_cache: dict[str, tuple[str, str, str]] = {}
 
 
 # CosyVoice 參考音檔的目標格式。16k 單聲道與 ASR 端一致，也是 zero-shot 的常見輸入；
 # 真正的重點不是這兩個數字，而是**不管家屬的裝置錄出什麼，進到模型的都是同一種東西**。
 _VOICE_TARGET_SR = 16000
+
+# `elder_id` 的合法字元（2026-08-12）。它來自請求 body，而且會被組進本機檔案路徑
+# （`voice-<elder_id>.wav`）——含 `..` 或 `/` 就寫得出快取目錄之外。正式環境有
+# `TTS_API_KEY` 擋著，但預設是「未設＝內網開發模式不驗」，所以這道不能省。
+# 業務主鍵本來就是 uuid，收窄到這個字元集不影響任何正常呼叫。
+_SAFE_ELDER_ID = re.compile(r"\A[A-Za-z0-9_-]{1,64}\Z")
+
+
+def _is_safe_elder_id(elder_id: str) -> bool:
+    return bool(_SAFE_ELDER_ID.match(elder_id))
 
 
 def _normalize_to_wav(audio: bytes, dest_path: str) -> None:
@@ -151,14 +163,41 @@ def _normalize_to_wav(audio: bytes, dest_path: str) -> None:
         raise ValueError(f"轉檔後沒有任何取樣（來源 {len(audio)} bytes，可能是檔案損毀或截斷）")
 
 
-def _resolve_voice(elder_id: str, prompt_audio_url: str, prompt_text: str) -> tuple[str, str]:
-    """依 elder_id 解析客製化參考語音；缺 elder_id 或無法取得時退回全域預設聲音。"""
-    if not elder_id:
+def _resolve_voice(
+    elder_id: str, prompt_audio_url: str, prompt_text: str, prompt_version: str = ""
+) -> tuple[str, str]:
+    """依 elder_id 解析客製化參考語音；缺 elder_id 或無法取得時退回全域預設聲音。
+
+    ⚠️ `prompt_version` 決定「要不要重新下載」（2026-08-12）。原本快取只認 elder_id、
+    命中就直接回傳，連新的 `prompt_audio_url` 都不看——於是家屬重錄之後（`PUT` 覆蓋
+    bucket 內同一個物件路徑，路徑本身不會變），DGX 端仍然拿第一次下載的那份錄音合成，
+    要等 `TTS_VOICE_CACHE_SIZE` 位長輩把它擠出快取、或整個服務重啟才會換。**全程沒有
+    任何錯誤訊息**，家屬只會覺得「我明明重錄了怎麼沒變」，而這正是這個功能的主要操作。
+
+    版本由應用層帶入，值是 `voice_profiles.granted_at`（見 `VoiceReference.version`）。
+    """
+    if not _is_safe_elder_id(elder_id):
+        if elder_id:  # 空字串是正常情形（沒有客製化聲音），不必吵
+            logger.error(
+                "elder_id 格式不合法，改用全域預設聲音 elder_id=%r",
+                elder_id[:64],
+            )
         return TTS_PROMPT_WAV, TTS_PROMPT_TEXT
     cached = _voice_cache.get(elder_id)
-    if cached is not None:
-        return cached
+    if cached is not None and cached[2] == prompt_version:
+        return cached[0], cached[1]
     if not prompt_audio_url or not prompt_text:
+        # 版本對不上卻沒帶網址：無從更新。有舊的就先用舊的——這條路在正常流程走不到
+        # （應用層一律網址與版本一起送），寧可聲音舊一點，也不要中途換成另一個人的聲音。
+        if cached is not None:
+            return cached[0], cached[1]
+        return TTS_PROMPT_WAV, TTS_PROMPT_TEXT
+    if not prompt_audio_url.startswith(("http://", "https://")):
+        # `urlopen` 也吃 file:// 與其他 scheme；參考音檔一律來自我們自己的 bucket。
+        logger.error(
+            "參考音檔網址不是 http(s)，改用全域預設聲音 elder_id=%s",
+            elder_id,
+        )
         return TTS_PROMPT_WAV, TTS_PROMPT_TEXT
     local_path = os.path.join(TTS_VOICE_CACHE_DIR, f"voice-{elder_id}.wav")
     # 下載失敗退回全域預設聲音（2026-08-01）：原本不接例外，於是任何下載問題（網址過期、
@@ -185,10 +224,25 @@ def _resolve_voice(elder_id: str, prompt_audio_url: str, prompt_text: str) -> tu
             exc_info=True,
         )
         return TTS_PROMPT_WAV, TTS_PROMPT_TEXT
-    if len(_voice_cache) >= TTS_VOICE_CACHE_SIZE:
-        _voice_cache.pop(next(iter(_voice_cache)))
-    _voice_cache[elder_id] = (local_path, prompt_text)
+    while len(_voice_cache) >= TTS_VOICE_CACHE_SIZE:
+        _evict_oldest_voice()
+    _voice_cache[elder_id] = (local_path, prompt_text, prompt_version)
     return local_path, prompt_text
+
+
+def _evict_oldest_voice() -> None:
+    """淘汰最舊的一筆快取，**連本機檔案一起刪掉**（2026-08-12）。
+
+    這些是長輩家人的聲音樣本，不是可以無限期堆在暫存目錄的中介檔。淘汰之後那個檔案
+    再也不會被讀到（下次同一位長輩來會重新下載），留著只是佔磁碟並擴大外洩面。
+    刪不掉不影響合成，記 warning 就好。
+    """
+    oldest = next(iter(_voice_cache))
+    path, _text, _version = _voice_cache.pop(oldest)
+    try:
+        os.unlink(path)
+    except OSError as exc:
+        logger.warning("淘汰的參考音檔刪不掉 elder_id=%s path=%s：%s", oldest, path, exc)
 
 
 def _install_soundfile_shim() -> None:
@@ -319,6 +373,8 @@ async def synthesize(payload: dict, request: Request) -> Response:
     elder_id = str(payload.get("elder_id", "")).strip()
     prompt_audio_url = str(payload.get("prompt_audio_url", "")).strip()
     prompt_text_override = str(payload.get("prompt_text", "")).strip()
+    # 缺席＝舊版呼叫端（一律空字串）：行為與加入本欄位前相同，命中快取就沿用。
+    prompt_version = str(payload.get("prompt_version", "")).strip()
     _inflight += 1
     try:
         async with _sem:
@@ -330,7 +386,11 @@ async def synthesize(payload: dict, request: Request) -> Response:
             try:
                 prompt_wav, prompt_text = await asyncio.wait_for(
                     run_in_threadpool(
-                        _resolve_voice, elder_id, prompt_audio_url, prompt_text_override
+                        _resolve_voice,
+                        elder_id,
+                        prompt_audio_url,
+                        prompt_text_override,
+                        prompt_version,
                     ),
                     timeout=TTS_SYNTH_TIMEOUT_SECONDS,
                 )

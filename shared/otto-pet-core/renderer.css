@@ -1,0 +1,10 @@
+* { box-sizing: border-box; }
+html, body, #petMount { width: 100%; height: 100%; margin: 0; padding: 0; }
+html, body { overflow: hidden; background: transparent; }
+body { transition: opacity 180ms ease-out; }
+body.is-error { opacity: 0.68; }
+#petMount { position: absolute; inset: 0; pointer-events: none; }
+#petMount svg { display: block; width: 100%; height: 100%; margin: 0 auto; }
+@media (prefers-reduced-motion: reduce) {
+  body { transition: none; }
+}

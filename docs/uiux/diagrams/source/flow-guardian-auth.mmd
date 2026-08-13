@@ -1,0 +1,29 @@
+---
+title: User Flow 07：家屬註冊與登入
+---
+flowchart TD
+  subgraph L0["選擇"]
+    L0N0["起點：選擇家屬"]
+    L0N1["決策：已有帳號？"]
+    L0N0 --> L0N1
+    L0N2["畫面：登入或註冊"]
+    L0N1 --> L0N2
+  end
+  subgraph L1["驗證"]
+    L1N0["操作：輸入資料"]
+    L1N1["系統：驗證欄位與帳密"]
+    L1N0 --> L1N1
+    L1N2["錯誤：繁中 API 訊息"]
+    L1N1 --> L1N2
+  end
+  L0N2 -.-> L1N0
+  subgraph L2["結果"]
+    L2N0["成功：儲存 Guardian Session"]
+    L2N1["畫面：家屬首頁"]
+    L2N0 --> L2N1
+    L2N2["回復：修正輸入"]
+    L2N1 --> L2N2
+    L2N3["取消：回角色頁"]
+    L2N2 --> L2N3
+  end
+  L1N2 -.-> L2N0

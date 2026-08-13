@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="844" viewBox="0 0 390 844" role="img">
+<style>text{font-family:'Microsoft JhengHei','PingFang TC','Noto Sans CJK TC','Noto Sans TC',sans-serif;fill:#202124;}.muted{fill:#5F6368}.label{font-weight:700;letter-spacing:.4px}</style>
+<rect x="0" y="0" width="390" height="25" rx="0" fill="#F1F3F4" stroke="#DADCE0" stroke-width="1"/>
+<text x="18" y="6" font-size="10" font-weight="400" fill="#5F6368" text-anchor="start">安全區域</text>
+<text x="372" y="6" font-size="10" font-weight="400" fill="#5F6368" text-anchor="end">9:41</text>
+<rect x="0" y="25" width="390" height="63" rx="0" fill="#FFFFFF" stroke="#DADCE0" stroke-width="1"/>
+<text x="18" y="40" font-size="20" font-weight="700" fill="#202124" text-anchor="start">家屬首頁</text>
+<text x="18" y="68" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">Loading</text>
+<text x="372" y="68" font-size="12" font-weight="400" fill="#5F6368" text-anchor="end">家屬</text>
+<rect x="8" y="96" width="374" height="710" rx="6" fill="#F1F3F4" stroke="#9AA0A6" stroke-width="1" stroke-dasharray="7 5"/>
+<text x="18" y="100" font-size="10" font-weight="400" fill="#5F6368" text-anchor="start">可捲動內容</text>
+<text x="18" y="122" font-size="22" font-weight="700" fill="#202124" text-anchor="start">我的長輩</text>
+<rect x="18" y="162" width="354" height="32" rx="10" fill="#F1F3F4" stroke="#DADCE0" stroke-width="2"/>
+<rect x="18" y="210" width="283" height="32" rx="10" fill="#F1F3F4" stroke="#DADCE0" stroke-width="2"/>
+<text x="28" y="170" font-size="13" font-weight="400" fill="#5F6368" text-anchor="start">正在載入長輩清單</text>
+<rect x="18" y="256" width="354" height="32" rx="10" fill="#F1F3F4" stroke="#DADCE0" stroke-width="2"/>
+<rect x="18" y="304" width="283" height="32" rx="10" fill="#F1F3F4" stroke="#DADCE0" stroke-width="2"/>
+<text x="28" y="264" font-size="13" font-weight="400" fill="#5F6368" text-anchor="start">正在確認未讀通知</text>
+<rect x="18" y="350" width="354" height="68" rx="10" fill="#E6E6E6" stroke="#3C4043" stroke-width="2" stroke-dasharray="7 5"/>
+<text x="30" y="360" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">設計註記</text>
+<text x="30" y="380" font-size="15" font-weight="400" fill="#202124" text-anchor="start">不得先閃現「尚無長輩」</text>
+<text x="18" y="825" font-size="10" font-weight="400" fill="#5F6368" text-anchor="start">底部安全區域</text>
+</svg>

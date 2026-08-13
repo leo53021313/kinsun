@@ -18,12 +18,14 @@ from kinsun import logging_setup
 def _restore_root():
     root = logging.getLogger()
     handlers, level = list(root.handlers), root.level
+    record_factory = logging.getLogRecordFactory()
     noisy = {name: logging.getLogger(name).level for name in logging_setup.NOISY_LOGGERS}
     logging_setup.reset_for_test()
     try:
         yield
     finally:
         logging_setup.reset_for_test()
+        logging.setLogRecordFactory(record_factory)
         root.handlers[:] = handlers
         root.setLevel(level)
         for name, lvl in noisy.items():

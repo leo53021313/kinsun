@@ -100,11 +100,18 @@ def test_dgx_tts_without_voice_sends_only_text():
 
 def test_dgx_tts_with_voice_includes_reference_fields():
     """長輩客製化聲音複製（2026-07-30）：帶 voice 時 JSON body 含 elder_id／
-    prompt_audio_url／prompt_text。"""
+    prompt_audio_url／prompt_text／prompt_version。
+
+    ⚠️ `prompt_version` 不可省（2026-08-12）：DGX 端靠它分辨「家屬重錄過了」，
+    少了它就會一直用第一次下載的那份錄音，而且不會有任何錯誤訊息。
+    """
     transport = FakeTransport([Response(200, {"X-Duration-Ms": "1234"}, b"AUDIOBYTES")])
     client = DgxTtsClient("http://dgx:8002/synthesize", 30.0, transport=transport)
     voice = VoiceReference(
-        elder_id="e1", prompt_audio_url="https://example.test/v.wav", prompt_text="逐字稿"
+        elder_id="e1",
+        prompt_audio_url="https://example.test/v.wav",
+        prompt_text="逐字稿",
+        version="1754870400.0",
     )
     client.synthesize("阿公您好", voice=voice)
     _, _, data, _, _ = transport.calls[0]
@@ -113,4 +120,5 @@ def test_dgx_tts_with_voice_includes_reference_fields():
         "elder_id": "e1",
         "prompt_audio_url": "https://example.test/v.wav",
         "prompt_text": "逐字稿",
+        "prompt_version": "1754870400.0",
     }

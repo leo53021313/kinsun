@@ -120,6 +120,34 @@ class SupabaseAudioPublisher:
         self._voice_url_cache.pop(path, None)
         return path
 
+    def delete_voice_reference(self, elder_id: str) -> None:
+        """刪掉某位長輩的參考音檔（家屬撤銷客製化聲音時，2026-08-12）。
+
+        ⚠️ **失敗不拋**：撤銷是否生效的權威是 `voice_profiles.revoked_at` 那一次資料庫
+        寫入，不是這次網路呼叫。反過來設計（刪不掉就讓撤銷失敗）會讓家屬收到錯誤、
+        以為沒撤銷成功，但聲音其實已經停用了——那比留一個孤兒物件更糟。刪不掉的檔案
+        不會再被任何人讀到（`resolve_voice` 只看得到未撤銷的設定檔）。
+
+        ⚠️ `cleanup(retention_days)` 掃不到這裡：那支只走 `tts/` 底下的日期資料夾，
+        參考音檔在 `voice-refs/`。沒有這支就等於「家屬按了撤銷、聲紋永遠留著」。
+        """
+        path = f"voice-refs/{elder_id}"
+        try:
+            self._transport.request(
+                "DELETE",
+                f"{self._base}/storage/v1/object/{self._bucket}",
+                data=json.dumps({"paths": [path]}).encode("utf-8"),
+                headers={
+                    "Authorization": f"Bearer {self._key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=self._timeout,
+            )
+        except TransportError as exc:
+            logger.warning("參考音檔刪除失敗 elder_id=%s：%s", elder_id, exc)
+        # 無論刪成功與否都清掉簽章快取：留著的話，撤銷後那個網址在效期內仍簽得出來。
+        self._voice_url_cache.pop(path, None)
+
     def signed_url_for(self, path: str) -> str:
         """為 bucket 內**既有**物件簽一個短效讀取網址（長輩客製化聲音的參考音檔用）。
 
