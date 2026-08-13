@@ -1,6 +1,6 @@
 # API 設計規範 - 金孫 KinSun
 
-> **版本:** v1.34 | **更新:** 2026-08-12 | **狀態:** ✅ 定稿（客製化聲音四支端點接上 web 家屬端呼叫端；契約本身未改動）
+> **版本:** v1.35 | **更新:** 2026-08-13 | **狀態:** ✅ 定稿（錯誤信封文案改寫為口語；錯誤碼與契約未動）
 > **基準:** as-is（現行 23 端點實證）＋ to-be（/v1 契約）。命名規則以 AGENTS.md 為準。
 > DGX 服務認證與速率限制 → 13_安全循環；`admin api disabled` 503 措辭一併列 13。
 
@@ -36,7 +36,7 @@
   "meta": { "limit": 100, "before": 1720000000.0, "after": null, "has_more": true } }
 // 失敗
 { "success": false, "data": null,
-  "error": { "code": "invalid_token", "message": "登入憑證無效，請重新登入" }, "meta": null }
+  "error": { "code": "invalid_token", "message": "登入過期了，請重新登入" }, "meta": null }
 ```
 
 - `error.code`＝標準錯誤碼（§3），機器判斷用；`error.message`＝繁中人話，UI 直接顯示。
