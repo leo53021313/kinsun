@@ -161,7 +161,7 @@ describe("ElderDetailScreen", () => {
     const lively = await screen.findByRole("radio", { name: /活潑的孫女/ });
     const steady = screen.getByRole("radio", { name: /穩重的孫子/ });
     expect(lively).toBeChecked();
-    const save = screen.getByRole("button", { name: "儲存個性" });
+    const save = screen.getByRole("button", { name: "就選這個" });
     // 沒有改動就不該能按——否則家屬會以為每次進來都要按一次才算數。
     expect(save).toBeDisabled();
 
@@ -189,7 +189,7 @@ describe("ElderDetailScreen", () => {
     renderDetail({ persona: "lively_granddaughter" });
 
     await userEvent.click(await screen.findByRole("radio", { name: /穩重的孫子/ }));
-    await userEvent.click(screen.getByRole("button", { name: "儲存個性" }));
+    await userEvent.click(screen.getByRole("button", { name: "就選這個" }));
 
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /穩重的孫子/ })).toBeChecked();

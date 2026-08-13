@@ -24,7 +24,7 @@
  * ＝反過來。`stage/StagePage.tsx` 同時傳了兩個，`StagePage.test.tsx` 釘住這件事。
  *
  * ⚠️ 尊重 prefers-reduced-motion（W-11）：判斷式抽到 `stage/reducedMotion.ts`，
- * 與 `stage/TearTransition.tsx` 共用同一份、用法也對齊——皆在掛載當下用
+ * 與 `stage/BloomTransition.tsx` 共用同一份、用法也對齊——皆在掛載當下用
  * `useState` 讀一次、之後凍結。本元件因 `key` 每次 `item.id` 改變都會重新掛載，
  * 所以「掛載時讀一次」與「每次 render 都讀」在這裡結果相同，但寫法對齊比較
  * 不會誤導以後同時讀這兩個檔案的人。
@@ -134,7 +134,7 @@ export function NotificationBanner(props: {
   const { item, os, onDismiss, size = "normal" } = props;
   // ⚠️ 呼叫順序須在下方的提前 return 之前：item 在 null／非 null 之間切換時，
   // 同一個元件實例不能出現「有時呼叫、有時不呼叫」的 hook，否則違反 React 的
-  // Hooks 規則（與 stage/TearTransition.tsx 的既有寫法一致）。
+  // Hooks 規則（與 stage/BloomTransition.tsx 的既有寫法一致）。
   const [reduced] = useState(prefersReducedMotion);
   if (item === null) {
     return null;
