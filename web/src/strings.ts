@@ -62,22 +62,29 @@ export const strings = {
   },
   gate: {
     brand: "金孫",
-    slogan: "陪伴長輩的家庭夥伴",
+    slogan: "陪阿公阿嬤說說話",
     checking: "正在確認服務狀態…",
     start: "開始使用",
     overall: {
-      available: "服務正常運作中",
-      degraded: "服務可以使用，但有部分功能受限",
+      available: "一切正常",
+      degraded: "可以用，但有些功能暫時不能用",
       starting: "服務正在啟動，請稍候…",
-      down: "服務目前無法使用",
+      down: "現在沒辦法用",
     } as Record<string, string>,
-    /** 分項名稱。鍵與後端 components 的鍵一一對應。 */
+    /**
+     * 分項名稱。鍵與後端 components 的鍵一一對應。
+     *
+     * ⚠️ 用技術名稱、不用白話（2026-08-13 Leo 定案）：這一頁的讀者是**組員與展示
+     * 場合的觀眾**，不是長輩——長輩根本走不到這裡（進站即轉場進雙欄舞台）。
+     * 原本的白話版（「聽懂您說話」「開口說話」…）看不出是哪個子系統掛了，服務
+     * 出問題時反而要多問一句。整體狀態（`overall`）仍維持白話，那句是給人看結論的。
+     */
     component: {
       database: "資料庫",
-      asr: "聽懂您說話",
-      tts: "開口說話",
-      llm: "對話思考",
-      scheduler: "準時提醒",
+      asr: "語音辨識",
+      tts: "語音合成",
+      llm: "Agent 核心",
+      scheduler: "排程器",
     } as Record<string, string>,
     componentStatus: {
       ok: "正常",
@@ -88,9 +95,9 @@ export const strings = {
     /** 部分受限時，逐項告訴使用者少了什麼——「部分受限」四個字沒有資訊量。 */
     degradedNote: {
       tts: "金孫聽得懂您說話，但暫時不會出聲，回答只會顯示文字。",
-      llm: "對話回應可能不穩定。",
+      llm: "回話可能會怪怪的，或是等比較久。",
       scheduler: "設定的提醒暫時不會準時響。",
-      database: "資料暫時無法讀寫。",
+      database: "現在存不了、也讀不到資料。",
       asr: "金孫暫時聽不懂您說話。",
     } as Record<string, string>,
     statusUnreachable: "連不上服務，可能是伺服器沒有啟動。",
@@ -149,11 +156,11 @@ export const strings = {
     elderNameLabel: "長輩稱呼",
     elderNamePlaceholder: "例如：阿公",
     consent:
-      "建立後，金孫會記錄長輩與它的對話內容（文字與語音），用來陪伴關懷、產生每日摘要、" +
-      "偵測到危急狀況時通知家人；資料會一直保留，開發團隊為了改善服務可檢視內容。" +
-      "按下「建立長輩檔案」即代表您替長輩同意以上事項。",
+      "建立之後，金孫會把長輩跟它講的話（文字和錄音）留下來，用來陪長輩聊天、" +
+      "整理每天的摘要，遇到危險狀況時通知家人。這些資料會一直留著，開發團隊為了" +
+      "把服務做得更好，可能會看到內容。按下「建立長輩檔案」，就表示您替長輩同意這些事。",
     createElder: "建立長輩檔案",
-    inviteHint: "長輩綁定碼（在長輩手機輸入或掃描一次即可）：",
+    inviteHint: "長輩綁定碼（在長輩手機輸入或掃描一次就好）",
     copyCode: "複製綁定碼",
     copied: "已複製",
     // ⚠️ 不寫死方位：`lg` 以下是頁籤擇一顯示（見 stage/StagePage.tsx），長輩欄不一定
@@ -175,8 +182,8 @@ export const strings = {
     noRiskEvents: "沒有危急事件，一切平安。",
     remindersCount: (count: number) => `近 30 天提醒 ${count} 則`,
     dailySummarySection: "每日摘要",
-    noSummaries: "還沒有摘要——長輩與阿白聊過天後，隔天早上就會出現。",
-    noSchedules: "還沒有任何提醒，點下方「管理行程」新增。",
+    noSummaries: "還沒有摘要。長輩跟阿白聊過天，隔天早上就會出現。",
+    noSchedules: "還沒有提醒，按下面的「管理行程」新增。",
     manageSchedules: "管理行程",
     personaSection: "金孫的個性",
     // ⚠️ 明講「聲音不會跟著變」：兩種個性共用同一個聲音，不先講家屬會以為壞了
@@ -184,25 +191,25 @@ export const strings = {
     // ⚠️ 2026-08-12 補上後半句：客製化聲音接上前端之後，只說「聲音不會變」會讓
     // 家屬以為聲音根本不能改——它能改，只是不在這一格。
     personaHelp:
-      "選一種說話的方式，下一次跟金孫講話就會換過來。聲音不會跟著變——" +
-      "要換聲音請到上面的「金孫的聲音」。",
+      "選一種說話的方式，下一次跟金孫講話就會換過來。聲音不會跟著變。" +
+      "要換聲音的話，請到上面的「金孫的聲音」。",
     personaLively: "活潑的孫女",
     personaLivelyHint: "有活力、情緒藏不住，會替您開心也會替您緊張",
     personaSteady: "穩重的孫子",
-    personaSteadyHint: "沉穩、話不多，關心用做事表達",
-    savePersona: "儲存個性",
+    personaSteadyHint: "話不多，但都默默替您做事",
+    savePersona: "就選這個",
     personaSaved: "已經換好了，下一次跟金孫講話就會聽到。",
     personaSaveFailed: "儲存失敗，請稍後再試。",
     accountSection: "長輩登入帳密（代辦）",
     accountHelp:
-      "幫長輩設定手機號碼＋密碼。換手機或登出後，長輩用這組帳密登入即可，不用再掃碼；" +
-      "忘記密碼時在這裡重設一次就好。",
+      "幫長輩設定手機號碼＋密碼。換手機或登出後，長輩用這組帳密登入就好，不用再掃碼。" +
+      "忘記密碼的話，在這裡重設一次。",
     accountPhoneLabel: "長輩手機號碼",
     accountPhonePlaceholder: "09xxxxxxxx",
     accountPasswordLabel: "密碼（至少 8 碼）",
     saveAccount: "儲存帳密",
     bindingSection: "長輩手機綁定",
-    bindingHelp: "長輩換手機、或手機不見了，在這裡重新產生一組綁定碼給他重新綁定。",
+    bindingHelp: "長輩換手機或手機不見了，在這裡產生一組新的綁定碼給他。",
     // ⚠️ 這是不可逆的破壞性操作，後果要寫在按鈕**上面**、按下去之前就看得到。
     // 另外要把它跟「產生家屬邀請碼」講清楚——兩個都是「產生一組碼」，但一個會
     // 把長輩登出、一個不會。
@@ -223,16 +230,16 @@ export const strings = {
   voiceProfile: {
     // --- 長輩詳情頁那一格 ---
     section: "金孫的聲音",
-    notSetHint: "您可以錄一段自己的聲音，讓金孫用您的聲音跟長輩講話。",
+    notSetHint: "錄一段自己的聲音，金孫就會用您的聲音跟長輩講話。",
     open: "設定聲音",
 
     // --- 錄音畫面 ---
     title: "錄一段您的聲音",
-    intro: "請照著下面這段話唸一次。長輩往後聽到的金孫，就會是您的聲音。",
+    intro: "請照著下面這段話唸一次。以後長輩聽到的金孫，就是您的聲音。",
     scriptLabel: "請照唸這段",
     tipsLabel: "錄音前請注意",
     currentSection: "目前的聲音",
-    setHint: (who: string, date: string) => `目前使用 ${who} 的聲音，${date} 設定。`,
+    setHint: (who: string, date: string) => `現在用的是 ${who} 的聲音（${date} 設定）。`,
     start: "開始錄音",
     stop: "停止",
     rerecord: "重錄",
@@ -271,7 +278,7 @@ export const strings = {
     confirmDelete: (title: string) => `確定要刪除「${title}」嗎？`,
     /** 長輩詳情頁的行程摘要區塊也用這一把——同一個概念不要兩把鍵。 */
     listSection: "全部行程",
-    empty: "還沒有任何提醒，從下方新增第一筆。",
+    empty: "還沒有提醒，在下面新增第一筆吧。",
     editSection: "編輯提醒",
     addSection: "新增提醒",
     kindLabel: "提醒類型",
@@ -283,12 +290,12 @@ export const strings = {
           ? "例：心臟科回診 林口長庚"
           : "例：去公園散步",
     slotsLabel: "提醒時段（可複選）",
-    customTimeLabel: "或直接指定時刻（選填，會蓋過上面的時段）",
+    customTimeLabel: "或自己填時間（可以不填，填了就以這個為準）",
     whenLabel: (kind: string) => (kind === "appointment" ? "回診日期" : "提醒時間"),
     whenPlaceholder: (kind: string) =>
       kind === "appointment" ? "2026-07-30 10:30（時間可省略）" : "每天 17:00／每週三 15:00",
-    whenRequired: "請填寫提醒時間，格式請照欄位下方的範例。",
-    editHint: "修改後請重新填一次提醒時間。",
+    whenRequired: "還沒填提醒時間，照下面的例子填就好。",
+    editHint: "改過了，提醒時間要再填一次。",
     byElder: "（長輩自己交代的）",
     customTimePlaceholder: "07:30",
     confirmDeleteButton: "確定刪除",
@@ -333,10 +340,10 @@ export const strings = {
   // 但那是設計稿與真實契約的矛盾，不是實作漏做。
   editAppointment: {
     whenLabel: "新的日期與時間",
-    whenHint: "改完記得也跟醫院改掛號——阿白不會幫您打電話。",
+    whenHint: "改完記得自己跟醫院改掛號，阿白不會幫您打電話。",
     invalidWhen: "請用「西元年-月-日 時:分」填寫，時間可以省略。",
-    notFound: "找不到這筆回診行程，可能已被刪除。",
-    savedEffect: "存檔後，後續提醒會改用新的時間；阿白不會替您聯絡醫院改掛號。",
+    notFound: "找不到這筆回診，可能已經被刪掉了。",
+    savedEffect: "存好之後，之後的提醒就會用新時間。掛號要自己跟醫院改，阿白不會幫您打。",
     save: "存起來",
     deleteThis: "刪除這個行程",
     deleteConfirm: (title: string) => `確定要刪除「${title}」嗎？刪掉之後提醒就不會再響。`,
@@ -354,7 +361,7 @@ export const strings = {
     cameraPermission: "需要相機權限才能掃描，也可以直接輸入號碼。",
     cameraUnsupported: "這個瀏覽器不能用相機，請直接輸入號碼。",
     cameraNotFound: "這台裝置沒有相機，請直接輸入號碼。",
-    cameraInUse: "相機正被別的畫面用著，請直接輸入號碼，或關掉其他用相機的畫面再試一次。",
+    cameraInUse: "別的畫面正在用相機，請直接輸入號碼，或關掉那個畫面再試一次。",
     // ⚠️ 不可講「換一家瀏覽器」：真正原因是網址不是安全來源（非 https 且非
     // localhost），常見於組員用區網 IP（如 http://192.168.x.x）連線；換瀏覽器
     // 解決不了，換網址才有用。
@@ -433,7 +440,7 @@ export const strings = {
     // 設定開啟」的話，沒有麥克風的桌機、用區網 IP 連進來的組員，都會去找一個
     // 根本不存在的權限開關——這與 Task 5／7 對相機做過的擴充是同一件事。
     micNotFound: "這台裝置沒有麥克風，請換一台有麥克風的手機或平板。",
-    micInUse: "麥克風正被別的畫面用著，請把其他在錄音或講電話的畫面關掉再試一次。",
+    micInUse: "別的畫面正在用麥克風，請把其他在錄音或講電話的畫面關掉再試一次。",
     // ⚠️ 不可講「換一家瀏覽器」：真正原因是網址不是安全來源（非 https 且非
     // localhost），常見於組員用區網 IP（如 http://192.168.x.x）連線。措辭與
     // `elderBind.cameraInsecureOrigin` 一致。

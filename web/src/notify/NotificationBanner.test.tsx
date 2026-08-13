@@ -24,7 +24,7 @@ function banner() {
   return screen.getByTestId("notification-banner");
 }
 
-/** 同 stage/TearTransition.test.tsx 既有的假 matchMedia 作法。 */
+/** 同 stage/BloomTransition.test.tsx 既有的假 matchMedia 作法。 */
 function mockReducedMotion(reduced: boolean) {
   vi.stubGlobal(
     "matchMedia",

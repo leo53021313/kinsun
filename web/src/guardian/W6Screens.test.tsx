@@ -201,7 +201,7 @@ describe("改回診時間", () => {
   it("找不到那筆行程時說清楚，不是停在空表單", async () => {
     api.listSchedules.mockResolvedValue([]);
     renderIn(<EditAppointmentScreen elderId="e1" scheduleId="g1" onDone={vi.fn()} />);
-    expect(await screen.findByRole("alert")).toHaveTextContent("找不到這筆回診行程");
+    expect(await screen.findByRole("alert")).toHaveTextContent("找不到這筆回診");
   });
 
   it("交付稿畫的「誰帶長輩去」與「讓阿白告訴長輩」刻意不做", async () => {
@@ -229,6 +229,6 @@ describe("格式化", () => {
     const text = buildShareText({ date: "2026-08-08", content: "還不錯。", created_at: 1 });
     expect(text).toContain("2026-08-08 的摘要");
     expect(text).toContain("還不錯。");
-    expect(text).toContain("（由金孫產生）");
+    expect(text).toContain("（金孫整理的）");
   });
 });

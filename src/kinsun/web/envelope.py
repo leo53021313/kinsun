@@ -17,10 +17,10 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 # 標準錯誤碼 → 繁中人話（✅ D-24，06 §3）；UI 直接顯示 error.message。
 ERROR_MESSAGES: dict[str, str] = {
-    "missing_token": "未提供登入憑證",
-    "invalid_token": "登入憑證無效，請重新登入",
+    "missing_token": "請先登入",
+    "invalid_token": "登入過期了，請重新登入",
     "not_found": "找不到這個頁面",
-    "method_not_allowed": "這個操作不支援",
+    "method_not_allowed": "現在不能做這件事",
     "invalid_schedule": "提醒的設定不正確",
     "invalid_credentials": "帳號或密碼不正確",
     "invalid_admin_key": "管理金鑰錯誤",
@@ -39,8 +39,8 @@ ERROR_MESSAGES: dict[str, str] = {
     "invite_used": "邀請碼已被使用",
     "invite_expired": "邀請碼已過期",
     "invite_wrong_role": "這是家屬邀請碼，請改用長輩綁定碼",
-    "too_many_attempts": "嘗試次數過多，請稍後再試",
-    "too_many_requests": "操作太頻繁，請稍後再試",
+    "too_many_attempts": "試太多次了，等一下再試",
+    "too_many_requests": "按太快了，等一下再試",
     "name_required": "請輸入名稱",
     "label_required": "請輸入回診名稱",
     "slots_required": "請至少選擇一個提醒時段",
@@ -53,9 +53,9 @@ ERROR_MESSAGES: dict[str, str] = {
     "invalid_date": "日期格式不正確（YYYY-MM-DD）",
     "invalid_time": "時間格式不正確（HH:MM）",
     "date_in_past": "日期不可早於今天",
-    "invalid_status": "狀態不正確",
-    "invalid_action": "不支援的操作",
-    "validation_error": "輸入資料格式不正確",
+    "invalid_status": "現在的狀態沒辦法做這件事",
+    "invalid_action": "現在不能做這件事",
+    "validation_error": "有欄位沒填好，請檢查一下",
     "audio_too_large": "音檔太大，請縮短錄音再試一次",
     "missing_audio": "沒有收到錄音，請重新錄一次",
     "unsupported_media_type": "上傳格式不正確，請使用語音錄音",
@@ -122,25 +122,25 @@ def _code_and_message(exc: StarletteHTTPException) -> tuple[str, str | None]:
 # `message` 給人看。沒對應到的型別退回**泛用繁中**而不是英文原文——退回原文等於這道
 # 防線在最需要的時候（遇到沒見過的錯）自動失效。
 _FIELD_MESSAGES: dict[str, str] = {
-    "missing": "這個欄位是必填的",
-    "string_too_short": "長度不足",
-    "string_too_long": "長度超過上限",
-    "string_pattern_mismatch": "格式不正確",
-    "string_type": "必須是文字",
-    "int_parsing": "必須是整數",
-    "int_type": "必須是整數",
-    "float_parsing": "必須是數字",
-    "float_type": "必須是數字",
-    "bool_parsing": "必須是是或否",
-    "bool_type": "必須是是或否",
-    "greater_than": "數值太小",
-    "greater_than_equal": "數值太小",
-    "less_than": "數值太大",
-    "less_than_equal": "數值太大",
+    "missing": "這個欄位要填",
+    "string_too_short": "字數不夠",
+    "string_too_long": "字數太多",
+    "string_pattern_mismatch": "格式不對",
+    "string_type": "請填文字",
+    "int_parsing": "請填整數",
+    "int_type": "請填整數",
+    "float_parsing": "請填數字",
+    "float_type": "請填數字",
+    "bool_parsing": "請選是或否",
+    "bool_type": "請選是或否",
+    "greater_than": "數字太小了",
+    "greater_than_equal": "數字太小了",
+    "less_than": "數字太大了",
+    "less_than_equal": "數字太大了",
     "json_invalid": "資料格式不是有效的 JSON",
-    "value_error": "內容不正確",
+    "value_error": "這裡填的內容不對",
 }
-_FIELD_MESSAGE_FALLBACK = "這個欄位填得不正確"
+_FIELD_MESSAGE_FALLBACK = "這一欄填得不對"
 
 
 def _field_message(error_type: str) -> str:

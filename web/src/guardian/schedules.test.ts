@@ -2,7 +2,7 @@
  * 排程輸入組裝與描述（自 app/src/lib/schedules.ts 原樣搬移）。
  *
  * App 端沒有替它寫過測試，搬過來時補上——三種類型各有一套「怎麼問時間」的規則，
- * 而使用者打錯格式時唯一的回饋是「請填寫提醒時間」，看不出是哪裡不對。
+ * 而使用者打錯格式時唯一的回饋是「還沒填提醒時間」，看不出是哪裡不對。
  */
 
 import type { ScheduleGroup } from "kinsun-shared/types";
@@ -20,7 +20,7 @@ describe("toOccurrences：用藥", () => {
     });
   });
 
-  it("直接指定時刻會蓋過時段", () => {
+  it("自己填時間會蓋過時段", () => {
     expect(toOccurrences("medication", { slots: ["morning"], when: "07:30" })).toEqual({
       occurrences: [{ repeat: "daily", time: "07:30" }],
     });

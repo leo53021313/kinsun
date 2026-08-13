@@ -1,5 +1,5 @@
 /**
- * `prefersReducedMotion`：`stage/TearTransition.tsx` 與 `notify/NotificationBanner.tsx`
+ * `prefersReducedMotion`：`stage/BloomTransition.tsx` 與 `notify/NotificationBanner.tsx`
  * 共用同一份判斷式，見該檔說明。
  */
 

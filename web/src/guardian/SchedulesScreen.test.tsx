@@ -76,10 +76,10 @@ describe("SchedulesScreen", () => {
 
   it("沒有行程時顯示引導文字", async () => {
     renderScreen(vi.fn().mockResolvedValue({ status: 200, json: async () => envelope([]) }));
-    expect(await screen.findByText("還沒有任何提醒，從下方新增第一筆。")).toBeInTheDocument();
+    expect(await screen.findByText("還沒有提醒，在下面新增第一筆吧。")).toBeInTheDocument();
   });
 
-  it("載入中會先顯示載入中，不會先閃過『還沒有任何提醒』", async () => {
+  it("載入中會先顯示載入中，不會先閃過『還沒有提醒』", async () => {
     // ⚠️ 用手動控制的 promise，不是 mockResolvedValue：後者在同一個 microtask
     // 就解出結果，測試永遠只看得到「解完之後」那一瞬間，看不出畫面在「還沒解完
     // 之前」顯示的是什麼——這正是 P1 抓過的同一種假測試手法。
@@ -90,9 +90,9 @@ describe("SchedulesScreen", () => {
     const fetchImpl = vi.fn().mockReturnValue(pending);
     renderScreen(fetchImpl);
     expect(await screen.findByText("載入中…")).toBeInTheDocument();
-    expect(screen.queryByText("還沒有任何提醒，從下方新增第一筆。")).not.toBeInTheDocument();
+    expect(screen.queryByText("還沒有提醒，在下面新增第一筆吧。")).not.toBeInTheDocument();
     resolveFetch({ status: 200, json: async () => envelope([]) });
-    expect(await screen.findByText("還沒有任何提醒，從下方新增第一筆。")).toBeInTheDocument();
+    expect(await screen.findByText("還沒有提醒，在下面新增第一筆吧。")).toBeInTheDocument();
   });
 
   // ⚠️ 同一份清單（`listSchedules`）在 `ElderDetailScreen` 早就用 `groupsError`
@@ -117,7 +117,7 @@ describe("SchedulesScreen", () => {
 
   it("切換類型會換掉時間欄位的問法", async () => {
     renderScreen(vi.fn().mockResolvedValue({ status: 200, json: async () => envelope([]) }));
-    await screen.findByText("還沒有任何提醒，從下方新增第一筆。");
+    await screen.findByText("還沒有提醒，在下面新增第一筆吧。");
     // 預設是用藥：顯示時段複選
     expect(screen.getByRole("checkbox", { name: "早上" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("radio", { name: "回診" }));
@@ -132,7 +132,7 @@ describe("SchedulesScreen", () => {
       .mockResolvedValueOnce({ status: 201, json: async () => envelope(WALK) })
       .mockResolvedValueOnce({ status: 200, json: async () => envelope([WALK]) });
     renderScreen(fetchImpl);
-    await screen.findByText("還沒有任何提醒，從下方新增第一筆。");
+    await screen.findByText("還沒有提醒，在下面新增第一筆吧。");
     await userEvent.type(screen.getByLabelText("提醒內容"), "降血壓藥");
     await userEvent.click(screen.getByRole("checkbox", { name: "早上" }));
     await userEvent.click(screen.getByRole("button", { name: "新增" }));
@@ -159,7 +159,7 @@ describe("SchedulesScreen", () => {
       })
       .mockResolvedValueOnce({ status: 200, json: async () => envelope([APPT]) });
     renderScreen(fetchImpl);
-    await screen.findByText("還沒有任何提醒，從下方新增第一筆。");
+    await screen.findByText("還沒有提醒，在下面新增第一筆吧。");
     await userEvent.click(screen.getByRole("radio", { name: "回診" }));
     await userEvent.type(screen.getByLabelText("提醒內容"), "心臟科回診");
     await userEvent.type(screen.getByLabelText("回診日期"), "2026-08-02");
@@ -179,7 +179,7 @@ describe("SchedulesScreen", () => {
       .mockResolvedValueOnce({ status: 201, json: async () => envelope(APPT) })
       .mockResolvedValueOnce({ status: 200, json: async () => envelope([APPT]) });
     renderScreen(fetchImpl);
-    await screen.findByText("還沒有任何提醒，從下方新增第一筆。");
+    await screen.findByText("還沒有提醒，在下面新增第一筆吧。");
     await userEvent.click(screen.getByRole("radio", { name: "回診" }));
     await userEvent.type(screen.getByLabelText("提醒內容"), "心臟科回診");
     await userEvent.type(screen.getByLabelText("回診日期"), "2026-08-20");
@@ -206,7 +206,7 @@ describe("SchedulesScreen", () => {
     await userEvent.click(screen.getByRole("button", { name: "更新" }));
 
     // ⚠️ 這裡同時擋住一個順序陷阱：`resetForm()` 會 setHint("")，這句話若排在它之前
-    // 就會被當場清掉——而畫面上看不出任何異狀（「修改後請重新填一次」本來就該消失）。
+    // 就會被當場清掉——而畫面上看不出任何異狀（「提醒時間要再填一次」本來就該消失）。
     expect(await screen.findByRole("status")).toHaveTextContent(gone);
   });
 
@@ -215,14 +215,14 @@ describe("SchedulesScreen", () => {
       .fn()
       .mockResolvedValue({ status: 200, json: async () => envelope([]) });
     renderScreen(fetchImpl);
-    await screen.findByText("還沒有任何提醒，從下方新增第一筆。");
+    await screen.findByText("還沒有提醒，在下面新增第一筆吧。");
     await userEvent.click(screen.getByRole("radio", { name: "其他" }));
     await userEvent.type(screen.getByLabelText("提醒內容"), "散步");
     await userEvent.type(screen.getByLabelText("提醒時間"), "每月三號 15:00");
     fetchImpl.mockClear();
     await userEvent.click(screen.getByRole("button", { name: "新增" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "請填寫提醒時間，格式請照欄位下方的範例。",
+      "還沒填提醒時間，照下面的例子填就好。",
     );
     expect(fetchImpl).not.toHaveBeenCalled();
   });
@@ -233,7 +233,7 @@ describe("SchedulesScreen", () => {
     expect(screen.getByLabelText("提醒內容")).toHaveValue("散步");
     // ⚠️ status 而非 alert：按「編輯」是一個**成功**的操作，這句話是操作指示、
     // 不是錯誤。掛 role="alert" 會讓螢幕報讀軟體當警示打斷朗讀，畫面上也會跳紅字。
-    expect(screen.getByRole("status")).toHaveTextContent("修改後請重新填一次提醒時間。");
+    expect(screen.getByRole("status")).toHaveTextContent("改過了，提醒時間要再填一次。");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "更新" })).toBeInTheDocument();
   });
@@ -241,7 +241,7 @@ describe("SchedulesScreen", () => {
   it("按取消編輯回到新增模式時，重填提示要一併消失", async () => {
     renderScreen(vi.fn().mockResolvedValue({ status: 200, json: async () => envelope([WALK]) }));
     await userEvent.click(await screen.findByRole("button", { name: "編輯" }));
-    expect(screen.getByRole("status")).toHaveTextContent("修改後請重新填一次提醒時間。");
+    expect(screen.getByRole("status")).toHaveTextContent("改過了，提醒時間要再填一次。");
     await userEvent.click(screen.getByRole("button", { name: "取消編輯" }));
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(screen.getByLabelText("提醒內容")).toHaveValue("");
@@ -294,7 +294,7 @@ describe("SchedulesScreen", () => {
         },
       });
     renderScreen(fetchImpl);
-    await screen.findByText("還沒有任何提醒，從下方新增第一筆。");
+    await screen.findByText("還沒有提醒，在下面新增第一筆吧。");
     await userEvent.type(screen.getByLabelText("提醒內容"), "降血壓藥");
     await userEvent.click(screen.getByRole("checkbox", { name: "早上" }));
     await userEvent.click(screen.getByRole("button", { name: "新增" }));
@@ -353,7 +353,7 @@ describe("SchedulesScreen", () => {
     const { result } = renderHook(() => useStageEvent("guardian-wrote"));
     const before = result.current;
     renderScreen(fetchImpl);
-    await screen.findByText("還沒有任何提醒，從下方新增第一筆。");
+    await screen.findByText("還沒有提醒，在下面新增第一筆吧。");
     await userEvent.type(screen.getByLabelText("提醒內容"), "散步");
     await userEvent.click(screen.getByRole("checkbox", { name: "早上" }));
     await userEvent.click(screen.getByRole("button", { name: "新增" }));

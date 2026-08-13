@@ -130,7 +130,7 @@
  *
  * ⚠️ 不在此處另加 `@media (prefers-reduced-motion: reduce)` 覆蓋：是否套用這個
  * 動畫的類名已在 NotificationBanner.tsx 以 `matchMedia` 判斷（與
- * stage/TearTransition.tsx 同款），CSS 層再疊一份會有兩處各自決定同一件事、
+ * stage/BloomTransition.tsx 同款），CSS 層再疊一份會有兩處各自決定同一件事、
  * 且其中一份（CSS media query）在 jsdom 測不到的問題。
  */
 @keyframes slideDown {

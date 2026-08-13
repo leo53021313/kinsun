@@ -86,7 +86,7 @@ describe("VoiceProfileScreen", () => {
       body: { elder_id: "e1", has_profile: true, consented_by: "女兒", granted_at: 1754956800 },
     });
     renderScreen();
-    expect(await screen.findByText(/目前使用 女兒 的聲音/)).toBeInTheDocument();
+    expect(await screen.findByText(/現在用的是 女兒 的聲音/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /改回預設聲音/ })).toBeInTheDocument();
   });
 
