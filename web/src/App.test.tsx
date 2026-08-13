@@ -113,7 +113,7 @@ describe("App", () => {
     // 改認 GatePage 專屬、不會被誤認的文字（品牌標語，舞台上的畫面不會出現
     // 這句話）；斷言寫死字面值而非讀 `strings.gate.slogan`——測試與產品讀
     // 同一個可變常數的話，改了兩邊一起變、永遠綠。
-    expect(screen.queryByText("陪伴長輩的家庭夥伴")).not.toBeInTheDocument();
+    expect(screen.queryByText("陪阿公阿嬤說說話")).not.toBeInTheDocument();
   });
 
   it("不認得的網址回開場", async () => {
