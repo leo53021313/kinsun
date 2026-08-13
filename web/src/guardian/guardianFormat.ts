@@ -11,7 +11,7 @@ import type { DailySummary } from "kinsun-shared/types";
 
 /** 分享給家人的文字。末尾標明來源是服務（金孫），不是角色。 */
 export function buildShareText(summary: DailySummary): string {
-  return `${summary.date} 的摘要\n\n${summary.content}\n\n（由金孫產生）`;
+  return `${summary.date} 的摘要\n\n${summary.content}\n\n（金孫整理的）`;
 }
 
 /**

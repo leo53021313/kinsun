@@ -27,7 +27,7 @@ describe("GatePage", () => {
 
   it("服務停機時按鈕不能按", () => {
     render(<GatePage state={state("down", { database: "down" })} onStart={vi.fn()} />);
-    expect(screen.getByText("服務目前無法使用")).toBeInTheDocument();
+    expect(screen.getByText("現在沒辦法用")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "開始使用" })).toBeDisabled();
   });
 
@@ -63,8 +63,8 @@ describe("GatePage", () => {
         onStart={vi.fn()}
       />,
     );
-    expect(screen.getByText("聽懂您說話")).toBeInTheDocument();
-    expect(screen.getByText("開口說話")).toBeInTheDocument();
-    expect(screen.getByText("準時提醒")).toBeInTheDocument();
+    expect(screen.getByText("語音辨識")).toBeInTheDocument();
+    expect(screen.getByText("語音合成")).toBeInTheDocument();
+    expect(screen.getByText("排程器")).toBeInTheDocument();
   });
 });
