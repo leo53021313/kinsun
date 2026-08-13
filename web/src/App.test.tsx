@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
-import { TEAR_DURATION_MS } from "./stage/TearTransition";
+import { BLOOM_DURATION_MS } from "./stage/BloomTransition";
 import { strings } from "./strings";
 
 /**
@@ -46,7 +46,7 @@ function mockAvailable() {
  * 可控的 fetch：由測試決定運營狀態什麼時候回來。
  *
  * ⚠️ **不可以**用「同一個 microtask 就 resolve」的 mock。`userEvent.click` 內部的
- * `act()` 會把待處理的 microtask 全部 flush 掉，於是「撕裂當下重新掛載、狀態歸零」
+ * `act()` 會把待處理的 microtask 全部 flush 掉，於是「轉場當下重新掛載、狀態歸零」
  * 這個症狀會在同一個 act 裡就被補回來——測試恰好通過，而真實網路上（哪怕只有
  * 幾十毫秒 RTT）使用者會實際看到畫面閃回「正在確認服務狀態…」。
  */
@@ -93,7 +93,7 @@ describe("App", () => {
     window.history.pushState({}, "", "/demo/stage");
     render(<App />);
     expect(await screen.findByRole("region", { name: "長輩的手機" })).toBeInTheDocument();
-    expect(screen.queryByTestId("tear-left")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("bloom-glow")).not.toBeInTheDocument();
   });
 
   it("舞台網址帶尾斜線時仍是舞台，不是開場頁", async () => {
@@ -145,20 +145,20 @@ describe("App", () => {
     expect(guardianTab).toHaveAttribute("aria-selected", "true");
 
     await waitFor(() => expect(window.location.pathname).toBe("/demo/stage"), {
-      timeout: TEAR_DURATION_MS + 1_000,
+      timeout: BLOOM_DURATION_MS + 1_000,
     });
     expect(screen.getByRole("tab", { name: "家屬端" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("從舞台回到開場時不會立刻重播動畫、把人彈回舞台", async () => {
-    // ⚠️ 撕裂旗標現在活在路由之上（以前它住在 <Routes> 底下的 Gate 裡，換路由連
+    // ⚠️ 轉場旗標現在活在路由之上（以前它住在 <Routes> 底下的 Gate 裡，換路由連
     // 元件一起卸載、旗標自然歸零）。不主動收回來的話，一回到開場就會看到動畫重播，
     // 700 毫秒後被彈回舞台——出不去。
     mockAvailable();
     render(<App />);
     await userEvent.click(await screen.findByRole("button", { name: "開始使用" }));
     await waitFor(() => expect(window.location.pathname).toBe("/demo/stage"), {
-      timeout: TEAR_DURATION_MS + 1_000,
+      timeout: BLOOM_DURATION_MS + 1_000,
     });
 
     // 模擬瀏覽器的上一頁。
@@ -168,15 +168,15 @@ describe("App", () => {
     });
 
     expect(await screen.findByRole("button", { name: "開始使用" })).toBeInTheDocument();
-    expect(screen.queryByTestId("tear-left")).not.toBeInTheDocument();
-    await new Promise((resolve) => setTimeout(resolve, TEAR_DURATION_MS + 50));
+    expect(screen.queryByTestId("bloom-glow")).not.toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, BLOOM_DURATION_MS + 50));
     expect(window.location.pathname).toBe("/demo/");
   });
 
-  it("撕裂當下畫面仍是已載入的狀態，不會閃回確認中、按鈕也不會變灰", async () => {
+  it("轉場當下畫面仍是已載入的狀態，不會閃回確認中、按鈕也不會變灰", async () => {
     // ⚠️ 這是整個展示的門面動畫：按下去的那一瞬間畫面若閃回「正在確認服務狀態…」
-    // 且按鈕變灰，看的人會以為壞了。成因是 TearTransition 在 active 翻轉時把 children
-    // 換到 overlay 底下的兩份副本——React 會卸載活著的 GatePage、掛兩個全新實例，
+    // 且按鈕變灰，看的人會以為壞了。成因是 BloomTransition 在 active 翻轉時把 children
+    // 換到 overlay 底下的副本——React 會卸載活著的 GatePage、掛一個全新實例，
     // 它們自己的 useDemoStatus 於是從 null 重來（並且各再打一次後端）。
     const { fetchMock, settleAll } = deferredStatusFetch();
     render(<App />);
@@ -191,13 +191,13 @@ describe("App", () => {
 
     await userEvent.click(button);
 
-    // 撕開的左半就是使用者當下看到的畫面。
-    // ⚠️ 用 getByText 而非 getByRole：overlay 掛了 aria-hidden（那兩層是裝飾，
+    // overlay 裡那份開場頁副本就是使用者當下看到的畫面。
+    // ⚠️ 用 getByText 而非 getByRole：overlay 掛了 aria-hidden（副本是裝飾，
     // 不該被讀螢幕唸兩遍），role 查詢走的是無障礙樹，查不到裡面的東西。
-    const left = within(screen.getByTestId("tear-left"));
-    expect(left.queryByText(strings.gate.checking)).not.toBeInTheDocument();
-    expect(left.getByText(strings.gate.overall.available)).toBeInTheDocument();
-    expect(left.getByText(strings.gate.start)).toBeEnabled();
+    const overlay = within(screen.getByTestId("bloom-page"));
+    expect(overlay.queryByText(strings.gate.checking)).not.toBeInTheDocument();
+    expect(overlay.getByText(strings.gate.overall.available)).toBeInTheDocument();
+    expect(overlay.getByText(strings.gate.start)).toBeEnabled();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
