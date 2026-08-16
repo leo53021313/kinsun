@@ -16,6 +16,12 @@
  * 線索；狀態帶到位後那組 aria-label 就退場了——可見文字比 aria-label 好，看得見的
  * 人與聽的人拿到同一份資訊，也不會有「同一個狀態兩套說法」的漂移。
  *
+ * ⚠️ **2026-08-16 起 `aria-hidden` 掛在兩個裝飾層上、不掛在外層容器**：待機時浮出來
+ * 的可點道具（戳泡泡、餵他一條魚⋯）必須進得了輔助科技的樹，而被祖先 `aria-hidden`
+ * 蓋住的按鈕在讀螢幕軟體眼中不存在。「純裝飾」的意思沒有變——沒有道具的時候舞台裡
+ * 一個可及的東西都沒有，狀態仍然只由狀態帶說。⚠️ 道具**只在網頁版**（✅ 裁決
+ * 2026-08-16）：App 端不畫這顆按鈕，renderer 照發事件但沒有人接。
+ *
  * ⚠️ 沒有靜態暫用圖。App 那側 renderer 未就緒時退回 `akin-hero.png`，而那張是
  * 舊角色阿金（黃金獵犬），已列在驗收報告。網頁版不重複這個錯：未就緒時只留光暈，
  * iframe 讀的是同源的本機檔案，不會等很久。
@@ -24,10 +30,14 @@
 import { useEffect, useRef, useState } from "react";
 
 import {
+  createOttoLookCommand,
   createOttoSyncCommand,
+  createOttoTapCommand,
   parseOttoRendererEvent,
+  type OttoIdleProp,
   type OttoSpeechCue,
 } from "kinsun-shared/ottoBridge";
+import { prefersReducedMotion } from "@/stage/reducedMotion";
 import { strings } from "@/strings";
 
 import { bearSpeechCue } from "./bearEmotion";
@@ -50,9 +60,17 @@ export function BearStage(props: {
   const { state } = props;
   const speechCue = bearSpeechCue(state, props.emotion, props.speechCue ?? null);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
+  const hostRef = useRef<HTMLDivElement | null>(null);
   const sequenceRef = useRef(0);
-  const latestCommandRef = useRef(createOttoSyncCommand(0, state, speechCue));
   const [isReady, setIsReady] = useState(false);
+  /**
+   * 待機時浮出來的可點小道具（戳泡泡、餵他一條魚⋯），由 renderer 主動回報。
+   *
+   * ⚠️ **只有待機態顯示**：長輩正要說話或正在聽答案時，畫面上不可以多一個會動的
+   * 東西跟麥克風鍵搶手指。renderer 那側待機被 `suspend()` 時本來就會送收起來，這裡
+   * 不賭「狀態切換」與「訊息抵達」的先後。
+   */
+  const [idleProp, setIdleProp] = useState<OttoIdleProp | null>(null);
 
   useEffect(() => {
     function receive(event: MessageEvent) {
@@ -61,30 +79,121 @@ export function BearStage(props: {
       if (!frameRef.current || event.source !== frameRef.current.contentWindow) return;
       if (typeof event.data !== "string") return;
       const message = parseOttoRendererEvent(event.data);
+      if (message?.type === "idle-prop") {
+        setIdleProp(message.prop);
+        return;
+      }
       if (message?.type !== "ready") return;
+      // ⚠️ 這裡**只開開關、不送指令**：補送由下面那條 effect 負責（`isReady` 在它
+      // 的相依陣列裡，轉真時會以當下的狀態送出一則）。兩邊都送的話 renderer 會在
+      // ready 的瞬間連收兩則同狀態指令——而重送 speaking 會讓 `TalkDriver.talk()`
+      // 先 `stop()` 再從頭開始，阿白的嘴會把同一句重對一次。
       setIsReady(true);
-      // renderer 剛起來時可能已經錯過幾個狀態，補送最後一個。
-      frameRef.current.contentWindow?.postMessage(
-        JSON.stringify(latestCommandRef.current),
-        "*",
-      );
     }
     window.addEventListener("message", receive);
     return () => window.removeEventListener("message", receive);
   }, []);
 
+  // ⚠️ `isReady` 也在相依陣列裡：renderer 起來之前的狀態變化只會累加序號、不送出，
+  // ready 轉真時這條會以**當下**的狀態補送一則——renderer 剛起來時錯過的那幾個狀態
+  // 因此不需要另外記，最後一個就是它現在該呈現的樣子。
   useEffect(() => {
+    if (!isReady) return;
     sequenceRef.current += 1;
     const command = createOttoSyncCommand(sequenceRef.current, state, speechCue);
-    latestCommandRef.current = command;
-    if (isReady) {
-      frameRef.current?.contentWindow?.postMessage(JSON.stringify(command), "*");
-    }
+    frameRef.current?.contentWindow?.postMessage(JSON.stringify(command), "*");
   }, [state, speechCue, isReady]);
 
+  // 視線追蹤：阿白的眼睛與頭跟著指標轉。
+  //
+  // ⚠️ **監聽掛在 `window` 而不是 iframe 上**：iframe 是 `pointer-events: none` 且
+  // 不給 `allow-same-origin`，它自己收不到、我們也伸不進去。座標在這一層換算完才
+  // 送進去——renderer 沒有頁面座標系的概念（它只有自己那 908×1250 的 viewBox）。
+  //
+  // ⚠️ **滿量程用視窗的一半、不是舞台的一半**：以舞台為基準的話，指標離開舞台一個
+  // 身位就飽和了，之後再怎麼移動阿白都不動；以視窗為基準，指標在畫面任何位置都對應
+  // 到合理的角度，而「靠近阿白」與「在螢幕角落」看起來是不同的方向。
+  useEffect(() => {
+    // ⚠️ 尊重「減少動態效果」：前庭功能障礙的使用者會因為跟著自己動的畫面而暈眩。
+    // renderer 那側讀同一個系統設定關掉動畫，這裡連訊息都不送。
+    if (!isReady || prefersReducedMotion()) return;
+
+    let pending: { x: number; y: number } | null = null;
+    let frameId = 0;
+
+    const send = (x: number | null, y: number | null) => {
+      frameRef.current?.contentWindow?.postMessage(
+        JSON.stringify(createOttoLookCommand(x, y)),
+        "*",
+      );
+    };
+
+    // ⚠️ 每一幀最多送一則：`pointermove` 的頻率遠高於畫面更新（高更新率的觸控螢幕
+    // 一秒可以送兩三百則），每一則都 `postMessage`＋`JSON.stringify` 是純浪費，而
+    // 阿白最多也只能一幀動一次。送出的永遠是**最後**那個位置，中途的已經過期。
+    const flush = () => {
+      frameId = 0;
+      if (!pending) return;
+      const { x, y } = pending;
+      pending = null;
+      send(x, y);
+    };
+
+    const onMove = (event: PointerEvent) => {
+      const host = hostRef.current;
+      if (!host) return;
+      const halfWidth = window.innerWidth / 2;
+      const halfHeight = window.innerHeight / 2;
+      // 視窗尺寸為 0（分頁在背景、jsdom 未設值）時換算會變成 Infinity／NaN，
+      // 而那會讓 renderer 的 transform 整組失效、阿白直接消失。
+      if (halfWidth <= 0 || halfHeight <= 0) return;
+      const rect = host.getBoundingClientRect();
+      pending = {
+        x: (event.clientX - (rect.left + rect.width / 2)) / halfWidth,
+        y: (event.clientY - (rect.top + rect.height / 2)) / halfHeight,
+      };
+      if (frameId === 0) frameId = requestAnimationFrame(flush);
+    };
+
+    const recenter = () => {
+      pending = null;
+      if (frameId !== 0) {
+        cancelAnimationFrame(frameId);
+        frameId = 0;
+      }
+      send(null, null);
+    };
+
+    // ⚠️ **只有觸控在放開時回正**：滑鼠放開按鍵不代表人走了，視線該留在原處；
+    // 手指離開玻璃就真的沒有指標了，不回正的話眼珠會一直斜著看最後那個位置。
+    const onUp = (event: PointerEvent) => {
+      if (event.pointerType === "touch") recenter();
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    // 滑鼠移出整個視窗（切到別的視窗、移到瀏覽器工具列）。
+    document.addEventListener("mouseleave", recenter);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      document.removeEventListener("mouseleave", recenter);
+      if (frameId !== 0) cancelAnimationFrame(frameId);
+    };
+  }, [isReady]);
+
+  const visibleProp = state === "idle" ? idleProp : null;
+
   return (
+    // ⚠️ **外層不再整塊 `aria-hidden`**（W3b 起它是的）：可點的道具必須進得了輔助
+    // 科技的樹，被祖先 `aria-hidden` 蓋住的按鈕在讀螢幕軟體眼中不存在，鍵盤走到它
+    // 時也讀不出任何東西。「舞台是純裝飾」這件事沒有變——光暈與 renderer 兩個裝飾層
+    // 各自帶著自己的 `aria-hidden`，狀態仍然由狀態帶的可見文字說；唯一的例外就是
+    // 這顆真的可以按的道具，而它有自己講得清楚的可及名稱。
     <div
-      aria-hidden
+      ref={hostRef}
       className="relative h-[var(--avatar-stage-h)] w-[var(--avatar-stage-w)] shrink-0"
       data-testid="bear-stage"
     >
@@ -110,6 +219,34 @@ export function BearStage(props: {
           isReady ? "opacity-100" : "opacity-0"
         }`}
       />
+      {visibleProp ? (
+        <button
+          type="button"
+          // ⚠️ 每個道具一顆新的按鈕（key 帶道具名）：換道具時若沿用同一顆，React 會
+          // 保留 DOM 節點，正在跑的浮現動畫會從上一個道具的進度接下去。
+          key={visibleProp.key}
+          data-testid="bear-idle-prop"
+          onClick={() => {
+            frameRef.current?.contentWindow?.postMessage(
+              JSON.stringify(createOttoTapCommand()),
+              "*",
+            );
+            // 樂觀收起來：renderer 那側一次待機也只認第一下（`Idle.tap()` 的 `hit`
+            // 旗標），留著只會讓長輩再按一次卻沒有反應。
+            setIdleProp(null);
+          }}
+          // emoji 對讀螢幕軟體幾乎沒有資訊量，可及名稱要自己講清楚「這是什麼、按了
+          // 會怎樣」。`title` 讓滑鼠使用者也讀得到同一句。
+          aria-label={`${visibleProp.zh}：${visibleProp.label}`}
+          title={`${visibleProp.zh}：${visibleProp.label}`}
+          style={{ left: `${visibleProp.x}%`, top: `${visibleProp.y}%` }}
+          // 56px 是長輩端可點目標的下限；`-translate-*` 讓 renderer 給的座標落在
+          // 按鈕**中心**而不是左上角。
+          className="absolute size-14 -translate-x-1/2 -translate-y-1/2 rounded-full bg-surface/80 text-[30px] leading-none shadow-[var(--elevation-sheet)] backdrop-blur-sm transition-transform duration-[var(--motion-state)] hover:scale-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+        >
+          <span aria-hidden>{visibleProp.icon}</span>
+        </button>
+      ) : null}
     </div>
   );
 }
