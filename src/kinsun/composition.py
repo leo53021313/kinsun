@@ -398,6 +398,7 @@ def assemble_core(
             locations=locations,
             location_stale_after_hours=settings.location_stale_after_hours,
         ),
+        emotion_enabled=settings.gemini_emotion_enabled,
     )
     notifications = PgAppNotificationStore(db, clock=clock, new_id=new_id)
     push_tokens = PgPushTokenStore(db, clock=clock, new_id=new_id)

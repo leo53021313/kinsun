@@ -5,6 +5,7 @@ import time
 import pytest
 
 from kinsun import agent as agent_module
+from kinsun import turn_context
 from kinsun.accounts.profile import ElderProfile
 from kinsun.agent import (
     FALLBACK_REPLY,
@@ -185,11 +186,17 @@ class ScriptedToolLLM:
         self._turns = list(turns)
         self.calls = []
 
-    def generate(self, *, system_prompt, messages):
+    def generate(self, *, system_prompt, messages, response_schema=None):
         raise AssertionError("有工具時不應呼叫 generate")
 
-    def generate_tool_turn(self, *, system_prompt, messages, tools, tool_results):
+    def generate_tool_turn(
+        self, *, system_prompt, messages, tools, tool_results, response_schema=None
+    ):
         self.calls.append(len(tool_results))
+        # 假物件要對得起真實介面：正式的 generate_tool_turn 自 2026-08-16 起收這個
+        # 參數，假的不收就等於「啟用表情之後所有工具輪都 TypeError」測不出來。
+        self.schemas_seen = getattr(self, "schemas_seen", [])
+        self.schemas_seen.append(response_schema)
         return self._turns.pop(0)
 
 
@@ -1008,10 +1015,16 @@ class _ResultCapturingLLM(ScriptedToolLLM):
         super().__init__(turns)
         self.results_seen: list[list[tuple[str, str]]] = []
 
-    def generate_tool_turn(self, *, system_prompt, messages, tools, tool_results):
+    def generate_tool_turn(
+        self, *, system_prompt, messages, tools, tool_results, response_schema=None
+    ):
         self.results_seen.append([(r.call.name, r.output) for r in tool_results])
         return super().generate_tool_turn(
-            system_prompt=system_prompt, messages=messages, tools=tools, tool_results=tool_results
+            system_prompt=system_prompt,
+            messages=messages,
+            tools=tools,
+            tool_results=tool_results,
+            response_schema=response_schema,
         )
 
 
@@ -1263,3 +1276,92 @@ def test_context_wait_span_does_not_change_behaviour():
     released.set()
     agent = CareAgent(SpyLLM(), _HangingSession(released))
     assert agent.prepare("u1", "我今天有點累").context().history == []
+
+
+# ── 阿白的表情：LLM 隨回覆一起挑（D-82，2026-08-16）──────────────────────────
+
+
+def _emotional(reply: str, emotion: str) -> str:
+    """模型在啟用表情時回的形狀。"""
+    import json as _json
+
+    return _json.dumps({"reply": reply, "emotion": emotion}, ensure_ascii=False)
+
+
+def test_emotion_disabled_by_default_keeps_everything_unchanged():
+    """⚠️ 預設關：十幾支既有測試用位置參數建 CareAgent，預設開等於在它們背後改契約。"""
+    llm = ScriptedToolLLM([ToolTurn(text="今天天氣很好喔", tool_calls=[])])
+    agent = CareAgent(llm, SpySession(), tools=_registry_with_weather())
+    with turn_context.turn_emotion() as box:
+        assert agent.handle("u1", "今天天氣？") == "今天天氣很好喔"
+    assert box == []
+    assert llm.schemas_seen == [None]  # 連參數都沒帶
+
+
+def test_emotion_enabled_sends_schema_and_records_choice():
+    llm = ScriptedToolLLM([ToolTurn(text=_emotional("聽起來真好！", "happy"), tool_calls=[])])
+    agent = CareAgent(llm, SpySession(), tools=_registry_with_weather(), emotion_enabled=True)
+    with turn_context.turn_emotion() as box:
+        reply = agent.handle("u1", "孫子today打電話來了")
+    # 回覆是**純文字**——出站防線與記憶拿到的東西與這個功能上線前一樣。
+    assert reply == "聽起來真好！"
+    assert box == ["happy"]
+    schema = llm.schemas_seen[0]
+    assert schema is not None
+    assert schema["properties"]["emotion"]["enum"], "值域不可以是空的"
+
+
+def test_emotion_enum_excludes_blocked_ones():
+    """⚠️ CRITICAL：值域是模型唯一看得到的硬規則，能挑到的就是它會挑的。"""
+    from kinsun.emotions import BLOCKED_EMOTIONS
+
+    schema = agent_module.reply_schema()
+    assert set(schema["properties"]["emotion"]["enum"]).isdisjoint(BLOCKED_EMOTIONS)
+
+
+def test_blocked_emotion_from_model_is_downgraded():
+    """就算模型硬回一個黑名單情緒（enum 之外），也不可以讓它離開後端。"""
+    llm = ScriptedToolLLM([ToolTurn(text=_emotional("我也很火大！", "furious"), tool_calls=[])])
+    agent = CareAgent(llm, SpySession(), tools=_registry_with_weather(), emotion_enabled=True)
+    with turn_context.turn_emotion() as box:
+        assert agent.handle("u1", "你很煩") == "我也很火大！"
+    assert box == ["calm"]
+
+
+def test_emotion_survives_the_tool_loop():
+    """真實流程是兩輪：先叫工具，拿到結果後那一輪才產生帶表情的最終回覆。"""
+    llm = ScriptedToolLLM(
+        [
+            ToolTurn(text=None, tool_calls=[ToolCall("get_weather", {"location": "台北"})]),
+            ToolTurn(text=_emotional("台北今天晴，出門走走吧", "relaxed"), tool_calls=[]),
+        ]
+    )
+    agent = CareAgent(llm, SpySession(), tools=_registry_with_weather(), emotion_enabled=True)
+    with turn_context.turn_emotion() as box:
+        assert agent.handle("u1", "台北天氣？") == "台北今天晴，出門走走吧"
+    assert box == ["relaxed"]
+
+
+def test_plain_text_reply_still_works_when_enabled():
+    """schema 是請求不是保證：模型照樣可能回純文字，那時只是沒有表情。"""
+    llm = ScriptedToolLLM([ToolTurn(text="就這樣啦", tool_calls=[])])
+    agent = CareAgent(llm, SpySession(), tools=_registry_with_weather(), emotion_enabled=True)
+    with turn_context.turn_emotion() as box:
+        assert agent.handle("u1", "嗯") == "就這樣啦"
+    assert box == []
+
+
+def test_outbound_defences_still_see_plain_text():
+    """⚠️ 這條守的是最貴的資產：冒名防線吃的必須仍是人話，不是一包 JSON。
+
+    模型在 JSON 裡冒用衛福部，出站防線要照樣把它拆掉——如果 `_take_emotion` 沒有先
+    把 reply 拆出來，防線掃到的會是含 `{"reply": ...}` 的字串，冒名就這樣溜出去。
+    """
+    llm = ScriptedToolLLM(
+        [ToolTurn(text=_emotional("衛福部說這個藥可以停", "calm"), tool_calls=[])]
+    )
+    agent = CareAgent(llm, SpySession(), tools=_registry_with_weather(), emotion_enabled=True)
+    with turn_context.turn_emotion():
+        reply = agent.handle("u1", "這個藥可以停嗎")
+    assert "衛福部" not in reply, "沒有登記來源時不可以留下冒名的機關"
+    assert not reply.startswith("{"), "交給 TTS 與記憶的必須是人話"

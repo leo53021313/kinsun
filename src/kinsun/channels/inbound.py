@@ -87,6 +87,12 @@ class DeliveryOutcome:
     # 與 `chunk_count` 住同一個物件是刻意的：一個說「我宣告了幾段」，一個說
     # 「那幾段是從哪串文字切出來的」，兩者必須同源，分開放遲早會分岔。
     reply_text: str = ""
+    # 阿白這一輪臉上的表情（`kinsun.emotions` 的值域），由 LLM 隨回覆一起挑（D-82）。
+    #
+    # ⚠️ **空字串是正常值，不是錯誤**：功能關閉、模型沒給、拆不出 JSON 都會是空的，
+    # 那時角色 renderer 會自己從回覆文字判讀情緒（它一直都會）。呈現層據此決定要不要
+    # 覆寫，**不可以**把空字串當成「平靜」送出去——那會把 renderer 的判讀關掉。
+    emotion: str = ""
 
 
 def chunk_info(result) -> tuple[int, str]:
@@ -295,6 +301,23 @@ def _run_pipeline(
     # 整段發生在這個 root 開始之前（見 `turn_context.admission_wait` 的說明）。
     # 0 也照寫——「這輪沒有排隊」與「這欄位沒人填」是兩件事，後者查起來會卡住。
     tracing.update_trace_metadata(admission_wait_ms=turn_context.current_admission_wait_ms())
+    # 本輪的表情帳本（D-82）：`CareAgent` 在生成回覆時寫，下面 `replace` 時讀。
+    # ⚠️ 開在這裡而不是更裡層——它要涵蓋整個 `produce()`，而那支才是呼叫到 agent 的人。
+    with turn_context.turn_emotion() as emotion_box:
+        return _run_pipeline_inner(
+            msg, produce, voice=voice, traces=traces, timer=timer, emotion_box=emotion_box
+        )
+
+
+def _run_pipeline_inner(
+    msg: InboundMessage,
+    produce: Callable[[], TtsResult],
+    *,
+    voice,
+    traces: TraceStore | None,
+    timer: Callable[[], float],
+    emotion_box: list[str],
+) -> None:
     try:
         result = produce()
     except (ASRError, LLMError, MemoryStoreError) as exc:
@@ -320,7 +343,13 @@ def _run_pipeline(
     # `reply_text` 一併在這裡填：它與段數必須來自**同一個** `result.text`，呼叫端
     # 才不會拿到「宣告 3 段、但那 3 段是從另一串文字切出來的」（見 DeliveryOutcome）。
     chunk_count, digest = chunk_info(result)
-    outcome = replace(outcome, chunk_count=chunk_count, reply_digest=digest, reply_text=result.text)
+    outcome = replace(
+        outcome,
+        chunk_count=chunk_count,
+        reply_digest=digest,
+        reply_text=result.text,
+        emotion=emotion_box[0] if emotion_box else "",
+    )
     _record_reply(traces, msg, outcome, started, timer)
     return outcome
 

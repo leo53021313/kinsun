@@ -21,6 +21,7 @@ import { useEffect, useState } from "react";
 
 import { strings } from "@/strings";
 
+import { BearAvatar } from "./BearStage";
 import { loadToday, type TodayTurn } from "./todayLog";
 
 /** 「早上 9:05」這種長輩讀得懂的說法，不用 24 小時制。 */
@@ -65,6 +66,8 @@ export function HistoryScreen(props: { onBack: () => void }) {
         <h1 className="flex-1 text-[28px] font-extrabold text-ink">
           {strings.elderHistory.title}
         </h1>
+        {/* 阿白也在這一頁——他不是只存在於對講機那一格畫面裡。 */}
+        <BearAvatar />
       </div>
 
       {/* 內容層：只有這一塊捲。 */}
