@@ -19,7 +19,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import rendererHtml from "../../public/otto/renderer.html?raw";
 import { strings } from "@/strings";
 
-import { BearStage } from "./BearStage";
+import { BearAvatar, BearStage } from "./BearStage";
 import { BLOCKED_EMOTIONS, sanitizeEmotion } from "./bearEmotion";
 
 function iframeWindow(): Window {
@@ -189,6 +189,50 @@ describe("說話對嘴的原料", () => {
     });
     expect(command).toMatchObject({ state: "thinking" });
     expect(command).not.toHaveProperty("text");
+  });
+});
+
+describe("BearAvatar（清單頁的小頭像）", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("用的是同一份 renderer，不是另外一張圖", () => {
+    // ⚠️ App 端這裡原本 `require("akin-hero.png")`，而那張是舊角色阿金（黃金獵犬）
+    // ——長輩每次進「之前聊過的」都會看到一隻狗，畫面其他地方卻都叫他阿白。
+    // 網頁版不重蹈：只有一份角色。
+    render(<BearAvatar />);
+    const frame = document.querySelector("iframe");
+    expect(frame).toHaveAttribute("src", expect.stringContaining("otto/renderer.html"));
+    expect(frame).toHaveAttribute("sandbox", "allow-scripts");
+  });
+
+  it("是純裝飾：頁首標題已經說了這是什麼頁", () => {
+    render(<BearAvatar />);
+    expect(screen.getByTestId("bear-avatar")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("尺寸用設計 token，不寫死", () => {
+    render(<BearAvatar />);
+    const avatar = screen.getByTestId("bear-avatar");
+    expect(avatar.className).toContain("w-[var(--avatar-header-w)]");
+    expect(avatar.className).toContain("h-[var(--avatar-header-h)]");
+  });
+
+  it("renderer 就緒前不顯示，避免先看到一塊空白再跳出角色", () => {
+    render(<BearAvatar />);
+    const frame = document.querySelector("iframe")!;
+    expect(frame.className).toContain("opacity-0");
+    emitReady(frame.contentWindow);
+    expect(frame.className).toContain("opacity-100");
+  });
+
+  it("不是自己 iframe 送來的 ready 一律不理", () => {
+    render(<BearAvatar />);
+    emitReady(window);
+    expect(document.querySelector("iframe")!.className).toContain("opacity-0");
   });
 });
 

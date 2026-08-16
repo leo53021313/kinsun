@@ -265,3 +265,57 @@ export function BearStage(props: {
     </div>
   );
 }
+
+/**
+ * 清單頁頁首的小頭像。
+ *
+ * ⚠️ 用**同一份 renderer**而不是一張靜態圖：App 端這裡原本 `require("akin-hero.png")`，
+ * 而那張是舊角色阿金（黃金獵犬＋已作廢的珊瑚橘圍巾）——長輩每次進「之前聊過的」都會
+ * 看到一隻狗，而畫面其他地方都叫他阿白。只有一份角色，就不會有「這裡是狗那裡是熊」。
+ *
+ * ⚠️ 這裡**不接**視線、道具、對嘴與打招呼：它是頁首的一個小裝飾，34 × 48 裡看不出
+ * 視線的方向，而可點的道具在這個尺寸下遠低於長輩端的觸控下限。要的只是「阿白也在
+ * 這一頁」。renderer 自己的待機動畫（呼吸、眨眼）不需要任何指令就會跑。
+ */
+export function BearAvatar() {
+  const frameRef = useRef<HTMLIFrameElement | null>(null);
+  const [isReady, setIsReady] = useState(false);
+
+  useEffect(() => {
+    function receive(event: MessageEvent) {
+      // 與 `BearStage` 同一道來源檢查：頁面上任何腳本都能對 window 送 message。
+      if (!frameRef.current || event.source !== frameRef.current.contentWindow) return;
+      if (typeof event.data !== "string") return;
+      if (parseOttoRendererEvent(event.data)?.type !== "ready") return;
+      setIsReady(true);
+    }
+    window.addEventListener("message", receive);
+    return () => window.removeEventListener("message", receive);
+  }, []);
+
+  return (
+    <div
+      aria-hidden
+      data-testid="bear-avatar"
+      className="relative h-[var(--avatar-header-h)] w-[var(--avatar-header-w)] shrink-0"
+    >
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -inset-1.5 rounded-full blur-md"
+        style={{ background: "var(--talk-idle-glow)" }}
+      />
+      <iframe
+        ref={frameRef}
+        src={RENDERER_SRC}
+        title={strings.talk.companionTitle}
+        aria-hidden
+        tabIndex={-1}
+        sandbox="allow-scripts"
+        scrolling="no"
+        className={`pointer-events-none absolute inset-0 size-full border-0 bg-transparent transition-opacity duration-[var(--motion-state)] ${
+          isReady ? "opacity-100" : "opacity-0"
+        }`}
+      />
+    </div>
+  );
+}

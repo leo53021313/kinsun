@@ -76,6 +76,11 @@ describe("HistoryScreen", () => {
     expect(h.onBack).toHaveBeenCalledOnce();
   });
 
+  it("頁首右側有阿白的小頭像——他不是只存在於對講機那一頁", async () => {
+    renderScreen();
+    expect(screen.getByTestId("bear-avatar")).toBeInTheDocument();
+  });
+
   it("頁首固定，只有內容層捲動", async () => {
     // 規則 2 的例外只開給內容層：一天講幾十輪，清單一定超過一屏。
     renderScreen();
