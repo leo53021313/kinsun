@@ -30,13 +30,25 @@ import {
 } from "kinsun-shared/ottoBridge";
 import { strings } from "@/strings";
 
+import { bearSpeechCue } from "./bearEmotion";
 import type { AvatarState } from "./useTalk";
 
 /** 產物與 App 同源同檔；`base` 由 Vite 注入（正式掛在 /demo/）。 */
 const RENDERER_SRC = `${import.meta.env.BASE_URL}otto/renderer.html`;
 
-export function BearStage(props: { state: AvatarState; speechCue?: OttoSpeechCue | null }) {
-  const { state, speechCue = null } = props;
+export function BearStage(props: {
+  state: AvatarState;
+  speechCue?: OttoSpeechCue | null;
+  /**
+   * 回應情緒。⚠️ 後端目前不回傳這個欄位（全庫 `src/` 沒有 emotion 的概念），所以
+   * 呼叫端一律不傳、此處恆為 `undefined`——與 App 端 `talk.tsx` 的 `replyEmotion`
+   * 是同一個呈現層接點。那時 renderer 會用 `senseEmotion()` 從阿白**自己講的話**
+   * 判讀情緒（`sentiment.js`，50 種），所以不傳並不等於沒有情緒。
+   */
+  emotion?: string | null;
+}) {
+  const { state } = props;
+  const speechCue = bearSpeechCue(state, props.emotion, props.speechCue ?? null);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const sequenceRef = useRef(0);
   const latestCommandRef = useRef(createOttoSyncCommand(0, state, speechCue));

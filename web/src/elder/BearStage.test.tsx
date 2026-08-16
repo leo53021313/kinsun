@@ -10,9 +10,17 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// ⚠️ 讀的是**這一端真正會載入的那份產物**（`RENDERER_SRC` 指向它），不是
+// `shared/otto-pet-core/sentiment.js` 來源：產物與來源一致由 `npm run build` 的
+// `build-renderer.mjs --check` 守，這裡再往來源比對只是重複同一件事，而比對產物
+// 才涵蓋「來源改了但沒重新產生」這個真實會發生的狀態。
+// ⚠️ 用 `?raw` 而不是 `node:fs`：路徑由打包器解析，不依賴測試從哪個目錄啟動
+//（jsdom 下 `import.meta.url` 不是 file: scheme，`fileURLToPath` 會擲例外）。
+import rendererHtml from "../../public/otto/renderer.html?raw";
 import { strings } from "@/strings";
 
 import { BearStage } from "./BearStage";
+import { BLOCKED_EMOTIONS, sanitizeEmotion } from "./bearEmotion";
 
 function iframeWindow(): Window {
   const frame = document.querySelector("iframe");
@@ -110,5 +118,102 @@ describe("BearStage", () => {
     render(<BearStage state="idle" />);
     const frame = document.querySelector("iframe")!;
     expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+  });
+});
+
+/** 走完「ready → 換成這組 props」，回傳 renderer 收到的最後一個指令。 */
+function lastCommandAfter(props: Parameters<typeof BearStage>[0]) {
+  const { rerender } = render(<BearStage state="idle" />);
+  const post = vi.spyOn(iframeWindow(), "postMessage");
+  emitReady(iframeWindow());
+  rerender(<BearStage {...props} />);
+  const commands = post.mock.calls.map((call) => JSON.parse(String(call[0])));
+  return commands.at(-1);
+}
+
+describe("說話對嘴的原料", () => {
+  // ⚠️ 這裡驗的是「呈現層有沒有把原料交出去」，不是 renderer 內部怎麼對嘴——後者
+  // 由 `app/scripts/test-otto-runtime.mjs` 在真的跑起來的 DOM 上驗，兩邊不重複。
+  // 這一層壞掉的症狀是**沒有編譯錯誤、沒有測試紅**，只是阿白說話時嘴不會動。
+
+  it("speaking 時把這一則的字與時長送給 renderer", () => {
+    const command = lastCommandAfter({
+      state: "speaking",
+      speechCue: { key: "t1:reply:1", text: "今天天氣很好", durationMs: 1200 },
+    });
+    expect(command).toMatchObject({
+      state: "speaking",
+      text: "今天天氣很好",
+      durationMs: 1200,
+    });
+  });
+
+  it("同一句重播也要送出新指令：key 不同，renderer 才會重新對嘴", () => {
+    const { rerender } = render(<BearStage state="idle" />);
+    const post = vi.spyOn(iframeWindow(), "postMessage");
+    emitReady(iframeWindow());
+    const spoken = { text: "該吃藥了喔", durationMs: 900 };
+    rerender(<BearStage state="speaking" speechCue={{ key: "t1:reply:1", ...spoken }} />);
+    rerender(<BearStage state="speaking" speechCue={{ key: "t1:reply:2", ...spoken }} />);
+
+    const commands = post.mock.calls.map((call) => JSON.parse(String(call[0])));
+    const speaking = commands.filter((command) => command.state === "speaking");
+    expect(speaking).toHaveLength(2);
+    // renderer 以 sequence 擋重複投遞（見 kinsun-bridge.js）：第二次沒有更大的
+    // sequence 就會被整個忽略，同一句重播時嘴巴不會再動。
+    expect(speaking[1].sequence).toBeGreaterThan(speaking[0].sequence);
+  });
+
+  it("非 speaking 態不帶字：協定只在說話時需要對嘴原料", () => {
+    const command = lastCommandAfter({
+      state: "thinking",
+      speechCue: { key: "t1:reply:1", text: "今天天氣很好", durationMs: 1200 },
+    });
+    expect(command).toMatchObject({ state: "thinking" });
+    expect(command).not.toHaveProperty("text");
+  });
+});
+
+describe("情緒黑名單", () => {
+  // ⚠️ CRITICAL（接手指示第 10 條）：阿白可以同理長輩的不舒服，但不能對長輩表現
+  // 生氣、不耐、嫌惡、猜忌或驚慌。renderer 內的 `PET.sanitizeEmotion` 是執行期的
+  // 真防線；這一層是**送出去之前**就先擋掉，與 App 端 `BearStage.tsx` 同形。
+
+  it("黑名單情緒不會送到 renderer", () => {
+    const command = lastCommandAfter({
+      state: "speaking",
+      emotion: "angry",
+      speechCue: { key: "t1:reply:1", text: "你很煩", durationMs: 500 },
+    });
+    expect(command).toMatchObject({ state: "speaking", text: "你很煩" });
+    expect(command).not.toHaveProperty("emotion");
+  });
+
+  it("允許的情緒照送——擋的是傷人的那幾種，不是全部", () => {
+    const command = lastCommandAfter({
+      state: "speaking",
+      emotion: "grateful",
+      speechCue: { key: "t1:reply:1", text: "謝謝您", durationMs: 500 },
+    });
+    expect(command).toMatchObject({ emotion: "grateful" });
+  });
+
+  it("sanitizeEmotion 對每一個黑名單情緒都回 null", () => {
+    for (const emotion of BLOCKED_EMOTIONS) {
+      expect(sanitizeEmotion(emotion)).toBeNull();
+    }
+    expect(sanitizeEmotion("calm")).toBe("calm");
+    expect(sanitizeEmotion(null)).toBeNull();
+  });
+
+  it("這份黑名單與 renderer 的 BLOCKED_EMOTIONS 是同一份", () => {
+    // ⚠️ 兩份清單漂掉**不會有任何症狀**，直到長輩罵阿白的那一刻。App 端由
+    // `test-otto-runtime.mjs` 對 `theme.ts` 做同一件事；web 這一份原本沒有任何
+    // 閘門守著，那正是「第三份會各自演化的清單」的起點。
+    const block = rendererHtml.match(/BLOCKED_EMOTIONS = new Set\(\[([\s\S]*?)\]\)/);
+    expect(block, "renderer 產物找不到 BLOCKED_EMOTIONS").not.toBeNull();
+    const rendererBlocked = Array.from(block![1].matchAll(/"([a-z]+)"/g)).map((m) => m[1]);
+    expect(rendererBlocked.length).toBeGreaterThan(0);
+    expect([...BLOCKED_EMOTIONS].sort()).toEqual([...rendererBlocked].sort());
   });
 });
