@@ -119,19 +119,38 @@ export function useVoiceRecording(deps: VoiceRecordingDeps = {}) {
     return () => clearInterval(handle);
   }, [status, now]);
 
-  // ⚠️ 卸載收乾淨：錄音中被切走（家屬按返回、窄螢幕切頁籤）而沒有停掉錄音器的話，
-  // 麥克風軌道沒有人關，分頁的錄音指示燈會一直亮著。blob 網址同理，不回收就一直
-  // 佔著記憶體。這是 web 端同一類坑的第五次（前四次見 12 §Task 8 的記載）。
+  // ⚠️ 依賴陣列必須是空的，**不可以放 `revokeObjectUrl`**（2026-08-12 iPhone 實測修正）。
+  //
+  // `deps: VoiceRecordingDeps = {}` 是預設參數，每次呼叫都會重建，於是上面四個預設
+  // 實作每次 render 都是新的函式實體。把 `revokeObjectUrl` 放進依賴陣列的話，這個
+  // 「卸載時清理」的 effect 會在**每一次 render** 都跑一次 cleanup——錄音才剛開始，
+  // 第一次重繪就把 `recorder.stop()` 呼叫掉、`recorderRef` 也清成 null。之後家屬按
+  // 「停止」時 `stop()` 讀到 null 直接 return，畫面永遠停在錄音中、計時器一直跳。
+  //
+  // ⚠️ 為什麼測試沒抓到：本檔的測試都把 deps 物件建好一次重複使用，識別碼是穩定的，
+  // 這個 effect 就不會重跑。正式路徑（`VoiceProfileScreen` 呼叫 `useVoiceRecording()`
+  // 不帶參數）才會踩到。見 useVoiceRecording.test.ts「重繪不可以把正在進行的錄音停掉」。
+  //
+  // 清理本身的理由不變：錄音中被切走（家屬按返回、窄螢幕切頁籤）而沒有停掉錄音器的話，
+  // 麥克風軌道沒有人關，分頁的錄音指示燈會一直亮著。blob 網址同理，不回收就一直佔著
+  // 記憶體。這是 web 端同一類坑的第五次（前四次見 12 §Task 8 的記載）。
+  // 「最新值」放 ref：讓上面那個 effect 的依賴陣列能保持空的，又不會清理到過期的網址。
+  // 寫入放在 effect 裡而不是 render 期間——並行渲染下 render 必須無副作用
+  // （eslint react-hooks/refs）。
+  const revokeObjectUrlRef = useRef(revokeObjectUrl);
+  useEffect(() => {
+    revokeObjectUrlRef.current = revokeObjectUrl;
+  }, [revokeObjectUrl]);
   useEffect(() => {
     return () => {
       void recorderRef.current?.stop();
       recorderRef.current = null;
       if (previewUriRef.current !== null) {
-        revokeObjectUrl(previewUriRef.current);
+        revokeObjectUrlRef.current(previewUriRef.current);
         previewUriRef.current = null;
       }
     };
-  }, [revokeObjectUrl]);
+  }, []);
 
   return {
     status,
