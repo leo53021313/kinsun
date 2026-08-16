@@ -134,6 +134,45 @@ def record_action(name: str) -> None:
         ledger.append(name)
 
 
+_emotion: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
+    "kinsun_turn_emotion", default=None
+)
+
+
+@contextmanager
+def turn_emotion() -> Iterator[list[str]]:
+    """本輪 LLM 挑的**阿白臉上的表情**（`kinsun.emotions` 的值域）。
+
+    ⚠️ 為什麼走 context 而不是改 `CareAgent.handle` 的回傳型別：表情是這一輪的**副
+    產物**，不是它的職責——`handle` 回字串這件事被管線、LINE 通道、主動關懷、排程端
+    共用，為了一個呈現層的欄位改動所有呼叫端的簽名並不划算。這與 `turn_sources`／
+    `turn_actions` 是同一個模式，理由也同一個。
+
+    ⚠️ **後寫的贏**（見 `record_emotion`）：工具迴圈一輪會問模型好幾次，只有產生
+    最終回覆的那一次算數；前幾次是 function_call，本來就不帶表情。
+    """
+    box: list[str] = []
+    token = _emotion.set(box)
+    try:
+        yield box
+    finally:
+        _emotion.reset(token)
+
+
+def record_emotion(emotion: str) -> None:
+    """記下本輪的表情；沒開帳本時 no-op。後寫的覆蓋先寫的。"""
+    box = _emotion.get()
+    if box is not None and emotion:
+        box.clear()
+        box.append(emotion)
+
+
+def current_emotion() -> str:
+    """本輪目前記到的表情；沒有就空字串（呼叫端自行決定退回什麼）。"""
+    box = _emotion.get()
+    return box[0] if box else ""
+
+
 _Announcer = Callable[[list[str], str], None]
 _announcer: contextvars.ContextVar[_Announcer | None] = contextvars.ContextVar(
     "kinsun_tool_announcer", default=None

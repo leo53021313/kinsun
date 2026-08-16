@@ -217,7 +217,10 @@ export function TalkScreen(props: {
         style={{ top: STAGE_TOP }}
         className="absolute left-1/2 z-10 -translate-x-1/2"
       >
-        <BearStage state={talk.avatar} />
+        {/* speechCue＝阿白正在講的那一段（字＋時長），renderer 據此逐字對嘴。
+            ⚠️ 不傳 `emotion`：後端目前不回傳回應情緒，renderer 會自己從這段話
+            判讀（見 `BearStage` 的 emotion prop 說明）。 */}
+        <BearStage state={talk.avatar} speechCue={talk.speechCue} />
       </div>
 
       {/* ── 內容層（z20，貼底往上長） ────────────────────────────────── */}

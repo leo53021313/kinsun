@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 
 from kinsun import background, tracing
 from kinsun.accounts.profile import ElderProfile
+from kinsun.emotions import SELECTABLE_EMOTIONS, sanitize_emotion
 from kinsun.llm import LLMClient, Message, ToolCall, ToolResult
 from kinsun.memory.models import FactSection, InjectedContext, format_injected_context
 from kinsun.memory.recall import SessionMemory
@@ -25,6 +26,7 @@ from kinsun.turn_context import (
     announce_transcript,
     current_turn_directive,
     elder_utterance,
+    record_emotion,
     turn_actions,
     turn_sources,
 )
@@ -260,6 +262,70 @@ _MAX_SPEAKABLE_CHARS = 500
 _TOOL_CALL_LEAK = re.compile(
     r"^(?:tool_code|tool_outputs?|print\s*\(|default_api\.)", re.IGNORECASE
 )
+
+
+#: 追加在提示詞尾端，只在情緒功能啟用時生效。
+#:
+#: ⚠️ 措辭是 2026-08-16 實測出來的，不是寫寫看的。第一版只說「挑一個情緒」，模型挑的
+#: 是**它自己的心情**——長輩說「我胸口悶悶的」它回 `surprised`、說「腳有點痛」它回
+#: `sad`。講明「這是你臉上要給長輩看的表情」＋不適時的紅線之後，50 題全數落在可接受
+#: 範圍、0 次踩紅線。改這段字之前請先重跑實測。
+EMOTION_DIRECTIVE = """
+
+【表情】
+除了回覆，另外挑一個 emotion——那是**阿白臉上要顯示給長輩看的表情**，不是你自己的心情。
+1. 長輩說身體不舒服（痛、悶、喘、睡不著、頭暈、跌倒）時，表情要沉穩關切（sick／hurt／
+   lonely／apologetic），不可以用 surprised——長輩看到你驚慌會更害怕。
+2. 長輩對你發脾氣或嫌棄你時用 apologetic。
+3. 長輩談到孤單、思念、生死時溫柔承接（touched／lonely／calm／love），不可以開心或興奮。
+4. 沒把握就用 calm，寧可平靜也不要挑錯。
+5. 表情要對得上你這句回覆的語氣。
+"""
+
+
+def reply_schema() -> dict:
+    """回覆＋表情的結構化輸出契約。
+
+    ⚠️ 值域直接排除黑名單情緒（`SELECTABLE_EMOTIONS`）：值域是模型唯一看得到的硬規則，
+    能挑到的就是它會挑的。提示詞那幾條是第二道，不是第一道。
+    """
+    return {
+        "type": "OBJECT",
+        "properties": {
+            "reply": {"type": "STRING"},
+            "emotion": {"type": "STRING", "enum": list(SELECTABLE_EMOTIONS)},
+        },
+        "required": ["reply", "emotion"],
+    }
+
+
+def _take_emotion(text: str | None) -> str:
+    """從模型的結構化輸出拆出回覆，順手把表情記進本輪。
+
+    ⚠️ **不是 JSON 就原樣回傳**：schema 是請求不是保證，而工具輪的 `text` 本來就可能
+    是空的。拆不出來時只是沒有表情（呈現層自己退回本地判讀），不該影響回覆本身。
+
+    ⚠️ 回傳的一定是**純文字**，所以 `handle` 之後的出站防線（`_speakable`、
+    `_no_fake_source`、空頭承諾修補）拿到的東西與這個功能上線前完全一樣——那些防線
+    是這個產品最貴的資產，不該為了一個呈現層欄位改變它們的輸入。
+    """
+    if not text:
+        return text or ""
+    stripped = text.strip()
+    if not stripped.startswith("{"):
+        return text
+    try:
+        payload = json.loads(stripped)
+    except ValueError:
+        return text
+    if not isinstance(payload, dict) or "reply" not in payload:
+        return text
+    reply = payload.get("reply")
+    if not isinstance(reply, str) or not reply.strip():
+        return text
+    emotion = payload.get("emotion")
+    record_emotion(sanitize_emotion(emotion if isinstance(emotion, str) else None))
+    return reply
 
 
 def _speakable(reply: str) -> str:
@@ -600,11 +666,17 @@ class CareAgent:
         tools=None,
         max_tool_iters: int = 3,
         profile_of: Callable[[str], ElderProfile] | None = None,
+        emotion_enabled: bool = False,
     ) -> None:
         self._llm = llm
         self._session = session
         self._tools = tools
         self._max_tool_iters = max_tool_iters
+        # 讓 LLM 順便挑阿白的表情（D-82，2026-08-16）。
+        # ⚠️ **預設關**：開著會讓每一輪都多帶一份 schema 與提示詞段落，而既有的十幾支
+        # 測試是用位置參數建 CareAgent 的——預設開等於在它們背後改了模型的輸出契約。
+        # 生產環境由 `composition` 依 `GEMINI_EMOTION_ENABLED` 開啟。
+        self._emotion_enabled = emotion_enabled
         # 人設＋稱呼的來源（2026-08-05）。
         # ⚠️ 預設 None 是相容性要求，不是貼心：`tests/test_pipeline.py` 與
         # `tests/test_channels_app_turns.py` 共十餘處只用 llm 與 session 兩個位置
@@ -692,6 +764,11 @@ class CareAgent:
         system_prompt, history, spoke_at, persona_id = self._envelope(
             elder_id, user_text, prepared=prepared
         )
+        # ⚠️ 表情的指示追加在最後、且只在啟用時追加：`_attach_care_prompt` 註冊進 Opik
+        # 版本庫的是**人設＋規則段**的模板，這一段是功能旗標的產物，混進去會讓同一份
+        # 人設因為旗標開關而出現兩個版本。
+        if self._emotion_enabled:
+            system_prompt += EMOTION_DIRECTIVE
         _attach_care_prompt(persona_id)
         user_msg = Message("user", user_text)
         base = [*history, user_msg]
@@ -700,7 +777,13 @@ class CareAgent:
         # 帳本就重置了。
         with turn_sources() as sources, turn_actions() as actions:
             if self._tools is None:
-                reply = self._llm.generate(system_prompt=system_prompt, messages=base)
+                reply = _take_emotion(
+                    self._llm.generate(
+                        system_prompt=system_prompt,
+                        messages=base,
+                        **({"response_schema": reply_schema()} if self._emotion_enabled else {}),
+                    )
+                )
             else:
                 # 把長輩的原話提供給工具（✅ spec 2026-07-17-天氣地點正確性）：天氣工具
                 # 靠它分辨「長輩說的地點」與「模型自己猜的」。實測顯示模型不知道地點時
@@ -877,15 +960,20 @@ class CareAgent:
     ) -> str:
         results: list[ToolResult] = []
         announced = False
+        # 只在啟用時帶 schema：關閉時連參數都不傳，既有的假 LLM 與行為完全不變。
+        schema_kwargs = {"response_schema": reply_schema()} if self._emotion_enabled else {}
         for _ in range(self._max_tool_iters):
             turn = self._llm.generate_tool_turn(
                 system_prompt=system_prompt,
                 messages=base,
                 tools=self._tools.specs(),
                 tool_results=results,
+                **schema_kwargs,
             )
             if not turn.tool_calls:
-                return turn.text or FALLBACK_REPLY
+                # ⚠️ 這是**最終回覆**的兩個出口之一（另一個在末輪修復）。表情在這裡取，
+                # 取完回傳純文字——底下的出站防線因此完全不受影響。
+                return _take_emotion(turn.text) or FALLBACK_REPLY
             # 安撫話的觸發點（spec 2026-07-28 P2）：此刻已經知道要查什麼、工具卻還沒跑，
             # 正是讓長輩聽到「好，我幫您查一下喔」的最佳時機。
             # ⚠️ **只在第一輪通知**：工具迴圈最多跑三輪，每輪都講就變成長輩連聽三次
@@ -902,8 +990,9 @@ class CareAgent:
             messages=base,
             tools=self._tools.specs(),
             tool_results=results,
+            **schema_kwargs,
         )
-        return turn.text or FALLBACK_REPLY
+        return _take_emotion(turn.text) or FALLBACK_REPLY
 
     @tracing.track(name="proactive_turn", type="general", capture_input=True, capture_output=True)
     def proactive(self, elder_id: str, intent: str, *, recall: Recall | None = None) -> str:
