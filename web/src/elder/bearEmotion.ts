@@ -46,12 +46,21 @@ export function sanitizeEmotion(emotion: string | null | undefined): string | nu
   return BLOCKED_EMOTIONS.includes(emotion) ? null : emotion;
 }
 
-/** 回應情緒只在 speaking 態併進 cue；其餘狀態下它沒有意義（協定層也會忽略）。 */
+/**
+ * 回應情緒只在 speaking 態併進 cue；其餘狀態下它沒有意義（協定層也會忽略）。
+ *
+ * ⚠️ **prop 沒給時要保留 cue 自己帶的**（D-82，2026-08-16）：表情現在由後端隨回覆
+ * 送來、跟著那一則語音走（見 `useTalk`），而 `emotion` prop 是給呈現層臨時覆寫用的、
+ * 平時沒有人傳。若拿 `undefined` 無條件覆蓋，後端指定的表情會在最後一步被抹掉——而
+ * 症狀是「表情又變回本地判讀」，不會有任何錯誤。
+ *
+ * 兩條路徑都過黑名單：不論表情從哪裡來，阿白都不對長輩生氣。
+ */
 export function bearSpeechCue(
   state: AvatarState,
   emotion: string | null | undefined,
   speechCue: OttoSpeechCue | null,
 ): OttoSpeechCue | null {
   if (state !== "speaking" || !speechCue) return speechCue;
-  return { ...speechCue, emotion: sanitizeEmotion(emotion) };
+  return { ...speechCue, emotion: sanitizeEmotion(emotion ?? speechCue.emotion) };
 }

@@ -68,10 +68,12 @@ class _ToolThenReplyLLM:
             ToolTurn(text="今天有三則新聞喔", tool_calls=[]),
         ]
 
-    def generate(self, *, system_prompt, messages):
+    def generate(self, *, system_prompt, messages, response_schema=None):
         raise AssertionError("有工具時不應呼叫 generate")
 
-    def generate_tool_turn(self, *, system_prompt, messages, tools, tool_results):
+    def generate_tool_turn(
+        self, *, system_prompt, messages, tools, tool_results, response_schema=None
+    ):
         return self._turns.pop(0)
 
 

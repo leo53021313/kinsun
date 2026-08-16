@@ -646,6 +646,9 @@ def create_app_ws_router(
                 "duration_ms": collector.duration_ms,
                 "chunk_count": chunk_count,
                 "reply_digest": outcome.reply_digest if outcome else "",
+                # 阿白這一輪的表情（D-82）。⚠️ 空字串＝這輪沒有指定，角色 renderer
+                # 會自己從回覆文字判讀——前端**不可以**把空字串當成「平靜」送過去。
+                "emotion": outcome.emotion if outcome else "",
             }
         )
 

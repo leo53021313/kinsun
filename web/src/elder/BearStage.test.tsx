@@ -558,6 +558,33 @@ describe("情緒黑名單", () => {
     expect(command).not.toHaveProperty("emotion");
   });
 
+  it("cue 自帶的表情（後端指定）要送到 renderer", () => {
+    // ⚠️ D-82 起表情由後端隨回覆送來、放在 cue 裡。`emotion` prop 沒人傳（恆為
+    // undefined），若拿它無條件覆蓋 cue，後端指定的表情會被當場抹掉。
+    const command = lastCommandAfter({
+      state: "speaking",
+      speechCue: { key: "t1:reply:1", text: "腳痛一定不舒服", durationMs: 900, emotion: "hurt" },
+    });
+    expect(command).toMatchObject({ emotion: "hurt" });
+  });
+
+  it("cue 自帶的表情同樣要過黑名單", () => {
+    const command = lastCommandAfter({
+      state: "speaking",
+      speechCue: { key: "t1:reply:1", text: "哼", durationMs: 500, emotion: "angry" },
+    });
+    expect(command).not.toHaveProperty("emotion");
+  });
+
+  it("prop 指定時蓋過 cue——呈現層仍是最後一手", () => {
+    const command = lastCommandAfter({
+      state: "speaking",
+      emotion: "touched",
+      speechCue: { key: "t1:reply:1", text: "謝謝您", durationMs: 500, emotion: "happy" },
+    });
+    expect(command).toMatchObject({ emotion: "touched" });
+  });
+
   it("允許的情緒照送——擋的是傷人的那幾種，不是全部", () => {
     const command = lastCommandAfter({
       state: "speaking",

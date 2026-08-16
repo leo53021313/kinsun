@@ -33,6 +33,11 @@ export type TalkFrame =
       chunk_count: number;
       reply_digest: string;
       /**
+       * 阿白這一輪的表情（D-82，2026-08-16）。⚠️ 選填且空字串是正常值——沒有就讓
+       * renderer 自己從回覆文字判讀，不要當成「平靜」。
+       */
+      emotion?: string;
+      /**
        * 這一輪 ASR 認出來的長輩原話。後端在 2026-08-07 為三條成功回應補上，
        * 供長輩本人在「之前聊過的」看到真實的「您說」。
        *
@@ -314,6 +319,11 @@ export type PlaybackItem = {
   text: string;
   /** 這一段語音多長（毫秒）。播放端據此知道何時可以放下一則。 */
   durationMs: number;
+  /**
+   * 阿白講這一段時臉上的表情（D-82）。⚠️ 與 `text`／`durationMs` 同源、跟著**這一則**
+   * 走：補播舊答案時要用當時那一輪的表情，不是現在這一輪的。空字串＝沒有指定。
+   */
+  emotion?: string;
 };
 
 /**

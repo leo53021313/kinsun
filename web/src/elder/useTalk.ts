@@ -439,6 +439,9 @@ export function useTalk(options: {
         key: `${item.turnId}:${speechSequenceRef.current}`,
         text: item.text,
         durationMs: item.durationMs,
+        // ⚠️ 表情跟著**這一則**走（補播舊答案時要用當時那一輪的），與字幕同一個道理。
+        // 空字串照樣傳下去：呈現層會把它當成「沒有指定」，讓 renderer 自己判讀。
+        emotion: item.emotion,
       });
       // 字幕跟著**真的播出來的那一則**走：收音期間收下來的那幾則，字幕要等補播時
       // 才顯示，否則長輩聽到的跟看到的是兩件事。
@@ -625,6 +628,9 @@ export function useTalk(options: {
             audioUrl: frame.audio_url,
             text: frame.text,
             durationMs: frame.duration_ms ?? 0,
+            // 只有 `reply` 帶表情（`ack` 是固定的安撫話、`chunk` 是同一輪的續段）；
+            // 沒有的那幾則就讓 renderer 自己判讀那一段文字。
+            emotion: "emotion" in frame ? frame.emotion : undefined,
           });
         } else if (frame.type === "reply" && canTakeOverScreen) {
           // ⚠️ 這一輪有字沒有聲音（TTS 掛掉、或音檔落地失敗——`talkSocket` 刻意

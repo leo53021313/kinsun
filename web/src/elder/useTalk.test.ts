@@ -1483,6 +1483,66 @@ describe("說話對嘴的原料（speechCue）", () => {
     expect(h.view.result.current.speechCue).toMatchObject({ text: "上一題的答案" });
   });
 
+  it("後端指定的表情跟著那一則走", async () => {
+    // D-82（2026-08-16）：LLM 隨回覆一起挑阿白臉上的表情。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    await holdAndRelease(h);
+    h.socket.emit({
+      ...REPLY,
+      type: "reply",
+      turn_id: "t1",
+      text: "腳痛走路一定很不舒服",
+      audio_url: "https://cdn.example/a.m4a",
+      emotion: "hurt",
+    });
+    await waitFor(() => expect(h.view.result.current.avatar).toBe("speaking"));
+    expect(h.view.result.current.speechCue).toMatchObject({ emotion: "hurt" });
+  });
+
+  it("後端沒給表情時 cue 不帶——讓 renderer 自己從文字判讀", async () => {
+    // ⚠️ 不可以填「平靜」代替：那會把 renderer 一直都有的本地判讀關掉，變成阿白
+    // 在後端沒給表情的每一輪都面無表情。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    await holdAndRelease(h);
+    h.socket.emit({ ...REPLY, type: "reply", turn_id: "t1", audio_url: "https://cdn.example/a.m4a" });
+    await waitFor(() => expect(h.view.result.current.avatar).toBe("speaking"));
+    expect(h.view.result.current.speechCue?.emotion).toBeFalsy();
+  });
+
+  it("補播舊答案時用的是**那一輪**的表情，不是新那一輪的", async () => {
+    // 與字幕同一個道理：長輩聽到的是舊答案，臉上就該是舊答案的表情。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    act(() => h.view.result.current.pressIn());
+    act(() => h.recorder.finishStart());
+    await waitFor(() => expect(h.view.result.current.avatar).toBe("listening"));
+    h.socket.emit({
+      ...REPLY,
+      type: "reply",
+      turn_id: "t1",
+      text: "上一題的答案",
+      audio_url: "https://cdn.example/old.m4a",
+      emotion: "sick",
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    await act(async () => {
+      h.view.result.current.pressOut();
+    });
+    await act(async () => {});
+    await waitFor(() => expect(h.view.result.current.avatar).toBe("speaking"));
+    expect(h.view.result.current.speechCue).toMatchObject({
+      text: "上一題的答案",
+      emotion: "sick",
+    });
+  });
+
   it("POST 降級路徑也要有 cue，否則長連線斷掉那幾輪阿白的嘴不會動", async () => {
     const h = setup();
     await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
