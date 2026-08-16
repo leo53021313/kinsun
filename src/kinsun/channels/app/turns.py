@@ -263,6 +263,8 @@ def create_app_turns_router(
             # 讓回應形狀與 WS 路徑一致，不代表這條 POST 路徑會分段。
             "chunk_count": chunk_count,
             "reply_digest": outcome.reply_digest if outcome else "",
+            # 阿白這一輪的表情（D-82）。⚠️ 空字串＝沒有指定，角色 renderer 自己判讀。
+            "emotion": outcome.emotion if outcome else "",
         }
 
     return router
