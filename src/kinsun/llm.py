@@ -168,6 +168,7 @@ class LLMClient(Protocol):
         messages: list[Message],
         tools: list[ToolSpec],
         tool_results: list[ToolResult],
+        response_schema: dict | None = None,
     ) -> ToolTurn: ...
 
 
@@ -290,6 +291,7 @@ class GeminiClient:
         messages: list[Message],
         tools: list[ToolSpec],
         tool_results: list[ToolResult],
+        response_schema: dict | None = None,
     ) -> ToolTurn:
         from google.genai import types
 
@@ -341,6 +343,12 @@ class GeminiClient:
             "tools": [genai_tool],
             "thinking_config": types.ThinkingConfig(thinking_level=TOOL_TURN_THINKING_LEVEL),
         }
+        # 工具與結構化輸出可以並用（2026-08-16 實機驗證 gemini-3.5-flash-lite）：要叫
+        # 工具的那幾輪照樣回 function_call、`text` 為空；產生最終回覆的那一輪才回 JSON。
+        # ⚠️ 呼叫端仍要能吃「不是 JSON」的回覆——schema 是請求，不是保證。
+        if response_schema is not None:
+            config_kwargs["response_mime_type"] = "application/json"
+            config_kwargs["response_json_schema"] = response_schema
         http_options = self._budgeted_http_options()
         if http_options is not None:
             config_kwargs["http_options"] = http_options

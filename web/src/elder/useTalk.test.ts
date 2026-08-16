@@ -1401,6 +1401,161 @@ describe("等不到回話的保險", () => {
   });
 });
 
+describe("說話對嘴的原料（speechCue）", () => {
+  // ⚠️ 這一組守的是「阿白說話時嘴會不會動」。壞掉**不會有編譯錯誤、不會有測試紅**
+  // ——renderer 收到空字串照樣把 `talk("")` 跑完，只是逐字對嘴的迴圈一次都不跑
+  //（`shared/otto-pet-core/lipsync.js`），長輩看到的是一張不動的臉在講話。
+
+  it("一則回覆真的開始播時，cue 帶它自己的字與時長", async () => {
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    await holdAndRelease(h);
+    expect(h.view.result.current.speechCue).toBeNull();
+    h.socket.emit({
+      ...REPLY,
+      type: "reply",
+      turn_id: "t1",
+      text: "血壓藥早上吃一顆",
+      audio_url: "https://cdn.example/a.m4a",
+      duration_ms: 2400,
+    });
+    await waitFor(() => expect(h.view.result.current.avatar).toBe("speaking"));
+    // 時長是對嘴的節奏來源：renderer 據此把每個字的間隔等比例拉到音檔實際長度
+    //（`lipsync.js` 的 `scale`）。少了它，嘴型會跟聲音對不上。
+    expect(h.view.result.current.speechCue).toMatchObject({
+      text: "血壓藥早上吃一顆",
+      durationMs: 2400,
+    });
+  });
+
+  it("每一則都有自己的 key：同一句重播，renderer 才會重新對嘴", async () => {
+    // ⚠️ 安撫話與答案剛好同一句、或長輩連問兩次同一件事時，text 與時長都一樣。
+    // key 若也一樣，`BearStage` 的 effect 不會再送指令——阿白的嘴只動第一次。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    await holdAndRelease(h);
+    const same = {
+      text: "好，我幫您查一下喔",
+      audio_url: "https://cdn.example/same.m4a",
+      duration_ms: 900,
+    };
+    h.socket.emit({ ...REPLY, type: "ack", turn_id: "t1", ...same });
+    await waitFor(() => expect(h.view.result.current.avatar).toBe("speaking"));
+    const first = h.view.result.current.speechCue?.key;
+    expect(first).toBeTruthy();
+    await act(async () => {
+      h.player.finish();
+    });
+    h.socket.emit({ ...REPLY, type: "reply", turn_id: "t1", ...same });
+    await waitFor(() => expect(h.view.result.current.speechCue?.key).not.toBe(first));
+    expect(h.view.result.current.speechCue).toMatchObject({ text: same.text });
+  });
+
+  it("收音期間收下來的那幾則，等真的補播出來才有 cue", async () => {
+    // 與字幕同一個道理（見播放回呼）：cue 跟著**真的播出來的那一則**走。提早設的
+    // 話，長輩還按著麥克風在講話，阿白的嘴就先動起來了。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    act(() => h.view.result.current.pressIn());
+    act(() => h.recorder.finishStart());
+    await waitFor(() => expect(h.view.result.current.avatar).toBe("listening"));
+    h.socket.emit({
+      ...REPLY,
+      type: "reply",
+      turn_id: "t1",
+      text: "上一題的答案",
+      audio_url: "https://cdn.example/old.m4a",
+    });
+    await act(async () => {});
+    expect(h.view.result.current.speechCue).toBeNull();
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    await act(async () => {
+      h.view.result.current.pressOut();
+    });
+    await act(async () => {});
+    await waitFor(() => expect(h.view.result.current.avatar).toBe("speaking"));
+    expect(h.view.result.current.speechCue).toMatchObject({ text: "上一題的答案" });
+  });
+
+  it("後端指定的表情跟著那一則走", async () => {
+    // D-82（2026-08-16）：LLM 隨回覆一起挑阿白臉上的表情。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    await holdAndRelease(h);
+    h.socket.emit({
+      ...REPLY,
+      type: "reply",
+      turn_id: "t1",
+      text: "腳痛走路一定很不舒服",
+      audio_url: "https://cdn.example/a.m4a",
+      emotion: "hurt",
+    });
+    await waitFor(() => expect(h.view.result.current.avatar).toBe("speaking"));
+    expect(h.view.result.current.speechCue).toMatchObject({ emotion: "hurt" });
+  });
+
+  it("後端沒給表情時 cue 不帶——讓 renderer 自己從文字判讀", async () => {
+    // ⚠️ 不可以填「平靜」代替：那會把 renderer 一直都有的本地判讀關掉，變成阿白
+    // 在後端沒給表情的每一輪都面無表情。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    await holdAndRelease(h);
+    h.socket.emit({ ...REPLY, type: "reply", turn_id: "t1", audio_url: "https://cdn.example/a.m4a" });
+    await waitFor(() => expect(h.view.result.current.avatar).toBe("speaking"));
+    expect(h.view.result.current.speechCue?.emotion).toBeFalsy();
+  });
+
+  it("補播舊答案時用的是**那一輪**的表情，不是新那一輪的", async () => {
+    // 與字幕同一個道理：長輩聽到的是舊答案，臉上就該是舊答案的表情。
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    h.socket.open();
+    act(() => h.view.result.current.pressIn());
+    act(() => h.recorder.finishStart());
+    await waitFor(() => expect(h.view.result.current.avatar).toBe("listening"));
+    h.socket.emit({
+      ...REPLY,
+      type: "reply",
+      turn_id: "t1",
+      text: "上一題的答案",
+      audio_url: "https://cdn.example/old.m4a",
+      emotion: "sick",
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    await act(async () => {
+      h.view.result.current.pressOut();
+    });
+    await act(async () => {});
+    await waitFor(() => expect(h.view.result.current.avatar).toBe("speaking"));
+    expect(h.view.result.current.speechCue).toMatchObject({
+      text: "上一題的答案",
+      emotion: "sick",
+    });
+  });
+
+  it("POST 降級路徑也要有 cue，否則長連線斷掉那幾輪阿白的嘴不會動", async () => {
+    const h = setup();
+    await waitFor(() => expect(h.view.result.current.micReady).toBe(true));
+    // 刻意不呼叫 socket.open()
+    await holdAndRelease(h);
+    await waitFor(() => expect(h.view.result.current.avatar).toBe("speaking"));
+    expect(h.view.result.current.speechCue).toMatchObject({
+      text: "今天天氣很好",
+      durationMs: 1200,
+    });
+  });
+});
+
 describe("降級與失敗", () => {
   it("長連線沒開時退回 POST", async () => {
     const h = setup();

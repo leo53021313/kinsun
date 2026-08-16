@@ -218,6 +218,11 @@ class Settings(_BaseEnvSettings):
     # 按用途配模型（✅ D-16 丁-5）：未設＝沿用 GEMINI_MODEL（見 _resolve_model_fallbacks）。
     gemini_model_safety: str = "gemini-3.5-flash-lite"
     gemini_model_summary: str = "gemini-3.5-flash-lite"
+    # 讓 LLM 順便挑阿白臉上的表情（D-82，2026-08-16）。關掉時角色 renderer 仍會從
+    # 阿白自己那句話判讀情緒——這個旗標決定的是「誰來挑」，不是「有沒有表情」。
+    # ⚠️ 留這個開關是因為它改的是**模型的輸出契約**（多帶一份 response_schema）：
+    # 若哪天發現工具呼叫的品質因此變差，要能立刻關掉而不必回退整包程式碼。
+    gemini_emotion_enabled: bool = True
     asr_backend: Annotated[
         str, BeforeValidator(_speech_backend("ASR_BACKEND", frozenset({"mock", "dgx"})))
     ] = "mock"

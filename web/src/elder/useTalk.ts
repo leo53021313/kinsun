@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import type { OttoSpeechCue } from "kinsun-shared/ottoBridge";
 import { apiErrorMessage, ApiError } from "@/api";
 import { makeSignOutOnAuthError } from "@/session/useSignOutOnAuthError";
 import { strings } from "@/strings";
@@ -177,6 +178,16 @@ export function useTalk(options: {
   const [transcript, setTranscript] = useState("");
   const [replyText, setReplyText] = useState(strings.talk.idleHint);
   const [micReady, setMicReady] = useState(false);
+  /**
+   * 阿白**正在講的那一段**的字與時長，交給角色 renderer 對嘴（`BearStage`）。
+   *
+   * ⚠️ **只在一則真的開始播的那一刻更新**，與字幕同一個道理：提早設的話，長輩還按著
+   * 麥克風在講話，阿白的嘴就先動起來了。收音期間收下來等補播的那幾輪，要等
+   * `flushDeferredReplies()` 把它們放回佇列、真的播出來時才有自己的 cue。
+   *
+   * ⚠️ 這個 state 只服務呈現層，**不新增也不影響 `AvatarState`**（五個系統態不變）。
+   */
+  const [speechCue, setSpeechCue] = useState<OttoSpeechCue | null>(null);
 
   // 401 的判定沿用家屬端五個畫面都在用的那一支（`session/useSignOutOnAuthError.ts`）
   // ——「什麼算 token 不能用了」只該有一份定義。⚠️ 它只負責「收到 401 就呼叫你給的
@@ -205,6 +216,13 @@ export function useTalk(options: {
    * 不存在，見 `advanceQueue` 該處說明。）
    */
   const playingTurnIdRef = useRef<string | null>(null);
+  /**
+   * 每一段實際播放的流水號，用來組出**每次都不同**的 `speechCue.key`。
+   *
+   * ⚠️ 不可以只用 `turnId`＋文字當 key：安撫話與答案剛好同一句、或長輩連問兩次同一
+   * 件事時兩者完全相同，`BearStage` 的 effect 不會再送指令——阿白的嘴只動第一次。
+   */
+  const speechSequenceRef = useRef(0);
   const placeRef = useRef<Promise<ElderPlace | null> | null>(null);
   /** 這一輪開錄流程的 promise：停止前先 await，消除「放開跑在開錄完成前」的競態。 */
   const startPromiseRef = useRef<Promise<boolean>>(Promise.resolve(false));
@@ -413,6 +431,18 @@ export function useTalk(options: {
       playingUriRef.current = item.audioUrl;
       // 記下「現在播的是哪一輪」：字幕不可被別一輪搶走（見下方 `isSpeakingAnotherTurn`）。
       playingTurnIdRef.current = item.turnId;
+      // 對嘴的原料跟著**這一則**走。⚠️ 這裡不加 `if (item.text)` 守門（字幕那一行
+      // 有）：有聲音沒有字時，空 cue 與不設 cue 對 renderer 是同一件事（協定層會
+      // 略過空文字），但少一個分支就少一條「忘了同步」的路。
+      speechSequenceRef.current += 1;
+      setSpeechCue({
+        key: `${item.turnId}:${speechSequenceRef.current}`,
+        text: item.text,
+        durationMs: item.durationMs,
+        // ⚠️ 表情跟著**這一則**走（補播舊答案時要用當時那一輪的），與字幕同一個道理。
+        // 空字串照樣傳下去：呈現層會把它當成「沒有指定」，讓 renderer 自己判讀。
+        emotion: item.emotion,
+      });
       // 字幕跟著**真的播出來的那一則**走：收音期間收下來的那幾則，字幕要等補播時
       // 才顯示，否則長輩聽到的跟看到的是兩件事。
       if (item.text) {
@@ -598,6 +628,9 @@ export function useTalk(options: {
             audioUrl: frame.audio_url,
             text: frame.text,
             durationMs: frame.duration_ms ?? 0,
+            // 只有 `reply` 帶表情（`ack` 是固定的安撫話、`chunk` 是同一輪的續段）；
+            // 沒有的那幾則就讓 renderer 自己判讀那一段文字。
+            emotion: "emotion" in frame ? frame.emotion : undefined,
           });
         } else if (frame.type === "reply" && canTakeOverScreen) {
           // ⚠️ 這一輪有字沒有聲音（TTS 掛掉、或音檔落地失敗——`talkSocket` 刻意
@@ -655,6 +688,9 @@ export function useTalk(options: {
       playQueueRef.current = null;
       playerRef.current = null;
       recorderRef.current = null;
+      // 對嘴的原料一併放掉：這一輪的播放器與長連線都要丟掉了，留著只會讓切回來
+      //（或換人登入）之後的第一個 speaking 態拿到上一輪的舊字。
+      setSpeechCue(null);
       setAvatarBoth("idle");
       // ⚠️ 只在麥克風本來就沒問題時才重設字幕：拿不到麥克風的那句說明是長輩
       // 唯一的線索，切個頁籤把它洗成「按住下面的麥克風說話」，而按鈕仍然是停用
@@ -756,6 +792,14 @@ export function useTalk(options: {
         const replyTurnId = reply.reply_digest;
         playingUriRef.current = reply.audio_url;
         playingTurnIdRef.current = replyTurnId;
+        // ⚠️ 這條路徑不經播放佇列，所以對嘴的 cue 要自己設——漏掉的話，長連線連不上
+        // 的那幾輪長輩會看到阿白張著一張不動的臉在講話。
+        speechSequenceRef.current += 1;
+        setSpeechCue({
+          key: `${replyTurnId}:${speechSequenceRef.current}`,
+          text: reply.text,
+          durationMs: reply.duration_ms ?? 0,
+        });
         playerRef.current?.replace({ uri: reply.audio_url });
         playerRef.current?.play();
       } else {
@@ -869,5 +913,5 @@ export function useTalk(options: {
     }
   }, [stopAndSend]);
 
-  return { avatar, replyText, transcript, micReady, pressIn, pressOut };
+  return { avatar, replyText, transcript, micReady, speechCue, pressIn, pressOut };
 }
