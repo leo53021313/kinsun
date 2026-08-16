@@ -26,6 +26,45 @@
     }
   }
 
+  /**
+   * 依情緒推出身體動作意圖（手勢、姿態、頭部擺動）。
+   *
+   * ⚠️ 用 `setMotionIntent` 而不是 `applyBehavior`／`beginBehavior`：後兩者會走
+   * `BehaviorController.begin()`，而那支會依 `eye_focus`（預設 `"user"`）呼叫
+   * `pet.lookAt(0, 0)`——每講一句話就把使用者的視線追蹤歸零，阿白會在「看著你」與
+   * 「看正前方」之間跳動。`setMotionIntent` 只設意圖、不碰視線。
+   *
+   * ⚠️ 手勢由 `AnimationStateMachine._sampleGesture` 取樣，而它**只在 `emotion`／
+   * `action` 狀態跑**（`speaking` 走的是另一條通用律動）——所以手勢是在阿白**講完
+   * 之後**演出來的，由 `talkEnd()` 依 `pet.behavior.hand_gesture` 切進去。
+   */
+  function applyMotionIntent(emotion, intensity) {
+    if (!PET.behaviorFromEmotion) return;
+    pet.setMotionIntent(PET.behaviorFromEmotion(emotion, intensity));
+  }
+
+  /**
+   * 講完話之後，讓手勢演完再回待機（毫秒）。
+   *
+   * ⚠️ **沒有這道保護，手勢等於沒做**：手勢只在 `action`／`emotion` 狀態取樣，由
+   * `talkEnd()` 在最後一個字之後切進去；而對講機是「音檔播完 → 佇列空 → 立刻送
+   * idle」，兩件事幾乎同時發生——實測收到 idle 後右肩擺幅由 22.5 掉到 1.99（只剩
+   * 呼吸），長輩看不到任何手勢。
+   *
+   * 1.2 秒：實測 1 秒就跑完約兩個半揮手週期，足夠看清楚；再長會讓狀態帶已經說
+   * 「準備好了」而阿白還在揮手。⚠️ 這只延後**回待機**——長輩按麥克風（listening）
+   * 或任何其他狀態一律立即生效並取消保護，不會讓聆聽姿勢慢半拍。
+   */
+  const GESTURE_HOLD_MS = 1200;
+  let gestureHoldTimer = null;
+
+  function clearGestureHold() {
+    if (gestureHoldTimer !== null) {
+      clearTimeout(gestureHoldTimer);
+      gestureHoldTimer = null;
+    }
+  }
+
   function stopTransientState() {
     talker.stop();
     if (pet.listening) pet.listen(false);
@@ -66,6 +105,8 @@
     if (!Number.isInteger(command.sequence) || command.sequence <= lastSequence) return;
     if (!["idle", "listening", "thinking", "speaking", "error"].includes(command.state)) return;
     lastSequence = command.sequence;
+    // 任何一個新狀態都比「把上一句的手勢演完」重要——長輩已經在做下一件事了。
+    clearGestureHold();
     stopTransientState();
     document.body.classList.toggle("is-error", command.state === "error");
 
@@ -84,13 +125,28 @@
       const sensed = command.emotion
         ? { emotion: PET.sanitizeEmotion(command.emotion), intensity: 2 }
         : PET.senseEmotion(text);
+      // ⚠️ 順序：意圖要先設。`setEmotion` 內部會 `stateMachine.set("emotion",
+      // { intent: this.behavior })`，晚一步的話那一輪帶進去的還是上一句的意圖。
+      applyMotionIntent(sensed.emotion, sensed.intensity);
       pet.setEmotion(sensed.emotion, { intensity: sensed.intensity });
       talker.talk(text, { durationMs: Number(command.durationMs) || 0 });
       return;
     }
     if (command.state === "error") {
       pet.backToIdle();
+      applyMotionIntent("apologetic", 1);
       pet.setEmotion("apologetic", { intensity: 1 });
+      return;
+    }
+
+    // 回待機。⚠️ 阿白剛講完、手勢正在演的話（`talkEnd()` 依 `hand_gesture` 切進
+    // `action`）先讓它演完——見 GESTURE_HOLD_MS 上方說明。`stopTransientState()`
+    // 已經在上面呼叫過，此處只剩「什麼時候真的回待機」這一件事。
+    if (pet.stateMachine && pet.stateMachine.state === "action") {
+      gestureHoldTimer = setTimeout(function () {
+        gestureHoldTimer = null;
+        pet.backToIdle();
+      }, GESTURE_HOLD_MS);
       return;
     }
     pet.backToIdle();

@@ -147,4 +147,100 @@ assert.equal(dom.window.kinsunBear.emotionKey, "calm", "WebView 實際接線也�
 assert.equal(dom.window.kinsunBear.talking, true);
 dom.window.close();
 
-console.log("Otto renderer 人設、情緒黑名單與離線邊界驗證通過。");
+// ── 依情緒推導的手部動作（2026-08-16）──────────────────────────────────────
+//
+// ⚠️ 另開一顆 DOM 而不是沿用上面那顆：上面的 `requestAnimationFrame` 是 `() => 1`
+// （刻意不跑無窮動畫迴圈），而手勢是 procedural 的——不推進動畫幀就什麼都量不到。
+//
+// 這一段守的是「手勢會不會被自己的收尾流程吃掉」：手勢只在 `action`／`emotion`
+// 狀態取樣，由 `talkEnd()` 在最後一個字之後切進去；而對講機是「音檔播完 → 佇列空
+// → 立刻送 idle」，兩件事幾乎同時。沒有 `GESTURE_HOLD_MS` 那道保護的話，實測右肩
+// 擺幅會由 22.5 掉到 1.99——阿白看起來從頭到尾沒有手。
+{
+  const gestureFrames = [];
+  const gestureDom = new JSDOM(renderer, {
+    runScripts: "dangerously",
+    url: "https://kinsun-renderer.invalid/",
+    beforeParse(window) {
+      window.matchMedia = () => ({ matches: false });
+      window.requestAnimationFrame = (cb) => gestureFrames.push(cb);
+      window.cancelAnimationFrame = () => undefined;
+      window.ReactNativeWebView = { postMessage: () => undefined };
+    },
+  });
+
+  // ⚠️ 時鐘必須**跨呼叫**單調遞增：每次都從 performance.now() 重新起算的話，真實
+  // 時間幾乎沒走，於是每次的第一幀 dt 是負數（pet.js 的 `now - this._last`），動畫
+  // 會倒退、待機的倒數計時被加回去。
+  let clock = gestureDom.window.performance.now();
+  const advance = (n) => {
+    for (let i = 0; i < n; i += 1) {
+      clock += 16;
+      for (const cb of gestureFrames.splice(0)) cb(clock);
+    }
+  };
+  const sync = (sequence, state, extra = {}) =>
+    gestureDom.window.dispatchEvent(
+      new gestureDom.window.MessageEvent("message", {
+        data: JSON.stringify({ version: 1, type: "sync", sequence, state, ...extra }),
+      }),
+    );
+  /** 同樣的取樣長度才可比：揮手週期約 2.6 秒，窗太短會落在平坦處。 */
+  const armPeak = (n) => {
+    let peak = 0;
+    for (let i = 0; i < n; i += 1) {
+      advance(1);
+      peak = Math.max(peak, Math.abs(gestureDom.window.kinsunBear.pose.armRShoulder));
+    }
+    return peak;
+  };
+
+  const bear = gestureDom.window.kinsunBear;
+  advance(20);
+
+  const greeting = gestureDom.window.PET.behaviorFromEmotion("greeting", 2);
+  assert.equal(greeting.hand_gesture, "wave", "打招呼應該推導出揮手");
+  assert.equal(
+    gestureDom.window.PET.behaviorFromEmotion("calm", 2).hand_gesture,
+    "none",
+    "平靜不該硬加手勢",
+  );
+
+  sync(1, "speaking", { text: "嗨嗨！你來啦！", durationMs: 1000 });
+  advance(3);
+  assert.equal(bear.behavior?.hand_gesture, "wave", "說話時應已依情緒設好動作意圖");
+  let guard = 0;
+  while (bear.talking && guard < 400) {
+    advance(1);
+    guard += 1;
+  }
+  assert.equal(bear.stateMachine.state, "action", "講完且有手勢時應切到 action");
+  assert.ok(armPeak(60) > 10, "揮手應讓右肩明顯抬起（遠大於待機呼吸的幅度）");
+
+  // 對講機講完就送 idle——手勢必須還演得完。
+  sync(2, "idle");
+  assert.equal(bear.stateMachine.state, "action", "保護期內不可以立刻回待機");
+  assert.ok(armPeak(60) > 10, "保護期內手勢應該還在演");
+
+  // ⚠️ 但新狀態一律立即生效：長輩按麥克風時聆聽姿勢不可以慢半拍。
+  sync(3, "listening");
+  advance(2);
+  assert.equal(bear.listening, true, "聆聽必須立即生效，不可被手勢保護擋住");
+
+  // 保護期真的會結束（`setTimeout` 走真實時間，這裡只能等）——否則阿白永遠不回待機。
+  sync(4, "speaking", { text: "嗨嗨！你來啦！", durationMs: 200 });
+  guard = 0;
+  while (bear.talking && guard < 400) {
+    advance(1);
+    guard += 1;
+  }
+  sync(5, "idle");
+  assert.equal(bear.stateMachine.state, "action", "前提：又進入保護期");
+  await new Promise((resolve) => setTimeout(resolve, 1400));
+  advance(2);
+  assert.equal(bear.stateMachine.state, "idle", "保護期過後必須自己回待機");
+
+  gestureDom.window.close();
+}
+
+console.log("Otto renderer 人設、情緒黑名單、手部動作與離線邊界驗證通過。");
