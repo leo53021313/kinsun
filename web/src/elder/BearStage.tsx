@@ -30,6 +30,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import {
+  createOttoGreetCommand,
   createOttoLookCommand,
   createOttoSyncCommand,
   createOttoTapCommand,
@@ -62,6 +63,8 @@ export function BearStage(props: {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const sequenceRef = useRef(0);
+  /** 這一次掛載打過招呼了沒。⚠️ 不可以每次回到待機都揮手——那會變成句句話的結尾動作。 */
+  const greetedRef = useRef(false);
   const [isReady, setIsReady] = useState(false);
   /**
    * 待機時浮出來的可點小道具（戳泡泡、餵他一條魚⋯），由 renderer 主動回報。
@@ -102,6 +105,18 @@ export function BearStage(props: {
     sequenceRef.current += 1;
     const command = createOttoSyncCommand(sequenceRef.current, state, speechCue);
     frameRef.current?.contentWindow?.postMessage(JSON.stringify(command), "*");
+
+    // ⚠️ 打招呼**排在狀態指令後面**（同一條 effect 內，不另開一條）：renderer 要先
+    // 知道自己該是什麼樣子，再演這一段；反過來的話補送的狀態會把打招呼當場蓋掉。
+    if (greetedRef.current) return;
+    greetedRef.current = true;
+    // 只在他真的在待機時打招呼——就緒的那一刻若長輩已經在講話或在等答案，揮手是打斷。
+    // 減少動態效果時同樣不演（與視線追蹤同一個理由）。
+    if (state !== "idle" || prefersReducedMotion()) return;
+    frameRef.current?.contentWindow?.postMessage(
+      JSON.stringify(createOttoGreetCommand()),
+      "*",
+    );
   }, [state, speechCue, isReady]);
 
   // 視線追蹤：阿白的眼睛與頭跟著指標轉。

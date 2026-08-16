@@ -116,7 +116,12 @@ describe("BearStage", () => {
     const commands = post.mock.calls.map((call) => JSON.parse(String(call[0])));
     expect(commands.at(-1)).toMatchObject({ type: "sync", state: "speaking" });
     // renderer 以 sequence 擋重複投遞，倒退或重複會被它整個忽略。
-    const sequences = commands.map((command) => command.sequence);
+    // ⚠️ 只看 `sync`：`look`／`tap`／`greet` 依設計不吃序號（它們不是狀態，與 `sync`
+    // 共用序號會讓兩者互相擋掉，見 `shared/ottoBridge.ts`）。
+    const sequences = commands
+      .filter((command) => command.type === "sync")
+      .map((command) => command.sequence);
+    expect(sequences.length).toBeGreaterThan(1);
     expect([...sequences]).toEqual([...sequences].sort((a, b) => a - b));
   });
 
@@ -184,6 +189,58 @@ describe("說話對嘴的原料", () => {
     });
     expect(command).toMatchObject({ state: "thinking" });
     expect(command).not.toHaveProperty("text");
+  });
+});
+
+describe("進畫面打招呼", () => {
+  function greetCommands(post: { mock: { calls: unknown[][] } }) {
+    return post.mock.calls
+      .map((call) => JSON.parse(String(call[0])) as Record<string, unknown>)
+      .filter((command) => command.type === "greet");
+  }
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("renderer 一就緒就揮手打招呼", () => {
+    render(<BearStage state="idle" />);
+    const post = vi.spyOn(iframeWindow(), "postMessage");
+    emitReady(iframeWindow());
+    expect(greetCommands(post)).toHaveLength(1);
+  });
+
+  it("打招呼排在狀態指令後面——先知道自己該是什麼樣子，再演", () => {
+    render(<BearStage state="idle" />);
+    const post = vi.spyOn(iframeWindow(), "postMessage");
+    emitReady(iframeWindow());
+    const types = post.mock.calls.map((call) => JSON.parse(String(call[0])).type);
+    expect(types).toEqual(["sync", "greet"]);
+  });
+
+  it("只打一次招呼——之後的狀態變化不會再觸發", () => {
+    const { rerender } = render(<BearStage state="idle" />);
+    const post = vi.spyOn(iframeWindow(), "postMessage");
+    emitReady(iframeWindow());
+    rerender(<BearStage state="listening" />);
+    rerender(<BearStage state="idle" />);
+    expect(greetCommands(post)).toHaveLength(1);
+  });
+
+  it("就緒時長輩已經在講話了就不打招呼——他正在等答案", () => {
+    render(<BearStage state="thinking" />);
+    const post = vi.spyOn(iframeWindow(), "postMessage");
+    emitReady(iframeWindow());
+    expect(greetCommands(post)).toHaveLength(0);
+  });
+
+  it("減少動態效果時不打招呼", () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    render(<BearStage state="idle" />);
+    const post = vi.spyOn(iframeWindow(), "postMessage");
+    emitReady(iframeWindow());
+    expect(greetCommands(post)).toHaveLength(0);
   });
 });
 

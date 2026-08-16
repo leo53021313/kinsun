@@ -82,8 +82,24 @@ export type OttoRendererEvent =
       prop: OttoIdleProp | null;
     };
 
+/**
+ * 進畫面時揮手打招呼。
+ *
+ * ⚠️ **由呈現層主動送、不是 renderer 自己啟動時做**：「什麼時候該打招呼」只有應用層
+ * 知道（長輩剛進對講機 vs. 只是切個頁籤回來），而 renderer 每次重新載入都自己打一次
+ * 會變成雜訊。同樣不吃 `sequence`——它不是狀態，是一次性的演出。
+ */
+export type OttoGreetCommand = {
+  version: typeof OTTO_BRIDGE_VERSION;
+  type: "greet";
+};
+
 export function createOttoTapCommand(): OttoTapCommand {
   return { version: OTTO_BRIDGE_VERSION, type: "tap" };
+}
+
+export function createOttoGreetCommand(): OttoGreetCommand {
+  return { version: OTTO_BRIDGE_VERSION, type: "greet" };
 }
 
 /** 兩軸要嘛都有效、要嘛一起回正——只有一軸的視線會讓阿白歪向一個沒人在的方向。 */

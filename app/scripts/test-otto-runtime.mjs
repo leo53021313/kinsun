@@ -240,6 +240,23 @@ dom.window.close();
   advance(2);
   assert.equal(bear.stateMachine.state, "idle", "保護期過後必須自己回待機");
 
+  // ── 進畫面打招呼 ──────────────────────────────────────────────────────────
+  // ⚠️ 放在最後、`sync` 序號接續往上：這一段用的序號若比前面小，會被單調序號整個
+  // 擋掉，而症狀是斷言失敗在**上一段**，很難看出是自己排錯了順序。
+  gestureDom.window.dispatchEvent(
+    new gestureDom.window.MessageEvent("message", {
+      data: JSON.stringify({ version: 1, type: "greet" }),
+    }),
+  );
+  advance(3);
+  assert.equal(bear.emotionKey, "greeting", "打招呼應進入 greeting 情緒");
+  assert.equal(bear.behavior?.hand_gesture, "wave", "打招呼應推導出揮手");
+  assert.ok(armPeak(90) > 10, "打招呼應讓右肩明顯抬起");
+  // 走與手勢保護同一顆計時器，所以同樣要驗「被打斷時會讓路」。
+  sync(6, "listening");
+  advance(3);
+  assert.equal(bear.listening, true, "打招呼演到一半按麥克風，聆聽必須立即生效");
+
   gestureDom.window.close();
 }
 

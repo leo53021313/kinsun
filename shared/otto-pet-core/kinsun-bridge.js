@@ -56,6 +56,11 @@
    * 或任何其他狀態一律立即生效並取消保護，不會讓聆聽姿勢慢半拍。
    */
   const GESTURE_HOLD_MS = 1200;
+  /**
+   * 打招呼演完再回待機（毫秒）。比 `GESTURE_HOLD_MS` 長：那是句尾的餘韻，這是一段
+   * 完整的演出——`greeting` 情緒本身的剪輯就有 1.6 秒，加上揮手要一個完整的來回。
+   */
+  const GREET_MS = 2600;
   let gestureHoldTimer = null;
 
   function clearGestureHold() {
@@ -98,6 +103,22 @@
     // 且在 reduced-motion 下 `pet.idle` 根本不存在——兩種情形都不需要外層知道。
     if (command.type === "tap") {
       if (pet.idle) pet.idle.tap();
+      return;
+    }
+
+    // 進畫面打招呼：揮手＋「打招呼」情緒，演完自己回待機。
+    //
+    // ⚠️ 走與手勢保護同一顆計時器：長輩在打招呼演到一半就按了麥克風時，`sync` 分支
+    // 的 `clearGestureHold()` 會把它取消——聆聽姿勢不會等這段演完才開始。
+    if (command.type === "greet") {
+      clearGestureHold();
+      stopTransientState();
+      applyMotionIntent("greeting", 2);
+      pet.setEmotion("greeting", { intensity: 2 });
+      gestureHoldTimer = setTimeout(function () {
+        gestureHoldTimer = null;
+        pet.backToIdle();
+      }, GREET_MS);
       return;
     }
 
