@@ -96,6 +96,40 @@ describe("useVoiceRecording", () => {
     expect(recorder.stop).toHaveBeenCalled();
   });
 
+  it("重繪不可以把正在進行的錄音停掉（iPhone 實測：按停止沒反應）", async () => {
+    // ⚠️ 這條刻意**每次 render 都給一個新的 deps 物件**，因為那正是正式路徑的行為：
+    // `VoiceProfileScreen` 呼叫 `useVoiceRecording()` 不帶參數，而
+    // `deps: VoiceRecordingDeps = {}` 是預設參數——每次 render 都重建，
+    // 四個預設實作因此都是新的函式實體。
+    //
+    // 本檔其他測試都把 `d` 建好一次重複用，識別碼是穩定的，所以「卸載清理」
+    // 那個 effect 不會重跑——**測試替身把缺陷遮住了**。真實症狀：家屬按下開始
+    // 錄音後計時器在跳，但錄音器早在第一次重繪就被自己的 cleanup 停掉、
+    // ref 也清成 null，於是按「停止」時 `stop()` 直接 early return，
+    // 畫面永遠停在錄音中。
+    const recorder = fakeRecorder();
+    const clock = clockAt([0, 9000]);
+    const { result, rerender } = renderHook(() =>
+      useVoiceRecording({
+        createRecorderFn: () => recorder,
+        now: clock,
+        createObjectUrl: () => "blob:preview",
+        revokeObjectUrl: () => {},
+      }),
+    );
+    await act(async () => {
+      await result.current.start();
+    });
+
+    rerender(); // 計時器每 100ms 就會造成一次重繪
+
+    expect(recorder.stop).not.toHaveBeenCalled();
+    await act(async () => {
+      await result.current.stop();
+    });
+    await waitFor(() => expect(result.current.status).toBe("recorded"));
+  });
+
   it("麥克風拿不到時不進錄音狀態", async () => {
     const recorder = fakeRecorder({ started: false });
     const d = deps(recorder, [0]);

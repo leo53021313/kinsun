@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import pathlib
+import wave
 
 import pytest
 from fastapi.testclient import TestClient
@@ -450,28 +451,91 @@ def test_voice_download_has_a_timeout(monkeypatch, tmp_path):
 # --- 參考音檔正規化（2026-08-11） ---
 
 
-def test_reference_audio_is_normalized_to_16k_mono_wav(monkeypatch):
+def _fake_ffmpeg(seen, *, frames):
+    """假的 ffmpeg：記下參數與 `-i` 指到的輸入內容，並在輸出位置寫一個含 frames 幀的 wav。"""
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["kwargs"] = kwargs
+        seen["input_path"] = cmd[cmd.index("-i") + 1]
+        seen["input_bytes"] = pathlib.Path(seen["input_path"]).read_bytes()
+        with wave.open(cmd[-1], "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(tts_server._VOICE_TARGET_SR)
+            wav.writeframes(b"\x00\x00" * frames)
+
+    return fake_run
+
+
+def test_reference_audio_is_normalized_to_16k_mono_wav(monkeypatch, tmp_path):
     """家屬用瀏覽器錄音，MediaRecorder 產出 webm/opus，而 CosyVoice 讀檔走
     soundfile（libsndfile）——**它讀不了 webm**。不轉檔的話家屬明明錄好了，
     合成時卻會在讀檔那一步爆掉。取樣率與聲道數也隨裝置而異，一併統一。
     """
     seen = {}
+    dest = str(tmp_path / "out.wav")
 
-    def fake_run(cmd, **kwargs):
-        seen["cmd"] = cmd
-        seen["kwargs"] = kwargs
-
-    monkeypatch.setattr(tts_server.subprocess, "run", fake_run)
-    tts_server._normalize_to_wav(b"WEBMDATA", "/tmp/out.wav")
+    monkeypatch.setattr(tts_server.subprocess, "run", _fake_ffmpeg(seen, frames=16000))
+    tts_server._normalize_to_wav(b"WEBMDATA", dest)
 
     cmd = seen["cmd"]
     assert cmd[0] == "ffmpeg"
-    assert cmd[-1] == "/tmp/out.wav"
+    assert cmd[-1] == dest
     assert "-ac" in cmd and cmd[cmd.index("-ac") + 1] == "1", "單聲道"
     assert "-ar" in cmd and cmd[cmd.index("-ar") + 1] == str(tts_server._VOICE_TARGET_SR)
-    assert seen["kwargs"]["input"] == b"WEBMDATA"
     assert seen["kwargs"]["check"] is True, "轉檔失敗要拋出來，讓上層退回全域預設聲音"
     assert seen["kwargs"]["timeout"] == tts_server.TTS_FFMPEG_TIMEOUT_SECONDS
+
+
+def test_the_ffmpeg_input_is_a_seekable_file_never_a_pipe(monkeypatch, tmp_path):
+    """迴歸測試（2026-08-12 demo 實測）：輸入走 pipe 會讓 m4a 靜默轉成空音檔。
+
+    m4a 的 moov atom（索引）在檔尾，pipe 倒不回去 → ffmpeg demux 失敗，
+    但**離開碼是 0**，`check=True` 攔不到，於是產出一個只有檔頭的 wav。
+    家屬用 iPhone 錄音上傳就是 m4a，踩中的話那位長輩每一輪都完全沒有聲音。
+    """
+    seen = {}
+    monkeypatch.setattr(tts_server.subprocess, "run", _fake_ffmpeg(seen, frames=16000))
+
+    tts_server._normalize_to_wav(b"M4A-BYTES", str(tmp_path / "out.wav"))
+
+    assert "pipe:0" not in seen["cmd"], "輸入必須可 seek"
+    assert seen["kwargs"].get("input") is None, "不可改走 stdin"
+    assert seen["input_bytes"] == b"M4A-BYTES", "`-i` 要指到裝著原始位元組的暫存檔"
+    assert not pathlib.Path(seen["input_path"]).exists(), "暫存檔用完要刪掉"
+
+
+def test_a_silently_empty_conversion_is_treated_as_failure(monkeypatch, tmp_path):
+    """ffmpeg 離開碼 0 不等於輸出可用——沒有這道檢查，空音檔會被當成轉檔成功。
+
+    後果差一級：空檔會一路送到 CosyVoice 才炸成 500、應用層退化成純文字
+    （長輩整輪沒聲音）；在這裡攔下來則只是退回全域預設聲音。
+    """
+    monkeypatch.setattr(tts_server.subprocess, "run", _fake_ffmpeg({}, frames=0))
+
+    with pytest.raises(ValueError, match="沒有任何取樣"):
+        tts_server._normalize_to_wav(b"TRUNCATED", str(tmp_path / "out.wav"))
+
+
+def test_an_empty_conversion_falls_back_to_the_global_voice(monkeypatch, tmp_path):
+    """接上整條路：轉出空檔時長輩仍要有聲音（預設的），而且不可以入快取。"""
+    monkeypatch.setattr(tts_server, "_voice_cache", {})
+    monkeypatch.setattr(tts_server, "TTS_VOICE_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(tts_server, "TTS_PROMPT_WAV", "/default.wav")
+    monkeypatch.setattr(tts_server, "TTS_PROMPT_TEXT", "預設逐字稿")
+    monkeypatch.setattr(
+        tts_server.urllib.request,
+        "urlopen",
+        lambda url, timeout=None: _FakeHttpResponse(b"TRUNCATED-M4A"),
+    )
+    monkeypatch.setattr(tts_server.subprocess, "run", _fake_ffmpeg({}, frames=0))
+
+    assert tts_server._resolve_voice("e1", "https://x.test/v.m4a", "逐字稿") == (
+        "/default.wav",
+        "預設逐字稿",
+    )
+    assert tts_server._voice_cache == {}, "壞掉的轉檔不可入快取，家屬重錄後要能再試"
 
 
 def test_a_recording_ffmpeg_cannot_read_falls_back_to_the_global_voice(monkeypatch, tmp_path):
