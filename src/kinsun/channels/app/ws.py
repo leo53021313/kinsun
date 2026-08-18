@@ -363,7 +363,7 @@ def create_app_ws_router(
         except Exception:  # noqa: BLE001 - 位置是加分項，寫入失敗不可中斷對話
             logger.warning("長輩地點寫入失敗")
 
-    def _ack_sender(sender: _Sender, turn_id: str) -> Callable[[list[str]], None]:
+    def _ack_sender(sender: _Sender, turn_id: str, elder_id: str) -> Callable[[list[str]], None]:
         """做出「模型決定要查什麼」時要跑的那件事：挑一句安撫話立刻送出去。
 
         ⚠️ 這裡**不合成、不上傳**——音檔在啟動時就備好了（見 `speech/ack_audio.py`）。
@@ -375,7 +375,8 @@ def create_app_ws_router(
                 return
             # 人設由 agent 隨通知帶過來（2026-08-05），這裡**不查資料庫**：那一輪
             # 的長輩檔案 agent 已經讀過了，為一句等待語再查一次是白付一次往返。
-            clip = ack_audio.clip_for(tool_names[0], persona_id=persona_id)
+            # 帶 elder_id：有專屬聲音的長輩，安撫話要用同一個聲音（2026-08-18）。
+            clip = ack_audio.clip_for(tool_names[0], persona_id=persona_id, elder_id=elder_id)
             if clip is None:  # 還沒暖好或簽章過期＝這輪不講（降級不是錯誤）
                 return
             sender.send(
@@ -569,7 +570,7 @@ def create_app_ws_router(
                 with turn_gate.admit(on_queued=notify_queued):
                     with (
                         admission_wait((time.monotonic() - queued_at) * 1000),
-                        tool_announcer(_ack_sender(sender, turn_id)),
+                        tool_announcer(_ack_sender(sender, turn_id, elder_id)),
                         transcript_listener(record_transcript),
                         pending_utterances(lambda: in_flight.others(turn_id)),
                         turn_directive(directive),

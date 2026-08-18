@@ -177,22 +177,36 @@ class _FakeAckAudio:
         # 這一輪被要求用哪一種人設的句子（2026-08-05）——人設由 agent 隨通知帶到
         # 這裡，WS 端不查資料庫，故它是唯一能證明接線沒斷的地方。
         self.personas: list[str] = []
+        self.elders: list[str | None] = []
         self._clip = clip or AckClip(
             text="好，我幫您看看最近的新聞喔",
             audio_url="https://cdn.example/ack.m4a",
             duration_ms=1300,
         )
 
-    def clip_for(self, tool_name: str, *, persona_id: str = DEFAULT_PERSONA_ID) -> AckClip | None:
+    def clip_for(
+        self,
+        tool_name: str,
+        *,
+        persona_id: str = DEFAULT_PERSONA_ID,
+        elder_id: str | None = None,
+    ) -> AckClip | None:
         self.asked.append(tool_name)
         self.personas.append(persona_id)
+        self.elders.append(elder_id)
         return self._clip
 
 
 class _ColdAckAudio:
     """還沒暖好：一律回 None（＝這輪不講安撫話）。"""
 
-    def clip_for(self, tool_name: str, *, persona_name: str = "kinsun") -> AckClip | None:
+    def clip_for(
+        self,
+        tool_name: str,
+        *,
+        persona_id: str = DEFAULT_PERSONA_ID,
+        elder_id: str | None = None,
+    ) -> AckClip | None:
         return None
 
 

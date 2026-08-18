@@ -11,6 +11,7 @@ CosyVoice zero-shot 要「參考音檔 ＋ 那段音檔的逐字稿」成對輸�
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import datetime
 
@@ -28,6 +29,8 @@ from kinsun.web.envelope import ok
 from kinsun.web.errors import ErrorCode
 from kinsun.web.routers.deps import GuardianAuth, GuardianScope
 
+logger = logging.getLogger(__name__)
+
 # 參考音檔上限（bytes）。15 秒的錄音遠低於此；上限存在是為了擋住誤傳的大檔，
 # 不是為了限制正常使用。與對講機單回合上限（10MB）同級。
 _MAX_REFERENCE_BYTES = 10 * 1024 * 1024
@@ -40,6 +43,8 @@ def create_voice_profiles_router(
     current_guardian: Callable[..., GuardianAuth],
     scope: GuardianScope,
     clock: Callable[[], datetime],
+    on_voice_changed: Callable[[str], None] | None = None,
+    on_voice_revoked: Callable[[str], None] | None = None,
 ) -> APIRouter:
     """`voice_profiles`／`publisher` 任一為 None＝功能未啟用（TTS 非 dgx 或缺 Supabase）。
 
@@ -47,6 +52,19 @@ def create_voice_profiles_router(
     自己打錯路徑，503 才講得出「這個環境沒開這個功能」。
     """
     router = APIRouter(tags=["voice-profiles"])
+
+    def _notify(hook: Callable[[str], None] | None, elder_id: str, what: str) -> None:
+        """通知安撫話快取換聲音／清掉（2026-08-18）。
+
+        ⚠️ 失敗只記 warning、不影響回應：設定檔已經寫進資料庫了，那才是權威。
+        安撫話用哪個聲音是加分項，不可以因為它讓家屬看到「設定失敗」。
+        """
+        if hook is None:
+            return
+        try:
+            hook(elder_id)
+        except Exception:  # noqa: BLE001
+            logger.warning("安撫話快取%s失敗 elder_id=%s", what, elder_id)
 
     def _require_enabled() -> None:
         if voice_profiles is None or publisher is None:
@@ -146,6 +164,11 @@ def create_voice_profiles_router(
             # （`upload_voice_reference` 用 upsert），不會留下垃圾。
             raise HTTPException(status_code=503, detail=ErrorCode.SPEECH_UNAVAILABLE) from exc
 
+        # 安撫話也要換成這個聲音（2026-08-18）：不換的話同一輪裡長輩會先聽到預設
+        # 聲音的「我幫你查查」、再聽到家屬聲音的答案，像換了個人在講話。
+        # 時機選在這裡而不是第一次對話時：十九句要暖約半分鐘，等到對話中才暖，
+        # 那位長輩前幾輪都不會有安撫話。
+        _notify(on_voice_changed, elder_id, "重暖")
         return ok({"elder_id": elder_id, "has_profile": True, "consented_by": consent})
 
     @router.delete("/elders/{elder_id}/voice-profile", status_code=204)
@@ -165,6 +188,8 @@ def create_voice_profiles_router(
         scope.assert_manages(auth, elder_id)
         _require_enabled()
         voice_profiles.revoke(elder_id, revoked_at=clock().timestamp())
+        # 丟掉那位長輩的安撫話，下一輪起回到全域預設聲音。
+        _notify(on_voice_revoked, elder_id, "清除")
         publisher.delete_voice_reference(elder_id)
 
     return router

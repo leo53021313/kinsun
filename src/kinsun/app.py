@@ -315,6 +315,10 @@ def build_app() -> FastAPI:
             # 管線失敗時唸的那一句也要預錄（V-02）：走到那裡代表 ASR／LLM／記憶已經
             # 壞了一個，當場合成既慢又可能一起失敗。
             standby_phrases=(FALLBACK_PROMPT,),
+            # 有專屬聲音的長輩，安撫話也要用同一個聲音（2026-08-18）：否則同一輪裡
+            # 先聽到預設聲音的「我幫你查查」、再聽到家屬聲音的答案，像換了個人在講話。
+            # `pipeline` 在上面就建好了，這裡沿用它同一套解析（含簽章快取）。
+            resolve_voice=pipeline.resolve_voice,
         )
         # 非阻塞：十幾段 × 約 1.9 秒 ≈ 半分鐘，同步跑會把服務啟動整整擋住那麼久。
         start_prewarm(ack_audio)
@@ -377,6 +381,11 @@ def build_app() -> FastAPI:
             # publisher 為 None＝TTS 非 dgx，客製化聲音本就無從生效，端點會回 503
             # 而不是讓家屬錄完才發現沒作用。
             voice_profiles=PgVoiceProfileStore(db) if publisher is not None else None,
+            # 家屬設定／撤銷聲音時，安撫話跟著換一批（2026-08-18）。
+            on_voice_changed=(
+                ack_audio.prewarm_elder_in_background if ack_audio is not None else None
+            ),
+            on_voice_revoked=ack_audio.drop_elder if ack_audio is not None else None,
             publisher=publisher,
         ),
         prefix="/api/v1",

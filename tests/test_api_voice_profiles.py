@@ -67,7 +67,7 @@ def _accounts():
     return svc
 
 
-def _client(accounts, *, profiles=None, publisher=None, verifier=None):
+def _client(accounts, *, profiles=None, publisher=None, verifier=None, hooks=None):
     app = FastAPI()
     install_error_envelope(app)
     app.include_router(
@@ -82,6 +82,8 @@ def _client(accounts, *, profiles=None, publisher=None, verifier=None):
             appointment_hour=8,
             voice_profiles=profiles,
             publisher=publisher,
+            on_voice_changed=(hooks or {}).get("changed"),
+            on_voice_revoked=(hooks or {}).get("revoked"),
         ),
         prefix="/api/v1",
     )
@@ -339,3 +341,78 @@ def test_endpoints_return_503_when_the_feature_is_not_enabled():
     elder_id = _elder_id(accounts)
 
     assert client.get(f"/api/v1/elders/{elder_id}/voice-profile", headers=AUTH).status_code == 503
+
+
+# --- 安撫話跟著換聲音（2026-08-18）---
+
+
+def test_setting_a_voice_also_rewarms_the_ack_audio(setup):
+    """實機回報：長輩同一輪裡先聽到預設聲音的「我幫你查查」、再聽到家屬聲音的答案。
+
+    安撫話原本只有一份、以全域聲音合成——那在「全系統一個聲音」的年代與回覆一致，
+    客製化聲音上線後前提就失效了。設定的當下就重暖，是因為十九句要暖約半分鐘，
+    等到對話中才暖那位長輩前幾輪都不會有安撫話。
+    """
+    accounts = _accounts()
+    warmed: list[str] = []
+    client = _client(
+        accounts,
+        profiles=FakeVoiceProfileStore(),
+        publisher=_SpyPublisher(),
+        hooks={"changed": warmed.append},
+    )
+    elder_id = _elder_id(accounts)
+
+    client.put(
+        f"/api/v1/elders/{elder_id}/voice-profile",
+        params={"consented_by": "孫子"},
+        headers={**AUTH, **AUDIO},
+        content=b"RECORDING",
+    )
+
+    assert warmed == [elder_id]
+
+
+def test_revoking_also_drops_the_ack_audio(setup):
+    """撤銷後安撫話也要回到全域預設聲音，否則長輩會繼續聽到已撤銷的那個聲音。"""
+    accounts = _accounts()
+    dropped: list[str] = []
+    client = _client(
+        accounts,
+        profiles=FakeVoiceProfileStore(),
+        publisher=_SpyPublisher(),
+        hooks={"revoked": dropped.append},
+    )
+    elder_id = _elder_id(accounts)
+
+    assert (
+        client.delete(f"/api/v1/elders/{elder_id}/voice-profile", headers=AUTH).status_code == 204
+    )
+    assert dropped == [elder_id]
+
+
+def test_a_failing_ack_rewarm_does_not_fail_the_request(setup):
+    """設定檔已經寫進資料庫了，那才是權威。
+
+    安撫話用哪個聲音是加分項，不可以因為它讓家屬看到「設定失敗」而重錄一次。
+    """
+
+    def boom(elder_id):
+        raise RuntimeError("安撫話快取掛了")
+
+    accounts = _accounts()
+    profiles = FakeVoiceProfileStore()
+    client = _client(
+        accounts, profiles=profiles, publisher=_SpyPublisher(), hooks={"changed": boom}
+    )
+    elder_id = _elder_id(accounts)
+
+    res = client.put(
+        f"/api/v1/elders/{elder_id}/voice-profile",
+        params={"consented_by": "孫子"},
+        headers={**AUTH, **AUDIO},
+        content=b"RECORDING",
+    )
+
+    assert res.status_code == 200
+    assert profiles.get_active(elder_id) is not None, "設定檔仍要寫成"
