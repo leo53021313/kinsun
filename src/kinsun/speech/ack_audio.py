@@ -38,7 +38,13 @@ from dataclasses import dataclass
 
 from kinsun import tracing
 from kinsun.speech import acks
-from kinsun.speech.tts import TTSClient, TTSError, TtsPriority, tts_priority
+from kinsun.speech.tts import (
+    TTSClient,
+    TTSError,
+    TtsPriority,
+    VoiceReference,
+    tts_priority,
+)
 
 logger = logging.getLogger("kinsun.speech.ack_audio")
 
@@ -82,6 +88,7 @@ class AckAudioCache:
         clock: Callable[[], float] = time.monotonic,
         rng: random.Random | None = None,
         standby_phrases: tuple[str, ...] = (),
+        resolve_voice: Callable[[str], VoiceReference | None] | None = None,
     ) -> None:
         """`standby_phrases`：語庫以外、也要預錄的句子（如管線失敗的回退話術）。
 
@@ -95,13 +102,24 @@ class AckAudioCache:
         self._clock = clock
         self._rng = rng or random.Random()
         self._standby = standby_phrases
-        self._entries: dict[str, _Entry] = {}
+        self._resolve_voice = resolve_voice
+        # 外層鍵＝長輩（None＝全域預設聲音那一批），內層鍵＝句子。
+        # ⚠️ 為什麼要分桶：安撫話原本只有一份、用全域聲音合成，那在「全系統一個聲音」
+        # 的年代與回覆完全一致。客製化聲音上線後前提就失效了——長輩會先聽到預設聲音的
+        # 「我幫你查查」、再聽到家屬聲音的答案，同一輪裡換人講話（2026-08-18 實測回報）。
+        self._entries: dict[str | None, dict[str, _Entry]] = {}
         self._lock = threading.Lock()
-        self._warming = False
+        self._warming: set[str | None] = set()
 
     # ── 對話路徑（必須極快、且絕不拋例外）────────────────────────────
 
-    def clip_for(self, tool_name: str, *, persona_id: str = acks.DEFAULT_PERSONA) -> AckClip | None:
+    def clip_for(
+        self,
+        tool_name: str,
+        *,
+        persona_id: str = acks.DEFAULT_PERSONA,
+        elder_id: str | None = None,
+    ) -> AckClip | None:
         """這輪要唸的安撫話；還沒暖好或已過期就回 None（＝這輪不講）。
 
         ⚠️ 回 None 是**降級不是錯誤**：長輩退回原本的乾等體感，整輪對話照常完成。
@@ -110,27 +128,35 @@ class AckAudioCache:
         phrase = acks.pick(tool_name, persona_id=persona_id, rng=self._rng)
         if not phrase:
             return None
-        return self.clip_for_text(phrase)
+        return self.clip_for_text(phrase, elder_id=elder_id)
 
-    def clip_for_text(self, phrase: str) -> AckClip | None:
+    def clip_for_text(self, phrase: str, *, elder_id: str | None = None) -> AckClip | None:
         """指定這一句的音檔（不隨機抽）；還沒暖好或已過期就回 None。
 
         回退話術用這支：它是固定的一句，不能像工具安撫話那樣輪替。
         同樣**絕不當場合成**——管線已經失敗了，再讓長輩多等 1.9 秒沒有意義。
+
+        ⚠️ 有客製化聲音的長輩**寧可不講也不用預設聲音**：講了就是同一輪裡換一個人
+        講話，那正是本次要修掉的症狀。沒暖好時回 None、背景補，下一輪就有了。
         """
+        voice = self._voice_for(elder_id)
+        key = elder_id if voice is not None else None
         with self._lock:
-            entry = self._entries.get(phrase)
+            entry = self._entries.get(key, {}).get(phrase)
             if entry is not None and self._is_stale(entry):
                 # ⚠️ 過期就把**整批**丟掉，不是只丟這一句：所有音檔都在啟動時一起
                 # 上傳，簽章效期相同，所以一句過期就代表全部都過期了。逐句補的話，
                 # 長輩會連續好幾輪都沒有安撫話（每輪隨機抽到一句沒補到的）。
                 # 這是實測抓到的——`test_expired_signature_is_treated_as_missing_and_refreshed`
                 # 在逐句補的版本上會紅。
-                self._entries.clear()
+                #
+                # ⚠️ 只清這一位長輩的桶，不是整個快取：各桶是各自整批上傳的，
+                # 效期互不相干，連坐會讓其他長輩平白少掉好幾輪安撫話。
+                self._entries.pop(key, None)
                 entry = None
         if entry is None:
             # 沒暖好或過期都自癒：背景整批重暖，這一輪就不講了。
-            self._warm_in_background()
+            self._warm_in_background(key, voice)
             return None
         return AckClip(text=phrase, audio_url=entry.audio_url, duration_ms=entry.duration_ms)
 
@@ -145,8 +171,11 @@ class AckAudioCache:
         capture_input=False,  # 首參是 self，其餘無參數
         capture_output=False,  # 回傳 None
     )
-    def prewarm(self) -> None:
+    def prewarm(self, elder_id: str | None = None, voice: VoiceReference | None = None) -> None:
         """把語庫裡每一句都合成上傳。啟動時由組裝根丟到背景執行緒。
+
+        `elder_id` 為 None＝全域預設聲音那一批（啟動時暖的就是這批）；帶 elder_id
+        則以該長輩的參考語音重暖一份，讓安撫話與回覆同一個聲音。
 
         ⚠️ 逐句獨立處理：一句失敗不可讓其餘的都沒有音檔（TTS 服務實測會偶發 400
         與瞬斷）。失敗的那句下次被抽中時會走 `clip_for` 的自癒路徑。
@@ -161,37 +190,77 @@ class AckAudioCache:
         """
         # 待命話術一併預錄：它只在管線失敗時用得到，但**正因為那時候什麼都壞了**，
         # 它更不能依賴當場合成。去重是因為它可能剛好也在語庫裡。
-        phrases = tuple(dict.fromkeys((*acks.all_phrases(), *self._standby)))
-        ok = sum(1 for phrase in phrases if self._publish(phrase))
-        logger.info("安撫話音檔預熱完成：%d/%d 句", ok, len(phrases))
-
-    def _warm_in_background(self) -> None:
-        """整批重暖。同時只跑一次——長輩連續發話時不該把整個語庫重複合成好幾遍。"""
-        with self._lock:
-            if self._warming:
+        if elder_id is not None and voice is None:
+            voice = self._voice_for(elder_id)
+            if voice is None:
+                # 設定檔在預熱排隊期間被撤銷了：不要用預設聲音填進這位長輩的桶，
+                # 那會讓「已撤銷」看起來像「已設定」。
                 return
-            self._warming = True
+        phrases = tuple(dict.fromkeys((*acks.all_phrases(), *self._standby)))
+        key = elder_id if voice is not None else None
+        ok = sum(1 for phrase in phrases if self._publish(phrase, key, voice))
+        logger.info(
+            "安撫話音檔預熱完成：%d/%d 句（%s）",
+            ok,
+            len(phrases),
+            "全域預設聲音" if key is None else f"長輩 {elder_id} 的專屬聲音",
+        )
+
+    def prewarm_elder_in_background(self, elder_id: str) -> None:
+        """家屬剛設定好專屬聲音時呼叫：背景把安撫話用新聲音重暖一份。
+
+        ⚠️ 時機刻意選在**設定的當下**而不是第一次講話時：十九句 × 約 1.9 秒 ≈ 半分鐘，
+        等到對話中才暖的話，那位長輩前幾輪都不會有安撫話（見 `clip_for_text` 的取捨）。
+        家屬設定完到長輩下次開口通常隔得夠久，暖得完。
+        """
+        self._warm_in_background(elder_id, None)
+
+    def drop_elder(self, elder_id: str) -> None:
+        """家屬撤銷專屬聲音時呼叫：丟掉那一桶，下一輪就回到全域預設聲音。"""
+        with self._lock:
+            self._entries.pop(elder_id, None)
+
+    def _voice_for(self, elder_id: str | None) -> VoiceReference | None:
+        """這位長輩有沒有專屬聲音。任何失敗都當成沒有——安撫話是加分項，
+        不可以因為查不到而讓整輪對話出事。"""
+        if elder_id is None or self._resolve_voice is None:
+            return None
+        try:
+            return self._resolve_voice(elder_id)
+        except Exception:  # noqa: BLE001
+            logger.warning("查長輩專屬聲音失敗，安撫話改用全域預設聲音")
+            return None
+
+    def _warm_in_background(self, key: str | None, voice: VoiceReference | None) -> None:
+        """整批重暖。同一桶同時只跑一次——長輩連續發話時不該把整個語庫重複合成好幾遍。"""
+        with self._lock:
+            if key in self._warming:
+                return
+            self._warming.add(key)
         threading.Thread(
             target=self._warm_and_release,
+            args=(key, voice),
             name="kinsun-ack-warm",
             daemon=True,
         ).start()
 
-    def _warm_and_release(self) -> None:
+    def _warm_and_release(self, key: str | None, voice: VoiceReference | None) -> None:
         try:
-            self.prewarm()
+            self.prewarm(key, voice)
         finally:
             with self._lock:
-                self._warming = False
+                self._warming.discard(key)
 
-    def _publish(self, phrase: str) -> bool:
+    def _publish(
+        self, phrase: str, key: str | None = None, voice: VoiceReference | None = None
+    ) -> bool:
         """合成並上傳一句，成功才寫進快取。任何失敗都只留 warning。
 
         優先權 PREWARM：沒有任何人在等這一段，它必須讓路給長輩正在等的回覆。
         """
         try:
             with tts_priority(TtsPriority.PREWARM):
-                result = self._tts.synthesize(phrase)
+                result = self._tts.synthesize(phrase, voice=voice)
         except TTSError:
             logger.warning("安撫話合成失敗，該句暫時不可用")
             return False
@@ -204,17 +273,17 @@ class AckAudioCache:
             logger.warning("安撫話音檔上傳失敗，該句暫時不可用")
             return False
         with self._lock:
-            self._entries[phrase] = _Entry(
+            self._entries.setdefault(key, {})[phrase] = _Entry(
                 audio_url=url,
                 duration_ms=result.duration_ms,
                 published_at=self._clock(),
             )
         return True
 
-    def warm_count(self) -> int:
+    def warm_count(self, elder_id: str | None = None) -> int:
         """已暖好的句數，供啟動檢查與測試用。"""
         with self._lock:
-            return len(self._entries)
+            return len(self._entries.get(elder_id, {}))
 
 
 def start_prewarm(cache: AckAudioCache) -> None:

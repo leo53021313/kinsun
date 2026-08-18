@@ -67,6 +67,8 @@ def create_guardian_face_router(
     appointment_hour: int,
     voice_profiles: VoiceProfileStore | None = None,
     publisher=None,
+    on_voice_changed: Callable[[str], None] | None = None,
+    on_voice_revoked: Callable[[str], None] | None = None,
 ) -> APIRouter:
     """家屬面聚合：長輩／排程／健康報告／每日摘要，共用雙認證與可及範圍守門。
 
@@ -86,6 +88,8 @@ def create_guardian_face_router(
         create_voice_profiles_router(
             voice_profiles=voice_profiles,
             publisher=publisher,
+            on_voice_changed=on_voice_changed,
+            on_voice_revoked=on_voice_revoked,
             current_guardian=current_guardian,
             scope=scope,
             clock=clock,
