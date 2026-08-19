@@ -60,6 +60,22 @@ export type OttoTapCommand = {
   type: "tap";
 };
 
+/**
+ * 長輩摸了阿白本體（2026-08-19）：頭、耳朵、肚子、手各有不同反應。
+ *
+ * ⚠️ 座標是**相對舞台的正規化位置**（0–1）：外層只知道自己的 rect，renderer 只
+ * 知道自己的 viewBox，各換算自己那一半——「哪裡是耳朵」是角色的知識，留在
+ * renderer 那側（interactions.js）。同樣不吃 `sequence`：這是一次性的演出，
+ * 講話中、思考中、聆聽中要不要理由 renderer 依自己的狀態決定。
+ */
+export type OttoPokeCommand = {
+  version: typeof OTTO_BRIDGE_VERSION;
+  type: "poke";
+  /** 0（左／上）～1（右／下），相對舞台。 */
+  x: number;
+  y: number;
+};
+
 /** renderer 目前浮出來的可點道具；`x`／`y` 是**舞台百分比**（0–100）。 */
 export type OttoIdleProp = {
   key: string;
@@ -68,6 +84,14 @@ export type OttoIdleProp = {
   zh: string;
   x: number;
   y: number;
+};
+
+/** 摸摸的反應：部位、情緒與一句台詞（呈現層目前僅記錄，未來可顯示）。 */
+export type OttoInteraction = {
+  kind: string;
+  label: string;
+  emotion: string;
+  text: string;
 };
 
 export type OttoRendererEvent =
@@ -80,6 +104,11 @@ export type OttoRendererEvent =
       type: "idle-prop";
       /** `null`＝道具收起來了（被點過、或這段待機結束）。 */
       prop: OttoIdleProp | null;
+    }
+  | {
+      version: typeof OTTO_BRIDGE_VERSION;
+      type: "interaction";
+      interaction: OttoInteraction | null;
     };
 
 /**
@@ -96,6 +125,15 @@ export type OttoGreetCommand = {
 
 export function createOttoTapCommand(): OttoTapCommand {
   return { version: OTTO_BRIDGE_VERSION, type: "tap" };
+}
+
+/** 座標不是有限數就不送（回 null）——半個座標的觸碰沒有意義，夾限之外直接丟棄。 */
+export function createOttoPokeCommand(x: number, y: number): OttoPokeCommand | null {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
+  const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+  return { version: OTTO_BRIDGE_VERSION, type: "poke", x: clamp01(x), y: clamp01(y) };
 }
 
 export function createOttoGreetCommand(): OttoGreetCommand {
@@ -170,7 +208,32 @@ export function parseOttoRendererEvent(data: string): OttoRendererEvent | null {
       prop: parseIdleProp(event.detail),
     };
   }
+  if (event.type === "interaction") {
+    return {
+      version: OTTO_BRIDGE_VERSION,
+      type: "interaction",
+      interaction: parseInteraction(event.detail),
+    };
+  }
   return null;
+}
+
+/** 與 `parseIdleProp` 同一把尺：跨 iframe 邊界進來的資料逐欄檢查，缺一欄整包不要。 */
+function parseInteraction(value: unknown): OttoInteraction | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const detail = value as Record<string, unknown>;
+  const text = (field: unknown) =>
+    typeof field === "string" && field.length > 0 && field.length <= 60 ? field : null;
+  const kind = text(detail.kind);
+  const label = text(detail.label);
+  const emotion = text(detail.emotion);
+  const line = text(detail.text);
+  if (!kind || !label || !emotion || !line) {
+    return null;
+  }
+  return { kind, label, emotion, text: line };
 }
 
 /**

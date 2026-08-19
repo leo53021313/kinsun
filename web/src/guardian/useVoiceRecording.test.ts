@@ -9,7 +9,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { useVoiceRecording } from "./useVoiceRecording";
+import { MIN_RECORDING_MS, useVoiceRecording } from "./useVoiceRecording";
 
 function fakeRecorder(options: { bytes?: Uint8Array | null; started?: boolean } = {}) {
   const { bytes = new Uint8Array([1, 2, 3]), started = true } = options;
@@ -39,9 +39,9 @@ function deps(recorder: ReturnType<typeof fakeRecorder>, nowValues: number[]) {
 afterEach(() => vi.restoreAllMocks());
 
 describe("useVoiceRecording", () => {
-  it("錄滿 8 秒才讓送出", async () => {
+  it("錄滿門檻長度才讓送出", async () => {
     const recorder = fakeRecorder();
-    const d = deps(recorder, [0, 8000]);
+    const d = deps(recorder, [0, MIN_RECORDING_MS]);
     const { result } = renderHook(() => useVoiceRecording(d));
     await act(async () => {
       await result.current.start();
@@ -50,13 +50,13 @@ describe("useVoiceRecording", () => {
       await result.current.stop();
     });
     await waitFor(() => expect(result.current.status).toBe("recorded"));
-    expect(result.current.durationMs).toBe(8000);
+    expect(result.current.durationMs).toBe(MIN_RECORDING_MS);
     expect(result.current.isLongEnough).toBe(true);
   });
 
   it("差 0.1 秒也不讓送——門檻是硬的，不是提示", async () => {
     const recorder = fakeRecorder();
-    const d = deps(recorder, [0, 7900]);
+    const d = deps(recorder, [0, MIN_RECORDING_MS - 100]);
     const { result } = renderHook(() => useVoiceRecording(d));
     await act(async () => {
       await result.current.start();

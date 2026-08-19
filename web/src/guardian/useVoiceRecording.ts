@@ -1,21 +1,21 @@
 /**
  * 家屬錄製參考語音的狀態機。
  *
- * 抽成 hook 而不是寫在畫面裡：它管的三件事（計時、8 秒門檻、資源回收）都是
+ * 抽成 hook 而不是寫在畫面裡：它管的三件事（計時、最短長度門檻、資源回收）都是
  * 「壞掉不會噴錯」的類型，混在畫面裡就只能靠點畫面來測。
  *
- * ⚠️ **8 秒門檻不是體感問題**：後端的稿子設計成唸完約 12～13 秒，
- * `voice_profiles/script.py::SCRIPT_RATIONALE` 記著實測——4 秒的參考音檔合成
- * 同一句話會產出 5.04～6.92 秒（另有一次 11.88 秒）。錄太短送出去，長輩從此
- * 聽到長度亂跳的聲音，而沒有任何一層會報錯。
+ * ⚠️ **最短長度門檻不是體感問題**：稿子沒唸完＝逐字稿對不上音檔，合成品質會
+ * 靜默壞掉（`voice_profiles/script.py` 檔頭）。門檻值必須跟著稿子長度走：
+ * 2026-08-19 稿子從 40 字換成 16 字（滲漏修正，見 SCRIPT_RATIONALE），
+ * 門檻同步從 8 秒調成 4 秒。
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { createRecorder, type Recorder } from "@/talk/recorder";
 
-/** 低於這個長度不讓送出。稿子唸完約 12～13 秒，8 秒是「明顯沒唸完」的界線。 */
-export const MIN_RECORDING_MS = 8000;
+/** 低於這個長度不讓送出。16 字的稿子自然語速約 5～7 秒，4 秒是「明顯沒唸完」的界線。 */
+export const MIN_RECORDING_MS = 4000;
 
 /** 錄音中更新秒數的間隔。 */
 const TICK_MS = 100;

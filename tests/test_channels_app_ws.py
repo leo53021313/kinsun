@@ -177,23 +177,37 @@ class _FakeAckAudio:
         # 這一輪被要求用哪一種人設的句子（2026-08-05）——人設由 agent 隨通知帶到
         # 這裡，WS 端不查資料庫，故它是唯一能證明接線沒斷的地方。
         self.personas: list[str] = []
+        # 這一輪被要求用哪個聲音（2026-08-19）——克隆聲音由 `_run_turn` 開頭的背景
+        # 解析帶到這裡，同樣是唯一能證明接線沒斷的地方。
+        self.voices: list[object] = []
         self._clip = clip or AckClip(
             text="好，我幫您看看最近的新聞喔",
             audio_url="https://cdn.example/ack.m4a",
             duration_ms=1300,
         )
 
-    def clip_for(self, tool_name: str, *, persona_id: str = DEFAULT_PERSONA_ID) -> AckClip | None:
+    def clip_for(
+        self, tool_name: str, *, persona_id: str = DEFAULT_PERSONA_ID, voice=None
+    ) -> AckClip | None:
         self.asked.append(tool_name)
         self.personas.append(persona_id)
+        self.voices.append(voice)
         return self._clip
+
+    def ensure_warm(self, voice) -> None:
+        """真實實作會在輪次開頭被叫到；替身不需要暖，記著介面存在即可。"""
 
 
 class _ColdAckAudio:
     """還沒暖好：一律回 None（＝這輪不講安撫話）。"""
 
-    def clip_for(self, tool_name: str, *, persona_name: str = "kinsun") -> AckClip | None:
+    def clip_for(
+        self, tool_name: str, *, persona_id: str = DEFAULT_PERSONA_ID, voice=None
+    ) -> AckClip | None:
         return None
+
+    def ensure_warm(self, voice) -> None:
+        pass
 
 
 def _service():
@@ -246,8 +260,9 @@ def _client(
         voice_profiles=voice_profiles,
         # 設定檔存的是 bucket 內物件路徑，簽章函式在此以假實作代替（2026-08-01）。
         # 給了 store 就必須給 signer，否則 VoicePipeline 建構子會擋下。
+        # 第二參數是聲音版本（2026-08-19，多 worker 重錄失效用），假實作不需理會。
         sign_voice_url=(
-            None if voice_profiles is None else lambda path: f"https://signed.test/{path}"
+            None if voice_profiles is None else lambda path, version: f"https://signed.test/{path}"
         ),
     )
     app = FastAPI()
@@ -686,6 +701,62 @@ def test_no_ack_when_no_tool_is_called():
         reply = _receive_frame(ws)
     assert reply["type"] == "reply"
     assert ack_audio.asked == []
+
+
+def test_ack_uses_the_elders_cloned_voice():
+    """有克隆聲音的長輩，安撫話也要用那個聲音（Leo 2026-08-19 需求）。
+
+    迴歸測試：安撫話快取原本只有全域預設聲音一批，`clip_for` 根本沒有聲音參數——
+    家屬設好克隆聲音後，回答是孫子的聲音、過場的「好我查一下喔」卻是預設聲音，
+    同一輪對話講到一半換人。這裡守的是 WS 端的接線：`_run_turn` 開頭背景解析的
+    `VoiceReference` 必須原封不動送進 `clip_for`。
+    """
+    svc = _service()
+    elder, token = _bound_elder_token(svc)
+    profiles = FakeVoiceProfileStore()
+    profiles.save(
+        VoiceProfile(
+            elder_id=elder.elder_id,
+            prompt_audio_path="voice-refs/grandson.wav",
+            prompt_text="阿嬤我是小明",
+            consented_by="孫子小明本人同意",
+            granted_at=NOW.timestamp(),
+        )
+    )
+    ack_audio = _FakeAckAudio()
+    client = _client(
+        svc,
+        llm=_ToolThenReplyLLM(),
+        tools=_news_registry(),
+        ack_audio=ack_audio,
+        voice_profiles=profiles,
+    )
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_bytes(b"\x00fake-audio")
+        _frames(ws, 2)  # ack ＋ reply
+    assert len(ack_audio.voices) == 1
+    voice = ack_audio.voices[0]
+    assert voice is not None, "有克隆聲音的長輩，安撫話卻拿到預設聲音（None）"
+    assert voice.elder_id == elder.elder_id
+    assert voice.prompt_audio_url == "https://signed.test/voice-refs/grandson.wav"
+
+
+def test_ack_passes_none_voice_when_the_elder_has_no_profile():
+    """沒有克隆聲音的長輩照舊：安撫話用全域預設聲音批次（voice=None）。"""
+    svc = _service()
+    _, token = _bound_elder_token(svc)
+    ack_audio = _FakeAckAudio()
+    client = _client(
+        svc,
+        llm=_ToolThenReplyLLM(),
+        tools=_news_registry(),
+        ack_audio=ack_audio,
+        voice_profiles=FakeVoiceProfileStore(),
+    )
+    with client.websocket_connect(f"/api/v1/ws/talk?token={token}") as ws:
+        ws.send_bytes(b"\x00fake-audio")
+        _frames(ws, 2)
+    assert ack_audio.voices == [None]
 
 
 # ── 位置 ────────────────────────────────────────────────────────────────

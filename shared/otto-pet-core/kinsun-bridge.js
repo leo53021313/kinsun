@@ -7,6 +7,10 @@
   if (prefersReducedMotion) pet.motionEnabled = false;
   else new PET.Idle(pet);
   const talker = new PET.TalkDriver(pet);
+  // 摸摸阿白（2026-08-19）：與 Idle 同一道 reduced-motion 閘——反應本身就是一段
+  // 晃動的動畫，減少動態效果時不裝，poke 指令自然變 no-op。
+  const interactions =
+    !prefersReducedMotion && PET.Interactions ? new PET.Interactions(pet) : null;
   let lastSequence = -1;
 
   function notify(type, detail) {
@@ -103,6 +107,17 @@
     // 且在 reduced-motion 下 `pet.idle` 根本不存在——兩種情形都不需要外層知道。
     if (command.type === "tap") {
       if (pet.idle) pet.idle.tap();
+      return;
+    }
+
+    // 長輩摸了阿白本體（頭、耳朵、肚子、手）。部位判定與反應全在 Interactions
+    // （見 interactions.js）；講話中、思考中、聆聽中它自己會不理，外層不必擋。
+    if (command.type === "poke") {
+      if (!interactions) return;
+      const px = Number(command.x);
+      const py = Number(command.y);
+      if (!Number.isFinite(px) || !Number.isFinite(py)) return;
+      interactions.poke(Math.min(1, Math.max(0, px)), Math.min(1, Math.max(0, py)));
       return;
     }
 
@@ -204,6 +219,12 @@
         y: detail.tap.y,
       });
     });
+  }
+
+  // 摸摸的反應通知外層（2026-08-19）：網頁版目前沒接台詞顯示，先照 idle-prop 的
+  // 慣例把事件送出去——之後要顯示反應台詞或做觸覺回饋時，線上已經有這則訊息。
+  if (interactions) {
+    pet.on("interaction", (detail) => notify("interaction", detail));
   }
 
   // iOS 使用 window，部分 Android WebView 版本使用 document；sequence 會擋重複投遞。

@@ -4,6 +4,7 @@
 故不需要 Supabase 憑證也不需要資料庫。
 """
 
+import threading
 from datetime import datetime, timedelta, timezone
 from itertools import count
 
@@ -15,6 +16,7 @@ from kinsun.accounts.service import AccountService
 from kinsun.audio.publisher import AudioPublishError
 from kinsun.schedules.service import ScheduleService
 from kinsun.schedules.store import FakeScheduleStore
+from kinsun.speech.tts import VoiceReference
 from kinsun.voice_profiles.script import VOICE_PROFILE_SCRIPT
 from kinsun.voice_profiles.store import FakeVoiceProfileStore, VoiceProfileError
 from kinsun.web.auth import LineIdentity
@@ -42,12 +44,14 @@ class _FakeVerifier:
 
 
 class _SpyPublisher:
-    """記下被上傳了什麼；`boom` 時模擬 Supabase 掛掉。"""
+    """記下被上傳了什麼；`boom` 時模擬 Supabase 掛掉、`sign_boom` 時模擬簽章掛掉。"""
 
-    def __init__(self, boom=False):
+    def __init__(self, boom=False, sign_boom=False):
         self.uploads: list[tuple[str, bytes, str]] = []
         self.deleted: list[str] = []
+        self.signed: list[tuple[str, str]] = []
         self._boom = boom
+        self._sign_boom = sign_boom
 
     def upload_voice_reference(self, elder_id, audio, *, content_type):
         if self._boom:
@@ -58,6 +62,22 @@ class _SpyPublisher:
     def delete_voice_reference(self, elder_id):
         self.deleted.append(elder_id)
 
+    def signed_url_for(self, path, version=""):
+        if self._sign_boom:
+            raise AudioPublishError("簽章不通")
+        self.signed.append((path, version))
+        return f"https://signed.test/{path}?v={version}"
+
+
+class _SpyAckAudio:
+    """記下錄後預熱被要求暖哪個聲音（2026-08-19）。"""
+
+    def __init__(self):
+        self.warmed: list[object] = []
+
+    def ensure_warm(self, voice):
+        self.warmed.append(voice)
+
 
 def _accounts():
     repo = FakeAccountStore()
@@ -67,7 +87,7 @@ def _accounts():
     return svc
 
 
-def _client(accounts, *, profiles=None, publisher=None, verifier=None):
+def _client(accounts, *, profiles=None, publisher=None, verifier=None, ack_audio=None):
     app = FastAPI()
     install_error_envelope(app)
     app.include_router(
@@ -82,6 +102,7 @@ def _client(accounts, *, profiles=None, publisher=None, verifier=None):
             appointment_hour=8,
             voice_profiles=profiles,
             publisher=publisher,
+            ack_audio=ack_audio,
         ),
         prefix="/api/v1",
     )
@@ -113,20 +134,24 @@ def test_script_is_served_by_the_server_not_hardcoded_in_the_frontend(setup):
 
 
 def test_the_script_satisfies_the_recording_guidelines():
-    """稿子是把四條錄製準則「內建」的手段，改稿不可以破壞它們。
+    """稿子是把錄製準則「內建」的手段，改稿不可以破壞它們。
 
-    這四項都有 DGX 實機 A/B 實測支撐，理由見 voice_profiles/script.py 的
+    各項皆有 DGX 實機實測支撐，理由見 voice_profiles/script.py 的
     SCRIPT_RATIONALE 與 services/tts/README.md 的「參考語音的錄製準則」。
     """
     text = VOICE_PROFILE_SCRIPT
-    assert text.count("阿嬤") >= 2, "「嬤」是罕用字，參考語音沒示範過就會念錯"
+    # 2026-08-19 滲漏實測：稿子的字會被機率性唸進回覆（40 字舊稿 2/4～3/4 次），
+    # 故①稿長必須壓在官方參考樣本的量級（15 字）②不可含稱謂——滲漏出來就是叫錯人。
+    plain = text.replace("，", "").replace("。", "")
+    assert 12 <= len(plain) <= 22, (
+        f"逐字稿過長會滲進回覆（舊稿 40 字實測 3/4），實際 {len(plain)} 字"
+    )
+    assert "嬤" not in text and "阿公" not in text, "稱謂滲漏＝對著阿公喊阿嬤，不可入稿"
     assert text.count("喔") >= 2, "「喔」要句中與句尾各一次，兩種型態都要學到"
     # 句中至少一次＝「喔」後面還有下文，不是整段的結尾。
     assert any(
         text[i + 1] not in "。" for i, c in enumerate(text) if c == "喔" and i + 1 < len(text)
     ), "「喔」至少要有一次出現在句中"
-    plain = text.replace("，", "").replace("。", "")
-    assert 30 <= len(plain) <= 45, f"約 12～15 秒的自然語速，實際 {len(plain)} 字"
 
 
 # --- 權限 ---
@@ -339,3 +364,88 @@ def test_endpoints_return_503_when_the_feature_is_not_enabled():
     elder_id = _elder_id(accounts)
 
     assert client.get(f"/api/v1/elders/{elder_id}/voice-profile", headers=AUTH).status_code == 503
+
+
+# --- 錄後預熱（Leo 2026-08-19 需求追加）---
+
+
+def _join_prewarm_threads():
+    for thread in threading.enumerate():
+        if thread.name == "kinsun-ack-warm-on-set":
+            thread.join(timeout=5)
+
+
+def test_setting_a_profile_prewarms_the_ack_batch_with_the_new_voice():
+    """家屬錄完的當下就用新聲音預錄安撫話，不等長輩第一次開口。
+
+    整批預錄要半分鐘——等長輩開口才開始的話，第一場對話的過場語全趕不上；
+    錄完就開暖，家屬把手機拿給長輩之前多半已經好了。
+    """
+    accounts = _accounts()
+    profiles, publisher = FakeVoiceProfileStore(), _SpyPublisher()
+    ack = _SpyAckAudio()
+    client = _client(accounts, profiles=profiles, publisher=publisher, ack_audio=ack)
+    elder_id = _elder_id(accounts)
+
+    res = client.put(
+        f"/api/v1/elders/{elder_id}/voice-profile",
+        params={"consented_by": "孫子小明本人於通話中同意"},
+        headers={**AUTH, **AUDIO},
+        content=b"RECORDING",
+    )
+
+    assert res.status_code == 200
+    _join_prewarm_threads()
+    version = str(NOW.timestamp())
+    assert publisher.signed == [(f"voice-refs/{elder_id}", version)], (
+        "簽章必須帶新版本——重錄後其他快取層靠它換新"
+    )
+    assert ack.warmed == [
+        VoiceReference(
+            elder_id=elder_id,
+            prompt_audio_url=f"https://signed.test/voice-refs/{elder_id}?v={version}",
+            prompt_text=VOICE_PROFILE_SCRIPT,
+            version=version,
+        )
+    ]
+
+
+def test_prewarm_signing_failure_does_not_fail_the_upload():
+    """預熱是加分項：簽章掛掉只記 warning，設定本身照樣成功（200）。"""
+    accounts = _accounts()
+    profiles = FakeVoiceProfileStore()
+    publisher = _SpyPublisher(sign_boom=True)
+    ack = _SpyAckAudio()
+    client = _client(accounts, profiles=profiles, publisher=publisher, ack_audio=ack)
+    elder_id = _elder_id(accounts)
+
+    res = client.put(
+        f"/api/v1/elders/{elder_id}/voice-profile",
+        params={"consented_by": "孫子小明本人於通話中同意"},
+        headers={**AUTH, **AUDIO},
+        content=b"RECORDING",
+    )
+
+    assert res.status_code == 200
+    _join_prewarm_threads()
+    assert ack.warmed == [], "簽不出網址就不該硬暖——長輩開口時 ensure_warm 會再試"
+    assert profiles.get_active(elder_id) is not None, "設定檔必須已寫入"
+
+
+def test_no_prewarm_when_ack_audio_is_not_wired():
+    """未注入 ack_audio（既有呼叫端）：PUT 行為與過去完全相同，不簽章、不預熱。"""
+    accounts = _accounts()
+    profiles, publisher = FakeVoiceProfileStore(), _SpyPublisher()
+    client = _client(accounts, profiles=profiles, publisher=publisher)
+    elder_id = _elder_id(accounts)
+
+    res = client.put(
+        f"/api/v1/elders/{elder_id}/voice-profile",
+        params={"consented_by": "孫子小明本人於通話中同意"},
+        headers={**AUTH, **AUDIO},
+        content=b"RECORDING",
+    )
+
+    assert res.status_code == 200
+    _join_prewarm_threads()
+    assert publisher.signed == []

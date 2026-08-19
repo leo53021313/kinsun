@@ -378,6 +378,8 @@ def build_app() -> FastAPI:
             # 而不是讓家屬錄完才發現沒作用。
             voice_profiles=PgVoiceProfileStore(db) if publisher is not None else None,
             publisher=publisher,
+            # 錄完克隆聲音當下就預熱該長輩的安撫話批次（2026-08-19）。
+            ack_audio=ack_audio,
         ),
         prefix="/api/v1",
     )
