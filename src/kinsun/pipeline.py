@@ -72,7 +72,9 @@ class VoicePipeline:
         moderator: AbuseModerator | None = None,
         combined_classifier: CombinedSafetyClassifier | None = None,
         voice_profiles: VoiceProfileStore | None = None,
-        sign_voice_url: Callable[[str], str] | None = None,
+        # (物件路徑, 聲音版本) → 簽章網址。版本讓多 worker 下重錄能立刻換新，
+        # 見 SupabaseAudioPublisher.signed_url_for。
+        sign_voice_url: Callable[[str, str], str] | None = None,
         chunked_channels: frozenset[str] = frozenset(),
         turn_budget_seconds: float = 0.0,
         recent_utterances: Callable[[str], list[str]] | None = None,
@@ -728,10 +730,16 @@ class VoicePipeline:
                 elder_id,
             )
             return None
+        # 版本＝`granted_at`（2026-08-12）：家屬重錄時 `save` 會換一個新值，而物件
+        # 路徑固定是 `voice-refs/<elder_id>`、重錄前後完全相同。DGX 端的本機快取
+        # 只認 elder_id，沒有這個值就分不出重錄過沒有，會一直用第一次下載的錄音。
+        version = str(profile.granted_at)
         # 設定檔存路徑、這裡才現簽成短效網址（2026-08-01）。簽章失敗不讓整輪陪葬：
         # 退回全域預設聲音，長輩至少聽得到金孫說話。
+        # 版本一併傳給簽章端（2026-08-19）：重錄後強制換發新 token，繞過其他 worker
+        # 與 CDN 手上的舊網址快取，見 SupabaseAudioPublisher.signed_url_for。
         try:
-            url = self._sign_voice_url(profile.prompt_audio_path)
+            url = self._sign_voice_url(profile.prompt_audio_path, version)
         except Exception:  # noqa: BLE001 - 簽章端的例外型別由注入的實作決定
             logger.warning(
                 "客製化聲音簽章失敗，本輪改用全域預設聲音 elder_id=%s", elder_id, exc_info=True
@@ -741,8 +749,5 @@ class VoicePipeline:
             elder_id=profile.elder_id,
             prompt_audio_url=url,
             prompt_text=profile.prompt_text,
-            # 版本＝`granted_at`（2026-08-12）：家屬重錄時 `save` 會換一個新值，而物件
-            # 路徑固定是 `voice-refs/<elder_id>`、重錄前後完全相同。DGX 端的本機快取
-            # 只認 elder_id，沒有這個值就分不出重錄過沒有，會一直用第一次下載的錄音。
-            version=str(profile.granted_at),
+            version=version,
         )

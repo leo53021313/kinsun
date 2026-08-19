@@ -101,7 +101,9 @@ def test_cleanup_deletes_expired_date_folders():
     assert deletes, "應觸發至少一次 bulk DELETE"
     for url, _ in deletes:
         assert url == "https://proj.supabase.co/storage/v1/object/tts-audio"
-    all_paths = [p for _, body in deletes for p in body["paths"]]
+    # Supabase 批次刪除的 body 鍵是 `prefixes`（2026-08-19 對真 Supabase 實測：
+    # `paths` 一律 400，撤銷刪檔上線以來從未成功過）。
+    all_paths = [p for _, body in deletes for p in body["prefixes"]]
     assert "tts/20260628/a.m4a" in all_paths
     assert "tts/20260628/b.m4a" in all_paths
     assert "tts/20260630/c.m4a" in all_paths
@@ -213,6 +215,26 @@ def test_signed_url_for_caches_per_path():
     assert transport.calls[1][1].endswith("/voice-refs/e2.wav")
 
 
+def test_signed_url_for_resigns_when_the_voice_version_changes():
+    """家屬重錄＝版本換值＝立刻重簽，不等快取到期（2026-08-19）。
+
+    正式環境跑多個 uvicorn worker：`upload_voice_reference` 只清得掉收到 PUT 的那個
+    worker 的快取，其他 worker 手上重錄**之前**簽的網址還有最長 55 分鐘壽命。物件
+    路徑固定不變，CDN 又是按完整 URL 快取——舊網址可能命中重錄前的舊音檔，DGX 端
+    再把它記在**新版本**底下，舊聲音從此黏死。版本一換就重簽＝新 token＝全新 URL，
+    兩層舊快取一次繞過。
+    """
+    transport = FakeTransport([_VOICE_SIGN_RESPONSE, _VOICE_SIGN_RESPONSE])
+    publisher = _publisher(transport)
+
+    publisher.signed_url_for("voice-refs/e1.wav", "1000.0")
+    publisher.signed_url_for("voice-refs/e1.wav", "1000.0")  # 同版本：照常吃快取
+    assert len(transport.calls) == 1
+
+    publisher.signed_url_for("voice-refs/e1.wav", "2000.0")  # 重錄後第一次：必須重簽
+    assert len(transport.calls) == 2, "版本換了卻沒重簽＝其他 worker 會把舊網址發到效期結束"
+
+
 def test_delete_voice_reference_removes_the_object_and_drops_the_cached_url():
     """撤銷客製化聲音要真的把聲音樣本刪掉（2026-08-12）。
 
@@ -222,14 +244,20 @@ def test_delete_voice_reference_removes_the_object_and_drops_the_cached_url():
     """
     transport = FakeTransport([Response(200, {}, b"{}")])
     publisher = _publisher(transport)
-    publisher._voice_url_cache["voice-refs/e1"] = ("https://stale.test/x", _NOW + timedelta(1))
+    publisher._voice_url_cache["voice-refs/e1"] = (
+        "https://stale.test/x",
+        _NOW + timedelta(1),
+        "1000.0",
+    )
 
     publisher.delete_voice_reference("e1")
 
     method, url, data, _headers, _timeout = transport.calls[0]
     assert method == "DELETE"
     assert url == "https://proj.supabase.co/storage/v1/object/tts-audio"
-    assert json.loads(data) == {"paths": ["voice-refs/e1"]}
+    assert json.loads(data) == {"prefixes": ["voice-refs/e1"]}, (
+        "鍵名必須是 prefixes——用 paths 真 Supabase 回 400、聲紋永遠刪不掉（2026-08-19 實測）"
+    )
     # 簽章快取一併清掉，否則撤銷後那個網址在效期內仍然簽得出來、指向剛被刪的物件。
     assert publisher._voice_url_cache == {}
 
