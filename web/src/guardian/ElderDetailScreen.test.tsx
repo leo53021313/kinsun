@@ -1,6 +1,6 @@
 /** 長輩詳情：健康報告、每日摘要、行程摘要、代辦帳密、家屬邀請碼。 */
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -194,6 +194,26 @@ describe("ElderDetailScreen", () => {
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /穩重的孫子/ })).toBeChecked();
     expect(screen.queryByText("已經換好了，下一次跟金孫講話就會聽到。")).not.toBeInTheDocument();
+  });
+
+  it("個性以伺服器目前值為準——route 快照過期時掛載後自動校正", async () => {
+    // 迴歸（2026-08-19 實際踩到）：props.persona 是導航當下的快照，家屬改完個性、
+    // 切走再切回來時 route 物件不重建——畫面顯示舊選項，家屬以為沒存成功而重複儲存，
+    // 但後端其實早就存好了。掛載時要向 GET /elders 對一次目前值。
+    mockByPath({
+      "health-report": { risk_events: [], reminders: [] },
+      "daily-summaries": [],
+      schedules: [],
+      // ⚠️ 這個鍵必須放最後：mockByPath 依插入順序取第一個符合的鍵，而上面三支的
+      // 路徑都含 "elders"（/elders/e1/…），放前面會把它們全部攔走。
+      elders: [{ elder_id: "e1", name: "王阿嬤", persona: "steady_grandson" }],
+    });
+    renderDetail({ persona: "lively_granddaughter" }); // 導航快照還是舊值
+
+    const steady = await screen.findByRole("radio", { name: /穩重的孫子/ });
+    await waitFor(() => expect(steady).toBeChecked());
+    // 校正後＝與伺服器一致，儲存鈕該是停用的（沒有未存的改動）。
+    expect(screen.getByRole("button", { name: "就選這個" })).toBeDisabled();
   });
 
   it("三支端點其中一支失敗時，其餘兩支照常顯示，失敗的那個區塊顯示錯誤而不是卡在載入中", async () => {

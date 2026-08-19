@@ -18,6 +18,7 @@ import {
   createGuardianInvite,
   getHealthReport,
   listDailySummaries,
+  listElders,
   listSchedules,
   revokeElderDeviceBindings,
   setElderAccount,
@@ -105,6 +106,35 @@ export function ElderDetailScreen(props: {
   const [personaMessage, setPersonaMessage] = useState("");
   const [personaError, setPersonaError] = useState("");
   const [personaBusy, setPersonaBusy] = useState(false);
+  // 家屬已手動點過選項＝掛載時的背景校正不可再蓋（校正輸給使用者的手）。
+  const personaTouchedRef = useRef(false);
+
+  // ⚠️ props.persona 是**導航當下的快照**，不可當真相：家屬改完個性、切走再切
+  // 回來時 route 物件不重建，快照還是舊值——畫面顯示舊選項，家屬以為沒存成功
+  // 而重複儲存（2026-08-19 實際踩到；後端其實早就存好了）。掛載時向伺服器對一次
+  // 目前值，快照只負責首繪不閃空白。取不到就沿用快照：校正失敗是顯示層小事，
+  // 不該把整頁變成錯誤。
+  useEffect(() => {
+    if (!token) {
+      return;
+    }
+    let alive = true;
+    listElders(token)
+      .then((list) => {
+        const current = Array.isArray(list)
+          ? list.find((e) => e.elder_id === elderId)?.persona
+          : undefined;
+        if (!alive || !current || personaTouchedRef.current) {
+          return;
+        }
+        setPersona(current);
+        setSavedPersona(current);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [elderId, token]);
 
   const [inviteCode, setInviteCode] = useState("");
   const [inviteBusy, setInviteBusy] = useState(false);
@@ -344,6 +374,7 @@ export function ElderDetailScreen(props: {
               onChange={() => {
                 // 改了選擇就把上一次的結果清掉——舊的「已經換好了」掛在新選項
                 // 旁邊，家屬會以為新的也存好了（同 editAccountField 的理由）。
+                personaTouchedRef.current = true;
                 setPersonaMessage("");
                 setPersonaError("");
                 setPersona(option.value);
