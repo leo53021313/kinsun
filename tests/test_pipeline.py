@@ -717,9 +717,12 @@ class SpyTts:
 
 
 def _voice_pipeline(voice_profiles=None, sign_voice_url=None):
-    """設定檔存的是物件路徑，簽章函式預設為「路徑加個前綴當網址」的假實作。"""
+    """設定檔存的是物件路徑，簽章函式預設為「路徑加個前綴當網址」的假實作。
+
+    簽章函式收 (路徑, 聲音版本) 兩個參數（2026-08-19，多 worker 重錄失效用）。
+    """
     if voice_profiles is not None and sign_voice_url is None:
-        sign_voice_url = lambda path: f"https://signed.test/{path}?token=abc"  # noqa: E731
+        sign_voice_url = lambda path, version: f"https://signed.test/{path}?token=abc"  # noqa: E731
     return VoicePipeline(
         asr=MockAsrClient("阿公早安"),
         agent=CareAgent(EchoLLM(), NullSession()),
@@ -771,6 +774,10 @@ def test_pipeline_voice_version_changes_when_the_family_re_records():
 
     ⚠️ 版本必須取自設定檔本身，不可用簽章網址——那個網址每小時換發一次，拿它當版本
     會讓 DGX 端每小時重下載一次，等於白費本機快取。
+
+    版本也必須**一併傳給簽章端**（2026-08-19）：正式環境跑多個 uvicorn worker，
+    PUT 只清得掉其中一個 worker 的簽章快取；其他 worker 靠版本比對才知道要重簽，
+    否則舊網址（可能命中 CDN 上的舊音檔）要活到效期結束，長輩繼續聽到舊聲音。
     """
     profiles = FakeVoiceProfileStore()
     original = VoiceProfile(
@@ -781,7 +788,13 @@ def test_pipeline_voice_version_changes_when_the_family_re_records():
         granted_at=1000.0,
     )
     profiles.save(original)
-    pipeline = _voice_pipeline(profiles)
+    signed_versions: list[str] = []
+
+    def sign(path: str, version: str) -> str:
+        signed_versions.append(version)
+        return f"https://signed.test/{path}?token=abc"
+
+    pipeline = _voice_pipeline(profiles, sign_voice_url=sign)
     before = pipeline.resolve_voice("e1")
 
     # 家屬重錄：物件路徑相同（PK 是 elder_id，重錄即覆蓋），只有 granted_at 換了。
@@ -791,6 +804,7 @@ def test_pipeline_voice_version_changes_when_the_family_re_records():
     assert before is not None and after is not None
     assert after.prompt_audio_url == before.prompt_audio_url, "本測試要驗的是路徑相同時的行為"
     assert after.version != before.version, "重錄後版本沒變＝DGX 端會繼續用舊錄音"
+    assert signed_versions == ["1000.0", "2000.0"], "簽章端沒收到新版本＝其他 worker 不會重簽"
 
 
 def test_pipeline_requires_a_signer_when_voice_profiles_is_given():
@@ -824,7 +838,7 @@ def test_pipeline_falls_back_to_default_voice_when_signing_fails():
         )
     )
 
-    def boom(_path: str) -> str:
+    def boom(_path: str, _version: str) -> str:
         raise RuntimeError("Supabase 暫時不通")
 
     pipeline = _voice_pipeline(profiles, sign_voice_url=boom)
@@ -1616,7 +1630,7 @@ def test_pipeline_rejects_a_url_stored_where_a_path_belongs():
         )
     )
     signed = []
-    pipeline = _voice_pipeline(profiles, sign_voice_url=lambda p: signed.append(p) or "x")
+    pipeline = _voice_pipeline(profiles, sign_voice_url=lambda p, v: signed.append(p) or "x")
     tts = pipeline._tts
     pipeline.process(b"\x00", elder_id="e1")
 

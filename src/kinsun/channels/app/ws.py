@@ -247,6 +247,28 @@ class _InFlight:
             return not self._order or self._order[-1] == turn_id
 
 
+class _VoiceSlot:
+    """`_run_turn` 背景解析客製化聲音的交棒點：解析執行緒 `set()`，安撫話回呼 `get()`。
+
+    與裸 list／變數的差別在 `get` 分得出三種狀態：解析完成且有克隆聲音、解析完成但
+    這位長輩沒有（值為 None）、**還沒解析完**（逾時拋 TimeoutError）。最後一種必須
+    可辨識——分不出有沒有克隆聲音時，安撫話寧可不講，也不能誤用預設聲音。
+    """
+
+    def __init__(self) -> None:
+        self._ready = threading.Event()
+        self._value = None
+
+    def set(self, value) -> None:
+        self._value = value
+        self._ready.set()
+
+    def get(self, *, timeout: float):
+        if not self._ready.wait(timeout):
+            raise TimeoutError("客製化聲音尚未解析完成")
+        return self._value
+
+
 def encode_reply_frame(header: dict, audio: bytes) -> bytes:
     """把 header 與音檔打包成自我描述的 binary frame（見模組 docstring 的協定說明）。
 
@@ -363,11 +385,16 @@ def create_app_ws_router(
         except Exception:  # noqa: BLE001 - 位置是加分項，寫入失敗不可中斷對話
             logger.warning("長輩地點寫入失敗")
 
-    def _ack_sender(sender: _Sender, turn_id: str) -> Callable[[list[str]], None]:
+    def _ack_sender(
+        sender: _Sender, turn_id: str, voice_slot: _VoiceSlot
+    ) -> Callable[[list[str]], None]:
         """做出「模型決定要查什麼」時要跑的那件事：挑一句安撫話立刻送出去。
 
         ⚠️ 這裡**不合成、不上傳**——音檔在啟動時就備好了（見 `speech/ack_audio.py`）。
         現場合成一句 10 字的安撫話要 1.86 秒，等於把這個功能省下來的延遲還掉快一半。
+
+        `voice_slot`＝`_run_turn` 開頭就丟到背景解析的客製化聲音（見該處說明）：
+        有克隆聲音的長輩，過場語也要是那個聲音（Leo 2026-08-19 需求）。
         """
 
         def announce(tool_names: list[str], persona_id: str) -> None:
@@ -375,7 +402,15 @@ def create_app_ws_router(
                 return
             # 人設由 agent 隨通知帶過來（2026-08-05），這裡**不查資料庫**：那一輪
             # 的長輩檔案 agent 已經讀過了，為一句等待語再查一次是白付一次往返。
-            clip = ack_audio.clip_for(tool_names[0], persona_id=persona_id)
+            # 聲音在輪次開頭就丟背景解析了，這裡只是等它收尾——ASR＋LLM 走到
+            # 「決定呼叫工具」至少要兩三秒，解析（數百 ms）早就完成，等待實務上是零。
+            # 上限 1 秒是護欄：真的等不到就不講這輪的安撫話——分不出這位長輩有沒有
+            # 克隆聲音時，播錯聲音（明明設了克隆卻用預設聲）比安靜更糟。
+            try:
+                voice_ref = voice_slot.get(timeout=1.0)
+            except TimeoutError:
+                return
+            clip = ack_audio.clip_for(tool_names[0], persona_id=persona_id, voice=voice_ref)
             if clip is None:  # 還沒暖好或簽章過期＝這輪不講（降級不是錯誤）
                 return
             sender.send(
@@ -521,6 +556,27 @@ def create_app_ws_router(
         """
         # 背景上傳，不等網址：見 `channels/app/inbound_audio.py`（延遲優化 B1）。
         start_inbound_upload(inbound_audio, traces, audio, turn_id)
+        # 客製化聲音也在背景先解析（2026-08-19）：安撫話回呼裡不可查資料庫（見
+        # `_ack_sender`），而 `resolve_voice` 要打一次 DB＋簽章（Supabase 跨海往返，
+        # 數百 ms）。輪次一開始就丟背景跑，等模型決定呼叫工具時（至少兩三秒後）
+        # 結果早就備好，關鍵路徑實務上一毫秒都不多付。解析完成後順手預熱這位長輩的
+        # 克隆聲音安撫話批次（`ensure_warm` 已暖好時是便宜查表）——整批預錄要半分鐘，
+        # 等到第一次呼叫工具才開始暖就全趕不上了。
+        voice_slot = _VoiceSlot()
+
+        def _preresolve_voice() -> None:
+            try:
+                resolved = pipeline.resolve_voice(elder_id)
+            except Exception:  # noqa: BLE001 - 解析失敗只影響安撫話，不可打斷這一輪
+                logger.warning("安撫話聲音預解析失敗 elder=%s", elder_id, exc_info=True)
+                resolved = None
+            voice_slot.set(resolved)
+            if ack_audio is not None:
+                ack_audio.ensure_warm(resolved)
+
+        threading.Thread(
+            target=_preresolve_voice, name="kinsun-voice-preresolve", daemon=True
+        ).start()
         collector = _TurnCollector(sender, turn_id)
         msg = InboundMessage(
             Channel.APP,
@@ -569,7 +625,7 @@ def create_app_ws_router(
                 with turn_gate.admit(on_queued=notify_queued):
                     with (
                         admission_wait((time.monotonic() - queued_at) * 1000),
-                        tool_announcer(_ack_sender(sender, turn_id)),
+                        tool_announcer(_ack_sender(sender, turn_id, voice_slot)),
                         transcript_listener(record_transcript),
                         pending_utterances(lambda: in_flight.others(turn_id)),
                         turn_directive(directive),

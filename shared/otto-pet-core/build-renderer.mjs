@@ -35,6 +35,7 @@ const scripts = [
   "quality.js",
   "pet.js",
   "idle.js",
+  "interactions.js",
   "lipsync.js",
   "sentiment.js",
   "kinsun-bridge.js",

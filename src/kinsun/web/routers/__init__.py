@@ -67,6 +67,7 @@ def create_guardian_face_router(
     appointment_hour: int,
     voice_profiles: VoiceProfileStore | None = None,
     publisher=None,
+    ack_audio=None,
 ) -> APIRouter:
     """家屬面聚合：長輩／排程／健康報告／每日摘要，共用雙認證與可及範圍守門。
 
@@ -89,6 +90,9 @@ def create_guardian_face_router(
             current_guardian=current_guardian,
             scope=scope,
             clock=clock,
+            # 家屬錄完克隆聲音當下就以新聲音預錄安撫話（2026-08-19），
+            # 不必等長輩第一次開口。None＝功能未啟用時照舊。
+            ack_audio=ack_audio,
         )
     )
     router.include_router(

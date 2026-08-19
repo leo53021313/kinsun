@@ -224,9 +224,13 @@ export function TalkScreen(props: {
       </div>
 
       {/* ── 內容層（z20，貼底往上長） ────────────────────────────────── */}
+      {/* ⚠️ 容器必須 `pointer-events-none`（2026-08-19 摸摸阿白實測踩到）：它是貼底
+          往上長的透明盒子，回話一長就整片疊在舞台（z10）上——透明不等於點不到，
+          長輩點阿白其實點到這個看不見的容器，摸摸互動整個失效。真正要互動的
+          子元素（回話卡要捲、收合鈕要按）各自 `pointer-events-auto` 開回來。 */}
       <div
         style={{ bottom: isSpeaking ? CONTENT_BOTTOM_SPEAKING : CONTENT_BOTTOM }}
-        className="absolute inset-x-[var(--size-elder-page-padding)] z-20 flex flex-col gap-2 transition-[bottom] duration-[var(--motion-layout)] ease-out"
+        className="pointer-events-none absolute inset-x-[var(--size-elder-page-padding)] z-20 flex flex-col gap-2 transition-[bottom] duration-[var(--motion-layout)] ease-out"
       >
         {showCollapsed ? (
           <button
@@ -234,14 +238,14 @@ export function TalkScreen(props: {
             onClick={() => setCollapsed(false)}
             aria-label={strings.talk.collapsedPrefix + talk.replyText}
             data-testid="reply-collapsed"
-            className="flex min-h-[70px] w-full items-center rounded-card border border-line bg-surface px-[18px] text-left text-elder-min font-bold text-ink shadow-[var(--elevation-sheet)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+            className="pointer-events-auto flex min-h-[70px] w-full items-center rounded-card border border-line bg-surface px-[18px] text-left text-elder-min font-bold text-ink shadow-[var(--elevation-sheet)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
             <span className="truncate">{collapsedSummary(talk.replyText)}</span>
           </button>
         ) : (
           <div
             data-testid="reply-card"
-            className="w-full rounded-card border border-line bg-surface p-[18px] shadow-[var(--elevation-sheet)]"
+            className="pointer-events-auto w-full rounded-card border border-line bg-surface p-[18px] shadow-[var(--elevation-sheet)]"
           >
             {/* 回話內文是這個畫面唯一的產出，讀螢幕的人不會自己去掃畫面找它；
                 polite 語意不會打斷目前的朗讀。
