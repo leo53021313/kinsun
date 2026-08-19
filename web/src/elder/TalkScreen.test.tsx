@@ -348,6 +348,28 @@ describe("四層版面與一屏不捲（W3b）", () => {
     renderScreen();
     expect(micButton()).not.toBeDisabled();
   });
+
+  it("內容層容器不攔截點擊，可互動的子元素各自開回來", () => {
+    // 迴歸（2026-08-19 摸摸阿白實測踩到）：內容層是貼底往上長的**透明**容器，
+    // 回話一長就整片疊在角色舞台（z10）上——透明不等於點不到，長輩點阿白其實
+    // 點到這個看不見的盒子，摸摸互動整個失效。容器必須 pointer-events-none，
+    // 回話卡（要捲）與收合鈕（要按）各自 auto。
+    talkState.replyText = "早上的血壓藥要記得吃，飯後半小時吃比較不傷胃喔。";
+    renderScreen();
+    const card = screen.getByTestId("reply-card");
+    expect(card.className).toContain("pointer-events-auto");
+    expect((card.parentElement as HTMLElement).className).toContain("pointer-events-none");
+  });
+
+  it("收合鈕也開得回點擊——容器 none 蓋不住它", async () => {
+    talkState.avatar = "speaking";
+    talkState.replyText = "早上的血壓藥要記得吃。";
+    const h = renderScreen();
+    talkState.avatar = "idle";
+    h.rerender();
+    const collapsed = await screen.findByTestId("reply-collapsed");
+    expect(collapsed.className).toContain("pointer-events-auto");
+  });
 });
 
 describe("回話卡收合（W3b）", () => {
