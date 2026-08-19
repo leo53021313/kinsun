@@ -11,12 +11,15 @@ CosyVoice zero-shot 要「參考音檔 ＋ 那段音檔的逐字稿」成對輸�
 
 from __future__ import annotations
 
+import logging
+import threading
 from collections.abc import Callable
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from kinsun.audio.publisher import AudioPublishError
+from kinsun.speech.tts import VoiceReference
 from kinsun.voice_profiles.models import VoiceProfile
 from kinsun.voice_profiles.script import (
     SCRIPT_RATIONALE,
@@ -27,6 +30,8 @@ from kinsun.voice_profiles.store import VoiceProfileError, VoiceProfileStore
 from kinsun.web.envelope import ok
 from kinsun.web.errors import ErrorCode
 from kinsun.web.routers.deps import GuardianAuth, GuardianScope
+
+logger = logging.getLogger("kinsun.web.voice_profiles")
 
 # 參考音檔上限（bytes）。15 秒的錄音遠低於此；上限存在是為了擋住誤傳的大檔，
 # 不是為了限制正常使用。與對講機單回合上限（10MB）同級。
@@ -40,6 +45,7 @@ def create_voice_profiles_router(
     current_guardian: Callable[..., GuardianAuth],
     scope: GuardianScope,
     clock: Callable[[], datetime],
+    ack_audio=None,
 ) -> APIRouter:
     """`voice_profiles`／`publisher` 任一為 None＝功能未啟用（TTS 非 dgx 或缺 Supabase）。
 
@@ -129,6 +135,7 @@ def create_voice_profiles_router(
             # 走一次「下載失敗→退回全域預設」，而家屬那端以為已經設定好了。
             raise HTTPException(status_code=502, detail=ErrorCode.SPEECH_UNAVAILABLE) from exc
 
+        granted_at = clock().timestamp()
         try:
             voice_profiles.save(
                 VoiceProfile(
@@ -137,7 +144,7 @@ def create_voice_profiles_router(
                     # 逐字稿＝系統下發的那份稿子。家屬照唸，所以這裡不必猜、也不必辨識。
                     prompt_text=VOICE_PROFILE_SCRIPT,
                     consented_by=consent,
-                    granted_at=clock().timestamp(),
+                    granted_at=granted_at,
                     revoked_at=None,
                 )
             )
@@ -146,7 +153,46 @@ def create_voice_profiles_router(
             # （`upload_voice_reference` 用 upsert），不會留下垃圾。
             raise HTTPException(status_code=503, detail=ErrorCode.SPEECH_UNAVAILABLE) from exc
 
+        _prewarm_ack_batch(elder_id, path, granted_at)
         return ok({"elder_id": elder_id, "has_profile": True, "consented_by": consent})
+
+    def _prewarm_ack_batch(elder_id: str, path: str, granted_at: float) -> None:
+        """家屬錄完的當下就用新聲音預錄安撫話（Leo 2026-08-19 需求追加）。
+
+        原本這批要等長輩**第一次開口**才開始暖（`ws.py` 的 `ensure_warm`），整批約
+        半分鐘——長輩第一場對話的過場語全趕不上。錄完就開暖的話，家屬把手機拿給
+        長輩之前多半已經好了。
+
+        ⚠️ 丟背景執行緒、任何失敗只記 warning：預熱是加分項，簽章或合成失敗都不可
+        影響「設定成功」這個既成事實（設定檔已寫入，對話與續段的聲音已經會換新）。
+        ⚠️ 只暖得到**收到這次 PUT 的 worker**：快取是行程內的（`WEB_WORKERS` 預設 2），
+        另一個 worker 仍靠長輩開口時的 `ensure_warm` 補上——兩條路互為備援，缺一個
+        都會讓某些第一場對話沒有過場語。
+        """
+        if ack_audio is None:
+            return
+
+        def _warm() -> None:
+            version = str(granted_at)
+            try:
+                url = publisher.signed_url_for(path, version)
+            except Exception:  # noqa: BLE001 - 簽章失敗只影響預熱，設定本身已成功
+                logger.warning(
+                    "錄後預熱簽章失敗，安撫話批次改由長輩首輪對話觸發 elder_id=%s",
+                    elder_id,
+                    exc_info=True,
+                )
+                return
+            ack_audio.ensure_warm(
+                VoiceReference(
+                    elder_id=elder_id,
+                    prompt_audio_url=url,
+                    prompt_text=VOICE_PROFILE_SCRIPT,
+                    version=version,
+                )
+            )
+
+        threading.Thread(target=_warm, name="kinsun-ack-warm-on-set", daemon=True).start()
 
     @router.delete("/elders/{elder_id}/voice-profile", status_code=204)
     def revoke_voice_profile(elder_id: str, auth: GuardianAuth = Depends(current_guardian)) -> None:

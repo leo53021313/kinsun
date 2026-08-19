@@ -13,19 +13,28 @@ import threading
 
 from kinsun.speech import acks
 from kinsun.speech.ack_audio import AckAudioCache
-from kinsun.speech.tts import TTSError, TtsPriority, TtsResult, current_tts_priority
+from kinsun.speech.tts import (
+    TTSError,
+    TtsPriority,
+    TtsResult,
+    VoiceReference,
+    current_tts_priority,
+)
 
 
 class _FakeTts:
     def __init__(self, *, fail_on: set[str] | None = None, audio: bytes | None = b"m4a") -> None:
         self.calls: list[str] = []
         self.priorities: list[TtsPriority] = []
+        # 每次合成收到的 voice 參數（2026-08-19）：克隆批次必須以那個聲音合成。
+        self.voices: list[VoiceReference | None] = []
         self._fail_on = fail_on or set()
         self._audio = audio
 
     def synthesize(self, text: str, *, voice=None) -> TtsResult:
         self.calls.append(text)
         self.priorities.append(current_tts_priority())
+        self.voices.append(voice)
         if text in self._fail_on:
             raise TTSError("假的合成失敗")
         return TtsResult(text=text, audio=self._audio, duration_ms=len(text) * 100)
@@ -225,7 +234,97 @@ def test_standby_phrases_are_prewarmed_alongside_the_ack_library():
     )
     cache.prewarm()
     assert "金孫這邊有點小狀況" in tts.calls
-    assert cache.warm_count() == len(acks.all_phrases()) + 1
+
+
+# ── 長輩客製化聲音（Leo 2026-08-19 需求）─────────────────────────────────
+#
+# 家屬設了克隆聲音的長輩，過場語也要是那個聲音——回答是孫子的聲音、過場卻是預設
+# 聲音，等於同一輪對話講到一半換人。快取因此分批：預設聲音一批、每個 elder_id＋版本
+# 各一批。
+
+
+def _grandson_voice(version: str = "1000.0") -> VoiceReference:
+    return VoiceReference(
+        elder_id="e1",
+        prompt_audio_url=f"https://signed.test/voice-refs/e1?v={version}",
+        prompt_text="阿嬤我是小明",
+        version=version,
+    )
+
+
+def test_cloned_voice_batch_synthesises_with_that_voice():
+    """克隆批次的每一句都必須帶著那個聲音去合成，暖好之後查表即回。"""
+    tts = _FakeTts()
+    cache = _cache(tts)
+    voice = _grandson_voice()
+    assert cache.clip_for("get_news", voice=voice) is None, "還沒暖好＝這輪不講"
+    _drain_background_threads()
+
+    clip = cache.clip_for("get_news", voice=voice)
+    assert clip is not None
+    assert clip.text in acks.phrases_for("get_news")
+    cloned = [v for v in tts.voices if v is not None]
+    assert cloned, "克隆批次沒有任何一句以克隆聲音合成"
+    assert all(v == voice for v in cloned)
+
+
+def test_cloned_voice_never_falls_back_to_the_default_batch():
+    """⭐ 需求明定過場不可以是預設聲音：克隆批次還沒暖好時寧可安靜，
+    也不能在同一輪裡「過場預設聲、回答克隆聲」講到一半換人。"""
+    cache = _cache()
+    cache.prewarm()  # 預設聲音批次已暖
+    assert cache.clip_for("get_news", voice=_grandson_voice()) is None
+
+
+def test_default_voice_elders_are_unaffected_by_cloned_batches():
+    """沒有克隆聲音的長輩照舊吃預設批次，不受任何克隆批次影響。"""
+    cache = _cache()
+    cache.prewarm()
+    _ = cache.clip_for("get_news", voice=_grandson_voice())  # 觸發克隆批次背景暖
+    _drain_background_threads()
+    clip = cache.clip_for("get_news")
+    assert clip is not None
+
+
+def test_re_recording_drops_the_old_cloned_batch():
+    """家屬重錄＝版本換值＝新批次；開始暖新批次時舊版本批次整批丟掉，
+    舊克隆聲音從此無從被取用（需求明定不可以再聽到舊克隆聲音）。"""
+    tts = _FakeTts()
+    cache = _cache(tts)
+    old, new = _grandson_voice("1000.0"), _grandson_voice("2000.0")
+
+    cache.clip_for("get_news", voice=old)
+    _drain_background_threads()
+    assert cache.clip_for("get_news", voice=old) is not None
+    count_with_old = cache.warm_count()
+
+    cache.clip_for("get_news", voice=new)  # 重錄後第一次：暖新批次、丟舊批次
+    _drain_background_threads()
+    assert cache.clip_for("get_news", voice=new) is not None
+    assert cache.warm_count() == count_with_old, "舊版本批次沒被丟掉（總句數應持平：舊換新）"
+
+
+def test_ensure_warm_prewarms_a_cloned_voice_before_the_first_tool_call():
+    """輪次開頭就先暖：整批預錄要半分鐘，等第一次工具呼叫才開始就全趕不上。"""
+    cache = _cache()
+    voice = _grandson_voice()
+    cache.ensure_warm(voice)
+    _drain_background_threads()
+    assert cache.clip_for("get_news", voice=voice) is not None
+
+
+def test_ensure_warm_without_a_cloned_voice_is_a_no_op():
+    """預設聲音批次由啟動時的 start_prewarm 負責，ensure_warm(None) 不該多做事。"""
+    tts = _FakeTts()
+    cache = _cache(tts)
+    cache.prewarm()  # 預設批次照常由啟動預熱備妥
+    calls_after_prewarm = len(tts.calls)
+
+    cache.ensure_warm(None)
+    _drain_background_threads()
+
+    assert len(tts.calls) == calls_after_prewarm, "ensure_warm(None) 不該多合成任何一句"
+    assert cache.warm_count() == len(acks.all_phrases()), "批次數量不該因 ensure_warm(None) 改變"
 
 
 def test_clip_for_text_returns_that_exact_phrase():

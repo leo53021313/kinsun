@@ -429,6 +429,99 @@ describe("視線追蹤", () => {
   });
 });
 
+describe("摸摸阿白", () => {
+  // ⚠️ 這一組驗的是**外層接線**：點一下舞台 → 換算成正規化座標 → 送 `poke` 指令。
+  // 部位判定（哪裡是耳朵）與反應動畫在 renderer 的 interactions.js，不在這層。
+
+  /** 把舞台釘在 (0,0)、209×300（jsdom 的 getBoundingClientRect 一律回 0）。 */
+  function pinStageRect() {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      top: 0,
+      width: 209,
+      height: 300,
+      right: 209,
+      bottom: 300,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+  }
+
+  function pointerOn(
+    target: EventTarget,
+    type: "pointerdown" | "pointerup",
+    clientX: number,
+    clientY: number,
+  ) {
+    // jsdom 沒有 PointerEvent 建構子；React 只認事件的 type 字串與冒泡，與視線
+    // 測試的 movePointer 同一套作法。
+    const event = new Event(type, { bubbles: true }) as Event & Record<string, unknown>;
+    event.pointerId = 1;
+    event.clientX = clientX;
+    event.clientY = clientY;
+    target.dispatchEvent(event);
+  }
+
+  function pokeCommands(post: { mock: { calls: unknown[][] } }) {
+    return post.mock.calls
+      .map((call) => JSON.parse(String(call[0])) as Record<string, unknown>)
+      .filter((command) => command.type === "poke");
+  }
+
+  it("點一下舞台，送出帶正規化座標的 poke 指令", () => {
+    pinStageRect();
+    render(<BearStage state="idle" />);
+    const post = vi.spyOn(iframeWindow(), "postMessage");
+    emitReady(iframeWindow());
+    const stage = screen.getByTestId("bear-stage");
+    pointerOn(stage, "pointerdown", 104.5, 150);
+    pointerOn(stage, "pointerup", 104.5, 150);
+
+    const sent = pokeCommands(post);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].version).toBe(1);
+    expect(Number(sent[0].x)).toBeCloseTo(0.5, 3);
+    expect(Number(sent[0].y)).toBeCloseTo(0.5, 3);
+  });
+
+  it("按著拖不算摸——那是視線追蹤的手勢", () => {
+    pinStageRect();
+    render(<BearStage state="idle" />);
+    const post = vi.spyOn(iframeWindow(), "postMessage");
+    emitReady(iframeWindow());
+    const stage = screen.getByTestId("bear-stage");
+    pointerOn(stage, "pointerdown", 60, 150);
+    pointerOn(stage, "pointerup", 120, 150); // 位移 60px，遠超過點一下的門檻
+
+    expect(pokeCommands(post)).toHaveLength(0);
+  });
+
+  it("renderer 還沒 ready 之前不送", () => {
+    pinStageRect();
+    render(<BearStage state="idle" />);
+    const post = vi.spyOn(iframeWindow(), "postMessage");
+    const stage = screen.getByTestId("bear-stage");
+    pointerOn(stage, "pointerdown", 104.5, 150);
+    pointerOn(stage, "pointerup", 104.5, 150);
+
+    expect(pokeCommands(post)).toHaveLength(0);
+  });
+
+  it("使用者要求減少動態效果時不送——反應本身就是一段晃動的動畫", () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    pinStageRect();
+    render(<BearStage state="idle" />);
+    const post = vi.spyOn(iframeWindow(), "postMessage");
+    emitReady(iframeWindow());
+    const stage = screen.getByTestId("bear-stage");
+    pointerOn(stage, "pointerdown", 104.5, 150);
+    pointerOn(stage, "pointerup", 104.5, 150);
+
+    expect(pokeCommands(post)).toHaveLength(0);
+  });
+});
+
 describe("待機可點道具", () => {
   // ⚠️ 道具的按鈕畫在**外層**而不是 renderer 裡：iframe 是 `pointer-events: none`
   // 且不給 `allow-same-origin`，畫在裡面點不到；而可以按的東西必須進得了輔助科技的

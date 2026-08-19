@@ -27,11 +27,17 @@
  * iframe 讀的是同源的本機檔案，不會等很久。
  */
 
-import { useEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 
 import {
   createOttoGreetCommand,
   createOttoLookCommand,
+  createOttoPokeCommand,
   createOttoSyncCommand,
   createOttoTapCommand,
   parseOttoRendererEvent,
@@ -201,6 +207,49 @@ export function BearStage(props: {
 
   const visibleProp = state === "idle" ? idleProp : null;
 
+  // 摸摸阿白（2026-08-19）：點舞台上的頭、耳朵、肚子、手，各有不同反應。
+  //
+  // ⚠️ 與視線追蹤同一套架構：iframe 是 `pointer-events: none` 的 sandbox，事件在
+  // 這一層攔、換算成**相對舞台的正規化座標**（0–1）後以 `poke` 指令送進去；部位
+  // 判定（哪裡是耳朵）是角色的知識，留在 renderer 的 interactions.js。
+  //
+  // ⚠️ 只認「點一下」（位移小、時間短）：按著拖是視線追蹤的手勢，不觸發摸摸。
+  // 講話中、思考中、聆聽中 renderer 那側自己會不理，這裡不重複判斷狀態。
+  //
+  // ⚠️ 這是裝飾層的彩蛋互動，刻意**沒有**鍵盤與讀螢幕路徑：舞台對輔助科技本來就是
+  // 隱藏的裝飾（見檔頭），唯一的可及互動仍是待機道具那顆真按鈕。
+  const pokeStartRef = useRef<{ id: number; x: number; y: number; t: number } | null>(null);
+
+  function onStagePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    // 待機道具按鈕有自己的行為；從它出發的手勢不是在摸阿白。
+    if (event.target instanceof Element && event.target.closest("button")) return;
+    pokeStartRef.current = {
+      id: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      t: performance.now(),
+    };
+  }
+
+  function onStagePointerUp(event: ReactPointerEvent<HTMLDivElement>) {
+    const start = pokeStartRef.current;
+    pokeStartRef.current = null;
+    if (!start || start.id !== event.pointerId) return;
+    if (!isReady || prefersReducedMotion()) return;
+    if (performance.now() - start.t > 600) return;
+    if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 12) return;
+    const host = hostRef.current;
+    if (!host) return;
+    const rect = host.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const command = createOttoPokeCommand(
+      (event.clientX - rect.left) / rect.width,
+      (event.clientY - rect.top) / rect.height,
+    );
+    if (!command) return;
+    frameRef.current?.contentWindow?.postMessage(JSON.stringify(command), "*");
+  }
+
   return (
     // ⚠️ **外層不再整塊 `aria-hidden`**（W3b 起它是的）：可點的道具必須進得了輔助
     // 科技的樹，被祖先 `aria-hidden` 蓋住的按鈕在讀螢幕軟體眼中不存在，鍵盤走到它
@@ -211,6 +260,8 @@ export function BearStage(props: {
       ref={hostRef}
       className="relative h-[var(--avatar-stage-h)] w-[var(--avatar-stage-w)] shrink-0"
       data-testid="bear-stage"
+      onPointerDown={onStagePointerDown}
+      onPointerUp={onStagePointerUp}
     >
       {/* CSS 有 radial-gradient，不必像 RN 那樣用大圓角色塊近似。 */}
       <div

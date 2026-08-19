@@ -57,8 +57,9 @@ class SupabaseAudioPublisher:
         self._prefix = prefix.strip("/")
         self._transport = transport or HttpxTransport()
         self._signed_url_expires_seconds = signed_url_expires_seconds
-        # 物件路徑 → (簽章網址, 這份快取的失效時刻)。見 signed_url_for 的說明。
-        self._voice_url_cache: dict[str, tuple[str, datetime]] = {}
+        # 物件路徑 → (簽章網址, 這份快取的失效時刻, 簽發當時的聲音版本)。
+        # 見 signed_url_for 的說明。
+        self._voice_url_cache: dict[str, tuple[str, datetime, str]] = {}
 
     def _object_path(self, name: str) -> str:
         return f"{self._prefix}/{self._clock().strftime('%Y%m%d')}/{name}"
@@ -133,10 +134,13 @@ class SupabaseAudioPublisher:
         """
         path = f"voice-refs/{elder_id}"
         try:
+            # ⚠️ body 的鍵是 `prefixes` 不是 `paths`（2026-08-19 對真 Supabase 實測修正：
+            # `paths` 一律回 400「body must have required property 'prefixes'」——上線以來
+            # 每一次撤銷的刪檔其實都失敗、只留 warning，聲紋一直留在 bucket）。
             self._transport.request(
                 "DELETE",
                 f"{self._base}/storage/v1/object/{self._bucket}",
-                data=json.dumps({"paths": [path]}).encode("utf-8"),
+                data=json.dumps({"prefixes": [path]}).encode("utf-8"),
                 headers={
                     "Authorization": f"Bearer {self._key}",
                     "Content-Type": "application/json",
@@ -148,7 +152,7 @@ class SupabaseAudioPublisher:
         # 無論刪成功與否都清掉簽章快取：留著的話，撤銷後那個網址在效期內仍簽得出來。
         self._voice_url_cache.pop(path, None)
 
-    def signed_url_for(self, path: str) -> str:
+    def signed_url_for(self, path: str, version: str = "") -> str:
         """為 bucket 內**既有**物件簽一個短效讀取網址（長輩客製化聲音的參考音檔用）。
 
         與 `publish` 不同：這裡不上傳，只針對已存在的路徑取用網址。`voice_profiles`
@@ -158,10 +162,22 @@ class SupabaseAudioPublisher:
         ⚠️ 帶行程內快取：DGX 端拿到音檔後會自行快取，之後每輪其實用不到這個網址，
         但應用層無從得知對方的快取狀態，只能每輪都附上。實測簽一次約 384ms，且落在
         「長輩講完話到聽見回覆」的關鍵路徑上，故在效期內重用同一個網址。
+
+        ⚠️ `version` 對不上就**不用快取、重簽一次**（2026-08-19，家屬重錄後長輩仍聽到
+        舊聲音的修正）：`upload_voice_reference` 覆蓋物件時會清掉本實例的快取，但正式
+        環境跑多個 uvicorn worker（`WEB_WORKERS`，預設 2），PUT 只會打中其中一個——
+        其他 worker 的快取還留著重錄**之前**簽出的網址，最長要到效期（約 55 分鐘）才換。
+        物件路徑固定是 `voice-refs/<elder_id>`，舊網址與新網址指向同一路徑，差別只在
+        token；而 CDN 是按**完整 URL** 快取的，舊網址可能命中 CDN 上重錄前的舊音檔。
+        更糟的是 DGX 端以 `elder_id＋版本` 快取下載結果：舊音檔一旦被記在**新版本**底下，
+        之後版本比對永遠命中、不再重新下載——舊聲音就此黏死，直到 TTS 服務重啟。
+        版本一換就重簽，拿到的新 token＝全新 URL，CDN 必然未命中，兩層舊快取一次繞過。
+        版本值＝`voice_profiles.granted_at`（與 `VoiceReference.version` 同源），
+        每次重錄都換值；同版本內仍照常重用快取，不多付任何簽章成本。
         """
         now = self._clock()
         cached = self._voice_url_cache.get(path)
-        if cached is not None and cached[1] > now:
+        if cached is not None and cached[1] > now and cached[2] == version:
             return cached[0]
         url = self._create_signed_url(path, expires_in=_VOICE_URL_TTL_SECONDS)
         # 提前 _VOICE_URL_REFRESH_MARGIN_SECONDS 失效：避免發出一個「就快過期」的網址，
@@ -169,6 +185,7 @@ class SupabaseAudioPublisher:
         self._voice_url_cache[path] = (
             url,
             now + timedelta(seconds=_VOICE_URL_TTL_SECONDS - _VOICE_URL_REFRESH_MARGIN_SECONDS),
+            version,
         )
         return url
 
@@ -249,7 +266,8 @@ class SupabaseAudioPublisher:
             if not paths:
                 return
             del_url = f"{self._base}/storage/v1/object/{self._bucket}"
-            body = json.dumps({"paths": paths}).encode("utf-8")
+            # 同上：Supabase 批次刪除的鍵是 `prefixes`（2026-08-19 實測修正）。
+            body = json.dumps({"prefixes": paths}).encode("utf-8")
             self._transport.request(
                 "DELETE",
                 del_url,
